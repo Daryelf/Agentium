@@ -1,0 +1,13 @@
+{
+  "name": "argentum",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Argentum supervised AI operating company prototype with Depo as the first visible agent.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check script.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

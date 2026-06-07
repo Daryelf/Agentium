@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Argentum</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Argentum navigation">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">Ag</div>
+          <div>
+            <p class="eyebrow">Argentum OS</p>
+            <h1>Control Floor</h1>
+          </div>
+        </div>
+
+        <div class="agent-roster" aria-label="Agent roster">
+          <p class="eyebrow">Agent Command</p>
+          <div class="roster-agent active">
+            <span class="roster-light" aria-hidden="true"></span>
+            <div>
+              <strong>Atlas</strong>
+              <small>System Overseer</small>
+            </div>
+            <em>01</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light" aria-hidden="true"></span>
+            <div>
+              <strong>Forge</strong>
+              <small>Production Agent</small>
+            </div>
+            <em>02</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light creative" aria-hidden="true"></span>
+            <div>
+              <strong>Prism</strong>
+              <small>Creative / Marketing</small>
+            </div>
+            <em>03</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light finance" aria-hidden="true"></span>
+            <div>
+              <strong>Ledger</strong>
+              <small>Finance Agent</small>
+            </div>
+            <em>04</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light nexus" aria-hidden="true"></span>
+            <div>
+              <strong>Nexus</strong>
+              <small>Automation Agent</small>
+            </div>
+            <em>05</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light sentry" aria-hidden="true"></span>
+            <div>
+              <strong>Sentry</strong>
+              <small>Security Agent</small>
+            </div>
+            <em>06</em>
+          </div>
+          <div class="roster-agent">
+            <span class="roster-light oracle" aria-hidden="true"></span>
+            <div>
+              <strong>Oracle</strong>
+              <small>Data Analyst</small>
+            </div>
+            <em>07</em>
+          </div>
+        </div>
+
+        <div class="operator-card">
+          <p class="eyebrow">Human Gate</p>
+          <strong>External actions locked</strong>
+          <span>Publishing, money movement, account changes, trades, and new agents require operator approval.</span>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Argentum OS v0.1.7</p>
+            <h2>Full-system command habitat: agents, commerce, finance, workflows, and automation running in one control room.</h2>
+          </div>
+          <div class="top-actions">
+            <span class="metric-chip" id="apiStatus">Local mode</span>
+            <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause Depo" title="Pause Depo">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+            </button>
+            <button class="primary-button" id="runCycleBtn" type="button">
+              <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+              Run cycle
+            </button>
+          </div>
+        </header>
+
+        <section class="view active" id="view-floor" aria-label="Agent floor">
+          <div class="floor-grid">
+            <section class="operations-floor" aria-label="Visual agent floor">
+              <div class="floor-header">
+                <div>
+                  <p class="eyebrow">Habitat Overview</p>
+                  <h3>Argentum orbital business system</h3>
+                </div>
+                <span class="status-pill" id="cycleStatus">Cycle running</span>
+              </div>
+
+              <div class="station-map" id="stationMap">
+                <div class="route-line route-a" aria-hidden="true"></div>
+                <div class="route-line route-b" aria-hidden="true"></div>
+                <div class="route-line route-c" aria-hidden="true"></div>
+                <div class="route-line route-d" aria-hidden="true"></div>
+                <div class="route-line route-e" aria-hidden="true"></div>
+                <div class="map-beacon beacon-one" aria-hidden="true"></div>
+                <div class="map-beacon beacon-two" aria-hidden="true"></div>
+                <div class="map-beacon beacon-three" aria-hidden="true"></div>
+                <div class="map-ring ring-one" aria-hidden="true"></div>
+                <div class="map-ring ring-two" aria-hidden="true"></div>
+                <div class="map-core" aria-hidden="true">
+                  <span>ARGENTUM SECURITY CORE</span>
+                </div>
+                <div class="floor-label label-pod" aria-hidden="true">CONTENT FLOW</div>
+                <div class="floor-label label-market" aria-hidden="true">REVENUE BUS</div>
+                <div class="floor-label label-factory" aria-hidden="true">TASK ROUTER</div>
+                <div class="station station-overview" data-station="Overview">
+                  <span>Overview</span>
+                  <strong>Agent Habitat</strong>
+                </div>
+                <div class="station station-research" data-station="Research">
+                  <span>Agents</span>
+                  <strong>AI Agents Room</strong>
+                </div>
+                <div class="station station-verify" data-station="Verify">
+                  <span>Security</span>
+                  <strong>Security Core</strong>
+                </div>
+                <div class="station station-draft" data-station="Draft">
+                  <span>Production</span>
+                  <strong>Task Factory</strong>
+                </div>
+                <div class="station station-approval" data-station="Approval">
+                  <span>Pipeline</span>
+                  <strong>Workflow Pipeline</strong>
+                </div>
+                <div class="station station-commerce" data-station="Commerce">
+                  <span>Commerce</span>
+                  <strong>Commerce Terminal</strong>
+                </div>
+                <div class="station station-finance" data-station="Finance">
+                  <span>Finance</span>
+                  <strong>Revenue Monitor</strong>
+                </div>
+                <div class="station station-inventory" data-station="Inventory">
+                  <span>Inventory</span>
+                  <strong>Resources</strong>
+                </div>
+                <div class="station station-logistics" data-station="Logistics">
+                  <span>Routing</span>
+                  <strong>Logistics Node</strong>
+                </div>
+                <div class="station station-marketing" data-station="Marketing">
+                  <span>Marketing</span>
+                  <strong>Content Engine</strong>
+                </div>
+                <div class="station station-support" data-station="Support">
+                  <span>Support</span>
+                  <strong>Customer Node</strong>
+                </div>
+                <div class="station station-logs" data-station="Logs">
+                  <span>Logs</span>
+                  <strong>System Logs</strong>
+                </div>
+                <div class="agent-avatar" id="depoAvatar" aria-label="Depo agent">
+                  <div class="agent-body">
+                    <div class="agent-visor"></div>
+                    <div class="agent-pack"></div>
+                  </div>
+                  <span>Depo</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel task-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Live System Status</p>
+                  <h3 id="missionTitle">Build Etsy print-on-demand research lane</h3>
+                </div>
+                <span class="metric-chip" id="confidenceChip">82% confidence</span>
+              </div>
+              <p class="mission-copy" id="missionCopy">
+                Depo is researching low-risk product niches, checking evidence freshness, and preparing a draft workflow that cannot publish without approval.
+              </p>
+              <div class="progress-track" aria-label="Mission progress">
+                <div class="progress-bar" id="missionProgress"></div>
+              </div>
+              <div class="mission-meta">
+                <span id="taskStage">Stage: Research</span>
+                <span id="riskLevel">Risk: Low</span>
+              </div>
+              <div class="system-status-grid" aria-label="Live system status cards">
+                <div><span>Agents Online</span><strong>7 / 7</strong></div>
+                <div><span>Active Tasks</span><strong id="queuedTaskMetric">0</strong></div>
+                <div><span>Revenue Today</span><strong>$7,128</strong></div>
+                <div><span>Orders Processing</span><strong>197</strong></div>
+                <div><span>Content Generated</span><strong id="artifactThroughputMetric">0</strong></div>
+                <div><span>Errors / Warnings</span><strong id="highRiskMetric">0</strong></div>
+                <div><span>System Health</span><strong id="readinessMetric">0% ready</strong></div>
+                <div><span>Automation Queue</span><strong id="pendingApprovalMetric">0</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="pipeline-grid" id="workflowList" aria-label="Business pipelines">
+          </section>
+
+          <section class="panel kpi-panel" aria-label="Business KPIs">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Business pulse</p>
+                <h3>Argentum KPI hooks</h3>
+              </div>
+                <span class="metric-chip">Subsystem telemetry</span>
+            </div>
+            <div class="kpi-grid">
+              <div>
+                <span>Artifacts</span>
+                <strong>14</strong>
+                <p>Drafts created by Depo</p>
+              </div>
+              <div>
+                <span>POD briefs</span>
+                <strong id="podBriefMetric">0</strong>
+                <p>Print-on-demand outputs</p>
+              </div>
+              <div>
+                <span>Market notes</span>
+                <strong id="marketNoteMetric">0</strong>
+                <p>Read-only stock notes</p>
+              </div>
+              <div>
+                <span>Function growth</span>
+                <strong id="functionGrowthMetric">0</strong>
+                <p>Reusable functions</p>
+              </div>
+              <div>
+                <span>Approval load</span>
+                <strong id="approvalLoadMetric">0</strong>
+                <p>Human gates waiting</p>
+              </div>
+              <div>
+                <span>Risk queue</span>
+                <strong id="riskQueueMetric">0</strong>
+                <p>High-risk approvals</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel template-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Quick start</p>
+                <h3>Task templates</h3>
+              </div>
+              <span class="metric-chip" id="templateCount">0 templates</span>
+            </div>
+            <div class="template-list" id="templateList"></div>
+          </section>
+
+          <section class="control-grid" aria-label="Operator controls">
+            <article class="panel control-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Governance</p>
+                  <h3>Operator controls</h3>
+                </div>
+                <span class="status-pill" id="killSwitchStatus">Kill switch off</span>
+              </div>
+              <div class="control-actions">
+                <button class="primary-button" id="runNextTaskBtn" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M6 4h10v6"/><path d="M6 20h10v-6"/><path d="M18 8l4 4-4 4"/><path d="M2 12h20"/></svg>
+                  Run next task
+                </button>
+                <button class="primary-button secondary-action" id="runWorkdayBtn" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h7"/><path d="M17 14l3 3-3 3"/></svg>
+                  Run workday
+                </button>
+                <button class="danger-button" id="killSwitchBtn" type="button">Enable kill switch</button>
+                <button class="ghost-button" id="resetLoopBtn" type="button">Reset loop guard</button>
+              </div>
+              <div class="governance-list">
+                <div>
+                  <span>Cycles</span>
+                  <strong id="cycleLimitMetric">0 / 12</strong>
+                </div>
+                <div>
+                  <span>Spend</span>
+                  <strong id="spendMetric">$0.00 / $5.00</strong>
+                </div>
+                <div>
+                  <span>Task runs</span>
+                  <strong id="taskRunMetric">0</strong>
+                </div>
+                <div>
+                  <span>Function runs</span>
+                  <strong id="functionRunMetric">0</strong>
+                </div>
+                <div>
+                  <span>Last workday</span>
+                  <strong id="lastWorkdayMetric">0 tasks</strong>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel control-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Business machine</p>
+                  <h3>Live counters</h3>
+                </div>
+              </div>
+              <div class="governance-list">
+                <div>
+                  <span>Queued tasks</span>
+                <strong>0</strong>
+                </div>
+                <div>
+                  <span>Pending approvals</span>
+                <strong>0</strong>
+                </div>
+                <div>
+                  <span>Approved functions</span>
+                  <strong id="approvedFunctionMetric">0</strong>
+                </div>
+                <div>
+                  <span>High-risk gates</span>
+                  <strong>0</strong>
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="view-depo" aria-label="Depo agent details">
+          <div class="detail-layout">
+            <section class="panel">
+              <div class="agent-profile">
+                <div class="large-avatar" aria-hidden="true">
+                  <div class="agent-body">
+                    <div class="agent-visor"></div>
+                    <div class="agent-pack"></div>
+                  </div>
+                </div>
+                <div>
+                  <p class="eyebrow">Agent 001</p>
+                  <h3>Depo</h3>
+                  <p>Depository operator for research, memory capture, workflow drafting, and approval packaging.</p>
+                </div>
+              </div>
+              <dl class="manifest-grid">
+                <div>
+                  <dt>State</dt>
+                  <dd id="agentState">Active / supervised</dd>
+                </div>
+                <div>
+                  <dt>Spend limit</dt>
+                  <dd>$5/day sandbox</dd>
+                </div>
+                <div>
+                  <dt>External actions</dt>
+                  <dd>Draft only</dd>
+                </div>
+                <div>
+                  <dt>Memory access</dt>
+                  <dd>Working + verified shared</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Function builder</p>
+                  <h3>Capabilities Depo can propose</h3>
+                </div>
+              </div>
+              <div class="capability-list" id="capabilityList"></div>
+            </section>
+          </div>
+
+          <section class="panel task-inbox-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Task inbox</p>
+                <h3>Assign Depo work</h3>
+              </div>
+              <span class="metric-chip" id="taskCount">1 task</span>
+            </div>
+            <form class="task-form" id="taskForm">
+              <textarea id="taskInput" name="task" rows="3" placeholder="Ask Depo for a POD niche brief, a stock algo watch note, or a new agent function proposal."></textarea>
+              <div class="task-form-row">
+                <select id="taskWorkflow" name="workflow" aria-label="Workflow">
+                  <option value="">Auto route</option>
+                  <option value="workflow-pod-lab">Print-on-demand lab</option>
+                  <option value="workflow-stock-watch">Stock algorithm watch</option>
+                  <option value="workflow-agent-factory">Agent factory</option>
+                </select>
+                <button class="primary-button" type="submit">
+                  <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+                  Assign
+                </button>
+              </div>
+            </form>
+            <div class="task-list" id="taskList"></div>
+          </section>
+
+          <section class="panel function-library-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Function library</p>
+                <h3>Reusable work Depo has learned</h3>
+              </div>
+              <span class="metric-chip" id="functionCount">1 function</span>
+            </div>
+            <div class="function-list" id="functionList"></div>
+          </section>
+
+          <section class="panel function-library-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Execution history</p>
+                <h3>Function runs</h3>
+              </div>
+              <span class="metric-chip" id="executionCount">0 runs</span>
+            </div>
+            <div class="execution-list" id="executionList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-approval" aria-label="Approval queue">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Human gate</p>
+                <h3>Approval queue</h3>
+              </div>
+              <span class="metric-chip" id="queueCount">2 pending</span>
+            </div>
+            <div class="approval-list" id="approvalList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-outputs" aria-label="Business outputs">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Business outputs</p>
+                <h3>Artifacts Depo has produced</h3>
+              </div>
+              <span class="metric-chip" id="artifactCount">0 artifacts</span>
+            </div>
+            <div class="artifact-list" id="artifactList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-memory" aria-label="Memory and audit">
+          <div class="memory-layout">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Structured memory</p>
+                  <h3>Depo memory layers</h3>
+                </div>
+              </div>
+              <div class="tabs" role="tablist" aria-label="Memory layers">
+                <button class="tab active" data-memory="working" type="button">Working</button>
+                <button class="tab" data-memory="shared" type="button">Shared</button>
+                <button class="tab" data-memory="agent" type="button">Agent</button>
+              </div>
+              <div class="memory-list" id="memoryList"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Trace</p>
+                  <h3>Audit trail</h3>
+                </div>
+              </div>
+              <div class="audit-log" id="auditLog"></div>
+            </section>
+          </div>
+        </section>
+
+        <nav class="bottom-nav" aria-label="Argentum system navigation">
+          <button class="nav-item active" data-view="floor" type="button">Overview</button>
+          <button class="nav-item" data-view="depo" type="button">Agents</button>
+          <button class="nav-item" data-view="approval" type="button">Workflows</button>
+          <button class="nav-item" data-view="outputs" type="button">Commerce</button>
+          <button class="nav-item" data-view="outputs" type="button">Finance</button>
+          <button class="nav-item" data-view="outputs" type="button">Inventory</button>
+          <button class="nav-item" data-view="outputs" type="button">Marketing</button>
+          <button class="nav-item" data-view="memory" type="button">Logs</button>
+          <button class="nav-item" data-view="memory" type="button">Settings</button>
+        </nav>
+      </main>
+    </div>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

@@ -318,6 +318,11 @@ const workspaceTitle = document.querySelector("#workspaceTitle");
 const workspaceGrid = document.querySelector("#workspaceGrid");
 const workspaceFeed = document.querySelector("#workspaceFeed");
 const closeWorkspaceBtn = document.querySelector("#closeWorkspaceBtn");
+const accessUserCount = document.querySelector("#accessUserCount");
+const accessUserList = document.querySelector("#accessUserList");
+const accessAlert = document.querySelector("#accessAlert");
+const passwordForm = document.querySelector("#passwordForm");
+const createUserForm = document.querySelector("#createUserForm");
 
 const roomProfiles = {
   Overview: {
@@ -637,6 +642,7 @@ let isPanning = false;
 let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
 let pointerCache = new Map();
 let pinchStart = null;
+let accessState = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -655,7 +661,14 @@ async function api(path, options = {}) {
     ...options,
   });
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    let message = `API request failed: ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = payload.error;
+    } catch {
+      // Keep the status-based message when the response is not JSON.
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -900,6 +913,55 @@ function updateSystemClock() {
     day: "numeric",
     year: "numeric",
   }).format(nowDate);
+}
+
+function showAccessMessage(message, type = "info") {
+  if (!accessAlert) return;
+  accessAlert.hidden = false;
+  accessAlert.className = `access-alert ${type}`;
+  accessAlert.textContent = message;
+}
+
+function clearAccessMessage() {
+  if (!accessAlert) return;
+  accessAlert.hidden = true;
+  accessAlert.textContent = "";
+}
+
+async function loadAccessState() {
+  if (!accessUserList) return;
+  try {
+    accessState = await api("/api/access");
+    renderAccessState();
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+}
+
+function renderAccessState() {
+  if (!accessState || !accessUserList) return;
+  const users = accessState.users || [];
+  accessUserCount.textContent = `${users.length} ${users.length === 1 ? "user" : "users"}`;
+  accessUserList.innerHTML = users
+    .map((user) => {
+      const isCurrent = accessState.currentUser?.id === user.id;
+      const canDelete = !isCurrent && users.filter((item) => !item.disabled).length > 1;
+      return `
+        <article class="access-user-card ${isCurrent ? "current" : ""}">
+          <div>
+            <div class="access-user-top">
+              <strong>${escapeHtml(user.username)}</strong>
+              <span>${escapeHtml(user.role)}</span>
+              ${isCurrent ? "<em>current</em>" : ""}
+              ${user.temporary ? "<em class=\"warning\">temporary</em>" : ""}
+            </div>
+            <p>${user.lastLoginAt ? `Last login ${escapeHtml(new Date(user.lastLoginAt).toLocaleString())}` : "No login recorded yet"}</p>
+          </div>
+          <button class="danger-button" type="button" data-access-delete="${escapeHtml(user.id)}" ${canDelete ? "" : "disabled"}>Delete</button>
+        </article>
+      `;
+    })
+    .join("");
 }
 
 function renderCapabilities() {
@@ -1354,6 +1416,9 @@ document.querySelectorAll(".nav-item").forEach((button) => {
     document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
     button.classList.add("active");
     document.querySelector(`#view-${button.dataset.view}`).classList.add("active");
+    if (button.dataset.view === "settings") {
+      loadAccessState();
+    }
   });
 });
 
@@ -1479,6 +1544,70 @@ inspectorActions.addEventListener("click", (event) => {
   addLocalAudit("Inspector action", `${button.textContent.trim()} requested for ${selectedAgentKey ? agentProfiles[selectedAgentKey].name : roomProfiles[selectedRoomKey || "Overview"].title}.`);
   renderAudit();
   renderInspector();
+});
+
+passwordForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(passwordForm);
+  const newPassword = String(form.get("newPassword") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+  if (newPassword !== confirmPassword) {
+    showAccessMessage("New passwords do not match.", "error");
+    return;
+  }
+  try {
+    accessState = await postJson("/api/access/password", {
+      currentPassword: form.get("currentPassword"),
+      newPassword,
+    });
+    passwordForm.reset();
+    renderAccessState();
+    showAccessMessage("Password updated. Use the new password next time you sign in.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+createUserForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(createUserForm);
+  const password = String(form.get("password") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+  if (password !== confirmPassword) {
+    showAccessMessage("New account passwords do not match.", "error");
+    return;
+  }
+  try {
+    accessState = await postJson("/api/access/users", {
+      username: form.get("username"),
+      password,
+      currentPassword: form.get("currentPassword"),
+    });
+    createUserForm.reset();
+    renderAccessState();
+    showAccessMessage("New admin login created. Sign out and test it before deleting the temporary admin.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+accessUserList?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-access-delete]");
+  if (!button) return;
+  const currentPassword = window.prompt("Enter your current password to delete this login.");
+  if (!currentPassword) return;
+  clearAccessMessage();
+  try {
+    accessState = await postJson(`/api/access/users/${encodeURIComponent(button.dataset.accessDelete)}/delete`, {
+      currentPassword,
+    });
+    renderAccessState();
+    showAccessMessage("Login deleted.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
 });
 
 pauseBtn.addEventListener("click", () => {

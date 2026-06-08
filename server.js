@@ -9,12 +9,14 @@ const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "password";
+const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
+const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "password";
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString("hex");
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 8);
 const LOGIN_WINDOW_MS = 1000 * 60 * 15;
 const LOGIN_MAX_ATTEMPTS = 5;
+const PASSWORD_ITERATIONS = 210_000;
 const loginAttempts = new Map();
 
 const mimeTypes = {
@@ -27,6 +29,140 @@ const mimeTypes = {
 
 function now() {
   return new Date().toISOString();
+}
+
+function ensureDataDir() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function normalizeUsername(username) {
+  return String(username || "").trim().toLowerCase();
+}
+
+function userId() {
+  return `user-${crypto.randomUUID()}`;
+}
+
+function hashPassword(password, salt = crypto.randomBytes(18).toString("base64url")) {
+  const passwordHash = crypto.pbkdf2Sync(String(password), salt, PASSWORD_ITERATIONS, 32, "sha256").toString("base64url");
+  return {
+    algorithm: "pbkdf2-sha256",
+    iterations: PASSWORD_ITERATIONS,
+    salt,
+    passwordHash,
+  };
+}
+
+function createUserRecord(username, password, options = {}) {
+  const normalizedUsername = normalizeUsername(username);
+  return {
+    id: userId(),
+    username: normalizedUsername,
+    role: "admin",
+    disabled: false,
+    temporary: Boolean(options.temporary),
+    createdAt: now(),
+    updatedAt: now(),
+    lastLoginAt: null,
+    ...hashPassword(password),
+  };
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    disabled: Boolean(user.disabled),
+    temporary: Boolean(user.temporary),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt,
+  };
+}
+
+function defaultAuthStore() {
+  return {
+    version: 1,
+    createdAt: now(),
+    updatedAt: now(),
+    users: [
+      createUserRecord(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, {
+        temporary: DEFAULT_ADMIN_USERNAME === "admin" && DEFAULT_ADMIN_PASSWORD === "password",
+      }),
+    ],
+  };
+}
+
+function readAuthStore() {
+  ensureDataDir();
+  if (!fs.existsSync(AUTH_FILE)) {
+    const store = defaultAuthStore();
+    writeAuthStore(store);
+    return store;
+  }
+  try {
+    const store = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
+    if (!Array.isArray(store.users) || store.users.length === 0) {
+      const fallback = defaultAuthStore();
+      writeAuthStore(fallback);
+      return fallback;
+    }
+    return store;
+  } catch {
+    const fallback = defaultAuthStore();
+    writeAuthStore(fallback);
+    return fallback;
+  }
+}
+
+function writeAuthStore(store) {
+  ensureDataDir();
+  store.updatedAt = now();
+  fs.writeFileSync(AUTH_FILE, JSON.stringify(store, null, 2));
+}
+
+function findAuthUser(store, username) {
+  const normalizedUsername = normalizeUsername(username);
+  return store.users.find((user) => normalizeUsername(user.username) === normalizedUsername);
+}
+
+function findAuthUserById(store, id) {
+  return store.users.find((user) => user.id === id);
+}
+
+function verifyPassword(password, user) {
+  if (!user || user.disabled) return false;
+  const computed = hashPassword(password, user.salt);
+  return constantTimeEqual(computed.passwordHash, user.passwordHash);
+}
+
+function validateUsername(username) {
+  const normalizedUsername = normalizeUsername(username);
+  if (!/^[a-z0-9._-]{3,32}$/.test(normalizedUsername)) {
+    throw guardedError("Use 3-32 characters: letters, numbers, dots, underscores, or hyphens.", 400);
+  }
+  return normalizedUsername;
+}
+
+function validateNewPassword(password) {
+  const value = String(password || "");
+  if (value.length < 12) {
+    throw guardedError("Use a password with at least 12 characters.", 400);
+  }
+  if (!/[a-z]/i.test(value) || !/[0-9]/.test(value)) {
+    throw guardedError("Use a password with letters and numbers.", 400);
+  }
+  return value;
+}
+
+function sanitizedAccessState(currentUser) {
+  const store = readAuthStore();
+  return {
+    currentUser: publicUser(currentUser),
+    users: store.users.map(publicUser),
+    temporaryAdminPresent: store.users.some((user) => user.temporary && !user.disabled),
+  };
 }
 
 function constantTimeEqual(left, right) {
@@ -70,8 +206,15 @@ function verifySession(token) {
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     if (payload.exp < Date.now()) return null;
-    if (payload.user !== ADMIN_USERNAME) return null;
-    return payload;
+    const store = readAuthStore();
+    const user = payload.uid ? findAuthUserById(store, payload.uid) : findAuthUser(store, payload.user);
+    if (!user || user.disabled) return null;
+    return {
+      ...payload,
+      user: user.username,
+      uid: user.id,
+      role: user.role,
+    };
   } catch {
     return null;
   }
@@ -599,7 +742,7 @@ function defaultState() {
 }
 
 function ensureState() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensureDataDir();
   if (!fs.existsSync(STATE_FILE)) {
     writeState(defaultState());
   }
@@ -635,7 +778,7 @@ function readState() {
 
 function writeState(state) {
   state.meta.updatedAt = now();
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensureDataDir();
   fs.writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
 }
 
@@ -1198,7 +1341,9 @@ async function handleLogin(req, res) {
     const payload = await readCredentials(req);
     const username = String(payload.username || "");
     const password = String(payload.password || "");
-    const valid = constantTimeEqual(username, ADMIN_USERNAME) && constantTimeEqual(password, ADMIN_PASSWORD);
+    const store = readAuthStore();
+    const user = findAuthUser(store, username);
+    const valid = verifyPassword(password, user);
 
     if (!valid) {
       recordLoginFailure(req);
@@ -1207,8 +1352,13 @@ async function handleLogin(req, res) {
     }
 
     clearLoginFailures(req);
+    user.lastLoginAt = now();
+    user.updatedAt = user.updatedAt || now();
+    writeAuthStore(store);
     const token = signSession({
-      user: ADMIN_USERNAME,
+      uid: user.id,
+      user: user.username,
+      role: user.role,
       iat: Date.now(),
       exp: Date.now() + SESSION_TTL_MS,
       nonce: crypto.randomBytes(16).toString("hex"),
@@ -1287,9 +1437,116 @@ function advanceCycle() {
   return state;
 }
 
+function currentAccessUser(req) {
+  const session = currentSession(req);
+  if (!session) return null;
+  const store = readAuthStore();
+  return {
+    store,
+    user: findAuthUserById(store, session.uid),
+  };
+}
+
+function requireCurrentPassword(req, payload, store, user) {
+  const currentPassword = String(payload.currentPassword || "");
+  if (!verifyPassword(currentPassword, user)) {
+    throw guardedError("Current password is required for access changes.", 403);
+  }
+}
+
+function activeUserCount(store) {
+  return store.users.filter((user) => !user.disabled).length;
+}
+
+function changeCurrentPassword(req, payload) {
+  const access = currentAccessUser(req);
+  if (!access?.user) throw guardedError("Session is no longer valid.", 401);
+  requireCurrentPassword(req, payload, access.store, access.user);
+  const nextPassword = validateNewPassword(payload.newPassword);
+  Object.assign(access.user, hashPassword(nextPassword), {
+    temporary: false,
+    updatedAt: now(),
+  });
+  writeAuthStore(access.store);
+  return sanitizedAccessState(access.user);
+}
+
+function createAccessUser(req, payload) {
+  const access = currentAccessUser(req);
+  if (!access?.user) throw guardedError("Session is no longer valid.", 401);
+  requireCurrentPassword(req, payload, access.store, access.user);
+  const username = validateUsername(payload.username);
+  const password = validateNewPassword(payload.password);
+  if (findAuthUser(access.store, username)) {
+    throw guardedError("That username already exists.", 409);
+  }
+  const user = createUserRecord(username, password, { temporary: false });
+  access.store.users.push(user);
+  writeAuthStore(access.store);
+  return sanitizedAccessState(access.user);
+}
+
+function deleteAccessUser(req, userIdToDelete, payload) {
+  const access = currentAccessUser(req);
+  if (!access?.user) throw guardedError("Session is no longer valid.", 401);
+  requireCurrentPassword(req, payload, access.store, access.user);
+  const user = findAuthUserById(access.store, userIdToDelete);
+  if (!user) throw guardedError("User not found.", 404);
+  if (user.id === access.user.id) {
+    throw guardedError("You cannot delete the account you are currently using.", 409);
+  }
+  if (activeUserCount(access.store) <= 1) {
+    throw guardedError("Create another admin login before deleting this one.", 409);
+  }
+  access.store.users = access.store.users.filter((item) => item.id !== user.id);
+  writeAuthStore(access.store);
+  return sanitizedAccessState(access.user);
+}
+
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/state") {
     sendJson(res, 200, readState());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/access") {
+    const access = currentAccessUser(req);
+    if (!access?.user) {
+      sendJson(res, 401, { error: "Session is no longer valid" });
+      return;
+    }
+    sendJson(res, 200, sanitizedAccessState(access.user));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/access/password") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, changeCurrentPassword(req, payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/access/users") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createAccessUser(req, payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const accessDeleteMatch = url.pathname.match(/^\/api\/access\/users\/([^/]+)\/delete$/);
+  if (req.method === "POST" && accessDeleteMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, deleteAccessUser(req, accessDeleteMatch[1], payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
     return;
   }
 
@@ -1480,6 +1737,7 @@ function serveStatic(req, res, url) {
 }
 
 ensureState();
+readAuthStore();
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);

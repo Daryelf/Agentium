@@ -1877,6 +1877,142 @@ dd {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+  padding-bottom: 110px;
+}
+
+#view-settings.active {
+  height: calc(100vh - 126px);
+  overflow: auto;
+  padding-bottom: 96px;
+}
+
+.settings-layout .access-panel:first-child {
+  grid-row: span 2;
+}
+
+.access-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.access-form label {
+  display: grid;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.access-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(3, 5, 7, 0.62);
+  outline: none;
+}
+
+.access-form input:focus {
+  border-color: rgba(125, 211, 252, 0.36);
+  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.08);
+}
+
+.access-alert {
+  margin: 12px 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 8px;
+  color: #dbeafe;
+  background: rgba(125, 211, 252, 0.075);
+}
+
+.access-alert.error {
+  color: #ffd7d5;
+  border-color: rgba(214, 107, 107, 0.28);
+  background: rgba(214, 107, 107, 0.12);
+}
+
+.access-alert.success {
+  color: #b8f0ea;
+  border-color: rgba(114, 183, 199, 0.25);
+  background: rgba(114, 183, 199, 0.11);
+}
+
+.access-user-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.access-user-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(125, 211, 252, 0.055), transparent 64%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.access-user-card.current {
+  border-color: rgba(199, 210, 254, 0.22);
+}
+
+.access-user-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.access-user-top strong {
+  font-size: 1.05rem;
+}
+
+.access-user-top span,
+.access-user-top em {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.access-user-top em.warning {
+  color: #ffe2a9;
+  border-color: rgba(214, 167, 91, 0.25);
+  background: rgba(214, 167, 91, 0.1);
+}
+
+.access-user-card p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.danger-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 @media (max-width: 1120px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1930,6 +2066,14 @@ dd {
   .workspace-grid,
   .workspace-feed {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-layout .access-panel:first-child {
+    grid-row: auto;
   }
 }
 

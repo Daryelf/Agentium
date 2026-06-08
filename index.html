@@ -637,6 +637,77 @@
           </div>
         </section>
 
+        <section class="view" id="view-settings" aria-label="Settings">
+          <div class="settings-layout">
+            <section class="panel access-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Settings / Access</p>
+                  <h3>Admin access control</h3>
+                </div>
+                <span class="metric-chip" id="accessUserCount">0 users</span>
+              </div>
+              <p class="mission-copy">
+                Create your own admin login, rotate the password, then delete the temporary account when you no longer need it.
+              </p>
+              <div class="access-alert" id="accessAlert" hidden></div>
+              <div class="access-user-list" id="accessUserList"></div>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Credential Rotation</p>
+                  <h3>Change current password</h3>
+                </div>
+              </div>
+              <form class="access-form" id="passwordForm">
+                <label>
+                  Current password
+                  <input name="currentPassword" type="password" autocomplete="current-password" required />
+                </label>
+                <label>
+                  New password
+                  <input name="newPassword" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+                <label>
+                  Confirm new password
+                  <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+                <button class="primary-button" type="submit">Update password</button>
+              </form>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">New Admin Login</p>
+                  <h3>Create your account</h3>
+                </div>
+              </div>
+              <form class="access-form" id="createUserForm">
+                <label>
+                  New username
+                  <input name="username" autocomplete="username" placeholder="your-name" required />
+                </label>
+                <label>
+                  New password
+                  <input name="password" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+                <label>
+                  Confirm new password
+                  <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+                <label>
+                  Your current password
+                  <input name="currentPassword" type="password" autocomplete="current-password" required />
+                </label>
+                <button class="primary-button" type="submit">Create admin login</button>
+              </form>
+            </section>
+          </div>
+        </section>
+
         <nav class="bottom-nav" aria-label="Argentum system navigation">
           <button class="nav-item active" data-view="floor" type="button">Overview</button>
           <button class="nav-item" data-view="depo" type="button">Agents</button>
@@ -646,7 +717,7 @@
           <button class="nav-item" data-view="outputs" type="button">Inventory</button>
           <button class="nav-item" data-view="outputs" type="button">Marketing</button>
           <button class="nav-item" data-view="memory" type="button">Logs</button>
-          <button class="nav-item" data-view="memory" type="button">Settings</button>
+          <button class="nav-item" data-view="settings" type="button">Settings</button>
         </nav>
 
         <section class="workspace-overlay" id="workspaceOverlay" aria-hidden="true">

@@ -19,7 +19,7 @@
 
         <div class="agent-roster" aria-label="Agent roster">
           <p class="eyebrow">Agent Command</p>
-          <div class="roster-agent active">
+          <div class="roster-agent active" data-agent="atlas" role="button" tabindex="0">
             <span class="roster-light" aria-hidden="true"></span>
             <div>
               <strong>Atlas</strong>
@@ -27,7 +27,7 @@
             </div>
             <em>01</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="forge" role="button" tabindex="0">
             <span class="roster-light" aria-hidden="true"></span>
             <div>
               <strong>Forge</strong>
@@ -35,7 +35,7 @@
             </div>
             <em>02</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="prism" role="button" tabindex="0">
             <span class="roster-light creative" aria-hidden="true"></span>
             <div>
               <strong>Prism</strong>
@@ -43,7 +43,7 @@
             </div>
             <em>03</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="ledger" role="button" tabindex="0">
             <span class="roster-light finance" aria-hidden="true"></span>
             <div>
               <strong>Ledger</strong>
@@ -51,7 +51,7 @@
             </div>
             <em>04</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="nexus" role="button" tabindex="0">
             <span class="roster-light nexus" aria-hidden="true"></span>
             <div>
               <strong>Nexus</strong>
@@ -59,7 +59,7 @@
             </div>
             <em>05</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="sentry" role="button" tabindex="0">
             <span class="roster-light sentry" aria-hidden="true"></span>
             <div>
               <strong>Sentry</strong>
@@ -67,7 +67,7 @@
             </div>
             <em>06</em>
           </div>
-          <div class="roster-agent">
+          <div class="roster-agent" data-agent="oracle" role="button" tabindex="0">
             <span class="roster-light oracle" aria-hidden="true"></span>
             <div>
               <strong>Oracle</strong>
@@ -114,6 +114,7 @@
               </div>
 
               <div class="station-map" id="stationMap">
+                <div class="habitat-canvas" id="habitatCanvas">
                 <div class="route-line route-a" aria-hidden="true"></div>
                 <div class="route-line route-b" aria-hidden="true"></div>
                 <div class="route-line route-c" aria-hidden="true"></div>
@@ -185,6 +186,13 @@
                   </div>
                   <span>Depo</span>
                 </div>
+                </div>
+                <div class="map-controls" aria-label="Habitat map controls">
+                  <button class="map-control" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+                  <button class="map-control" id="zoomOutBtn" type="button" aria-label="Zoom out">-</button>
+                  <button class="map-control" id="centerMapBtn" type="button" aria-label="Reset habitat view">Center</button>
+                  <button class="map-control" id="fullscreenMapBtn" type="button" aria-label="Toggle fullscreen map">Full</button>
+                </div>
               </div>
             </section>
 
@@ -215,6 +223,20 @@
                 <div><span>Errors / Warnings</span><strong id="highRiskMetric">0</strong></div>
                 <div><span>System Health</span><strong id="readinessMetric">0% ready</strong></div>
                 <div><span>Automation Queue</span><strong id="pendingApprovalMetric">0</strong></div>
+              </div>
+              <div class="inspector-panel" id="inspectorPanel" aria-live="polite">
+                <div class="inspector-top">
+                  <div>
+                    <p class="eyebrow" id="inspectorType">Habitat</p>
+                    <h3 id="inspectorTitle">Argentum Habitat Overview</h3>
+                  </div>
+                  <button class="ghost-button compact-action" id="backToHabitatBtn" type="button">Back to Habitat</button>
+                </div>
+                <p class="mission-copy" id="inspectorSummary">Click a room or agent to inspect live status, connected modules, tasks, permissions, and recent activity.</p>
+                <div class="inspector-chips" id="inspectorChips"></div>
+                <div class="inspector-grid" id="inspectorGrid"></div>
+                <div class="inspector-actions" id="inspectorActions"></div>
+                <div class="activity-feed" id="activityFeed"></div>
               </div>
             </section>
           </div>
@@ -511,6 +533,20 @@
           <button class="nav-item" data-view="memory" type="button">Logs</button>
           <button class="nav-item" data-view="memory" type="button">Settings</button>
         </nav>
+
+        <section class="workspace-overlay" id="workspaceOverlay" aria-hidden="true">
+          <div class="workspace-panel">
+            <div class="workspace-top">
+              <div>
+                <p class="eyebrow" id="workspaceEyebrow">Agent Workspace</p>
+                <h3 id="workspaceTitle">Agent room</h3>
+              </div>
+              <button class="ghost-button compact-action" id="closeWorkspaceBtn" type="button">Back to Habitat</button>
+            </div>
+            <div class="workspace-grid" id="workspaceGrid"></div>
+            <div class="activity-feed workspace-feed" id="workspaceFeed"></div>
+          </div>
+        </section>
       </main>
     </div>
 

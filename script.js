@@ -294,6 +294,346 @@ const marketNoteMetric = document.querySelector("#marketNoteMetric");
 const functionGrowthMetric = document.querySelector("#functionGrowthMetric");
 const approvalLoadMetric = document.querySelector("#approvalLoadMetric");
 const riskQueueMetric = document.querySelector("#riskQueueMetric");
+const stationMap = document.querySelector("#stationMap");
+const habitatCanvas = document.querySelector("#habitatCanvas");
+const zoomInBtn = document.querySelector("#zoomInBtn");
+const zoomOutBtn = document.querySelector("#zoomOutBtn");
+const centerMapBtn = document.querySelector("#centerMapBtn");
+const fullscreenMapBtn = document.querySelector("#fullscreenMapBtn");
+const backToHabitatBtn = document.querySelector("#backToHabitatBtn");
+const inspectorPanel = document.querySelector("#inspectorPanel");
+const inspectorType = document.querySelector("#inspectorType");
+const inspectorTitle = document.querySelector("#inspectorTitle");
+const inspectorSummary = document.querySelector("#inspectorSummary");
+const inspectorChips = document.querySelector("#inspectorChips");
+const inspectorGrid = document.querySelector("#inspectorGrid");
+const inspectorActions = document.querySelector("#inspectorActions");
+const activityFeed = document.querySelector("#activityFeed");
+const workspaceOverlay = document.querySelector("#workspaceOverlay");
+const workspaceEyebrow = document.querySelector("#workspaceEyebrow");
+const workspaceTitle = document.querySelector("#workspaceTitle");
+const workspaceGrid = document.querySelector("#workspaceGrid");
+const workspaceFeed = document.querySelector("#workspaceFeed");
+const closeWorkspaceBtn = document.querySelector("#closeWorkspaceBtn");
+
+const roomProfiles = {
+  Overview: {
+    title: "Agent Habitat",
+    type: "Habitat Overview",
+    status: "Online",
+    roomClass: "station-overview",
+    summary: "System-wide command view for agents, automations, approvals, commerce signals, and operating health.",
+    agents: ["Atlas", "Nexus", "Oracle"],
+    connected: ["AI Agents Room", "Workflow Pipeline", "Security Core"],
+    tasks: ["Balance automation queue", "Review system readiness", "Watch cross-room routing"],
+    activity: ["Atlas reconciled the command map.", "Nexus refreshed route links.", "Oracle tagged stale telemetry."],
+    metrics: [
+      ["System health", "92%"],
+      ["Active modules", "12"],
+      ["Open routes", "8"],
+    ],
+  },
+  Research: {
+    title: "AI Agents Room",
+    type: "Agent Habitat",
+    status: "7 online",
+    roomClass: "station-research",
+    summary: "Agent control room where Atlas, Forge, Prism, Ledger, Nexus, Sentry, and Oracle coordinate supervised work.",
+    agents: ["Atlas", "Oracle", "Nexus"],
+    connected: ["Agent Habitat", "Task Factory", "System Logs"],
+    tasks: ["Sync agent queues", "Inspect permissions", "Route handoffs"],
+    activity: ["Atlas assigned a task packet.", "Oracle summarized agent memory.", "Nexus checked automation dependencies."],
+    metrics: [
+      ["Agents online", "7 / 7"],
+      ["Queues active", "5"],
+      ["Permission gates", "14"],
+    ],
+  },
+  Draft: {
+    title: "Task Factory",
+    type: "Production / Task Factory",
+    status: "Draft mode",
+    roomClass: "station-draft",
+    summary: "Production floor for turning approved prompts into bounded jobs, draft outputs, and approval packages.",
+    agents: ["Forge", "Nexus"],
+    connected: ["AI Agents Room", "Resources", "Workflow Pipeline"],
+    tasks: ["Build POD brief", "Package workflow proposal", "Run next supervised task"],
+    activity: ["Forge staged a build queue.", "Nexus paused a high-risk automation.", "Task runner prepared a draft artifact."],
+    metrics: [
+      ["Active jobs", "12"],
+      ["Completed", "38"],
+      ["Needs approval", "4"],
+    ],
+  },
+  Commerce: {
+    title: "Commerce Terminal",
+    type: "Commerce",
+    status: "Monitoring",
+    roomClass: "station-commerce",
+    summary: "Read-only commerce console for orders, storefront concepts, Printify/Etsy plans, and product lane status.",
+    agents: ["Ledger", "Forge"],
+    connected: ["Revenue Monitor", "Resources", "Customer Node"],
+    tasks: ["Review POD store lane", "Prepare order summary", "Check blocked publish actions"],
+    activity: ["Commerce lane synced pending orders.", "Print-on-demand plan stayed approval-gated.", "Storefront metrics refreshed."],
+    metrics: [
+      ["Orders processing", "197"],
+      ["Store lanes", "2"],
+      ["Draft listings", "56"],
+    ],
+  },
+  Finance: {
+    title: "Revenue Monitor",
+    type: "Finance",
+    status: "Read-only",
+    roomClass: "station-finance",
+    summary: "Finance monitor for revenue, expenses, profit, stock-watch notes, risk checks, and approval-gated money actions.",
+    agents: ["Ledger", "Oracle"],
+    connected: ["Commerce Terminal", "Security Core", "System Logs"],
+    tasks: ["Summarize revenue today", "Run risk check", "Prepare finance approval note"],
+    activity: ["Ledger marked broker access blocked.", "Oracle generated variance note.", "Finance queue stayed read-only."],
+    metrics: [
+      ["Revenue today", "$7,128"],
+      ["Expenses", "$1,204"],
+      ["Profit", "$5,924"],
+    ],
+  },
+  Inventory: {
+    title: "Resources",
+    type: "Inventory",
+    status: "Stable",
+    roomClass: "station-inventory",
+    summary: "Resource inventory for data inputs, creative assets, workflow materials, prompt templates, and tool capacity.",
+    agents: ["Forge", "Prism"],
+    connected: ["Task Factory", "Logistics Node", "Content Engine"],
+    tasks: ["Index asset supply", "Track prompt templates", "Check resource bottlenecks"],
+    activity: ["Inventory snapshot refreshed.", "Creative assets linked to Prism.", "Template supply marked healthy."],
+    metrics: [
+      ["Assets ready", "578"],
+      ["Prompt templates", "4"],
+      ["Capacity", "86%"],
+    ],
+  },
+  Logistics: {
+    title: "Logistics Node",
+    type: "Routing",
+    status: "Routing",
+    roomClass: "station-logistics",
+    summary: "Routing layer for workflow handoffs, agent queues, dependency checks, and task movement across the system.",
+    agents: ["Nexus", "Atlas"],
+    connected: ["Resources", "Workflow Pipeline", "Commerce Terminal"],
+    tasks: ["Optimize queue route", "Route agent handoff", "Confirm blocked action path"],
+    activity: ["Nexus rerouted two draft tasks.", "Atlas resolved a queue collision.", "Route health stayed nominal."],
+    metrics: [
+      ["Routes active", "8"],
+      ["ETA drift", "2m"],
+      ["Queue depth", "21"],
+    ],
+  },
+  Approval: {
+    title: "Workflow Pipeline",
+    type: "Workflow Pipeline",
+    status: "Human gate",
+    roomClass: "station-approval",
+    summary: "Approval-gated pipeline where draft artifacts become reusable functions only after human review.",
+    agents: ["Atlas", "Nexus", "Sentry"],
+    connected: ["Task Factory", "Security Core", "System Logs"],
+    tasks: ["Review POD lane", "Check stock monitor", "Promote approved function"],
+    activity: ["Workflow package reached human gate.", "Sentry checked risk tags.", "Nexus held deployment permissions."],
+    metrics: [
+      ["Pending approvals", "2"],
+      ["Functions", "1"],
+      ["Risk gates", "1"],
+    ],
+  },
+  Marketing: {
+    title: "Content Engine",
+    type: "Marketing",
+    status: "Drafting",
+    roomClass: "station-marketing",
+    summary: "Creative workspace for campaigns, listing copy, thumbnails, content queues, drafts, and approval-needed assets.",
+    agents: ["Prism", "Oracle"],
+    connected: ["Resources", "Commerce Terminal", "Customer Node"],
+    tasks: ["Draft campaign concepts", "Prepare listing copy", "Generate approval package"],
+    activity: ["Prism drafted campaign angles.", "Creative queue added thumbnail concepts.", "Oracle tagged keyword assumptions."],
+    metrics: [
+      ["Content generated", "24"],
+      ["Drafts waiting", "7"],
+      ["Approvals needed", "3"],
+    ],
+  },
+  Support: {
+    title: "Customer Node",
+    type: "Customer Support",
+    status: "Standby",
+    roomClass: "station-support",
+    summary: "Support command node for customer notes, policy-safe replies, service queues, and human-reviewed responses.",
+    agents: ["Sentry", "Prism"],
+    connected: ["Commerce Terminal", "Content Engine", "System Logs"],
+    tasks: ["Review support script", "Classify customer issue", "Hold outbound messages"],
+    activity: ["Customer-contact permission remained blocked.", "Support reply template staged.", "Sentry flagged external messaging gate."],
+    metrics: [
+      ["Tickets staged", "9"],
+      ["Reply drafts", "5"],
+      ["Outbound blocks", "9"],
+    ],
+  },
+  Verify: {
+    title: "Security Core",
+    type: "Security",
+    status: "Protected",
+    roomClass: "station-verify",
+    summary: "Security and governance core for permissions, high-risk actions, blocked tools, kill switch, and policy gates.",
+    agents: ["Sentry", "Atlas"],
+    connected: ["Workflow Pipeline", "Revenue Monitor", "System Logs"],
+    tasks: ["Verify risk gates", "Audit permissions", "Monitor kill switch"],
+    activity: ["Sentry audited finance permissions.", "Blocked external account creation.", "Security core confirmed draft-only mode."],
+    metrics: [
+      ["Blocked actions", "7"],
+      ["High-risk gates", "1"],
+      ["Kill switch", "Off"],
+    ],
+  },
+  Logs: {
+    title: "System Logs",
+    type: "Trace",
+    status: "Recording",
+    roomClass: "station-logs",
+    summary: "Trace room for audit events, function runs, memory writes, approval decisions, and agent activity history.",
+    agents: ["Oracle", "Sentry"],
+    connected: ["Security Core", "Workflow Pipeline", "AI Agents Room"],
+    tasks: ["Record cycle events", "Summarize recent actions", "Flag stale memory"],
+    activity: ["Audit trail captured latest cycle.", "Oracle summarized outputs.", "Sentry filed a permission note."],
+    metrics: [
+      ["Audit entries", "12"],
+      ["Function runs", "0"],
+      ["Memory writes", "4"],
+    ],
+  },
+};
+
+const agentProfiles = {
+  atlas: {
+    name: "Atlas",
+    role: "System Overseer",
+    status: "Online",
+    room: "Overview",
+    currentTask: "Balancing habitat routes and approval load.",
+    queue: ["Review system readiness", "Route agent handoff", "Confirm operator gates"],
+    actions: ["Reconciled command map", "Updated route priorities", "Prepared readiness summary"],
+    permissions: ["Read system state", "Assign supervised tasks", "Cannot deploy agents"],
+    modules: ["Agent Habitat", "Workflow Pipeline", "Security Core"],
+  },
+  forge: {
+    name: "Forge",
+    role: "Production Agent",
+    status: "Online",
+    room: "Draft",
+    currentTask: "Building draft-only production jobs for approval.",
+    queue: ["POD niche brief", "Listing outline", "Function proposal"],
+    actions: ["Staged build queue", "Prepared draft package", "Sent risky action to approval"],
+    permissions: ["Draft tasks", "Build artifacts", "Cannot publish"],
+    modules: ["Task Factory", "Resources", "Workflow Pipeline"],
+  },
+  prism: {
+    name: "Prism",
+    role: "Creative / Marketing Agent",
+    status: "Online",
+    room: "Marketing",
+    currentTask: "Turning approved lanes into creative concepts and content drafts.",
+    queue: ["Campaign angles", "Thumbnail concepts", "Listing copy"],
+    actions: ["Generated campaign outline", "Tagged approval-needed assets", "Queued creative drafts"],
+    permissions: ["Draft content", "Prepare assets", "Cannot post externally"],
+    modules: ["Content Engine", "Resources", "Customer Node"],
+  },
+  ledger: {
+    name: "Ledger",
+    role: "Finance Agent",
+    status: "Read-only",
+    room: "Finance",
+    currentTask: "Monitoring revenue and risk without moving money.",
+    queue: ["Revenue summary", "Expense check", "Finance approval note"],
+    actions: ["Updated profit snapshot", "Marked broker access blocked", "Prepared risk check"],
+    permissions: ["Read finance notes", "Draft summaries", "Cannot move money or trade"],
+    modules: ["Revenue Monitor", "Commerce Terminal", "Security Core"],
+  },
+  nexus: {
+    name: "Nexus",
+    role: "Automation Agent",
+    status: "Online",
+    room: "Logistics",
+    currentTask: "Routing tasks between modules while respecting gates.",
+    queue: ["Optimize route", "Check dependency", "Hold blocked automation"],
+    actions: ["Rerouted task queue", "Paused risky automation", "Synced workflow pipeline"],
+    permissions: ["Route tasks", "Run checks", "Cannot modify core systems"],
+    modules: ["Logistics Node", "Workflow Pipeline", "Agent Habitat"],
+  },
+  sentry: {
+    name: "Sentry",
+    role: "Security Agent",
+    status: "Guarding",
+    room: "Verify",
+    currentTask: "Auditing permissions and high-risk workflow gates.",
+    queue: ["Permission audit", "Kill switch check", "Customer-contact block"],
+    actions: ["Flagged external action", "Reviewed high-risk queue", "Confirmed draft-only controls"],
+    permissions: ["Read governance", "Block risky tasks", "Cannot approve itself"],
+    modules: ["Security Core", "System Logs", "Customer Node"],
+  },
+  oracle: {
+    name: "Oracle",
+    role: "Data Analyst",
+    status: "Online",
+    room: "Logs",
+    currentTask: "Summarizing system data, memory, and recent outputs.",
+    queue: ["Audit summary", "Market note", "Memory freshness check"],
+    actions: ["Summarized activity feed", "Tagged stale assumptions", "Prepared metric brief"],
+    permissions: ["Analyze data", "Write summaries", "Cannot invent certainty"],
+    modules: ["System Logs", "AI Agents Room", "Revenue Monitor"],
+  },
+};
+
+const workspaceProfiles = {
+  prism: {
+    title: "Prism Creative Workspace",
+    eyebrow: "Marketing / Creative Agent",
+    sections: [
+      ["Active campaigns", "Moon Garden Club, Espresso After Dark, Secret Island"],
+      ["Content queue", "7 drafts, 3 approval-needed assets, 2 keyword studies"],
+      ["Generated assets", "Thumbnail concepts, listing title angles, social captions"],
+      ["Connected tools", "Content Engine, Resources, Commerce Terminal"],
+    ],
+    feed: ["Drafted campaign variations", "Queued thumbnail prompt set", "Held publishing behind approval"],
+  },
+  ledger: {
+    title: "Ledger Finance Workspace",
+    eyebrow: "Finance Agent",
+    sections: [
+      ["Revenue", "$7,128 today across simulated lanes"],
+      ["Expenses", "$1,204 tracked for draft planning"],
+      ["Profit", "$5,924 estimated; no money movement permitted"],
+      ["Risk checks", "Broker access blocked, finance approvals pending"],
+    ],
+    feed: ["Prepared revenue variance note", "Marked stock lane paper-only", "Logged finance approval requirement"],
+  },
+  forge: {
+    title: "Forge Production Workspace",
+    eyebrow: "Production Agent",
+    sections: [
+      ["Build queue", "POD brief, listing outline, workflow proposal"],
+      ["Active jobs", "12 draft jobs running in supervised mode"],
+      ["Completed jobs", "38 historical draft completions"],
+      ["Failed jobs", "2 blocked by missing evidence"],
+    ],
+    feed: ["Staged production packet", "Sent publish action to approval", "Refreshed build queue"],
+  },
+};
+
+let selectedRoomKey = null;
+let selectedAgentKey = null;
+let mapView = { x: 0, y: 0, scale: 1 };
+let isPanning = false;
+let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
+let pointerCache = new Map();
+let pinchStart = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -366,6 +706,179 @@ function setStep() {
   confidenceChip.textContent = `${step.confidence}% confidence`;
   taskStage.textContent = `Stage: ${step.station}`;
   riskLevel.textContent = `Risk: ${step.risk}`;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function applyMapView(animated = true) {
+  if (!habitatCanvas) return;
+  habitatCanvas.classList.toggle("is-animating", animated);
+  habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  if (animated) {
+    window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
+  }
+}
+
+function setMapView(nextView, animated = true) {
+  mapView = {
+    x: Number.isFinite(nextView.x) ? nextView.x : mapView.x,
+    y: Number.isFinite(nextView.y) ? nextView.y : mapView.y,
+    scale: clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, 0.72, 2.8),
+  };
+  applyMapView(animated);
+}
+
+function resetHabitatView(animated = true) {
+  selectedRoomKey = null;
+  selectedAgentKey = null;
+  document.querySelectorAll(".station.selected").forEach((item) => item.classList.remove("selected"));
+  document.querySelectorAll(".roster-agent.selected").forEach((item) => item.classList.remove("selected"));
+  stationMap?.classList.remove("has-selection");
+  setMapView({ x: 0, y: 0, scale: 1 }, animated);
+  renderInspector();
+}
+
+function zoomMap(delta, point) {
+  if (!stationMap) return;
+  const rect = stationMap.getBoundingClientRect();
+  const anchor = point || { x: rect.width / 2, y: rect.height / 2 };
+  const nextScale = clamp(mapView.scale + delta, 0.72, 2.8);
+  const worldX = (anchor.x - mapView.x) / mapView.scale;
+  const worldY = (anchor.y - mapView.y) / mapView.scale;
+  setMapView({
+    x: anchor.x - worldX * nextScale,
+    y: anchor.y - worldY * nextScale,
+    scale: nextScale,
+  });
+}
+
+function stationElementForRoom(roomKey) {
+  return document.querySelector(`.station[data-station="${CSS.escape(roomKey)}"]`);
+}
+
+function focusRoom(roomKey, options = {}) {
+  const station = stationElementForRoom(roomKey);
+  if (!station || !stationMap) return;
+  const mapRect = stationMap.getBoundingClientRect();
+  const centerX = station.offsetLeft + station.offsetWidth / 2;
+  const centerY = station.offsetTop + station.offsetHeight / 2;
+  const scale = options.scale || 1.72;
+  selectedRoomKey = roomKey;
+  if (options.agentKey) selectedAgentKey = options.agentKey;
+
+  document.querySelectorAll(".station").forEach((item) => {
+    item.classList.toggle("selected", item.dataset.station === roomKey);
+  });
+  document.querySelectorAll(".roster-agent").forEach((item) => {
+    item.classList.toggle("selected", item.dataset.agent === selectedAgentKey);
+  });
+  stationMap.classList.add("has-selection");
+  setMapView({
+    x: mapRect.width / 2 - centerX * scale,
+    y: mapRect.height / 2 - centerY * scale,
+    scale,
+  });
+  renderInspector();
+}
+
+function listMarkup(items) {
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function renderInspector() {
+  if (!inspectorPanel) return;
+  const agent = selectedAgentKey ? agentProfiles[selectedAgentKey] : null;
+  const room = selectedRoomKey ? roomProfiles[selectedRoomKey] : roomProfiles.Overview;
+  const activeRoom = agent ? roomProfiles[agent.room] : room;
+
+  inspectorPanel.classList.toggle("is-focused", Boolean(selectedRoomKey || selectedAgentKey));
+  inspectorPanel.closest(".task-panel")?.classList.toggle("focused-inspector", Boolean(selectedRoomKey || selectedAgentKey));
+  inspectorType.textContent = agent ? "Agent Detail" : activeRoom.type;
+  inspectorTitle.textContent = agent ? `${agent.name} // ${agent.role}` : activeRoom.title;
+  inspectorSummary.textContent = agent ? agent.currentTask : activeRoom.summary;
+
+  inspectorChips.innerHTML = (agent
+    ? [agent.status, activeRoom.title, `${agent.queue.length} queued`]
+    : [activeRoom.status, `${activeRoom.agents.length} agents`, `${activeRoom.connected.length} links`]
+  )
+    .map((chip) => `<span>${escapeHtml(chip)}</span>`)
+    .join("");
+
+  inspectorGrid.innerHTML = agent
+    ? `
+      <div><span>Current task</span><strong>${escapeHtml(agent.currentTask)}</strong></div>
+      <div><span>Queue</span>${listMarkup(agent.queue)}</div>
+      <div><span>Permissions</span>${listMarkup(agent.permissions)}</div>
+      <div><span>Connected modules</span>${listMarkup(agent.modules)}</div>
+    `
+    : `
+      ${activeRoom.metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      <div><span>Connected agents</span>${listMarkup(activeRoom.agents)}</div>
+      <div><span>Connected modules</span>${listMarkup(activeRoom.connected)}</div>
+      <div><span>Active tasks</span>${listMarkup(activeRoom.tasks)}</div>
+    `;
+
+  inspectorActions.innerHTML = agent
+    ? `
+      <button class="small-button" type="button" data-inspector-action="tasks">View tasks</button>
+      <button class="small-button" type="button" data-inspector-action="workspace" data-agent="${escapeHtml(selectedAgentKey)}">Open workspace</button>
+      <button class="ghost-button" type="button" data-inspector-action="check">Run check</button>
+      <button class="ghost-button" type="button" data-inspector-action="pause">Pause agent</button>
+      <button class="ghost-button" type="button" data-inspector-action="logs">View logs</button>
+    `
+    : `
+      <button class="small-button" type="button" data-inspector-action="room-tasks">View tasks</button>
+      <button class="ghost-button" type="button" data-inspector-action="room-logs">View logs</button>
+    `;
+
+  const feed = agent ? agent.actions : activeRoom.activity;
+  activityFeed.innerHTML = feed
+    .map((item) => `<article><span></span><p>${escapeHtml(item)}</p></article>`)
+    .join("");
+}
+
+function openAgent(agentKey) {
+  const agent = agentProfiles[agentKey];
+  if (!agent) return;
+  selectedAgentKey = agentKey;
+  focusRoom(agent.room, { scale: 1.9, agentKey });
+}
+
+function renderWorkspace(agentKey) {
+  const agent = agentProfiles[agentKey];
+  if (!agent) return;
+  const profile = workspaceProfiles[agentKey] || {
+    title: `${agent.name} Workspace`,
+    eyebrow: agent.role,
+    sections: [
+      ["Current task", agent.currentTask],
+      ["Queue", agent.queue.join(", ")],
+      ["Permissions", agent.permissions.join(", ")],
+      ["Connected modules", agent.modules.join(", ")],
+    ],
+    feed: agent.actions,
+  };
+  workspaceEyebrow.textContent = profile.eyebrow;
+  workspaceTitle.textContent = profile.title;
+  workspaceGrid.innerHTML = profile.sections
+    .map(([label, body]) => `<div><span>${escapeHtml(label)}</span><p>${escapeHtml(body)}</p></div>`)
+    .join("");
+  workspaceFeed.innerHTML = profile.feed
+    .map((item) => `<article><span></span><p>${escapeHtml(item)}</p></article>`)
+    .join("");
+}
+
+function openWorkspace(agentKey) {
+  renderWorkspace(agentKey || selectedAgentKey || "atlas");
+  workspaceOverlay.classList.add("open");
+  workspaceOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closeWorkspace() {
+  workspaceOverlay.classList.remove("open");
+  workspaceOverlay.setAttribute("aria-hidden", "true");
 }
 
 function renderCapabilities() {
@@ -784,6 +1297,7 @@ function render() {
   renderArtifacts();
   renderMemory();
   renderAudit();
+  renderInspector();
 }
 
 function addLocalAudit(title, body) {
@@ -829,6 +1343,120 @@ document.querySelectorAll(".tab").forEach((tab) => {
     activeMemoryLayer = tab.dataset.memory;
     renderMemory();
   });
+});
+
+document.querySelectorAll(".station").forEach((station) => {
+  station.setAttribute("role", "button");
+  station.setAttribute("tabindex", "0");
+  station.addEventListener("click", (event) => {
+    event.stopPropagation();
+    selectedAgentKey = null;
+    focusRoom(station.dataset.station);
+  });
+  station.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    selectedAgentKey = null;
+    focusRoom(station.dataset.station);
+  });
+});
+
+document.querySelectorAll(".roster-agent").forEach((agentNode) => {
+  const activate = () => openAgent(agentNode.dataset.agent);
+  agentNode.addEventListener("click", activate);
+  agentNode.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    activate();
+  });
+});
+
+stationMap.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const rect = stationMap.getBoundingClientRect();
+  const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  zoomMap(event.deltaY > 0 ? -0.12 : 0.12, point);
+}, { passive: false });
+
+stationMap.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".map-controls") || event.target.closest(".station")) return;
+  pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  stationMap.setPointerCapture(event.pointerId);
+  if (pointerCache.size === 1) {
+    isPanning = true;
+    panStart = {
+      x: event.clientX,
+      y: event.clientY,
+      viewX: mapView.x,
+      viewY: mapView.y,
+    };
+  }
+  if (pointerCache.size === 2) {
+    const points = Array.from(pointerCache.values());
+    const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    pinchStart = { distance, scale: mapView.scale };
+  }
+});
+
+stationMap.addEventListener("pointermove", (event) => {
+  if (!pointerCache.has(event.pointerId)) return;
+  pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pointerCache.size === 2 && pinchStart) {
+    const points = Array.from(pointerCache.values());
+    const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    const nextScale = clamp(pinchStart.scale * (distance / pinchStart.distance), 0.72, 2.8);
+    setMapView({ scale: nextScale }, false);
+    return;
+  }
+  if (!isPanning) return;
+  setMapView({
+    x: panStart.viewX + event.clientX - panStart.x,
+    y: panStart.viewY + event.clientY - panStart.y,
+  }, false);
+});
+
+function endPointer(event) {
+  pointerCache.delete(event.pointerId);
+  if (pointerCache.size < 2) pinchStart = null;
+  if (pointerCache.size === 0) isPanning = false;
+}
+
+stationMap.addEventListener("pointerup", endPointer);
+stationMap.addEventListener("pointercancel", endPointer);
+stationMap.addEventListener("click", (event) => {
+  if (event.target === stationMap || event.target === habitatCanvas) {
+    selectedAgentKey = null;
+    selectedRoomKey = null;
+    document.querySelectorAll(".station.selected, .roster-agent.selected").forEach((item) => item.classList.remove("selected"));
+    stationMap.classList.remove("has-selection");
+    renderInspector();
+  }
+});
+
+zoomInBtn.addEventListener("click", () => zoomMap(0.18));
+zoomOutBtn.addEventListener("click", () => zoomMap(-0.18));
+centerMapBtn.addEventListener("click", () => resetHabitatView());
+fullscreenMapBtn.addEventListener("click", () => {
+  stationMap.classList.toggle("map-fullscreen");
+  fullscreenMapBtn.textContent = stationMap.classList.contains("map-fullscreen") ? "Exit" : "Full";
+  window.setTimeout(() => applyMapView(), 80);
+});
+backToHabitatBtn.addEventListener("click", () => resetHabitatView());
+closeWorkspaceBtn.addEventListener("click", closeWorkspace);
+workspaceOverlay.addEventListener("click", (event) => {
+  if (event.target === workspaceOverlay) closeWorkspace();
+});
+inspectorActions.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-inspector-action]");
+  if (!button) return;
+  const action = button.dataset.inspectorAction;
+  if (action === "workspace") {
+    openWorkspace(button.dataset.agent || selectedAgentKey);
+    return;
+  }
+  addLocalAudit("Inspector action", `${button.textContent.trim()} requested for ${selectedAgentKey ? agentProfiles[selectedAgentKey].name : roomProfiles[selectedRoomKey || "Overview"].title}.`);
+  renderAudit();
+  renderInspector();
 });
 
 pauseBtn.addEventListener("click", () => {

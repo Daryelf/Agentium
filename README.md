@@ -12,6 +12,22 @@ Then open `http://127.0.0.1:5173`.
 
 You can still open `index.html` directly for a static preview, but persistent approvals, memory, audit, and Depo cycles require the local server.
 
+## Admin access
+
+Argentum is protected by a server-side admin login. Temporary local credentials are:
+
+- Username: `admin`
+- Password: `password`
+
+Before using the public Railway site, set stronger Railway environment variables:
+
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+- `SESSION_SECRET`
+- `SESSION_TTL_MS` optional, defaults to 8 hours
+
+Use a long random `SESSION_SECRET`; changing it signs everyone out.
+
 ## Deploy
 
 Argentum is a plain Node.js app. It reads `process.env.PORT` and binds to `0.0.0.0`, so it is ready for hosts such as Railway.

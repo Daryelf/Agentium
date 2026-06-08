@@ -1536,7 +1536,11 @@ dd {
 }
 
 .ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--ink);
+  text-decoration: none;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.04);
 }

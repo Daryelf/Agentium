@@ -1,4 +1,5 @@
 const http = require("node:http");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { URL } = require("node:url");
@@ -8,6 +9,13 @@ const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "password";
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString("hex");
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 8);
+const LOGIN_WINDOW_MS = 1000 * 60 * 15;
+const LOGIN_MAX_ATTEMPTS = 5;
+const loginAttempts = new Map();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -19,6 +27,290 @@ const mimeTypes = {
 
 function now() {
   return new Date().toISOString();
+}
+
+function constantTimeEqual(left, right) {
+  const leftValue = String(left);
+  const rightValue = String(right);
+  const leftHash = crypto.createHash("sha256").update(leftValue).digest();
+  const rightHash = crypto.createHash("sha256").update(rightValue).digest();
+  return crypto.timingSafeEqual(leftHash, rightHash) && leftValue.length === rightValue.length;
+}
+
+function parseCookies(req) {
+  const cookies = {};
+  const header = req.headers.cookie || "";
+  for (const part of header.split(";")) {
+    const [key, ...valueParts] = part.trim().split("=");
+    if (!key) continue;
+    try {
+      cookies[key] = decodeURIComponent(valueParts.join("="));
+    } catch {
+      cookies[key] = "";
+    }
+  }
+  return cookies;
+}
+
+function isSecureRequest(req) {
+  return req.socket.encrypted || req.headers["x-forwarded-proto"] === "https";
+}
+
+function signSession(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+function verifySession(token) {
+  if (!token || !token.includes(".")) return null;
+  const [body, signature] = token.split(".");
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  if (!constantTimeEqual(signature, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (payload.exp < Date.now()) return null;
+    if (payload.user !== ADMIN_USERNAME) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function currentSession(req) {
+  return verifySession(parseCookies(req).argentum_session);
+}
+
+function sessionCookie(req, token) {
+  const parts = [
+    `argentum_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict",
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+  ];
+  if (isSecureRequest(req)) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearSessionCookie(req) {
+  const parts = [
+    "argentum_session=",
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Strict",
+    "Max-Age=0",
+  ];
+  if (isSecureRequest(req)) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clientKey(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local").split(",")[0].trim();
+}
+
+function getLoginBucket(req) {
+  const key = clientKey(req);
+  const bucket = loginAttempts.get(key);
+  if (bucket && bucket.resetAt > Date.now()) return bucket;
+  const nextBucket = { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
+  loginAttempts.set(key, nextBucket);
+  return nextBucket;
+}
+
+function isLoginLimited(req) {
+  return getLoginBucket(req).count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordLoginFailure(req) {
+  const bucket = getLoginBucket(req);
+  bucket.count += 1;
+  bucket.resetAt = Date.now() + LOGIN_WINDOW_MS;
+}
+
+function clearLoginFailures(req) {
+  loginAttempts.delete(clientKey(req));
+}
+
+function securityHeaders(req) {
+  const connectSrc = isSecureRequest(req) ? "https:" : "'self'";
+  return {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "same-origin",
+    "content-security-policy": `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${connectSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
+  };
+}
+
+function redirect(res, location, req) {
+  res.writeHead(302, {
+    ...securityHeaders(req),
+    location,
+    "cache-control": "no-store",
+  });
+  res.end();
+}
+
+function loginPage(errorMessage = "") {
+  const message = errorMessage ? `<p class="error">${escapeHtml(errorMessage)}</p>` : "";
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Argentum Admin Access</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f5f7fa;
+        --muted: #9ca3af;
+        --line: rgba(255,255,255,.12);
+        --panel: rgba(255,255,255,.06);
+        --blue: #7dd3fc;
+        --violet: #a78bfa;
+        --red: #fca5a5;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at 72% 18%, rgba(167,139,250,.18), transparent 34%),
+          radial-gradient(circle at 24% 28%, rgba(125,211,252,.12), transparent 34%),
+          linear-gradient(135deg, #030507 0%, #070a0f 48%, #0b0f17 100%);
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 14% 18%, rgba(255,255,255,.26) 0 1px, transparent 1.5px),
+          radial-gradient(circle at 72% 30%, rgba(199,210,254,.22) 0 1px, transparent 1.5px),
+          radial-gradient(circle at 46% 76%, rgba(125,211,252,.18) 0 1px, transparent 1.5px);
+        background-size: 260px 220px, 340px 280px, 430px 360px;
+      }
+      .login-panel {
+        position: relative;
+        z-index: 1;
+        width: min(440px, 100%);
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.035));
+        box-shadow: 0 28px 90px rgba(0,0,0,.58), inset 0 1px 0 rgba(255,255,255,.08);
+        backdrop-filter: blur(18px);
+      }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        margin-bottom: 18px;
+        border: 1px solid rgba(125,211,252,.32);
+        border-radius: 8px;
+        color: var(--blue);
+        font-weight: 900;
+        background: rgba(255,255,255,.05);
+      }
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: .72rem;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      .copy {
+        margin: 0 0 22px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      label {
+        display: grid;
+        gap: 8px;
+        margin-top: 14px;
+        color: #cbd5e1;
+        font-size: .86rem;
+        font-weight: 700;
+      }
+      input {
+        width: 100%;
+        min-height: 46px;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--ink);
+        background: rgba(3,5,7,.74);
+        outline: none;
+      }
+      input:focus {
+        border-color: rgba(125,211,252,.46);
+        box-shadow: 0 0 0 4px rgba(125,211,252,.08);
+      }
+      button {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 20px;
+        border: 1px solid rgba(125,211,252,.3);
+        border-radius: 8px;
+        color: #071018;
+        font-weight: 850;
+        background: linear-gradient(135deg, var(--blue), #c7d2fe);
+        cursor: pointer;
+      }
+      .error {
+        padding: 10px 12px;
+        border: 1px solid rgba(252,165,165,.3);
+        border-radius: 8px;
+        color: var(--red);
+        background: rgba(127,29,29,.22);
+      }
+      .note {
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: .78rem;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <form class="login-panel" method="post" action="/login" autocomplete="off">
+      <div class="mark">Ag</div>
+      <p class="eyebrow">Argentum OS secure entry</p>
+      <h1>Admin Access</h1>
+      <p class="copy">Authenticate before opening the command habitat.</p>
+      ${message}
+      <label>
+        Username
+        <input name="username" autocomplete="username" required autofocus />
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit">Enter Argentum</button>
+      <p class="note">Temporary credentials are admin / password. Replace them before treating this as private.</p>
+    </form>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function defaultState() {
@@ -826,6 +1118,16 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function sendHtml(req, res, status, html, extraHeaders = {}) {
+  res.writeHead(status, {
+    ...securityHeaders(req),
+    ...extraHeaders,
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(html);
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -848,6 +1150,102 @@ function readBody(req) {
       }
     });
   });
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 100_000) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+async function readCredentials(req) {
+  const raw = await readRawBody(req);
+  const contentType = req.headers["content-type"] || "";
+  if (contentType.includes("application/json")) {
+    return raw ? JSON.parse(raw) : {};
+  }
+  const params = new URLSearchParams(raw);
+  return {
+    username: params.get("username") || "",
+    password: params.get("password") || "",
+  };
+}
+
+async function handleLogin(req, res) {
+  if (req.method === "GET" && req.url.startsWith("/login")) {
+    if (currentSession(req)) {
+      redirect(res, "/", req);
+      return true;
+    }
+    sendHtml(req, res, 200, loginPage());
+    return true;
+  }
+
+  if (req.method === "POST" && (req.url.startsWith("/login") || req.url.startsWith("/api/login"))) {
+    if (isLoginLimited(req)) {
+      sendHtml(req, res, 429, loginPage("Too many attempts. Wait 15 minutes, then try again."));
+      return true;
+    }
+    const payload = await readCredentials(req);
+    const username = String(payload.username || "");
+    const password = String(payload.password || "");
+    const valid = constantTimeEqual(username, ADMIN_USERNAME) && constantTimeEqual(password, ADMIN_PASSWORD);
+
+    if (!valid) {
+      recordLoginFailure(req);
+      sendHtml(req, res, 401, loginPage("Invalid username or password."));
+      return true;
+    }
+
+    clearLoginFailures(req);
+    const token = signSession({
+      user: ADMIN_USERNAME,
+      iat: Date.now(),
+      exp: Date.now() + SESSION_TTL_MS,
+      nonce: crypto.randomBytes(16).toString("hex"),
+    });
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      "set-cookie": sessionCookie(req, token),
+      "cache-control": "no-store",
+      location: "/",
+    });
+    res.end();
+    return true;
+  }
+
+  if (req.method === "POST" && req.url.startsWith("/api/logout")) {
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "set-cookie": clearSessionCookie(req),
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  if (req.method === "GET" && req.url.startsWith("/logout")) {
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      "set-cookie": clearSessionCookie(req),
+      "cache-control": "no-store",
+      location: "/login",
+    });
+    res.end();
+    return true;
+  }
+
+  return false;
 }
 
 function advanceCycle() {
@@ -1072,7 +1470,11 @@ function serveStatic(req, res, url) {
       return;
     }
     const type = mimeTypes[path.extname(absolutePath)] || "application/octet-stream";
-    res.writeHead(200, { "content-type": type });
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": type.startsWith("text/html") ? "no-store" : "private, max-age=300",
+    });
     res.end(data);
   });
 }
@@ -1082,6 +1484,17 @@ ensureState();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   try {
+    if (await handleLogin(req, res)) {
+      return;
+    }
+    if (!currentSession(req)) {
+      if (url.pathname.startsWith("/api/")) {
+        sendJson(res, 401, { error: "Authentication required" });
+        return;
+      }
+      redirect(res, "/login", req);
+      return;
+    }
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url);
       return;

@@ -298,8 +298,11 @@ const stationMap = document.querySelector("#stationMap");
 const habitatCanvas = document.querySelector("#habitatCanvas");
 const zoomInBtn = document.querySelector("#zoomInBtn");
 const zoomOutBtn = document.querySelector("#zoomOutBtn");
+const zoomReadout = document.querySelector("#zoomReadout");
 const centerMapBtn = document.querySelector("#centerMapBtn");
 const fullscreenMapBtn = document.querySelector("#fullscreenMapBtn");
+const systemClock = document.querySelector("#systemClock");
+const systemDate = document.querySelector("#systemDate");
 const backToHabitatBtn = document.querySelector("#backToHabitatBtn");
 const inspectorPanel = document.querySelector("#inspectorPanel");
 const inspectorType = document.querySelector("#inspectorType");
@@ -716,6 +719,7 @@ function applyMapView(animated = true) {
   if (!habitatCanvas) return;
   habitatCanvas.classList.toggle("is-animating", animated);
   habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
   if (animated) {
     window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
   }
@@ -879,6 +883,23 @@ function openWorkspace(agentKey) {
 function closeWorkspace() {
   workspaceOverlay.classList.remove("open");
   workspaceOverlay.setAttribute("aria-hidden", "true");
+}
+
+function updateSystemClock() {
+  if (!systemClock || !systemDate) return;
+  const nowDate = new Date();
+  systemClock.textContent = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  }).format(nowDate);
+  systemDate.textContent = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(nowDate);
 }
 
 function renderCapabilities() {
@@ -1438,7 +1459,8 @@ zoomOutBtn.addEventListener("click", () => zoomMap(-0.18));
 centerMapBtn.addEventListener("click", () => resetHabitatView());
 fullscreenMapBtn.addEventListener("click", () => {
   stationMap.classList.toggle("map-fullscreen");
-  fullscreenMapBtn.textContent = stationMap.classList.contains("map-fullscreen") ? "Exit" : "Full";
+  fullscreenMapBtn.title = stationMap.classList.contains("map-fullscreen") ? "Exit fullscreen map" : "Toggle fullscreen map";
+  fullscreenMapBtn.setAttribute("aria-label", fullscreenMapBtn.title);
   window.setTimeout(() => applyMapView(), 80);
 });
 backToHabitatBtn.addEventListener("click", () => resetHabitatView());
@@ -1726,3 +1748,5 @@ functionList.addEventListener("click", (event) => {
 
 loadState();
 startCycle();
+updateSystemClock();
+setInterval(updateSystemClock, 1000);

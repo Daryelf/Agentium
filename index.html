@@ -4,13 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Argentum navigation">
         <div class="brand-block">
-          <div class="brand-mark" aria-hidden="true">Ag</div>
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M16 3 29 26H19L16 20l-3 6H3L16 3Z"/><path d="M16 8v8"/><path d="M9 26l7-12 7 12"/></svg>
+          </div>
           <div>
             <p class="eyebrow">Argentum OS</p>
             <h1>Control Floor</h1>
@@ -20,60 +23,93 @@
         <div class="agent-roster" aria-label="Agent roster">
           <p class="eyebrow">Agent Command</p>
           <div class="roster-agent active" data-agent="atlas" role="button" tabindex="0">
-            <span class="roster-light" aria-hidden="true"></span>
+            <span class="agent-badge atlas-badge" aria-hidden="true">A</span>
             <div>
               <strong>Atlas</strong>
               <small>System Overseer</small>
+              <span class="agent-status">Online</span>
             </div>
             <em>01</em>
           </div>
           <div class="roster-agent" data-agent="forge" role="button" tabindex="0">
-            <span class="roster-light" aria-hidden="true"></span>
+            <span class="agent-badge forge-badge" aria-hidden="true">F</span>
             <div>
               <strong>Forge</strong>
               <small>Production Agent</small>
+              <span class="agent-status busy">Busy</span>
             </div>
             <em>02</em>
           </div>
           <div class="roster-agent" data-agent="prism" role="button" tabindex="0">
-            <span class="roster-light creative" aria-hidden="true"></span>
+            <span class="agent-badge prism-badge" aria-hidden="true">P</span>
             <div>
               <strong>Prism</strong>
               <small>Creative / Marketing</small>
+              <span class="agent-status">Online</span>
             </div>
             <em>03</em>
           </div>
           <div class="roster-agent" data-agent="ledger" role="button" tabindex="0">
-            <span class="roster-light finance" aria-hidden="true"></span>
+            <span class="agent-badge ledger-badge" aria-hidden="true">L</span>
             <div>
               <strong>Ledger</strong>
               <small>Finance Agent</small>
+              <span class="agent-status">Online</span>
             </div>
             <em>04</em>
           </div>
           <div class="roster-agent" data-agent="nexus" role="button" tabindex="0">
-            <span class="roster-light nexus" aria-hidden="true"></span>
+            <span class="agent-badge nexus-badge" aria-hidden="true">N</span>
             <div>
               <strong>Nexus</strong>
               <small>Automation Agent</small>
+              <span class="agent-status">Online</span>
             </div>
             <em>05</em>
           </div>
           <div class="roster-agent" data-agent="sentry" role="button" tabindex="0">
-            <span class="roster-light sentry" aria-hidden="true"></span>
+            <span class="agent-badge sentry-badge" aria-hidden="true">S</span>
             <div>
               <strong>Sentry</strong>
               <small>Security Agent</small>
+              <span class="agent-status">Online</span>
             </div>
             <em>06</em>
           </div>
           <div class="roster-agent" data-agent="oracle" role="button" tabindex="0">
-            <span class="roster-light oracle" aria-hidden="true"></span>
+            <span class="agent-badge oracle-badge" aria-hidden="true">O</span>
             <div>
               <strong>Oracle</strong>
               <small>Data Analyst</small>
+              <span class="agent-status idle">Idle</span>
             </div>
             <em>07</em>
+          </div>
+        </div>
+
+        <div class="system-time-card">
+          <p class="eyebrow">System Time</p>
+          <strong><span>UTC</span> <time id="systemClock">13:42:18</time></strong>
+          <small id="systemDate">May 12, 2025</small>
+        </div>
+
+        <div class="system-mini-card">
+          <div>
+            <p class="eyebrow">System Status</p>
+            <strong>All systems nominal</strong>
+            <span>No critical alerts</span>
+          </div>
+          <div class="mini-line-chart" aria-hidden="true">
+            <i style="height: 28%"></i>
+            <i style="height: 38%"></i>
+            <i style="height: 34%"></i>
+            <i style="height: 52%"></i>
+            <i style="height: 46%"></i>
+            <i style="height: 64%"></i>
+            <i style="height: 58%"></i>
+            <i style="height: 78%"></i>
+            <i style="height: 66%"></i>
+            <i style="height: 84%"></i>
           </div>
         </div>
 
@@ -87,11 +123,23 @@
       <main>
         <header class="topbar">
           <div>
-            <p class="eyebrow">Argentum OS v0.1.7</p>
+            <div class="header-meta">
+              <p class="eyebrow">Argentum OS v1.2.7</p>
+              <span class="metric-chip" id="apiStatus">Local mode</span>
+            </div>
             <h2>Full-system command habitat: agents, commerce, finance, workflows, and automation running in one control room.</h2>
           </div>
           <div class="top-actions">
-            <span class="metric-chip" id="apiStatus">Local mode</span>
+            <label class="system-search">
+              <svg viewBox="0 0 24 24"><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="7"/></svg>
+              <input type="search" placeholder="Search system..." aria-label="Search system" />
+            </label>
+            <button class="icon-button" type="button" aria-label="Notifications" title="Notifications">
+              <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+            </button>
+            <button class="icon-button" type="button" aria-label="Scan focus" title="Scan focus">
+              <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/><path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/><path d="M9 21H5a2 2 0 0 1-2-2v-4"/></svg>
+            </button>
             <a class="ghost-button compact-action" href="/logout">Logout</a>
             <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause Depo" title="Pause Depo">
               <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
@@ -104,7 +152,7 @@
         </header>
 
         <section class="view active" id="view-floor" aria-label="Agent floor">
-          <div class="floor-grid">
+          <div class="command-grid">
             <section class="operations-floor" aria-label="Visual agent floor">
               <div class="floor-header">
                 <div>
@@ -116,89 +164,100 @@
 
               <div class="station-map" id="stationMap">
                 <div class="habitat-canvas" id="habitatCanvas">
-                <div class="route-line route-a" aria-hidden="true"></div>
-                <div class="route-line route-b" aria-hidden="true"></div>
-                <div class="route-line route-c" aria-hidden="true"></div>
-                <div class="route-line route-d" aria-hidden="true"></div>
-                <div class="route-line route-e" aria-hidden="true"></div>
-                <div class="map-beacon beacon-one" aria-hidden="true"></div>
-                <div class="map-beacon beacon-two" aria-hidden="true"></div>
-                <div class="map-beacon beacon-three" aria-hidden="true"></div>
-                <div class="map-ring ring-one" aria-hidden="true"></div>
-                <div class="map-ring ring-two" aria-hidden="true"></div>
+                <div class="planet-glow" aria-hidden="true"></div>
+                <div class="orbital-arc arc-one" aria-hidden="true"></div>
+                <div class="orbital-arc arc-two" aria-hidden="true"></div>
+                <div class="route-line route-a" aria-hidden="true"><span></span></div>
+                <div class="route-line route-b" aria-hidden="true"><span></span></div>
+                <div class="route-line route-c" aria-hidden="true"><span></span></div>
+                <div class="route-line route-d" aria-hidden="true"><span></span></div>
+                <div class="route-line route-e" aria-hidden="true"><span></span></div>
+                <div class="route-line route-f" aria-hidden="true"><span></span></div>
+                <div class="route-line route-g" aria-hidden="true"><span></span></div>
+                <div class="route-line route-h" aria-hidden="true"><span></span></div>
                 <div class="map-core" aria-hidden="true">
-                  <span>ARGENTUM SECURITY CORE</span>
+                  <div class="core-orb"></div>
+                  <span>ARGENTUM CORE</span>
+                  <small>System brain online</small>
                 </div>
-                <div class="floor-label label-pod" aria-hidden="true">CONTENT FLOW</div>
-                <div class="floor-label label-market" aria-hidden="true">REVENUE BUS</div>
-                <div class="floor-label label-factory" aria-hidden="true">TASK ROUTER</div>
                 <div class="station station-overview" data-station="Overview">
-                  <span>Overview</span>
+                  <i></i>
+                  <span>7 agents</span>
                   <strong>Agent Habitat</strong>
                 </div>
                 <div class="station station-research" data-station="Research">
-                  <span>Agents</span>
+                  <i></i>
+                  <span>Active</span>
                   <strong>AI Agents Room</strong>
                 </div>
                 <div class="station station-verify" data-station="Verify">
-                  <span>Security</span>
+                  <i></i>
+                  <span>Secure</span>
                   <strong>Security Core</strong>
                 </div>
                 <div class="station station-draft" data-station="Draft">
-                  <span>Production</span>
+                  <i></i>
+                  <span>197 active</span>
                   <strong>Task Factory</strong>
                 </div>
                 <div class="station station-approval" data-station="Approval">
-                  <span>Pipeline</span>
+                  <i></i>
+                  <span>578 tasks</span>
                   <strong>Workflow Pipeline</strong>
                 </div>
                 <div class="station station-commerce" data-station="Commerce">
-                  <span>Commerce</span>
+                  <i></i>
+                  <span>Live</span>
                   <strong>Commerce Terminal</strong>
                 </div>
                 <div class="station station-finance" data-station="Finance">
-                  <span>Finance</span>
+                  <i></i>
+                  <span>$7,128 today</span>
                   <strong>Revenue Monitor</strong>
                 </div>
                 <div class="station station-inventory" data-station="Inventory">
-                  <span>Inventory</span>
+                  <i></i>
+                  <span>12,455 items</span>
                   <strong>Resources</strong>
                 </div>
                 <div class="station station-logistics" data-station="Logistics">
-                  <span>Routing</span>
+                  <i></i>
+                  <span>8 routes active</span>
                   <strong>Logistics Node</strong>
                 </div>
                 <div class="station station-marketing" data-station="Marketing">
-                  <span>Marketing</span>
+                  <i></i>
+                  <span>5 generating</span>
                   <strong>Content Engine</strong>
                 </div>
                 <div class="station station-support" data-station="Support">
-                  <span>Support</span>
+                  <i></i>
+                  <span>24 active</span>
                   <strong>Customer Node</strong>
                 </div>
                 <div class="station station-logs" data-station="Logs">
-                  <span>Logs</span>
+                  <i></i>
+                  <span>Live feed</span>
                   <strong>System Logs</strong>
                 </div>
-                <div class="agent-avatar" id="depoAvatar" aria-label="Depo agent">
-                  <div class="agent-body">
-                    <div class="agent-visor"></div>
-                    <div class="agent-pack"></div>
-                  </div>
-                  <span>Depo</span>
-                </div>
+                <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
                 </div>
                 <div class="map-controls" aria-label="Habitat map controls">
-                  <button class="map-control" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+                  <button class="map-control" id="centerMapBtn" type="button" aria-label="Reset habitat view">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
+                  </button>
                   <button class="map-control" id="zoomOutBtn" type="button" aria-label="Zoom out">-</button>
-                  <button class="map-control" id="centerMapBtn" type="button" aria-label="Reset habitat view">Center</button>
-                  <button class="map-control" id="fullscreenMapBtn" type="button" aria-label="Toggle fullscreen map">Full</button>
+                  <span class="zoom-readout" id="zoomReadout">100%</span>
+                  <button class="map-control" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+                  <button class="map-control" id="fullscreenMapBtn" type="button" aria-label="Toggle fullscreen map">
+                    <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                  </button>
                 </div>
               </div>
             </section>
 
-            <section class="panel task-panel">
-              <div class="panel-heading">
+            <section class="panel task-panel inspector-sidebar">
+              <div class="panel-heading mission-brief">
                 <div>
                   <p class="eyebrow">Live System Status</p>
                   <h3 id="missionTitle">Build Etsy print-on-demand research lane</h3>
@@ -241,6 +300,61 @@
               </div>
             </section>
           </div>
+
+          <section class="analytics-strip" aria-label="Live analytics">
+            <article class="analytics-card health-card">
+              <div class="ring-meter" style="--value: 96"><strong>96%</strong><span>Healthy</span></div>
+              <div>
+                <p class="eyebrow">System Health</p>
+                <ul>
+                  <li><span>Infrastructure</span><strong>98%</strong></li>
+                  <li><span>Automation</span><strong>96%</strong></li>
+                  <li><span>Security</span><strong>97%</strong></li>
+                  <li><span>Integrations</span><strong>95%</strong></li>
+                </ul>
+              </div>
+            </article>
+            <article class="analytics-card tasks-card">
+              <div>
+                <p class="eyebrow">Active Tasks</p>
+                <strong class="big-metric">578</strong>
+                <span>Total active</span>
+                <ul>
+                  <li><span>High</span><strong>12</strong></li>
+                  <li><span>Medium</span><strong>143</strong></li>
+                  <li><span>Low</span><strong>423</strong></li>
+                </ul>
+              </div>
+              <div class="donut-meter" aria-hidden="true"></div>
+            </article>
+            <article class="analytics-card pipeline-flow-card">
+              <p class="eyebrow">Workflow Pipeline</p>
+              <div class="wave-visual" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+              <ul>
+                <li><span>Intake</span><strong>132</strong></li>
+                <li><span>Processing</span><strong>278</strong></li>
+                <li><span>Review</span><strong>98</strong></li>
+                <li><span>Output</span><strong>70</strong></li>
+              </ul>
+            </article>
+            <article class="analytics-card feed-card">
+              <p class="eyebrow">System Feed</p>
+              <div class="mini-feed">
+                <span>Nexus completed automation cycle <em>Just now</em></span>
+                <span>Forge deployed production batch <em>2m ago</em></span>
+                <span>Ledger reconciled transactions <em>4m ago</em></span>
+                <span>Sentry blocked suspicious login <em>6m ago</em></span>
+              </div>
+            </article>
+            <article class="analytics-card revenue-card">
+              <p class="eyebrow">Revenue Overview</p>
+              <strong class="big-metric">$7,128 <small>Today</small></strong>
+              <span class="positive">+12.4% vs yesterday</span>
+              <div class="sparkline" aria-hidden="true"><i></i></div>
+            </article>
+          </section>
 
           <section class="pipeline-grid" id="workflowList" aria-label="Business pipelines">
           </section>

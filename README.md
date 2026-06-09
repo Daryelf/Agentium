@@ -14,23 +14,20 @@ You can still open `index.html` directly for a static preview, but persistent ap
 
 ## Admin access
 
-Argentum is protected by a server-side admin login. Temporary first-run credentials are:
+Argentum is protected by a server-side admin login. On first run, open the app and create the owner admin login on the setup screen. There are no hardcoded default credentials.
 
-- Username: `admin`
-- Password: `password`
-
-After signing in, open **Settings -> Access** to create your own admin login, change the current password, and delete the temporary admin account after your new login works.
+After signing in, open **Settings -> Access** to create additional admin logins or rotate the current password.
 
 Account records are stored in `data/argentum-auth.json` with salted password hashes. That file is ignored by Git.
 
-Before using the public Railway site, you can also seed stronger first-run Railway environment variables:
+Before using the public Railway site, you can also seed first-run Railway environment variables:
 
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `SESSION_SECRET`
 - `SESSION_TTL_MS` optional, defaults to 8 hours
 
-Use a long random `SESSION_SECRET`; changing it signs everyone out.
+Use a unique admin username, a strong admin password with at least 12 characters including letters and numbers, and a long random `SESSION_SECRET`; changing the secret signs everyone out. Weak legacy defaults are rejected.
 
 ## Deploy
 

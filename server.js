@@ -10,13 +10,15 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
-const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "password";
+const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString("hex");
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 8);
 const LOGIN_WINDOW_MS = 1000 * 60 * 15;
 const LOGIN_MAX_ATTEMPTS = 5;
 const PASSWORD_ITERATIONS = 210_000;
+const LEGACY_DEFAULT_USERNAME = "admin";
+const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 
 const mimeTypes = {
@@ -81,38 +83,79 @@ function publicUser(user) {
   };
 }
 
-function defaultAuthStore() {
+function emptyAuthStore() {
   return {
     version: 1,
     createdAt: now(),
     updatedAt: now(),
-    users: [
-      createUserRecord(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD, {
-        temporary: DEFAULT_ADMIN_USERNAME === "admin" && DEFAULT_ADMIN_PASSWORD === "password",
-      }),
-    ],
+    users: [],
   };
+}
+
+function seededAuthStoreFromEnv() {
+  if (!ENV_ADMIN_USERNAME && !ENV_ADMIN_PASSWORD) return null;
+  if (!ENV_ADMIN_USERNAME || !ENV_ADMIN_PASSWORD) {
+    throw new Error("Set both ADMIN_USERNAME and ADMIN_PASSWORD, or unset both and use first-run setup.");
+  }
+  const username = validateUsername(ENV_ADMIN_USERNAME);
+  const password = validateNewPassword(ENV_ADMIN_PASSWORD);
+  if (username === LEGACY_DEFAULT_USERNAME && password === LEGACY_DEFAULT_PASSWORD) {
+    throw new Error("Refusing to seed the legacy admin/password account. Choose a unique admin login.");
+  }
+  return {
+    ...emptyAuthStore(),
+    users: [createUserRecord(username, password, { temporary: false })],
+  };
+}
+
+function matchesStoredPassword(password, user) {
+  if (!user?.salt || !user?.passwordHash) return false;
+  const computed = hashPassword(password, user.salt);
+  return constantTimeEqual(computed.passwordHash, user.passwordHash);
+}
+
+function isLegacyDefaultUser(user) {
+  return (
+    normalizeUsername(user?.username) === LEGACY_DEFAULT_USERNAME &&
+    Boolean(user?.temporary) &&
+    matchesStoredPassword(LEGACY_DEFAULT_PASSWORD, user)
+  );
+}
+
+function migrateAuthStore(store) {
+  let changed = false;
+  const users = Array.isArray(store.users) ? store.users : [];
+  const filteredUsers = users.filter((user) => {
+    if (!isLegacyDefaultUser(user)) return true;
+    changed = true;
+    return false;
+  });
+  const migratedStore = {
+    version: store.version || 1,
+    createdAt: store.createdAt || now(),
+    updatedAt: store.updatedAt || now(),
+    users: filteredUsers,
+  };
+  return { store: migratedStore, changed };
 }
 
 function readAuthStore() {
   ensureDataDir();
   if (!fs.existsSync(AUTH_FILE)) {
-    const store = defaultAuthStore();
+    const seeded = seededAuthStoreFromEnv();
+    const store = seeded || emptyAuthStore();
     writeAuthStore(store);
     return store;
   }
+
   try {
-    const store = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
-    if (!Array.isArray(store.users) || store.users.length === 0) {
-      const fallback = defaultAuthStore();
-      writeAuthStore(fallback);
-      return fallback;
+    const { store, changed } = migrateAuthStore(JSON.parse(fs.readFileSync(AUTH_FILE, "utf8")));
+    if (changed) {
+      writeAuthStore(store);
     }
     return store;
-  } catch {
-    const fallback = defaultAuthStore();
-    writeAuthStore(fallback);
-    return fallback;
+  } catch (error) {
+    throw new Error(`Unable to read auth store securely: ${error.message}`);
   }
 }
 
@@ -133,8 +176,7 @@ function findAuthUserById(store, id) {
 
 function verifyPassword(password, user) {
   if (!user || user.disabled) return false;
-  const computed = hashPassword(password, user.salt);
-  return constantTimeEqual(computed.passwordHash, user.passwordHash);
+  return matchesStoredPassword(password, user);
 }
 
 function validateUsername(username) {
@@ -277,12 +319,18 @@ function clearLoginFailures(req) {
 
 function securityHeaders(req) {
   const connectSrc = isSecureRequest(req) ? "https:" : "'self'";
-  return {
+  const headers = {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
+    "cross-origin-opener-policy": "same-origin",
+    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "referrer-policy": "same-origin",
     "content-security-policy": `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${connectSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
   };
+  if (isSecureRequest(req)) {
+    headers["strict-transport-security"] = "max-age=15552000; includeSubDomains";
+  }
+  return headers;
 }
 
 function redirect(res, location, req) {
@@ -294,7 +342,21 @@ function redirect(res, location, req) {
   res.end();
 }
 
-function loginPage(errorMessage = "") {
+function assertTrustedOrigin(req) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return;
+  const origin = req.headers.origin;
+  if (!origin) return;
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  if (!host) {
+    throw guardedError("Request origin could not be verified.", 403);
+  }
+  const protocol = isSecureRequest(req) ? "https" : "http";
+  if (origin !== `${protocol}://${host}`) {
+    throw guardedError("Cross-origin request blocked.", 403);
+  }
+}
+
+function credentialPage({ title, eyebrow, copy, action, fields, buttonLabel, note, errorMessage = "" }) {
   const message = errorMessage ? `<p class="error">${escapeHtml(errorMessage)}</p>` : "";
   return `<!doctype html>
 <html lang="en">
@@ -426,12 +488,27 @@ function loginPage(errorMessage = "") {
     </style>
   </head>
   <body>
-    <form class="login-panel" method="post" action="/login" autocomplete="off">
+    <form class="login-panel" method="post" action="${action}" autocomplete="off">
       <div class="mark">Ag</div>
-      <p class="eyebrow">Argentum OS secure entry</p>
-      <h1>Admin Access</h1>
-      <p class="copy">Authenticate before opening the command habitat.</p>
+      <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="copy">${escapeHtml(copy)}</p>
       ${message}
+      ${fields}
+      <button type="submit">${escapeHtml(buttonLabel)}</button>
+      <p class="note">${escapeHtml(note)}</p>
+    </form>
+  </body>
+</html>`;
+}
+
+function loginPage(errorMessage = "") {
+  return credentialPage({
+    title: "Admin Access",
+    eyebrow: "Argentum OS secure entry",
+    copy: "Authenticate before opening the command habitat.",
+    action: "/login",
+    fields: `
       <label>
         Username
         <input name="username" autocomplete="username" required autofocus />
@@ -440,11 +517,37 @@ function loginPage(errorMessage = "") {
         Password
         <input name="password" type="password" autocomplete="current-password" required />
       </label>
-      <button type="submit">Enter Argentum</button>
-      <p class="note">Temporary credentials are admin / password. Replace them before treating this as private.</p>
-    </form>
-  </body>
-</html>`;
+    `,
+    buttonLabel: "Enter Argentum",
+    note: "Use the admin login created in Settings or during first-run setup. Legacy default credentials are disabled.",
+    errorMessage,
+  });
+}
+
+function setupPage(errorMessage = "") {
+  return credentialPage({
+    title: "Create Admin Login",
+    eyebrow: "Argentum OS first-run setup",
+    copy: "Create the owner login before Argentum opens the console.",
+    action: "/setup",
+    fields: `
+      <label>
+        Username
+        <input name="username" autocomplete="username" pattern="[A-Za-z0-9._-]{3,32}" required autofocus />
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" autocomplete="new-password" minlength="12" required />
+      </label>
+      <label>
+        Confirm password
+        <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+      </label>
+    `,
+    buttonLabel: "Create Admin",
+    note: "Use a unique password with at least 12 characters, including letters and numbers.",
+    errorMessage,
+  });
 }
 
 function escapeHtml(value) {
@@ -1320,11 +1423,68 @@ async function readCredentials(req) {
   return {
     username: params.get("username") || "",
     password: params.get("password") || "",
+    confirmPassword: params.get("confirmPassword") || "",
   };
+}
+
+function issueSession(res, req, user) {
+  const token = signSession({
+    uid: user.id,
+    user: user.username,
+    role: user.role,
+    iat: Date.now(),
+    exp: Date.now() + SESSION_TTL_MS,
+    nonce: crypto.randomBytes(16).toString("hex"),
+  });
+  res.writeHead(302, {
+    ...securityHeaders(req),
+    "set-cookie": sessionCookie(req, token),
+    "cache-control": "no-store",
+    location: "/",
+  });
+  res.end();
+}
+
+async function handleSetup(req, res) {
+  if (!req.url.startsWith("/setup")) return false;
+  const store = readAuthStore();
+  if (activeUserCount(store) > 0) {
+    redirect(res, currentSession(req) ? "/" : "/login", req);
+    return true;
+  }
+
+  if (req.method === "GET") {
+    sendHtml(req, res, 200, setupPage());
+    return true;
+  }
+
+  if (req.method === "POST") {
+    if (isLoginLimited(req)) {
+      sendHtml(req, res, 429, setupPage("Too many attempts. Wait 15 minutes, then try again."));
+      return true;
+    }
+    try {
+      const payload = await readCredentials(req);
+      const user = createInitialAccessUser(payload);
+      clearLoginFailures(req);
+      issueSession(res, req, user);
+    } catch (error) {
+      recordLoginFailure(req);
+      sendHtml(req, res, error.status || 400, setupPage(error.message));
+    }
+    return true;
+  }
+
+  sendHtml(req, res, 405, setupPage("Unsupported setup request."));
+  return true;
 }
 
 async function handleLogin(req, res) {
   if (req.method === "GET" && req.url.startsWith("/login")) {
+    if (activeUserCount(readAuthStore()) === 0) {
+      redirect(res, "/setup", req);
+      return true;
+    }
     if (currentSession(req)) {
       redirect(res, "/", req);
       return true;
@@ -1334,6 +1494,14 @@ async function handleLogin(req, res) {
   }
 
   if (req.method === "POST" && (req.url.startsWith("/login") || req.url.startsWith("/api/login"))) {
+    if (activeUserCount(readAuthStore()) === 0) {
+      if (req.url.startsWith("/api/login")) {
+        sendJson(res, 409, { error: "Create the first admin login before signing in." });
+      } else {
+        redirect(res, "/setup", req);
+      }
+      return true;
+    }
     if (isLoginLimited(req)) {
       sendHtml(req, res, 429, loginPage("Too many attempts. Wait 15 minutes, then try again."));
       return true;
@@ -1355,21 +1523,7 @@ async function handleLogin(req, res) {
     user.lastLoginAt = now();
     user.updatedAt = user.updatedAt || now();
     writeAuthStore(store);
-    const token = signSession({
-      uid: user.id,
-      user: user.username,
-      role: user.role,
-      iat: Date.now(),
-      exp: Date.now() + SESSION_TTL_MS,
-      nonce: crypto.randomBytes(16).toString("hex"),
-    });
-    res.writeHead(302, {
-      ...securityHeaders(req),
-      "set-cookie": sessionCookie(req, token),
-      "cache-control": "no-store",
-      location: "/",
-    });
-    res.end();
+    issueSession(res, req, user);
     return true;
   }
 
@@ -1455,7 +1609,27 @@ function requireCurrentPassword(req, payload, store, user) {
 }
 
 function activeUserCount(store) {
-  return store.users.filter((user) => !user.disabled).length;
+  return (store.users || []).filter((user) => !user.disabled).length;
+}
+
+function createInitialAccessUser(payload) {
+  const existingStore = readAuthStore();
+  if (activeUserCount(existingStore) > 0) {
+    throw guardedError("Initial setup is already complete.", 409);
+  }
+  const username = validateUsername(payload.username);
+  const password = validateNewPassword(payload.password);
+  const confirmPassword = String(payload.confirmPassword || "");
+  if (password !== confirmPassword) {
+    throw guardedError("Passwords do not match.", 400);
+  }
+  const user = createUserRecord(username, password, { temporary: false });
+  const store = {
+    ...emptyAuthStore(),
+    users: [user],
+  };
+  writeAuthStore(store);
+  return user;
 }
 
 function changeCurrentPassword(req, payload) {
@@ -1742,6 +1916,10 @@ readAuthStore();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   try {
+    assertTrustedOrigin(req);
+    if (await handleSetup(req, res)) {
+      return;
+    }
     if (await handleLogin(req, res)) {
       return;
     }

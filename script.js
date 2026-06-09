@@ -1587,7 +1587,7 @@ createUserForm?.addEventListener("submit", async (event) => {
     });
     createUserForm.reset();
     renderAccessState();
-    showAccessMessage("New admin login created. Sign out and test it before deleting the temporary admin.", "success");
+    showAccessMessage("New admin login created. Sign out and test it before removing any older login.", "success");
   } catch (error) {
     showAccessMessage(error.message, "error");
   }

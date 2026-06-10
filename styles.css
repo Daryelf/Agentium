@@ -1894,6 +1894,16 @@ dd {
   grid-row: span 2;
 }
 
+#view-settings .panel-heading h3 {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+#view-settings .mission-copy {
+  max-width: 62ch;
+  font-size: 0.92rem;
+}
+
 .access-form {
   display: grid;
   gap: 12px;

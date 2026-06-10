@@ -22,6 +22,8 @@ Account records are stored in `data/argentum-auth.json` with salted password has
 
 The login and first-run setup forms support browser password managers and a save/remember device checkbox. Argentum does not store plaintext passwords; remembered access is a signed, HttpOnly, SameSite session cookie capped at 30 days.
 
+If `SESSION_SECRET` is not set, the local server creates `data/argentum-session-secret.json` so remembered devices keep working across local restarts. That file is ignored by Git. On Railway, set a long fixed `SESSION_SECRET` environment variable so deploys do not invalidate remembered sessions.
+
 Before using the public Railway site, you can also seed first-run Railway environment variables:
 
 - `ADMIN_USERNAME`

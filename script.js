@@ -259,6 +259,7 @@ const notificationDot = document.querySelector("#notificationDot");
 const adminMenuBtn = document.querySelector("#adminMenuBtn");
 const adminMenu = document.querySelector("#adminMenu");
 const adminSettingsBtn = document.querySelector("#adminSettingsBtn");
+const profileInitials = document.querySelector("#profileInitials");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
 const queueCount = document.querySelector("#queueCount");
@@ -942,6 +943,30 @@ function clearAccessMessage() {
   accessAlert.textContent = "";
 }
 
+function profileBadgeText(username) {
+  const compact = String(username || "").trim().replace(/[^a-z0-9]/gi, "");
+  return compact ? compact.slice(0, 2).toLowerCase() : "--";
+}
+
+function renderProfileIdentity(user) {
+  if (!profileInitials) return;
+  profileInitials.textContent = profileBadgeText(user?.username);
+}
+
+async function loadProfileIdentity() {
+  if (!profileInitials || !apiAvailable) return;
+  try {
+    const access = await api("/api/access");
+    renderProfileIdentity(access.currentUser);
+    if (accessUserList && !accessState) {
+      accessState = access;
+      renderAccessState();
+    }
+  } catch {
+    renderProfileIdentity(null);
+  }
+}
+
 async function loadAccessState() {
   if (!accessUserList) return;
   try {
@@ -954,6 +979,7 @@ async function loadAccessState() {
 
 function renderAccessState() {
   if (!accessState || !accessUserList) return;
+  renderProfileIdentity(accessState.currentUser);
   const users = accessState.users || [];
   accessUserCount.textContent = `${users.length} ${users.length === 1 ? "user" : "users"}`;
   accessUserList.innerHTML = users
@@ -1993,7 +2019,9 @@ functionList.addEventListener("click", (event) => {
   });
 });
 
-loadState();
+loadState().then(() => {
+  loadProfileIdentity();
+});
 startCycle();
 updateSystemClock();
 setInterval(updateSystemClock, 1000);

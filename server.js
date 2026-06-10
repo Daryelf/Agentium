@@ -10,9 +10,10 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
+const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString("hex");
+const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
 const REMEMBER_SESSION_TTL_MS = boundedDurationMs(process.env.REMEMBER_SESSION_TTL_MS, 30 * DAY_MS, 30 * DAY_MS);
@@ -43,6 +44,41 @@ function boundedDurationMs(value, fallback, max) {
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readPersistentSessionSecret() {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(SESSION_SECRET_FILE)) {
+      const stored = JSON.parse(fs.readFileSync(SESSION_SECRET_FILE, "utf8"));
+      if (typeof stored.secret === "string" && stored.secret.length >= 64) {
+        return stored.secret;
+      }
+    }
+  } catch {
+    // Replace unreadable local session secrets so the server can keep running.
+  }
+
+  const secret = crypto.randomBytes(48).toString("hex");
+  fs.writeFileSync(
+    SESSION_SECRET_FILE,
+    JSON.stringify(
+      {
+        version: 1,
+        createdAt: now(),
+        secret,
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+  try {
+    fs.chmodSync(SESSION_SECRET_FILE, 0o600);
+  } catch {
+    // Best effort on filesystems that do not support POSIX modes.
+  }
+  return secret;
 }
 
 function normalizeUsername(username) {

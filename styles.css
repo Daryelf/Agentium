@@ -4530,3 +4530,30 @@ main {
     margin: 8px 0 0;
   }
 }
+
+/* Keep overview analytics clear of the fixed bottom navigation. */
+main {
+  padding-bottom: 148px;
+}
+
+#view-floor.active {
+  padding-bottom: 96px;
+}
+
+.analytics-strip {
+  margin-bottom: 96px;
+}
+
+@media (max-width: 980px) {
+  main {
+    padding-bottom: 124px;
+  }
+
+  #view-floor.active {
+    padding-bottom: 82px;
+  }
+
+  .analytics-strip {
+    margin-bottom: 82px;
+  }
+}

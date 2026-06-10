@@ -273,6 +273,10 @@ const artifactList = document.querySelector("#artifactList");
 const artifactCount = document.querySelector("#artifactCount");
 const memoryList = document.querySelector("#memoryList");
 const auditLog = document.querySelector("#auditLog");
+const systemFeedCard = document.querySelector("#systemFeedCard");
+const systemFeedMini = document.querySelector("#systemFeedMini");
+const systemFeedPageList = document.querySelector("#systemFeedPageList");
+const feedBackBtn = document.querySelector("#feedBackBtn");
 const workflowList = document.querySelector("#workflowList");
 const templateList = document.querySelector("#templateList");
 const templateCount = document.querySelector("#templateCount");
@@ -1373,6 +1377,96 @@ function renderMemory() {
     .join("");
 }
 
+function systemFeedEntries() {
+  const auditEntries = Array.isArray(state.audit) ? state.audit : [];
+  const seededEntries = [
+    {
+      title: "Nexus completed automation cycle",
+      body: "Automation cycle completed inside the supervised local console.",
+    },
+    {
+      title: "Forge deployed production batch",
+      body: "Production work was packaged for operator review.",
+    },
+    {
+      title: "Ledger reconciled transactions",
+      body: "Finance checks completed without opening money movement permissions.",
+    },
+    {
+      title: "Sentry blocked suspicious login",
+      body: "Security guard kept the console in protected access mode.",
+    },
+  ];
+
+  return [...auditEntries, ...seededEntries].slice(0, 12).map((entry, index) => ({
+    title: entry.title || "System event",
+    body: entry.body || "Event recorded in the local console.",
+    createdAt: entry.createdAt || entry.timestamp || "",
+    index,
+  }));
+}
+
+function formatFeedTime(entry) {
+  if (entry.createdAt) {
+    const date = new Date(entry.createdAt);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+  }
+  if (entry.index === 0) return "Just now";
+  return `${entry.index * 2}m ago`;
+}
+
+function compactFeedTitle(title) {
+  const normalizedTitle = String(title || "");
+  const compactTitles = {
+    "Static console loaded": "Console loaded",
+    "Nexus completed automation cycle": "Nexus cycle complete",
+    "Forge deployed production batch": "Forge batch deployed",
+    "Ledger reconciled transactions": "Ledger reconciled",
+    "Sentry blocked suspicious login": "Sentry login blocked",
+  };
+
+  if (compactTitles[normalizedTitle]) return compactTitles[normalizedTitle];
+  if (normalizedTitle.length <= 24) return normalizedTitle;
+  return `${normalizedTitle.slice(0, 21)}...`;
+}
+
+function renderSystemFeed() {
+  const entries = systemFeedEntries();
+
+  if (systemFeedMini) {
+    systemFeedMini.innerHTML = entries
+      .slice(0, 4)
+      .map(
+        (entry) => `
+          <span>
+            <strong>${escapeHtml(compactFeedTitle(entry.title))}</strong>
+            <em>${escapeHtml(formatFeedTime(entry))}</em>
+          </span>
+        `,
+      )
+      .join("");
+  }
+
+  if (systemFeedPageList) {
+    systemFeedPageList.innerHTML = entries
+      .map(
+        (entry) => `
+          <article class="system-feed-row">
+            <span aria-hidden="true"></span>
+            <div>
+              <strong>${escapeHtml(entry.title)}</strong>
+              <p>${escapeHtml(entry.body)}</p>
+            </div>
+            <em>${escapeHtml(formatFeedTime(entry))}</em>
+          </article>
+        `,
+      )
+      .join("");
+  }
+}
+
 function renderAudit() {
   auditLog.innerHTML = state.audit
     .slice(0, 12)
@@ -1385,6 +1479,7 @@ function renderAudit() {
       `,
     )
     .join("");
+  renderSystemFeed();
 }
 
 function renderAgent() {
@@ -1589,6 +1684,19 @@ function activateView(viewName) {
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => activateView(button.dataset.view));
 });
+
+function openSystemFeed() {
+  renderSystemFeed();
+  activateView("feed");
+}
+
+systemFeedCard?.addEventListener("click", openSystemFeed);
+systemFeedCard?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openSystemFeed();
+});
+feedBackBtn?.addEventListener("click", () => activateView("floor"));
 
 settingsNavButtons.forEach((button) => {
   button.addEventListener("click", () => {

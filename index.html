@@ -357,13 +357,16 @@
                 <li><span>Output</span><strong>70</strong></li>
               </ul>
             </article>
-            <article class="analytics-card feed-card">
-              <p class="eyebrow">System Feed</p>
-              <div class="mini-feed">
-                <span>Nexus completed automation cycle <em>Just now</em></span>
-                <span>Forge deployed production batch <em>2m ago</em></span>
-                <span>Ledger reconciled transactions <em>4m ago</em></span>
-                <span>Sentry blocked suspicious login <em>6m ago</em></span>
+            <article class="analytics-card feed-card interactive-card" id="systemFeedCard" role="button" tabindex="0" aria-label="Open system feed">
+              <div class="feed-card-head">
+                <p class="eyebrow">System Feed</p>
+                <span>Open</span>
+              </div>
+              <div class="mini-feed" id="systemFeedMini" aria-live="polite">
+                <span><strong>Nexus completed automation cycle</strong><em>Just now</em></span>
+                <span><strong>Forge deployed production batch</strong><em>2m ago</em></span>
+                <span><strong>Ledger reconciled transactions</strong><em>4m ago</em></span>
+                <span><strong>Sentry blocked suspicious login</strong><em>6m ago</em></span>
               </div>
             </article>
             <article class="analytics-card revenue-card">
@@ -651,6 +654,52 @@
                 </div>
               </div>
               <div class="audit-log" id="auditLog"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-feed" aria-label="System feed">
+          <div class="feed-page">
+            <section class="panel feed-hero-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">System Feed</p>
+                  <h3>Live operating events</h3>
+                </div>
+                <button class="ghost-button compact-action" id="feedBackBtn" type="button">Back to Overview</button>
+              </div>
+              <p class="mission-copy">Recent agent actions, operator requests, security notices, and workflow events in one readable stream.</p>
+            </section>
+
+            <section class="feed-page-layout">
+              <section class="panel feed-stream-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Current Stream</p>
+                    <h3>System feed</h3>
+                  </div>
+                  <span class="metric-chip">Live local trace</span>
+                </div>
+                <div class="system-feed-page-list" id="systemFeedPageList"></div>
+              </section>
+
+              <aside class="panel feed-side-panel" aria-label="Feed status">
+                <div class="feed-status-card">
+                  <p class="eyebrow">Coverage</p>
+                  <strong>Audit + agent events</strong>
+                  <span>Local system trace</span>
+                </div>
+                <div class="feed-status-card">
+                  <p class="eyebrow">Approval Model</p>
+                  <strong>Supervised</strong>
+                  <span>High-risk actions stay gated</span>
+                </div>
+                <div class="feed-status-card">
+                  <p class="eyebrow">Retention</p>
+                  <strong>Latest 12</strong>
+                  <span>Persistent when the server is running</span>
+                </div>
+              </aside>
             </section>
           </div>
         </section>

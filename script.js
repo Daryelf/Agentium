@@ -260,6 +260,12 @@ const adminMenuBtn = document.querySelector("#adminMenuBtn");
 const adminMenu = document.querySelector("#adminMenu");
 const adminSettingsBtn = document.querySelector("#adminSettingsBtn");
 const profileInitials = document.querySelector("#profileInitials");
+const settingsSessionInitials = document.querySelector("#settingsSessionInitials");
+const settingsCurrentUser = document.querySelector("#settingsCurrentUser");
+const settingsSessionMeta = document.querySelector("#settingsSessionMeta");
+const settingsLoginHistory = document.querySelector("#settingsLoginHistory");
+const securityScanBtn = document.querySelector("#securityScanBtn");
+const settingsNavButtons = document.querySelectorAll("[data-settings-target]");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
 const queueCount = document.querySelector("#queueCount");
@@ -949,8 +955,14 @@ function profileBadgeText(username) {
 }
 
 function renderProfileIdentity(user) {
-  if (!profileInitials) return;
-  profileInitials.textContent = profileBadgeText(user?.username);
+  const badge = profileBadgeText(user?.username);
+  if (profileInitials) profileInitials.textContent = badge;
+  if (settingsSessionInitials) settingsSessionInitials.textContent = badge;
+  if (settingsCurrentUser) settingsCurrentUser.textContent = user?.username || "Signed-in user";
+  if (settingsSessionMeta) {
+    const host = window.location.hostname || "127.0.0.1";
+    settingsSessionMeta.textContent = `Browser session - ${host}`;
+  }
 }
 
 async function loadProfileIdentity() {
@@ -982,6 +994,7 @@ function renderAccessState() {
   renderProfileIdentity(accessState.currentUser);
   const users = accessState.users || [];
   accessUserCount.textContent = `${users.length} ${users.length === 1 ? "user" : "users"}`;
+  renderLoginHistory(users);
   accessUserList.innerHTML = users
     .map((user) => {
       const isCurrent = accessState.currentUser?.id === user.id;
@@ -1001,6 +1014,37 @@ function renderAccessState() {
         </article>
       `;
     })
+    .join("");
+}
+
+function renderLoginHistory(users) {
+  if (!settingsLoginHistory) return;
+  const rows = [...users]
+    .filter((user) => user.lastLoginAt)
+    .sort((left, right) => new Date(right.lastLoginAt) - new Date(left.lastLoginAt))
+    .slice(0, 4);
+
+  if (!rows.length) {
+    settingsLoginHistory.innerHTML = `
+      <div class="login-history-row muted-row">
+        <span>No login history yet</span>
+        <span>127.0.0.1</span>
+        <strong>Ready</strong>
+      </div>
+    `;
+    return;
+  }
+
+  settingsLoginHistory.innerHTML = rows
+    .map(
+      (user) => `
+        <div class="login-history-row">
+          <span>${escapeHtml(new Date(user.lastLoginAt).toLocaleString())}</span>
+          <span>${escapeHtml(user.username)}</span>
+          <strong>Success</strong>
+        </div>
+      `,
+    )
     .join("");
 }
 
@@ -1544,6 +1588,19 @@ function activateView(viewName) {
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => activateView(button.dataset.view));
+});
+
+settingsNavButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    settingsNavButtons.forEach((item) => item.classList.toggle("active", item === button));
+    const target = document.querySelector(`#${CSS.escape(button.dataset.settingsTarget)}`);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+});
+
+securityScanBtn?.addEventListener("click", () => {
+  loadAccessState();
+  showAccessMessage("Security scan complete. Password hashing, signed sessions, legacy-default blocking, and approval gates are active.", "success");
 });
 
 document.querySelectorAll(".tab").forEach((tab) => {

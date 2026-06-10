@@ -13,7 +13,9 @@ const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString("hex");
-const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 8);
+const DAY_MS = 1000 * 60 * 60 * 24;
+const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
+const REMEMBER_SESSION_TTL_MS = boundedDurationMs(process.env.REMEMBER_SESSION_TTL_MS, 30 * DAY_MS, 30 * DAY_MS);
 const LOGIN_WINDOW_MS = 1000 * 60 * 15;
 const LOGIN_MAX_ATTEMPTS = 5;
 const PASSWORD_ITERATIONS = 210_000;
@@ -31,6 +33,12 @@ const mimeTypes = {
 
 function now() {
   return new Date().toISOString();
+}
+
+function boundedDurationMs(value, fallback, max) {
+  const parsed = Number(value || fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
 }
 
 function ensureDataDir() {
@@ -266,13 +274,13 @@ function currentSession(req) {
   return verifySession(parseCookies(req).argentum_session);
 }
 
-function sessionCookie(req, token) {
+function sessionCookie(req, token, maxAgeMs = SESSION_TTL_MS) {
   const parts = [
     `argentum_session=${encodeURIComponent(token)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Strict",
-    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    `Max-Age=${Math.floor(maxAgeMs / 1000)}`,
   ];
   if (isSecureRequest(req)) parts.push("Secure");
   return parts.join("; ");
@@ -479,6 +487,27 @@ function credentialPage({ title, eyebrow, copy, action, fields, buttonLabel, not
         color: var(--red);
         background: rgba(127,29,29,.22);
       }
+      .remember-row {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        margin-top: 16px;
+        color: #dbeafe;
+        font-size: .82rem;
+        font-weight: 750;
+      }
+      .remember-row input {
+        width: 18px;
+        min-height: 18px;
+        padding: 0;
+        accent-color: #7dd3fc;
+      }
+      .remember-row span {
+        color: var(--muted);
+        font-size: .76rem;
+        font-weight: 650;
+      }
       .note {
         margin: 16px 0 0;
         color: var(--muted);
@@ -488,7 +517,7 @@ function credentialPage({ title, eyebrow, copy, action, fields, buttonLabel, not
     </style>
   </head>
   <body>
-    <form class="login-panel" method="post" action="${action}" autocomplete="off">
+    <form class="login-panel" method="post" action="${action}" autocomplete="on">
       <div class="mark">Ag</div>
       <p class="eyebrow">${escapeHtml(eyebrow)}</p>
       <h1>${escapeHtml(title)}</h1>
@@ -517,9 +546,13 @@ function loginPage(errorMessage = "") {
         Password
         <input name="password" type="password" autocomplete="current-password" required />
       </label>
+      <label class="remember-row">
+        <input name="remember" type="checkbox" value="on" autocomplete="off" />
+        <span>Remember this device for ${rememberSessionLabel()}</span>
+      </label>
     `,
     buttonLabel: "Enter Argentum",
-    note: "Use the admin login created in Settings or during first-run setup. Legacy default credentials are disabled.",
+    note: "Argentum does not store your password. Use the checkbox only on a device you control.",
     errorMessage,
   });
 }
@@ -1420,21 +1453,33 @@ async function readCredentials(req) {
     username: params.get("username") || "",
     password: params.get("password") || "",
     confirmPassword: params.get("confirmPassword") || "",
+    remember: params.get("remember") || "",
   };
 }
 
-function issueSession(res, req, user) {
+function rememberSessionLabel() {
+  const days = Math.max(1, Math.round(REMEMBER_SESSION_TTL_MS / DAY_MS));
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+function wantsRememberedSession(value) {
+  return value === true || ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+}
+
+function issueSession(res, req, user, options = {}) {
+  const sessionTtlMs = options.remember ? REMEMBER_SESSION_TTL_MS : SESSION_TTL_MS;
   const token = signSession({
     uid: user.id,
     user: user.username,
     role: user.role,
     iat: Date.now(),
-    exp: Date.now() + SESSION_TTL_MS,
+    exp: Date.now() + sessionTtlMs,
+    remembered: Boolean(options.remember),
     nonce: crypto.randomBytes(16).toString("hex"),
   });
   res.writeHead(302, {
     ...securityHeaders(req),
-    "set-cookie": sessionCookie(req, token),
+    "set-cookie": sessionCookie(req, token, sessionTtlMs),
     "cache-control": "no-store",
     location: "/",
   });
@@ -1519,7 +1564,9 @@ async function handleLogin(req, res) {
     user.lastLoginAt = now();
     user.updatedAt = user.updatedAt || now();
     writeAuthStore(store);
-    issueSession(res, req, user);
+    issueSession(res, req, user, {
+      remember: wantsRememberedSession(payload.remember),
+    });
     return true;
   }
 

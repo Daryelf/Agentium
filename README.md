@@ -20,12 +20,15 @@ After signing in, open **Settings -> Access** to create additional admin logins 
 
 Account records are stored in `data/argentum-auth.json` with salted password hashes. That file is ignored by Git.
 
+The login form supports browser password managers and a **Remember this device** checkbox. Argentum does not store plaintext passwords; remembered access is a signed, HttpOnly, SameSite session cookie capped at 30 days.
+
 Before using the public Railway site, you can also seed first-run Railway environment variables:
 
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `SESSION_SECRET`
 - `SESSION_TTL_MS` optional, defaults to 8 hours
+- `REMEMBER_SESSION_TTL_MS` optional, defaults to 30 days and is capped at 30 days
 
 Use a unique admin username, a strong admin password with at least 12 characters including letters and numbers, and a long random `SESSION_SECRET`; changing the secret signs everyone out. Weak legacy defaults are rejected.
 

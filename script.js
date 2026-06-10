@@ -252,6 +252,11 @@ const taskStage = document.querySelector("#taskStage");
 const riskLevel = document.querySelector("#riskLevel");
 const pauseBtn = document.querySelector("#pauseBtn");
 const runCycleBtn = document.querySelector("#runCycleBtn");
+const notificationBtn = document.querySelector("#notificationBtn");
+const notificationPanel = document.querySelector("#notificationPanel");
+const notificationList = document.querySelector("#notificationList");
+const notificationDot = document.querySelector("#notificationDot");
+const scanFocusBtn = document.querySelector("#scanFocusBtn");
 const apiStatus = document.querySelector("#apiStatus");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
@@ -755,6 +760,16 @@ function resetHabitatView(animated = true) {
   stationMap?.classList.remove("has-selection");
   setMapView({ x: 0, y: 0, scale: 1 }, animated);
   renderInspector();
+}
+
+function setMapFullscreen(open) {
+  if (!stationMap || !fullscreenMapBtn) return;
+  stationMap.classList.toggle("map-fullscreen", open);
+  fullscreenMapBtn.title = open ? "Exit fullscreen map" : "Toggle fullscreen map";
+  fullscreenMapBtn.setAttribute("aria-label", fullscreenMapBtn.title);
+  scanFocusBtn?.classList.toggle("is-active", open);
+  scanFocusBtn?.setAttribute("aria-pressed", String(open));
+  window.setTimeout(() => applyMapView(), 80);
 }
 
 function zoomMap(delta, point) {
@@ -1312,9 +1327,80 @@ function renderAgent() {
 }
 
 function renderStatus() {
-  apiStatus.textContent = apiAvailable ? "Persistent local OS" : "Static preview";
-  pauseBtn.setAttribute("aria-label", state.mission.paused ? "Resume Depo" : "Pause Depo");
-  pauseBtn.title = state.mission.paused ? "Resume Depo" : "Pause Depo";
+  apiStatus.textContent = apiAvailable ? "Live OS" : "Preview";
+  const paused = Boolean(state.mission.paused);
+  pauseBtn.classList.toggle("is-active", paused);
+  pauseBtn.setAttribute("aria-label", paused ? "Resume Depo" : "Pause Depo");
+  pauseBtn.title = paused ? "Resume Depo" : "Pause Depo";
+  pauseBtn.innerHTML = paused
+    ? `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
+    : `<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>`;
+}
+
+function notificationItems() {
+  const approvals = state.approvals || [];
+  const tasks = state.tasks || [];
+  const governance = state.governance || fallbackState.governance;
+  const items = [];
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const queuedTasks = tasks.filter((task) => task.status === "queued");
+
+  if (pendingApprovals.length) {
+    items.push({
+      title: `${pendingApprovals.length} approval${pendingApprovals.length === 1 ? "" : "s"} waiting`,
+      body: pendingApprovals[0].title,
+    });
+  }
+  if (queuedTasks.length) {
+    items.push({
+      title: `${queuedTasks.length} queued task${queuedTasks.length === 1 ? "" : "s"}`,
+      body: queuedTasks[0].title,
+    });
+  }
+  if (governance.killSwitch) {
+    items.push({
+      title: "Kill switch enabled",
+      body: "Automation is stopped until the operator disables the guard.",
+    });
+  }
+  if (state.mission.paused) {
+    items.push({
+      title: "Cycle paused",
+      body: "Depo will hold the current stage until resumed.",
+    });
+  }
+  return items.slice(0, 4);
+}
+
+function renderNotifications() {
+  if (!notificationList || !notificationBtn || !notificationDot) return;
+  const items = notificationItems();
+  notificationBtn.classList.toggle("has-alerts", items.length > 0);
+  notificationDot.hidden = items.length === 0;
+  notificationList.innerHTML = items.length
+    ? items
+        .map(
+          (item) => `
+            <article>
+              <strong>${escapeHtml(item.title)}</strong>
+              <p>${escapeHtml(item.body)}</p>
+            </article>
+          `,
+        )
+        .join("")
+    : `
+        <article>
+          <strong>All clear</strong>
+          <p>No queued alerts need operator attention.</p>
+        </article>
+      `;
+}
+
+function setNotificationsOpen(open) {
+  if (!notificationPanel || !notificationBtn) return;
+  notificationPanel.hidden = !open;
+  notificationBtn.classList.toggle("is-active", open);
+  notificationBtn.setAttribute("aria-expanded", String(open));
 }
 
 function money(value) {
@@ -1367,6 +1453,7 @@ function renderKpis() {
 function render() {
   setStep();
   renderStatus();
+  renderNotifications();
   renderGovernance();
   renderKpis();
   renderAgent();
@@ -1523,15 +1610,27 @@ zoomInBtn.addEventListener("click", () => zoomMap(0.18));
 zoomOutBtn.addEventListener("click", () => zoomMap(-0.18));
 centerMapBtn.addEventListener("click", () => resetHabitatView());
 fullscreenMapBtn.addEventListener("click", () => {
-  stationMap.classList.toggle("map-fullscreen");
-  fullscreenMapBtn.title = stationMap.classList.contains("map-fullscreen") ? "Exit fullscreen map" : "Toggle fullscreen map";
-  fullscreenMapBtn.setAttribute("aria-label", fullscreenMapBtn.title);
-  window.setTimeout(() => applyMapView(), 80);
+  setMapFullscreen(!stationMap.classList.contains("map-fullscreen"));
+});
+scanFocusBtn?.addEventListener("click", () => {
+  resetHabitatView();
+  setMapFullscreen(!stationMap.classList.contains("map-fullscreen"));
 });
 backToHabitatBtn.addEventListener("click", () => resetHabitatView());
 closeWorkspaceBtn.addEventListener("click", closeWorkspace);
 workspaceOverlay.addEventListener("click", (event) => {
   if (event.target === workspaceOverlay) closeWorkspace();
+});
+notificationBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  renderNotifications();
+  setNotificationsOpen(notificationPanel?.hidden ?? true);
+});
+notificationPanel?.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+document.addEventListener("click", () => {
+  setNotificationsOpen(false);
 });
 inspectorActions.addEventListener("click", (event) => {
   const button = event.target.closest("[data-inspector-action]");

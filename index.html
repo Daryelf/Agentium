@@ -122,22 +122,32 @@
 
       <main>
         <header class="topbar">
-          <div>
+          <div class="topbar-brand">
             <div class="header-meta">
-              <p class="eyebrow">Argentum OS v1.2.7</p>
-              <span class="metric-chip" id="apiStatus">Local mode</span>
+              <p class="eyebrow">Argentum OS</p>
+              <span class="metric-chip" id="apiStatus">Secure</span>
             </div>
-            <h2>Full-system command habitat: agents, commerce, finance, workflows, and automation running in one control room.</h2>
+            <h2>Argentum</h2>
           </div>
           <div class="top-actions">
             <label class="system-search">
               <svg viewBox="0 0 24 24"><path d="m21 21-4.3-4.3"/><circle cx="11" cy="11" r="7"/></svg>
               <input type="search" placeholder="Search system..." aria-label="Search system" />
             </label>
-            <button class="icon-button" type="button" aria-label="Notifications" title="Notifications">
-              <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
-            </button>
-            <button class="icon-button" type="button" aria-label="Scan focus" title="Scan focus">
+            <div class="top-action-wrap">
+              <button class="icon-button" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false" title="Notifications">
+                <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+                <span class="notification-dot" id="notificationDot" aria-hidden="true"></span>
+              </button>
+              <div class="notification-popover" id="notificationPanel" hidden>
+                <div class="notification-head">
+                  <p class="eyebrow">Notifications</p>
+                  <strong>System Queue</strong>
+                </div>
+                <div class="notification-list" id="notificationList"></div>
+              </div>
+            </div>
+            <button class="icon-button" id="scanFocusBtn" type="button" aria-label="Focus habitat map" title="Focus habitat map">
               <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/><path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/><path d="M9 21H5a2 2 0 0 1-2-2v-4"/></svg>
             </button>
             <a class="ghost-button compact-action" href="/logout">Logout</a>

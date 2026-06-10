@@ -539,10 +539,6 @@ function setupPage(errorMessage = "") {
         Password
         <input name="password" type="password" autocomplete="new-password" minlength="12" required />
       </label>
-      <label>
-        Confirm password
-        <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
-      </label>
     `,
     buttonLabel: "Create Admin",
     note: "Use a unique password with at least 12 characters, including letters and numbers.",
@@ -1619,10 +1615,6 @@ function createInitialAccessUser(payload) {
   }
   const username = validateUsername(payload.username);
   const password = validateNewPassword(payload.password);
-  const confirmPassword = String(payload.confirmPassword || "");
-  if (password !== confirmPassword) {
-    throw guardedError("Passwords do not match.", 400);
-  }
   const user = createUserRecord(username, password, { temporary: false });
   const store = {
     ...emptyAuthStore(),
@@ -1900,11 +1892,13 @@ function serveStatic(req, res, url) {
       res.end("Not found");
       return;
     }
-    const type = mimeTypes[path.extname(absolutePath)] || "application/octet-stream";
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    const cacheControl = [".html", ".css", ".js"].includes(extension) ? "no-store" : "private, max-age=300";
     res.writeHead(200, {
       ...securityHeaders(req),
       "content-type": type,
-      "cache-control": type.startsWith("text/html") ? "no-store" : "private, max-age=300",
+      "cache-control": cacheControl,
     });
     res.end(data);
   });

@@ -256,8 +256,9 @@ const notificationBtn = document.querySelector("#notificationBtn");
 const notificationPanel = document.querySelector("#notificationPanel");
 const notificationList = document.querySelector("#notificationList");
 const notificationDot = document.querySelector("#notificationDot");
-const scanFocusBtn = document.querySelector("#scanFocusBtn");
-const apiStatus = document.querySelector("#apiStatus");
+const adminMenuBtn = document.querySelector("#adminMenuBtn");
+const adminMenu = document.querySelector("#adminMenu");
+const adminSettingsBtn = document.querySelector("#adminSettingsBtn");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
 const queueCount = document.querySelector("#queueCount");
@@ -767,8 +768,6 @@ function setMapFullscreen(open) {
   stationMap.classList.toggle("map-fullscreen", open);
   fullscreenMapBtn.title = open ? "Exit fullscreen map" : "Toggle fullscreen map";
   fullscreenMapBtn.setAttribute("aria-label", fullscreenMapBtn.title);
-  scanFocusBtn?.classList.toggle("is-active", open);
-  scanFocusBtn?.setAttribute("aria-pressed", String(open));
   window.setTimeout(() => applyMapView(), 80);
 }
 
@@ -1327,7 +1326,6 @@ function renderAgent() {
 }
 
 function renderStatus() {
-  apiStatus.textContent = apiAvailable ? "Live OS" : "Preview";
   const paused = Boolean(state.mission.paused);
   pauseBtn.classList.toggle("is-active", paused);
   pauseBtn.setAttribute("aria-label", paused ? "Resume Depo" : "Pause Depo");
@@ -1401,6 +1399,14 @@ function setNotificationsOpen(open) {
   notificationPanel.hidden = !open;
   notificationBtn.classList.toggle("is-active", open);
   notificationBtn.setAttribute("aria-expanded", String(open));
+}
+
+function setAdminMenuOpen(open) {
+  if (!adminMenu || !adminMenuBtn) return;
+  adminMenu.hidden = !open;
+  adminMenuBtn.classList.toggle("is-active", open);
+  adminMenuBtn.setAttribute("aria-expanded", String(open));
+  if (!open) setNotificationsOpen(false);
 }
 
 function money(value) {
@@ -1497,16 +1503,21 @@ function startCycle() {
   }, 5200);
 }
 
-document.querySelectorAll(".nav-item").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
-    button.classList.add("active");
-    document.querySelector(`#view-${button.dataset.view}`).classList.add("active");
-    if (button.dataset.view === "settings") {
-      loadAccessState();
-    }
+function activateView(viewName) {
+  const target = document.querySelector(`#view-${CSS.escape(viewName)}`);
+  if (!target) return;
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.view === viewName);
   });
+  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+  target.classList.add("active");
+  if (viewName === "settings") {
+    loadAccessState();
+  }
+}
+
+document.querySelectorAll(".nav-item").forEach((button) => {
+  button.addEventListener("click", () => activateView(button.dataset.view));
 });
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -1612,14 +1623,21 @@ centerMapBtn.addEventListener("click", () => resetHabitatView());
 fullscreenMapBtn.addEventListener("click", () => {
   setMapFullscreen(!stationMap.classList.contains("map-fullscreen"));
 });
-scanFocusBtn?.addEventListener("click", () => {
-  resetHabitatView();
-  setMapFullscreen(!stationMap.classList.contains("map-fullscreen"));
-});
 backToHabitatBtn.addEventListener("click", () => resetHabitatView());
 closeWorkspaceBtn.addEventListener("click", closeWorkspace);
 workspaceOverlay.addEventListener("click", (event) => {
   if (event.target === workspaceOverlay) closeWorkspace();
+});
+adminMenuBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setAdminMenuOpen(adminMenu?.hidden ?? true);
+});
+adminMenu?.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+adminSettingsBtn?.addEventListener("click", () => {
+  setAdminMenuOpen(false);
+  activateView("settings");
 });
 notificationBtn?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -1630,6 +1648,7 @@ notificationPanel?.addEventListener("click", (event) => {
   event.stopPropagation();
 });
 document.addEventListener("click", () => {
+  setAdminMenuOpen(false);
   setNotificationsOpen(false);
 });
 inspectorActions.addEventListener("click", (event) => {

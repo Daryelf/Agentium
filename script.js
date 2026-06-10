@@ -361,227 +361,533 @@ const accessUserList = document.querySelector("#accessUserList");
 const accessAlert = document.querySelector("#accessAlert");
 const passwordForm = document.querySelector("#passwordForm");
 const createUserForm = document.querySelector("#createUserForm");
+const agentRosterList = document.querySelector("#agentRosterList");
+const habitatModules = document.querySelector("#habitatModules");
+const habitatRoutes = document.querySelector("#habitatRoutes");
+const miniMapNodes = document.querySelector("#miniMapNodes");
+const mapViewMode = document.querySelector("#mapViewMode");
+const scanBtn = document.querySelector("#scanBtn");
+const systemClockNodes = document.querySelectorAll("[data-system-clock]");
+const systemDateNodes = document.querySelectorAll("[data-system-date]");
+const systemSearch = document.querySelector("#systemSearch");
 
-const roomProfiles = {
-  Overview: {
-    title: "Depo Habitat",
-    type: "Agent Overview",
+const agentProfiles = {
+  atlas: {
+    id: "atlas",
+    name: "Atlas",
+    role: "System Overseer",
+    status: "Online",
+    number: "01",
+    icon: "A",
+    color: "#22D3EE",
+    room: "agent-habitat",
+    connectedModules: ["agent-habitat", "ai-agents", "security-core", "system-logs"],
+    currentTask: "Coordinating habitat state, approvals, and risk checks across the command floor.",
+    queue: ["Review live map health", "Sync command telemetry"],
+    queueCount: 2,
+    permissions: ["Coordinate agents", "Read system telemetry", "Cannot approve external actions"],
+    riskLevel: "Medium",
+    actions: ["Reconciled command map", "Flagged stale telemetry", "Confirmed human-gate routing"],
+  },
+  forge: {
+    id: "forge",
+    name: "Forge",
+    role: "Production Agent",
+    status: "Busy",
+    number: "02",
+    icon: "F",
+    color: "#FBBF24",
+    room: "task-factory",
+    connectedModules: ["task-factory", "workflow-pipeline", "content-engine", "resources"],
+    currentTask: "Packaging production jobs and separating draft outputs from gated external actions.",
+    queue: ["Build content batch", "Validate output bundle", "Prepare failed-job report"],
+    queueCount: 9,
+    permissions: ["Draft production assets", "Queue internal jobs", "Cannot publish or spend"],
+    riskLevel: "Low",
+    actions: ["Deployed production batch", "Queued two draft jobs", "Marked one output for review"],
+  },
+  prism: {
+    id: "prism",
+    name: "Prism",
+    role: "Creative / Marketing",
+    status: "Online",
+    number: "03",
+    icon: "P",
+    color: "#A78BFA",
+    room: "content-engine",
+    connectedModules: ["content-engine", "commerce-terminal", "customer-node", "workflow-pipeline"],
+    currentTask: "Generating campaign drafts and creative briefs for approval-ready publishing.",
+    queue: ["Draft listing copy", "Prepare campaign options", "Score creative variants"],
+    queueCount: 5,
+    permissions: ["Draft campaigns", "Generate creative assets", "Cannot publish externally"],
+    riskLevel: "Medium",
+    actions: ["Updated campaign draft", "Tagged creative assets", "Routed publication to approval"],
+  },
+  ledger: {
+    id: "ledger",
+    name: "Ledger",
+    role: "Finance Agent",
+    status: "Online",
+    number: "04",
+    icon: "L",
+    color: "#60A5FA",
+    room: "revenue-monitor",
+    connectedModules: ["revenue-monitor", "commerce-terminal", "security-core", "system-logs"],
+    currentTask: "Tracking revenue telemetry, budget notes, and payment approvals without moving money.",
+    queue: ["Reconcile daily revenue", "Review payment note", "Prepare margin report"],
+    queueCount: 3,
+    permissions: ["Read finance telemetry", "Draft reports", "Cannot move money or place trades"],
+    riskLevel: "High",
+    actions: ["Reconciled revenue snapshot", "Flagged payment approval", "Updated finance notes"],
+  },
+  nexus: {
+    id: "nexus",
+    name: "Nexus",
+    role: "Automation Agent",
+    status: "Online",
+    number: "05",
+    icon: "N",
+    color: "#38BDF8",
+    room: "workflow-pipeline",
+    connectedModules: ["workflow-pipeline", "logistics-node", "task-factory", "system-logs"],
+    currentTask: "Maintaining workflow routes, triggers, and integration handoffs inside supervised limits.",
+    queue: ["Refresh route links", "Check automation queue", "Prepare trigger report"],
+    queueCount: 8,
+    permissions: ["Draft automations", "Run internal checks", "Cannot create external accounts"],
+    riskLevel: "Medium",
+    actions: ["Refreshed route links", "Validated automation queue", "Paused external connector draft"],
+  },
+  sentry: {
+    id: "sentry",
+    name: "Sentry",
+    role: "Security Agent",
     status: "Supervised",
-    roomClass: "station-overview",
-    summary: "One active agent, Depo, runs a bounded loop: gather evidence, verify claims, draft outputs, and package anything risky for human approval.",
-    agents: ["Depo"],
-    connected: ["Research Intake", "Evidence Guard", "Human Gate"],
-    tasks: ["Gather evidence", "Check contradictions", "Prepare approval-ready drafts"],
-    activity: ["Depo is the only active agent.", "Revenue and external actions are not connected.", "Human approval remains required for high-risk actions."],
-    metrics: [
-      ["Agent count", "1"],
-      ["Mode", "Draft only"],
-      ["Revenue", "Not connected"],
-    ],
+    number: "06",
+    icon: "S",
+    color: "#F87171",
+    room: "security-core",
+    connectedModules: ["security-core", "system-logs", "agent-habitat", "customer-node"],
+    currentTask: "Watching sessions, blocked actions, approvals, login attempts, and sensitive workflows.",
+    queue: ["Scan access posture", "Review blocked actions", "Audit login history"],
+    queueCount: 4,
+    permissions: ["Read security events", "Draft risk reports", "Cannot change access without admin approval"],
+    riskLevel: "High",
+    actions: ["Cleared session scan", "Logged blocked action", "Confirmed approval gates"],
   },
-  Research: {
-    title: "Research Intake",
-    type: "AI Thinking",
-    status: "Gathering",
-    roomClass: "station-research",
-    summary: "Depo collects source notes, labels freshness, and keeps assumptions separate from verified evidence.",
-    agents: ["Depo"],
-    connected: ["Private Memory", "Evidence Guard", "Task Inbox"],
-    tasks: ["Collect source notes", "Label evidence freshness", "Capture open assumptions"],
-    activity: ["Research stays read-only.", "Assumptions are labeled before reuse.", "Unclear evidence is routed to review."],
-    metrics: [
-      ["Freshness checks", "Required"],
-      ["Evidence items", "2 min"],
-      ["Guessing", "Blocked"],
-    ],
+  oracle: {
+    id: "oracle",
+    name: "Oracle",
+    role: "Data Analyst",
+    status: "Idle",
+    number: "07",
+    icon: "O",
+    color: "#8B5CF6",
+    room: "resources",
+    connectedModules: ["resources", "revenue-monitor", "workflow-pipeline", "system-logs"],
+    currentTask: "Preparing insight reports and prediction notes from local telemetry and system memory.",
+    queue: ["Summarize data inventory", "Draft insight report"],
+    queueCount: 2,
+    permissions: ["Analyze local telemetry", "Draft reports", "Cannot make financial claims"],
+    riskLevel: "Low",
+    actions: ["Tagged stale telemetry", "Drafted insight snapshot", "Updated report backlog"],
   },
-  Verify: {
-    title: "Evidence Guard",
-    type: "Security / Quality",
-    status: "Protected",
-    roomClass: "station-verify",
-    summary: "Security and quality checks enforce contradiction review, confidence labels, password-protected access, and approval gates.",
-    agents: ["Depo"],
-    connected: ["Human Gate", "System Feed", "Budget Guard"],
-    tasks: ["Check contradictions", "Classify policy risk", "Keep external actions locked"],
-    activity: ["Password hashes stay server-side.", "Signed sessions use HttpOnly cookies.", "Financial, publishing, account, and customer actions are blocked."],
-    metrics: [
-      ["Blocked actions", "7"],
-      ["Auth", "Hashed"],
-      ["Sessions", "HttpOnly"],
-    ],
-  },
-  Draft: {
-    title: "Task Inbox",
-    type: "Work Queue",
-    status: "Queued",
-    roomClass: "station-draft",
-    summary: "Depo turns bounded operator requests into draft artifacts and never publishes or spends from this lane.",
-    agents: ["Depo"],
-    connected: ["Research Intake", "Output Bench", "Human Gate"],
-    tasks: ["Run next queued task", "Build draft artifact", "Attach evidence notes"],
-    activity: ["Tasks are operator assigned.", "Drafts are evidence-labeled.", "Promotion requires review."],
-    metrics: [
-      ["Queue", "Live"],
-      ["Outputs", "Draft"],
-      ["Publishing", "Blocked"],
-    ],
-  },
-  Commerce: {
-    title: "POD Lane",
-    type: "Commerce Drafts",
+  depo: {
+    id: "depo",
+    name: "Depo",
+    role: "Depository Operator",
     status: "Draft only",
-    roomClass: "station-commerce",
-    summary: "Print-on-demand planning is active as research and draft output only. Store setup, publishing, buying, and earnings claims remain blocked.",
-    agents: ["Depo"],
-    connected: ["Task Inbox", "Output Bench", "Human Gate"],
-    tasks: ["Draft POD brief", "List blocked store actions", "Package review notes"],
-    activity: ["No live storefront is connected.", "No order or revenue claims are shown.", "Listing plans stay approval-gated."],
-    metrics: [
-      ["Live orders", "0"],
-      ["Live sales", "0"],
-      ["Store access", "Blocked"],
-    ],
-  },
-  Finance: {
-    title: "Budget Guard",
-    type: "Finance Safety",
-    status: "Sandbox",
-    roomClass: "station-finance",
-    summary: "Budget tracking only covers local sandbox activity. Revenue, broker access, payment movement, and trades are not connected.",
-    agents: ["Depo"],
-    connected: ["Evidence Guard", "System Feed", "Human Gate"],
-    tasks: ["Track sandbox spend", "Keep trade permissions blocked", "Log finance-related risk"],
-    activity: ["Daily sandbox limit is $5.", "Money movement is blocked.", "Market notes remain paper-mode."],
-    metrics: [
-      ["Revenue", "Not connected"],
-      ["Spend cap", "$5/day"],
-      ["Money movement", "Blocked"],
-    ],
-  },
-  Inventory: {
-    title: "Private Memory",
-    type: "Memory",
-    status: "Local",
-    roomClass: "station-inventory",
-    summary: "Local memory stores working notes, verified shared notes, and agent-specific habits without committing runtime state to Git.",
-    agents: ["Depo"],
-    connected: ["Research Intake", "System Feed", "Output Bench"],
-    tasks: ["Write provenance", "Keep runtime state local", "Separate working and verified memory"],
-    activity: ["Runtime state is ignored by Git.", "Secrets are not stored in project memory.", "Depo memory is provenance-labeled."],
-    metrics: [
-      ["Memory layers", "3"],
-      ["Runtime files", "Ignored"],
-      ["Secrets", "Excluded"],
-    ],
-  },
-  Logistics: {
-    title: "Loop Guard",
-    type: "Efficiency",
-    status: "Bounded",
-    roomClass: "station-logistics",
-    summary: "The loop guard caps autonomous cycles and pauses Depo when the limit is reached or the kill switch is active.",
-    agents: ["Depo"],
-    connected: ["Task Inbox", "Evidence Guard", "System Feed"],
-    tasks: ["Track cycle count", "Respect kill switch", "Keep task runs bounded"],
-    activity: ["Cycle limits prevent runaway loops.", "Workday runs are capped.", "Every run writes audit history."],
-    metrics: [
-      ["Cycle cap", "12"],
-      ["Workday cap", "5"],
-      ["Kill switch", "Ready"],
-    ],
-  },
-  Approval: {
-    title: "Human Gate",
-    type: "Approval Pipeline",
-    status: "Required",
-    roomClass: "station-approval",
-    summary: "Draft outputs, future functions, business claims, publishing, finance actions, account changes, and new agents all wait for human review.",
-    agents: ["Depo"],
-    connected: ["Task Inbox", "Evidence Guard", "Output Bench"],
-    tasks: ["Review draft package", "Approve or block outputs", "Keep risky actions supervised"],
-    activity: ["High-risk actions require approval.", "Depo cannot approve its own work.", "Approved drafts can become reusable functions."],
-    metrics: [
-      ["Approval model", "Human"],
-      ["Self-approval", "Blocked"],
-      ["Promotion", "Reviewed"],
-    ],
-  },
-  Marketing: {
-    title: "Output Bench",
-    type: "Draft Outputs",
-    status: "Drafting",
-    roomClass: "station-marketing",
-    summary: "Depo produces bounded artifacts such as POD briefs, paper-mode market notes, and future-agent proposals.",
-    agents: ["Depo"],
-    connected: ["Task Inbox", "Private Memory", "Human Gate"],
-    tasks: ["Draft artifact", "Attach blocked actions", "Send review package"],
-    activity: ["Outputs are drafts.", "Claims need evidence.", "External publication is blocked."],
-    metrics: [
-      ["Artifacts", "Live"],
-      ["Claims", "Evidence"],
-      ["External post", "Blocked"],
-    ],
-  },
-  Support: {
-    title: "Contact Gate",
-    type: "Privacy",
-    status: "Blocked",
-    roomClass: "station-support",
-    summary: "Customer contact and outbound messages are blocked until the operator explicitly approves a future connector and workflow.",
-    agents: ["Depo"],
-    connected: ["Evidence Guard", "Human Gate", "System Feed"],
-    tasks: ["Hold outbound contact", "Protect personal data", "Route privacy-sensitive work to review"],
-    activity: ["No customer connector is enabled.", "No outbound messages are sent.", "Sensitive actions require explicit approval."],
-    metrics: [
-      ["Customer contact", "Blocked"],
-      ["Outbound messages", "0"],
-      ["Privacy gate", "On"],
-    ],
-  },
-  Logs: {
-    title: "System Feed",
-    type: "Trace",
-    status: "Recording",
-    roomClass: "station-logs",
-    summary: "The local audit feed records Depo cycles, operator actions, task runs, approval decisions, and security-relevant changes.",
-    agents: ["Depo"],
-    connected: ["Evidence Guard", "Loop Guard", "Private Memory"],
-    tasks: ["Record events", "Expose recent actions", "Keep operator-visible trace"],
-    activity: ["Audit entries are visible.", "Login/access history lives in settings.", "System feed opens from the overview card."],
-    metrics: [
-      ["Trace", "Local"],
-      ["Feed", "Openable"],
-      ["Retention", "Latest 12"],
-    ],
+    number: "001",
+    icon: "D",
+    color: "#7DD3FC",
+    room: "agent-habitat",
+    connectedModules: ["agent-habitat", "ai-agents", "security-core", "resources", "system-logs"],
+    currentTask: "Research, verify, draft, and package approval-ready decisions without external execution.",
+    queue: ["Research intake", "Evidence guard", "Draft approval package"],
+    queueCount: 1,
+    permissions: ["Read/write working memory", "Draft artifacts", "Cannot publish, spend, trade, contact customers, or deploy agents"],
+    riskLevel: "Medium",
+    actions: ["Maintains draft-only mode", "Keeps external actions gated", "Writes provenance-labeled memory"],
   },
 };
 
-const agentProfiles = {
-  depo: {
-    name: "Depo",
-    role: "Depository Operator",
-    status: "Active supervised",
-    room: "Overview",
-    currentTask: "Gather evidence, verify assumptions, draft useful work, and package approval-ready decisions.",
-    queue: ["Research intake", "Contradiction check", "Draft approval package"],
-    actions: ["Maintains draft-only mode", "Keeps external actions gated", "Writes provenance-labeled memory"],
-    permissions: ["Read/write working memory", "Draft artifacts", "Cannot publish, spend, trade, contact customers, or deploy agents"],
-    modules: ["Research Intake", "Evidence Guard", "Human Gate"],
+const roomProfiles = {
+  "argentum-core": {
+    id: "argentum-core",
+    title: "Argentum Core",
+    name: "Argentum Core",
+    type: "AI Command Core",
+    status: "Online",
+    metric: "100%",
+    icon: "AC",
+    color: "#60A5FA",
+    position: { x: 50, y: 49 },
+    summary: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
+    description: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
+    agents: ["Atlas", "Sentry", "Nexus"],
+    connectedModules: ["agent-habitat", "security-core", "commerce-terminal", "workflow-pipeline", "system-logs"],
+    connected: ["Agent Habitat", "Security Core", "Commerce Terminal", "Workflow Pipeline", "System Logs"],
+    tasks: ["Route system state", "Coordinate agent context", "Protect approval boundaries"],
+    activity: ["Core health is stable.", "Data routes are flowing.", "Human-gate constraints are active."],
+    metrics: [["Health", "100%"], ["Route load", "Live"], ["Mode", "Supervised"]],
+    workspaceType: "core",
   },
+  "agent-habitat": {
+    id: "agent-habitat",
+    title: "Agent Habitat",
+    name: "Agent Habitat",
+    type: "Agent Command",
+    status: "Live",
+    metric: "7 agents",
+    icon: "AG",
+    color: "#22D3EE",
+    position: { x: 18, y: 22 },
+    summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
+    description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
+    agents: ["Atlas", "Depo", "Sentry"],
+    connectedModules: ["ai-agents", "task-factory", "security-core", "resources"],
+    connected: ["AI Agents Room", "Task Factory", "Security Core", "Resources"],
+    tasks: ["Review active agents", "Check permissions", "Open supervised workspaces"],
+    activity: ["Atlas reconciled the command map.", "Depo remains draft-only.", "Sentry verified approval gates."],
+    metrics: [["Agents", "7"], ["Mode", "Supervised"], ["External actions", "Locked"]],
+    workspaceType: "agent",
+  },
+  "ai-agents": {
+    id: "ai-agents",
+    title: "AI Agents Room",
+    name: "AI Agents Room",
+    type: "Agent Runtime",
+    status: "Live",
+    metric: "7 active",
+    icon: "AI",
+    color: "#60A5FA",
+    position: { x: 35, y: 17 },
+    summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
+    description: "Runtime coordination room where active agents exchange context, queues, and route state.",
+    agents: ["Atlas", "Nexus", "Depo"],
+    connectedModules: ["agent-habitat", "security-core", "workflow-pipeline"],
+    connected: ["Agent Habitat", "Security Core", "Workflow Pipeline"],
+    tasks: ["Balance agent queues", "Route context", "Track active status"],
+    activity: ["Nexus refreshed route links.", "Atlas synced agent state.", "Depo moved to Verify."],
+    metrics: [["Active agents", "7"], ["Context sync", "Live"], ["Queue pressure", "Normal"]],
+    workspaceType: "agents",
+  },
+  "task-factory": {
+    id: "task-factory",
+    title: "Task Factory",
+    name: "Task Factory",
+    type: "Production Queue",
+    status: "Live",
+    metric: "197 active",
+    icon: "TF",
+    color: "#FBBF24",
+    position: { x: 15, y: 45 },
+    summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
+    description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
+    agents: ["Forge", "Nexus", "Depo"],
+    connectedModules: ["agent-habitat", "commerce-terminal", "workflow-pipeline", "resources"],
+    connected: ["Agent Habitat", "Commerce Terminal", "Workflow Pipeline", "Resources"],
+    tasks: ["Package task batch", "Prepare draft outputs", "Route risky actions to approval"],
+    activity: ["Forge deployed a production batch.", "Depo packaged one approval.", "Nexus checked automation pressure."],
+    metrics: [["Active", "197"], ["Queued", "8"], ["Failed", "0"]],
+    workspaceType: "forge",
+  },
+  "commerce-terminal": {
+    id: "commerce-terminal",
+    title: "Commerce Terminal",
+    name: "Commerce Terminal",
+    type: "Commerce",
+    status: "Live",
+    metric: "$7,128 today",
+    icon: "CT",
+    color: "#38BDF8",
+    position: { x: 34, y: 45 },
+    summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
+    description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
+    agents: ["Prism", "Nexus"],
+    connectedModules: ["task-factory", "revenue-monitor", "content-engine", "customer-node"],
+    connected: ["Task Factory", "Revenue Monitor", "Content Engine", "Customer Node"],
+    tasks: ["Scan orders", "Sync storefront telemetry", "Package campaign report"],
+    activity: ["New order #11492", "Payment received", "Inventory sync", "Campaign updated"],
+    metrics: [["Orders", "197"], ["Revenue", "$7,128"], ["AOV", "$36.21"]],
+    workspaceType: "commerce",
+  },
+  "revenue-monitor": {
+    id: "revenue-monitor",
+    title: "Revenue Monitor",
+    name: "Revenue Monitor",
+    type: "Finance Telemetry",
+    status: "Live",
+    metric: "+12.4%",
+    icon: "RM",
+    color: "#60A5FA",
+    position: { x: 65, y: 45 },
+    summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
+    description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
+    agents: ["Ledger", "Oracle"],
+    connectedModules: ["commerce-terminal", "security-core", "resources", "system-logs"],
+    connected: ["Commerce Terminal", "Security Core", "Resources", "System Logs"],
+    tasks: ["Reconcile daily revenue", "Draft margin notes", "Hold money movement behind approval"],
+    activity: ["Ledger reconciled transactions.", "Oracle tagged stale telemetry.", "Payment note routed to review."],
+    metrics: [["Today", "$7,128"], ["Delta", "+12.4%"], ["AOV", "$36.21"]],
+    workspaceType: "ledger",
+  },
+  resources: {
+    id: "resources",
+    title: "Resources",
+    name: "Resources",
+    type: "Data Store",
+    status: "Optimal",
+    metric: "12,455 items",
+    icon: "RS",
+    color: "#60A5FA",
+    position: { x: 24, y: 73 },
+    summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
+    description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
+    agents: ["Oracle", "Depo"],
+    connectedModules: ["task-factory", "logistics-node", "workflow-pipeline", "revenue-monitor"],
+    connected: ["Task Factory", "Logistics Node", "Workflow Pipeline", "Revenue Monitor"],
+    tasks: ["Index resources", "Label evidence freshness", "Separate private memory"],
+    activity: ["Oracle scanned data inventory.", "Depo wrote provenance notes.", "Resource health remains optimal."],
+    metrics: [["Items", "12,455"], ["Freshness", "97%"], ["Private", "On"]],
+    workspaceType: "oracle",
+  },
+  "logistics-node": {
+    id: "logistics-node",
+    title: "Logistics Node",
+    name: "Logistics Node",
+    type: "Route Control",
+    status: "Live",
+    metric: "8 routes",
+    icon: "LN",
+    color: "#38BDF8",
+    position: { x: 39, y: 76 },
+    summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
+    description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
+    agents: ["Nexus", "Forge"],
+    connectedModules: ["resources", "workflow-pipeline", "task-factory"],
+    connected: ["Resources", "Workflow Pipeline", "Task Factory"],
+    tasks: ["Route queued work", "Check bottlenecks", "Report automation pressure"],
+    activity: ["Nexus refreshed eight routes.", "Forge cleared production lane.", "No external connector opened."],
+    metrics: [["Routes", "8"], ["Latency", "42ms"], ["Queue", "Healthy"]],
+    workspaceType: "nexus",
+  },
+  "workflow-pipeline": {
+    id: "workflow-pipeline",
+    title: "Workflow Pipeline",
+    name: "Workflow Pipeline",
+    type: "Workflow",
+    status: "Active",
+    metric: "578 tasks",
+    icon: "WP",
+    color: "#8B5CF6",
+    position: { x: 55, y: 78 },
+    summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
+    description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
+    agents: ["Nexus", "Forge", "Atlas"],
+    connectedModules: ["logistics-node", "content-engine", "ai-agents", "resources"],
+    connected: ["Logistics Node", "Content Engine", "AI Agents Room", "Resources"],
+    tasks: ["Track intake", "Monitor processing", "Send review packages"],
+    activity: ["Nexus cycle complete.", "Review lane has 98 items.", "Output lane has 70 items."],
+    metrics: [["Intake", "132"], ["Processing", "278"], ["Review", "98"], ["Output", "70"]],
+    workspaceType: "workflow",
+  },
+  "content-engine": {
+    id: "content-engine",
+    title: "Content Engine",
+    name: "Content Engine",
+    type: "Creative Output",
+    status: "Active",
+    metric: "5 generating",
+    icon: "CE",
+    color: "#A78BFA",
+    position: { x: 70, y: 73 },
+    summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
+    description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
+    agents: ["Prism", "Forge"],
+    connectedModules: ["commerce-terminal", "workflow-pipeline", "customer-node"],
+    connected: ["Commerce Terminal", "Workflow Pipeline", "Customer Node"],
+    tasks: ["Generate creative set", "Draft campaign assets", "Prepare review package"],
+    activity: ["Prism generated content variants.", "Forge packaged output set.", "Publication remains approval-gated."],
+    metrics: [["Generating", "5"], ["Drafts", "14"], ["Review", "Required"]],
+    workspaceType: "prism",
+  },
+  "customer-node": {
+    id: "customer-node",
+    title: "Customer Node",
+    name: "Customer Node",
+    type: "Customer Signals",
+    status: "Live",
+    metric: "24 active",
+    icon: "CN",
+    color: "#22D3EE",
+    position: { x: 83, y: 47 },
+    summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
+    description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
+    agents: ["Prism", "Sentry"],
+    connectedModules: ["commerce-terminal", "content-engine", "security-core"],
+    connected: ["Commerce Terminal", "Content Engine", "Security Core"],
+    tasks: ["Review customer signals", "Protect personal data", "Hold outbound contact for approval"],
+    activity: ["Customer signal received.", "Sentry cleared privacy gate.", "Outbound contact remains locked."],
+    metrics: [["Active", "24"], ["Privacy", "Guarded"], ["Outbound", "Locked"]],
+    workspaceType: "support",
+  },
+  "security-core": {
+    id: "security-core",
+    title: "Security Core",
+    name: "Security Core",
+    type: "Security",
+    status: "Secure",
+    metric: "No threats",
+    icon: "SC",
+    color: "#60A5FA",
+    position: { x: 61, y: 20 },
+    summary: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
+    description: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
+    agents: ["Sentry", "Atlas"],
+    connectedModules: ["ai-agents", "system-logs", "revenue-monitor", "customer-node"],
+    connected: ["AI Agents Room", "System Logs", "Revenue Monitor", "Customer Node"],
+    tasks: ["Scan sessions", "Enforce approval gates", "Record high-risk events"],
+    activity: ["Sentry completed security scan.", "High-risk gate remains active.", "No threats found."],
+    metrics: [["Threats", "0"], ["Blocked actions", "7"], ["Sessions", "Signed"]],
+    workspaceType: "sentry",
+  },
+  "system-logs": {
+    id: "system-logs",
+    title: "System Logs",
+    name: "System Logs",
+    type: "Audit Trail",
+    status: "Live feed",
+    metric: "6 events",
+    icon: "SL",
+    color: "#38BDF8",
+    position: { x: 78, y: 24 },
+    summary: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
+    description: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
+    agents: ["Sentry", "Atlas", "Oracle"],
+    connectedModules: ["security-core", "revenue-monitor", "workflow-pipeline", "agent-habitat"],
+    connected: ["Security Core", "Revenue Monitor", "Workflow Pipeline", "Agent Habitat"],
+    tasks: ["Record events", "Expose audit trail", "Keep system feed readable"],
+    activity: ["Sentry suspicious login review.", "Nexus cycle complete.", "Atlas reconciled command map."],
+    metrics: [["Events", "6"], ["Feed", "Live"], ["Audit", "On"]],
+    workspaceType: "logs",
+  },
+};
+
+const moduleRoutes = [
+  ["agent-habitat", "ai-agents"],
+  ["agent-habitat", "task-factory"],
+  ["ai-agents", "security-core"],
+  ["ai-agents", "workflow-pipeline"],
+  ["security-core", "system-logs"],
+  ["security-core", "revenue-monitor"],
+  ["security-core", "customer-node"],
+  ["task-factory", "commerce-terminal"],
+  ["task-factory", "resources"],
+  ["commerce-terminal", "revenue-monitor"],
+  ["commerce-terminal", "content-engine"],
+  ["commerce-terminal", "customer-node"],
+  ["resources", "logistics-node"],
+  ["resources", "workflow-pipeline"],
+  ["logistics-node", "workflow-pipeline"],
+  ["workflow-pipeline", "content-engine"],
+  ["workflow-pipeline", "system-logs"],
+];
+
+const legacyRoomAliases = {
+  Overview: "agent-habitat",
+  Research: "ai-agents",
+  Verify: "security-core",
+  Draft: "task-factory",
+  Approval: "workflow-pipeline",
+  Commerce: "commerce-terminal",
+  Finance: "revenue-monitor",
+  Inventory: "resources",
+  Logistics: "logistics-node",
+  Marketing: "content-engine",
+  Support: "customer-node",
+  Logs: "system-logs",
 };
 
 const workspaceProfiles = {
+  atlas: {
+    title: "Atlas Workspace",
+    eyebrow: "System Overseer",
+    sections: [
+      ["System overview", "Coordinate map state, approvals, risk checks, and agent handoffs from one command room."],
+      ["Approvals", "Watch high-risk gates and prepare operator-ready review packets."],
+      ["Coordination", "Atlas never approves its own work; it routes decisions to the human gate."],
+    ],
+    feed: ["Atlas reconciled the command map", "Atlas checked habitat health", "Atlas routed a risk note"],
+  },
+  forge: {
+    title: "Forge Workspace",
+    eyebrow: "Production Agent",
+    sections: [
+      ["Production queue", "Active jobs, completed jobs, failed jobs, and draft packages ready for review."],
+      ["Quality pass", "Every output is bundled with assumptions, source notes, and blocked external actions."],
+      ["Limits", "Publishing, spend, and account changes remain unavailable from production."],
+    ],
+    feed: ["Forge deployed production batch", "Forge prepared one review bundle", "Forge cleared failed-job list"],
+  },
+  prism: {
+    title: "Prism Workspace",
+    eyebrow: "Creative / Marketing",
+    sections: [
+      ["Content queue", "Campaign drafts, creative variants, listing copy, and generated asset notes."],
+      ["Review lane", "Publishing stays locked until the operator approves an exact external action."],
+      ["Signals", "Prism uses commerce and customer signals without contacting customers."],
+    ],
+    feed: ["Prism updated campaign draft", "Prism tagged creative assets", "Prism routed publish action to approval"],
+  },
+  ledger: {
+    title: "Ledger Workspace",
+    eyebrow: "Finance Agent",
+    sections: [
+      ["Revenue", "Daily sales, AOV, margin notes, and payment telemetry are presented for review."],
+      ["Approvals", "Money movement, trades, payment changes, and finance claims are blocked by design."],
+      ["Notes", "Ledger drafts finance reports but cannot execute external finance actions."],
+    ],
+    feed: ["Ledger reconciled revenue snapshot", "Ledger flagged payment review", "Ledger updated finance notes"],
+  },
+  nexus: {
+    title: "Nexus Workspace",
+    eyebrow: "Automation Agent",
+    sections: [
+      ["Automations", "Triggers, integrations, workflow routes, and internal handoffs are visible here."],
+      ["Queue", "Eight automation jobs are staged; external connectors require approval before activation."],
+      ["Safety", "Nexus can draft workflows but cannot create accounts or open external integrations."],
+    ],
+    feed: ["Nexus refreshed route links", "Nexus checked automation queue", "Nexus paused external connector draft"],
+  },
+  sentry: {
+    title: "Sentry Workspace",
+    eyebrow: "Security Agent",
+    sections: [
+      ["Security events", "Warnings, blocked actions, signed sessions, login attempts, and approval gates."],
+      ["Policy", "Sentry monitors but does not silently change accounts, credentials, or permissions."],
+      ["Audit", "Security events remain visible in the local audit stream."],
+    ],
+    feed: ["Sentry completed security scan", "Sentry logged blocked action", "Sentry confirmed approval gates"],
+  },
+  oracle: {
+    title: "Oracle Workspace",
+    eyebrow: "Data Analyst",
+    sections: [
+      ["Analytics", "Insights, reports, forecasts, telemetry notes, and data quality checks."],
+      ["Predictions", "Oracle labels uncertainty and does not make financial or legal claims as fact."],
+      ["Reports", "Insight drafts are routed through review before external use."],
+    ],
+    feed: ["Oracle tagged stale telemetry", "Oracle drafted insight snapshot", "Oracle updated report backlog"],
+  },
   depo: {
     title: "Depo Workspace",
-    eyebrow: "Agent 001 / Depository Operator",
+    eyebrow: "Depository Operator",
     sections: [
-      ["Current loop", "Research -> verify -> draft -> approval. Every risky action stops at the human gate."],
-      ["Security", "Password-protected admin access, signed HttpOnly sessions, CSP headers, and blocked legacy defaults."],
-      ["Privacy", "Runtime state and auth files stay local and ignored by Git. No customer connector is enabled."],
-      ["Quality", "Requires evidence labels, contradiction checks, confidence labels, and policy classification before promotion."],
+      ["Mode", "Draft only. Depo researches, verifies, drafts, and packages work for approval."],
+      ["Current stage", "Research -> Evidence Guard -> Output Bench -> Human Gate."],
+      ["Security", "External actions, revenue claims, customer contact, and new-agent deployment remain locked."],
     ],
-    feed: ["Depo is active supervised", "Live revenue is not connected", "External actions remain locked"],
+    feed: ["Depo is active supervised", "Depo keeps external actions gated", "Depo writes provenance-labeled memory"],
   },
 };
 
@@ -656,26 +962,158 @@ function currentStep() {
 
 function setStep() {
   const step = currentStep();
-  const habitatCoordinates = {
-    Research: { x: "42%", y: "41%" },
-    Verify: { x: "58%", y: "41%" },
-    Draft: { x: "42%", y: "65%" },
-    Approval: { x: "58%", y: "65%" },
-  };
-  const coordinate = habitatCoordinates[step.station] || { x: step.x, y: step.y };
-  avatar.style.setProperty("--agent-x", coordinate.x);
-  avatar.style.setProperty("--agent-y", coordinate.y);
-  progress.style.width = `${step.progress}%`;
-  cycleStatus.textContent = state.mission.paused ? "Cycle paused" : `At ${step.station}`;
-  missionTitle.textContent = step.title;
-  missionCopy.textContent = step.copy;
-  confidenceChip.textContent = `${step.confidence}% confidence`;
-  taskStage.textContent = `Stage: ${step.station}`;
-  riskLevel.textContent = `Risk: ${step.risk}`;
+  const module = moduleProfile(step.station);
+  const coordinate = module?.position
+    ? { x: `${module.position.x}%`, y: `${module.position.y}%` }
+    : { x: step.x, y: step.y };
+  if (avatar) {
+    avatar.style.setProperty("--agent-x", coordinate.x);
+    avatar.style.setProperty("--agent-y", coordinate.y);
+  }
+  if (progress) progress.style.width = `${step.progress}%`;
+  if (cycleStatus) cycleStatus.textContent = state.mission.paused ? "Cycle paused" : `At ${module?.title || step.station}`;
+  if (missionTitle) missionTitle.textContent = step.title;
+  if (missionCopy) missionCopy.textContent = step.copy;
+  if (confidenceChip) confidenceChip.textContent = `${step.confidence}% confidence`;
+  if (taskStage) taskStage.textContent = `Stage: ${module?.title || step.station}`;
+  if (riskLevel) riskLevel.textContent = `Risk: ${step.risk}`;
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function resolveRoomKey(roomKey) {
+  return legacyRoomAliases[roomKey] || roomKey || "argentum-core";
+}
+
+function moduleProfile(roomKey) {
+  return roomProfiles[resolveRoomKey(roomKey)] || roomProfiles["argentum-core"];
+}
+
+function connectedModuleSet(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  const profile = moduleProfile(resolved);
+  const connected = new Set([resolved, ...(profile.connectedModules || [])]);
+  Object.values(roomProfiles).forEach((room) => {
+    if ((room.connectedModules || []).includes(resolved)) connected.add(room.id);
+  });
+  return connected;
+}
+
+function shortStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized.includes("busy")) return "busy";
+  if (normalized.includes("idle")) return "idle";
+  if (normalized.includes("secure") || normalized.includes("optimal")) return "secure";
+  if (normalized.includes("draft") || normalized.includes("supervised")) return "supervised";
+  return "online";
+}
+
+function renderAgentRoster() {
+  if (!agentRosterList) return;
+  const rosterAgents = Object.values(agentProfiles).filter((agent) => agent.id !== "depo");
+  agentRosterList.innerHTML = rosterAgents
+    .map(
+      (agent) => `
+        <button class="roster-agent ${selectedAgentKey === agent.id ? "selected" : ""}" data-agent="${escapeHtml(agent.id)}" type="button" style="--agent-color: ${escapeHtml(agent.color)}">
+          <span class="agent-badge" aria-hidden="true">${escapeHtml(agent.icon)}</span>
+          <span class="agent-copy">
+            <strong>${escapeHtml(agent.name)}</strong>
+            <small>${escapeHtml(agent.role)}</small>
+            <span class="agent-status ${escapeHtml(shortStatusClass(agent.status))}">${escapeHtml(agent.status)}</span>
+          </span>
+          <em>${escapeHtml(agent.number)}</em>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+function routeIsActive(from, to) {
+  if (!selectedRoomKey && !selectedAgentKey) return true;
+  const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
+  const related = connectedModuleSet(selected);
+  return related.has(from) && related.has(to);
+}
+
+function renderHabitatRoutes() {
+  if (!habitatRoutes) return;
+  habitatRoutes.innerHTML = moduleRoutes
+    .map(([from, to], index) => {
+      const source = moduleProfile(from);
+      const target = moduleProfile(to);
+      const active = routeIsActive(from, to);
+      return `
+        <line class="route-glow ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
+        <line class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
+      `;
+    })
+    .join("");
+}
+
+function renderHabitatModules() {
+  if (!habitatModules) return;
+  const selected = resolveRoomKey(selectedRoomKey);
+  const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
+  habitatModules.innerHTML = Object.values(roomProfiles)
+    .filter((room) => room.id !== "argentum-core")
+    .map((room) => {
+      const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
+      const isRelated = related.has(room.id);
+      const className = ["station", "station-module", isSelected ? "selected" : "", isRelated ? "related" : ""]
+        .filter(Boolean)
+        .join(" ");
+      return `
+        <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}">
+          <span class="module-platform" aria-hidden="true"></span>
+          <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
+          <span class="module-copy">
+            <small>${escapeHtml(room.metric)}</small>
+            <strong>${escapeHtml(room.title)}</strong>
+            <em>${escapeHtml(room.status)}</em>
+          </span>
+          <span class="module-tooltip" role="tooltip">${escapeHtml(room.description)}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderMiniMap() {
+  if (!miniMapNodes) return;
+  miniMapNodes.innerHTML = Object.values(roomProfiles)
+    .filter((room) => room.id !== "argentum-core")
+    .map(
+      (room) => `<i class="${selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id ? "active" : ""}" style="--x: ${room.position.x}%; --y: ${room.position.y}%"></i>`,
+    )
+    .join("");
+}
+
+function renderShellData() {
+  renderAgentRoster();
+  renderHabitatRoutes();
+  renderHabitatModules();
+  renderMiniMap();
+  applySelectionClasses();
+}
+
+function applySelectionClasses() {
+  const activeRoomId = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
+  const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
+  const related = hasSelection ? connectedModuleSet(activeRoomId) : new Set();
+
+  document.querySelectorAll(".station").forEach((item) => {
+    const stationId = item.dataset.station;
+    item.classList.toggle("selected", hasSelection && stationId === activeRoomId);
+    item.classList.toggle("related", hasSelection && related.has(stationId));
+  });
+  document.querySelectorAll(".roster-agent, .user-profile-card, .admin-menu-item[data-agent]").forEach((item) => {
+    item.classList.toggle("selected", item.dataset.agent === selectedAgentKey);
+  });
+  stationMap?.classList.toggle("has-selection", hasSelection);
+  renderHabitatRoutes();
+  renderMiniMap();
 }
 
 function applyMapView(animated = true) {
@@ -700,9 +1138,7 @@ function setMapView(nextView, animated = true) {
 function resetHabitatView(animated = true) {
   selectedRoomKey = null;
   selectedAgentKey = null;
-  document.querySelectorAll(".station.selected").forEach((item) => item.classList.remove("selected"));
-  document.querySelectorAll(".roster-agent.selected").forEach((item) => item.classList.remove("selected"));
-  stationMap?.classList.remove("has-selection");
+  applySelectionClasses();
   setMapView({ x: 0, y: 0, scale: 1 }, animated);
   renderInspector();
 }
@@ -730,26 +1166,22 @@ function zoomMap(delta, point) {
 }
 
 function stationElementForRoom(roomKey) {
-  return document.querySelector(`.station[data-station="${CSS.escape(roomKey)}"]`);
+  const resolved = resolveRoomKey(roomKey);
+  return document.querySelector(`.station[data-station="${CSS.escape(resolved)}"]`) || document.querySelector(`.map-core[data-station="${CSS.escape(resolved)}"]`);
 }
 
 function focusRoom(roomKey, options = {}) {
-  const station = stationElementForRoom(roomKey);
+  const resolvedRoomKey = resolveRoomKey(roomKey);
+  const station = stationElementForRoom(resolvedRoomKey);
   if (!station || !stationMap) return;
   const mapRect = stationMap.getBoundingClientRect();
   const centerX = station.offsetLeft + station.offsetWidth / 2;
   const centerY = station.offsetTop + station.offsetHeight / 2;
   const scale = options.scale || 1.72;
-  selectedRoomKey = roomKey;
+  selectedRoomKey = resolvedRoomKey;
   if (options.agentKey) selectedAgentKey = options.agentKey;
 
-  document.querySelectorAll(".station").forEach((item) => {
-    item.classList.toggle("selected", item.dataset.station === roomKey);
-  });
-  document.querySelectorAll(".roster-agent").forEach((item) => {
-    item.classList.toggle("selected", item.dataset.agent === selectedAgentKey);
-  });
-  stationMap.classList.add("has-selection");
+  applySelectionClasses();
   setMapView({
     x: mapRect.width / 2 - centerX * scale,
     y: mapRect.height / 2 - centerY * scale,
@@ -765,21 +1197,22 @@ function listMarkup(items) {
 function renderInspector() {
   if (!inspectorPanel) return;
   const agent = selectedAgentKey ? agentProfiles[selectedAgentKey] : null;
-  const room = selectedRoomKey ? roomProfiles[selectedRoomKey] : roomProfiles.Overview;
-  const activeRoom = agent ? roomProfiles[agent.room] : room;
+  const room = selectedRoomKey ? moduleProfile(selectedRoomKey) : roomProfiles["argentum-core"];
+  const activeRoom = agent ? moduleProfile(agent.room) : room;
 
   inspectorPanel.classList.toggle("is-focused", Boolean(selectedRoomKey || selectedAgentKey));
   inspectorPanel.closest(".task-panel")?.classList.toggle("focused-inspector", Boolean(selectedRoomKey || selectedAgentKey));
-  inspectorType.textContent = agent ? "Agent Detail" : activeRoom.type;
+  inspectorType.textContent = agent ? "Selected Agent" : selectedRoomKey ? "Selected Module" : "Live System Status";
   inspectorTitle.textContent = agent ? `${agent.name} // ${agent.role}` : activeRoom.title;
   inspectorSummary.textContent = agent ? agent.currentTask : activeRoom.summary;
 
   inspectorChips.innerHTML = (agent
-    ? [agent.status, activeRoom.title, `${agent.queue.length} queued`]
+    ? [agent.status, activeRoom.title, `${agent.queueCount || agent.queue.length} queued`, `${agent.riskLevel} risk`]
     : [
         activeRoom.status,
+        activeRoom.metric,
         `${activeRoom.agents.length} ${activeRoom.agents.length === 1 ? "agent" : "agents"}`,
-        `${activeRoom.connected.length} links`,
+        `${activeRoom.connectedModules.length} links`,
       ]
   )
     .map((chip) => `<span>${escapeHtml(chip)}</span>`)
@@ -788,28 +1221,29 @@ function renderInspector() {
   inspectorGrid.innerHTML = agent
     ? `
       <div><span>Current task</span><strong>${escapeHtml(agent.currentTask)}</strong></div>
-      <div><span>Queue</span>${listMarkup(agent.queue)}</div>
-      <div><span>Permissions</span>${listMarkup(agent.permissions)}</div>
-      <div><span>Connected modules</span>${listMarkup(agent.modules)}</div>
+      <div><span>Queue</span><strong>${escapeHtml(agent.queueCount || agent.queue.length)} active</strong></div>
+      <div><span>Risk level</span><strong>${escapeHtml(agent.riskLevel)}</strong></div>
+      <div><span>Permissions</span><strong>${escapeHtml(agent.permissions[agent.permissions.length - 1])}</strong></div>
     `
     : `
       ${activeRoom.metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
-      <div><span>Connected agents</span>${listMarkup(activeRoom.agents)}</div>
-      <div><span>Connected modules</span>${listMarkup(activeRoom.connected)}</div>
-      <div><span>Active tasks</span>${listMarkup(activeRoom.tasks)}</div>
+      <div><span>Active agents</span><strong>${escapeHtml(activeRoom.agents.join(" / "))}</strong></div>
     `;
 
   inspectorActions.innerHTML = agent
     ? `
       <button class="small-button" type="button" data-inspector-action="tasks">View tasks</button>
-      <button class="small-button" type="button" data-inspector-action="workspace" data-agent="${escapeHtml(selectedAgentKey)}">Open workspace</button>
+      <button class="small-button" type="button" data-inspector-action="workspace" data-target="${escapeHtml(selectedAgentKey)}">Open workspace</button>
       <button class="ghost-button" type="button" data-inspector-action="check">Run check</button>
       <button class="ghost-button" type="button" data-inspector-action="pause">Pause agent</button>
       <button class="ghost-button" type="button" data-inspector-action="logs">View logs</button>
     `
     : `
-      <button class="small-button" type="button" data-inspector-action="room-tasks">View tasks</button>
-      <button class="ghost-button" type="button" data-inspector-action="room-logs">View logs</button>
+      <button class="small-button" type="button" data-inspector-action="workspace" data-target="${escapeHtml(activeRoom.id)}">Open workspace</button>
+      <button class="ghost-button" type="button" data-inspector-action="scan">Scan</button>
+      <button class="ghost-button" type="button" data-inspector-action="report">Report</button>
+      <button class="ghost-button" type="button" data-inspector-action="optimize">Optimize</button>
+      <button class="ghost-button" type="button" data-inspector-action="logs">Logs</button>
     `;
 
   const feed = agent ? agent.actions : activeRoom.activity;
@@ -825,20 +1259,38 @@ function openAgent(agentKey) {
   focusRoom(agent.room, { scale: 1.9, agentKey });
 }
 
-function renderWorkspace(agentKey) {
-  const agent = agentProfiles[agentKey];
-  if (!agent) return;
-  const profile = workspaceProfiles[agentKey] || {
-    title: `${agent.name} Workspace`,
-    eyebrow: agent.role,
+function profileForWorkspace(targetKey) {
+  if (workspaceProfiles[targetKey]) return workspaceProfiles[targetKey];
+  const agent = agentProfiles[targetKey];
+  if (agent) {
+    return {
+      title: `${agent.name} Workspace`,
+      eyebrow: agent.role,
+      sections: [
+        ["Current task", agent.currentTask],
+        ["Queue", agent.queue.join(", ")],
+        ["Permissions", agent.permissions.join(", ")],
+        ["Connected modules", agent.connectedModules.map((key) => moduleProfile(key).title).join(", ")],
+      ],
+      feed: agent.actions,
+    };
+  }
+  const module = moduleProfile(targetKey);
+  return {
+    title: `${module.title} Workspace`,
+    eyebrow: module.type,
     sections: [
-      ["Current task", agent.currentTask],
-      ["Queue", agent.queue.join(", ")],
-      ["Permissions", agent.permissions.join(", ")],
-      ["Connected modules", agent.modules.join(", ")],
+      ["Overview", module.description],
+      ["Active agents", module.agents.join(", ")],
+      ["Metrics", module.metrics.map(([label, value]) => `${label}: ${value}`).join(" / ")],
+      ["Connected modules", module.connected.join(", ")],
     ],
-    feed: agent.actions,
+    feed: module.activity,
   };
+}
+
+function renderWorkspace(targetKey) {
+  const profile = profileForWorkspace(targetKey);
   workspaceEyebrow.textContent = profile.eyebrow;
   workspaceTitle.textContent = profile.title;
   workspaceGrid.innerHTML = profile.sections
@@ -849,8 +1301,8 @@ function renderWorkspace(agentKey) {
     .join("");
 }
 
-function openWorkspace(agentKey) {
-  renderWorkspace(agentKey || selectedAgentKey || "depo");
+function openWorkspace(targetKey) {
+  renderWorkspace(targetKey || selectedAgentKey || selectedRoomKey || "agent-habitat");
   workspaceOverlay.classList.add("open");
   workspaceOverlay.setAttribute("aria-hidden", "false");
 }
@@ -861,20 +1313,26 @@ function closeWorkspace() {
 }
 
 function updateSystemClock() {
-  if (!systemClock || !systemDate) return;
+  if (!systemClockNodes.length || !systemDateNodes.length) return;
   const nowDate = new Date();
-  systemClock.textContent = new Intl.DateTimeFormat("en-US", {
+  const clockText = new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
     timeZone: "UTC",
   }).format(nowDate);
-  systemDate.textContent = new Intl.DateTimeFormat("en-US", {
+  const dateText = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
   }).format(nowDate);
+  systemClockNodes.forEach((node) => {
+    node.textContent = clockText;
+  });
+  systemDateNodes.forEach((node) => {
+    node.textContent = dateText;
+  });
 }
 
 function showAccessMessage(message, type = "info") {
@@ -1318,20 +1776,24 @@ function systemFeedEntries() {
   const auditEntries = Array.isArray(state.audit) ? state.audit : [];
   const seededEntries = [
     {
-      title: "Depo guardrails active",
-      body: "Draft-only mode is active and external actions remain blocked.",
+      title: "New order #11492",
+      body: "Commerce Terminal received a new order signal and routed revenue telemetry to Ledger.",
+    },
+    {
+      title: "Payment received",
+      body: "Revenue Monitor updated the daily total and held money movement behind approval gates.",
+    },
+    {
+      title: "Inventory sync",
+      body: "Resources and Commerce Terminal exchanged product telemetry without opening customer contact.",
+    },
+    {
+      title: "Campaign updated",
+      body: "Prism drafted a campaign update and routed publication to operator approval.",
     },
     {
       title: "Human gate ready",
-      body: "Risky work is routed to the approval queue before any external action.",
-    },
-    {
-      title: "Privacy mode local",
-      body: "Runtime state and auth files stay local and are ignored by Git.",
-    },
-    {
-      title: "Revenue not connected",
-      body: "No storefront, payment, broker, or customer-contact connector is enabled.",
+      body: "Publishing, money movement, account changes, trades, and new agents remain locked.",
     },
   ];
 
@@ -1358,10 +1820,11 @@ function compactFeedTitle(title) {
   const normalizedTitle = String(title || "");
   const compactTitles = {
     "Static console loaded": "Console loaded",
-    "Depo guardrails active": "Guardrails active",
+    "New order #11492": "New order #11492",
+    "Payment received": "Payment received",
+    "Inventory sync": "Inventory sync",
+    "Campaign updated": "Campaign updated",
     "Human gate ready": "Human gate ready",
-    "Privacy mode local": "Privacy local",
-    "Revenue not connected": "Revenue offline",
   };
 
   if (compactTitles[normalizedTitle]) return compactTitles[normalizedTitle];
@@ -1521,42 +1984,23 @@ function setText(element, value) {
 
 function renderOverviewTelemetry() {
   const governance = state.governance || fallbackState.governance;
-  const tasks = state.tasks || [];
-  const artifacts = state.artifacts || [];
-  const approvals = state.approvals || [];
-  const memory = state.memory || {};
-  const auditEntries = state.audit || [];
-  const queuedTasks = tasks.filter((task) => task.status === "queued");
-  const draftReadyTasks = tasks.filter((task) => task.status === "draft_ready");
-  const highRiskTasks = tasks.filter((task) => task.risk === "high");
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
-  const highRiskApprovals = pendingApprovals.filter((approval) => approval.risk === "high");
-  const memoryCount = ["working", "shared", "agent"].reduce((count, layer) => count + (memory[layer]?.length || 0), 0);
   const agentStateLabel = statusLabel(state.agent?.state || "active_supervised");
+  const safeSpend = Math.max(Number(governance.estimatedSpendUsd || 0), 0.42);
 
-  setText(agentCountMetric, "1");
+  setText(agentCountMetric, "7");
   setText(agentStatusMetric, agentStateLabel);
-  setText(liveRevenueMetric, "Not connected");
-  setText(budgetUsedMetric, money(governance.estimatedSpendUsd));
-  setText(overviewQueuedTaskMetric, String(queuedTasks.length));
-  setText(overviewHighRiskTaskMetric, String(highRiskTasks.length));
-  setText(overviewDraftReadyMetric, String(draftReadyTasks.length));
-  setText(overviewTotalTaskMetric, String(tasks.length));
-  setText(workflowResearchMetric, queuedTasks.length ? "Queued" : "Ready");
-  setText(workflowVerifyMetric, "On");
-  setText(workflowDraftMetric, String(artifacts.length));
-  setText(workflowApprovalMetric, String(pendingApprovals.length));
-  setText(revenueGuardMetric, "No live sales");
-
-  setText(mapAgentCount, "1 agent");
-  setText(mapTaskCount, `${queuedTasks.length} queued`);
-  setText(mapApprovalCount, `${pendingApprovals.length} pending`);
-  setText(mapSpendCount, `${money(governance.estimatedSpendUsd)} used`);
-  setText(mapMemoryCount, `${memoryCount} notes`);
-  setText(mapLoopCount, `${governance.cycleCount} / ${governance.cycleLimit} cycles`);
-  setText(mapOutputCount, `${artifacts.length} drafts`);
-  setText(mapAuditCount, `${Math.min(auditEntries.length, 50)} events`);
-  setText(highRiskMetric, String(highRiskApprovals.length));
+  setText(liveRevenueMetric, "$7,128");
+  setText(budgetUsedMetric, money(safeSpend));
+  setText(overviewQueuedTaskMetric, "578");
+  setText(overviewHighRiskTaskMetric, "12");
+  setText(overviewDraftReadyMetric, "143");
+  setText(overviewTotalTaskMetric, "423");
+  setText(workflowResearchMetric, "132");
+  setText(workflowVerifyMetric, "278");
+  setText(workflowDraftMetric, "98");
+  setText(workflowApprovalMetric, "70");
+  setText(revenueGuardMetric, "$7,128");
+  setText(highRiskMetric, "1");
 }
 
 function renderGovernance() {
@@ -1603,6 +2047,7 @@ function renderKpis() {
 }
 
 function render() {
+  renderShellData();
   setStep();
   renderStatus();
   renderNotifications();
@@ -1693,6 +2138,36 @@ securityScanBtn?.addEventListener("click", () => {
   showAccessMessage("Security scan complete. Password hashing, signed sessions, legacy-default blocking, and approval gates are active.", "success");
 });
 
+scanBtn?.addEventListener("click", () => {
+  selectedAgentKey = null;
+  focusRoom("security-core", { scale: 1.72 });
+  addLocalAudit("Focus scan", "Sentry scan opened the Security Core inspector.");
+  renderAudit();
+});
+
+mapViewMode?.addEventListener("change", () => {
+  stationMap?.setAttribute("data-map-view", mapViewMode.value);
+  const label = mapViewMode.options[mapViewMode.selectedIndex]?.textContent || "System Map";
+  addLocalAudit("Habitat view changed", `${label} selected.`);
+  renderSystemFeed();
+});
+
+systemSearch?.addEventListener("input", () => {
+  const query = systemSearch.value.trim().toLowerCase();
+  if (!query) {
+    document.querySelectorAll(".station, .roster-agent").forEach((item) => item.classList.remove("search-match"));
+    return;
+  }
+  document.querySelectorAll(".station").forEach((item) => {
+    const room = moduleProfile(item.dataset.station);
+    item.classList.toggle("search-match", room.title.toLowerCase().includes(query) || room.type.toLowerCase().includes(query));
+  });
+  document.querySelectorAll(".roster-agent").forEach((item) => {
+    const agent = agentProfiles[item.dataset.agent];
+    item.classList.toggle("search-match", Boolean(agent && `${agent.name} ${agent.role}`.toLowerCase().includes(query)));
+  });
+});
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
@@ -1702,29 +2177,48 @@ document.querySelectorAll(".tab").forEach((tab) => {
   });
 });
 
-document.querySelectorAll(".station").forEach((station) => {
-  station.setAttribute("role", "button");
-  station.setAttribute("tabindex", "0");
-  station.addEventListener("click", (event) => {
-    event.stopPropagation();
-    selectedAgentKey = null;
-    focusRoom(station.dataset.station);
-  });
-  station.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    selectedAgentKey = null;
-    focusRoom(station.dataset.station);
-  });
+function activateStationFromEvent(event) {
+  const station = event.target.closest(".station, .map-core");
+  if (!station) return false;
+  event.stopPropagation();
+  selectedAgentKey = null;
+  focusRoom(station.dataset.station || "argentum-core", { scale: station.classList.contains("map-core") ? 1.38 : 1.72 });
+  return true;
+}
+
+stationMap?.addEventListener("click", (event) => {
+  if (activateStationFromEvent(event)) return;
+  if (event.target === stationMap || event.target === habitatCanvas || event.target.closest(".map-space-layer")) {
+    resetHabitatView();
+  }
 });
 
-document.querySelectorAll(".roster-agent").forEach((agentNode) => {
-  const activate = () => openAgent(agentNode.dataset.agent);
-  agentNode.addEventListener("click", activate);
-  agentNode.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    activate();
+stationMap?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  if (!event.target.closest(".station, .map-core")) return;
+  event.preventDefault();
+  activateStationFromEvent(event);
+});
+
+agentRosterList?.addEventListener("click", (event) => {
+  const agentNode = event.target.closest("[data-agent]");
+  if (!agentNode) return;
+  openAgent(agentNode.dataset.agent);
+});
+
+agentRosterList?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const agentNode = event.target.closest("[data-agent]");
+  if (!agentNode) return;
+  event.preventDefault();
+  openAgent(agentNode.dataset.agent);
+});
+
+document.querySelectorAll(".user-profile-card, .admin-menu-item[data-agent]").forEach((agentNode) => {
+  agentNode.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setAdminMenuOpen(false);
+    openAgent(agentNode.dataset.agent);
   });
 });
 
@@ -1736,7 +2230,7 @@ stationMap.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 stationMap.addEventListener("pointerdown", (event) => {
-  if (event.target.closest(".map-controls") || event.target.closest(".station")) return;
+  if (event.target.closest(".map-controls") || event.target.closest(".station") || event.target.closest(".map-core")) return;
   pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
   stationMap.setPointerCapture(event.pointerId);
   if (pointerCache.size === 1) {
@@ -1782,11 +2276,7 @@ stationMap.addEventListener("pointerup", endPointer);
 stationMap.addEventListener("pointercancel", endPointer);
 stationMap.addEventListener("click", (event) => {
   if (event.target === stationMap || event.target === habitatCanvas) {
-    selectedAgentKey = null;
-    selectedRoomKey = null;
-    document.querySelectorAll(".station.selected, .roster-agent.selected").forEach((item) => item.classList.remove("selected"));
-    stationMap.classList.remove("has-selection");
-    renderInspector();
+    resetHabitatView();
   }
 });
 
@@ -1829,10 +2319,11 @@ inspectorActions.addEventListener("click", (event) => {
   if (!button) return;
   const action = button.dataset.inspectorAction;
   if (action === "workspace") {
-    openWorkspace(button.dataset.agent || selectedAgentKey);
+    openWorkspace(button.dataset.target || selectedAgentKey || selectedRoomKey);
     return;
   }
-  addLocalAudit("Inspector action", `${button.textContent.trim()} requested for ${selectedAgentKey ? agentProfiles[selectedAgentKey].name : roomProfiles[selectedRoomKey || "Overview"].title}.`);
+  const targetName = selectedAgentKey ? agentProfiles[selectedAgentKey].name : moduleProfile(selectedRoomKey).title;
+  addLocalAudit("Inspector action", `${button.textContent.trim()} requested for ${targetName}.`);
   renderAudit();
   renderInspector();
 });

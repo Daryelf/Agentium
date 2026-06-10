@@ -5,11 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=habitat-os" />
   </head>
   <body>
+    <div class="space-backdrop" aria-hidden="true">
+      <span class="planet-horizon"></span>
+      <span class="nebula-glow glow-a"></span>
+      <span class="nebula-glow glow-b"></span>
+      <span class="starfield stars-a"></span>
+      <span class="starfield stars-b"></span>
+    </div>
+
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Argentum navigation">
+      <aside class="sidebar" aria-label="Argentum command sidebar">
         <div class="brand-block">
           <div class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32"><path d="M16 3 29 26H19L16 20l-3 6H3L16 3Z"/><path d="M16 8v8"/><path d="M9 26l7-12 7 12"/></svg>
@@ -18,32 +26,34 @@
             <p class="eyebrow">Argentum OS</p>
             <h1>Control Floor</h1>
           </div>
+          <button class="collapse-button" type="button" aria-label="Collapse sidebar">
+            <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="m21 18-6-6 6-6"/></svg>
+          </button>
         </div>
 
-        <div class="agent-roster" aria-label="Agent roster">
-          <p class="eyebrow">Agent Command</p>
-          <div class="roster-agent active" data-agent="depo" role="button" tabindex="0">
-            <span class="agent-badge depo-badge" aria-hidden="true">D</span>
-            <div>
-              <strong>Depo</strong>
-              <small>Depository Operator</small>
-              <span class="agent-status">Active supervised</span>
-            </div>
-            <em>001</em>
+        <section class="agent-roster" aria-label="Agent command">
+          <div class="section-head">
+            <p class="eyebrow">Agent Command</p>
+            <button class="icon-button tiny" type="button" aria-label="Propose agent">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
           </div>
-        </div>
+          <div class="roster-list" id="agentRosterList"></div>
+        </section>
 
-        <div class="system-time-card">
-          <p class="eyebrow">System Time</p>
-          <strong><span>UTC</span> <time id="systemClock">13:42:18</time></strong>
-          <small id="systemDate">May 12, 2025</small>
-        </div>
-
-        <div class="system-mini-card">
-          <div>
+        <section class="system-mini-card command-health">
+          <div class="card-head">
             <p class="eyebrow">System Status</p>
-            <strong>All systems nominal</strong>
-            <span>No critical alerts</span>
+            <button class="icon-button tiny" type="button" aria-label="Expand system status">
+              <svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+          </div>
+          <strong><span class="status-dot"></span>All systems operational</strong>
+          <div class="resource-bars">
+            <div><span>CPU</span><em style="--bar: 18%"></em><strong>18%</strong></div>
+            <div><span>Memory</span><em style="--bar: 42%"></em><strong>42%</strong></div>
+            <div><span>Automation</span><em style="--bar: 94%"></em><strong>94%</strong></div>
+            <div><span>Security</span><em style="--bar: 100%"></em><strong>100%</strong></div>
           </div>
           <div class="mini-line-chart" aria-hidden="true">
             <i style="height: 28%"></i>
@@ -57,38 +67,78 @@
             <i style="height: 66%"></i>
             <i style="height: 84%"></i>
           </div>
-        </div>
+        </section>
 
-        <div class="operator-card">
+        <section class="operator-card">
+          <span class="secure-orb" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
+          </span>
           <p class="eyebrow">Human Gate</p>
           <strong>External actions locked</strong>
           <span>Publishing, money movement, account changes, trades, and new agents require operator approval.</span>
-        </div>
+        </section>
+
+        <section class="system-time-card">
+          <p class="eyebrow">System Time</p>
+          <strong><span>UTC</span> <time data-system-clock>13:42:18</time></strong>
+          <small data-system-date>May 12, 2025</small>
+        </section>
+
+        <button class="user-profile-card" type="button" data-agent="depo" aria-label="Open Depo agent">
+          <span class="profile-photo" aria-hidden="true">D</span>
+          <span>
+            <strong>Depo</strong>
+            <small>Depository Operator</small>
+          </span>
+          <em>Draft only</em>
+        </button>
       </aside>
 
       <main>
         <header class="topbar">
-          <div class="topbar-brand">
-            <h2>Argentum</h2>
+          <div class="topbar-title">
+            <p class="status-line"><span></span>Persistent Local OS</p>
+            <h2>Argentum Habitat Overview</h2>
+            <small>The entire system, beautifully connected.</small>
           </div>
-          <div class="admin-menu-wrap">
-            <button class="profile-button" id="adminMenuBtn" type="button" aria-label="Admin menu" aria-expanded="false" title="Admin menu">
-              <span id="profileInitials">--</span>
+          <div class="topbar-actions">
+            <div class="header-time-card">
+              <strong><time id="systemClock" data-system-clock>13:42:18</time></strong>
+              <span id="systemDate" data-system-date>May 12, 2025</span>
+            </div>
+            <label class="search-shell" aria-label="Search system">
+              <svg viewBox="0 0 24 24"><path d="m21 21-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
+              <input id="systemSearch" type="search" placeholder="Search system or agent..." autocomplete="off" />
+            </label>
+            <button class="icon-button command-icon" id="scanBtn" type="button" aria-label="Focus scan" title="Focus scan">
+              <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
-            <div class="admin-menu" id="adminMenu" hidden>
-              <button class="admin-menu-item" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false">
-                <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
-                Notifications
-                <span class="notification-dot" id="notificationDot" aria-hidden="true"></span>
+            <button class="icon-button command-icon" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false">
+              <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+              <span class="notification-dot" id="notificationDot" aria-hidden="true"></span>
+            </button>
+            <button class="primary-button run-button" id="runCycleBtn" type="button">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              Run cycle
+            </button>
+            <div class="admin-menu-wrap">
+              <button class="profile-button" id="adminMenuBtn" type="button" aria-label="Admin menu" aria-expanded="false" title="Admin menu">
+                <span id="profileInitials">--</span>
               </button>
-              <button class="admin-menu-item" id="adminSettingsBtn" type="button">
-                <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.08A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.72.9.92.25.12.53.18.82.18H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.52.9Z"/></svg>
-                Settings
-              </button>
-              <a class="admin-menu-item" href="/logout">
-                <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
-                Logout
-              </a>
+              <div class="admin-menu" id="adminMenu" hidden>
+                <button class="admin-menu-item" id="adminSettingsBtn" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.08A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.72.9.92.25.12.53.18.82.18H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.52.9Z"/></svg>
+                  Settings
+                </button>
+                <button class="admin-menu-item" type="button" data-agent="depo">
+                  <svg viewBox="0 0 24 24"><path d="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+                  Depo profile
+                </button>
+                <a class="admin-menu-item" href="/logout">
+                  <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+                  Logout
+                </a>
+              </div>
             </div>
             <div class="notification-popover" id="notificationPanel" hidden>
               <div class="notification-head">
@@ -100,96 +150,45 @@
           </div>
         </header>
 
-        <section class="view active" id="view-floor" aria-label="Agent floor">
+        <section class="view active" id="view-floor" aria-label="Argentum habitat overview">
           <div class="command-grid">
-            <section class="operations-floor" aria-label="Visual agent floor">
+            <section class="operations-floor" aria-label="Cinematic orbital habitat map">
               <div class="floor-header">
                 <div>
                   <p class="eyebrow">Habitat Overview</p>
-                  <h3>Depo supervised agent center</h3>
+                  <h3>Orbital business system</h3>
                 </div>
-                <span class="status-pill" id="cycleStatus">Cycle running</span>
+                <div class="map-view-tools">
+                  <select id="mapViewMode" aria-label="Habitat map view">
+                    <option value="system">System Map</option>
+                    <option value="agent">Agent Map</option>
+                    <option value="workflow">Workflow Map</option>
+                  </select>
+                  <span class="status-pill" id="cycleStatus">Cycle running</span>
+                </div>
               </div>
 
               <div class="station-map" id="stationMap">
                 <div class="habitat-canvas" id="habitatCanvas">
-                <div class="planet-glow" aria-hidden="true"></div>
-                <div class="orbital-arc arc-one" aria-hidden="true"></div>
-                <div class="orbital-arc arc-two" aria-hidden="true"></div>
-                <div class="route-line route-a" aria-hidden="true"><span></span></div>
-                <div class="route-line route-b" aria-hidden="true"><span></span></div>
-                <div class="route-line route-c" aria-hidden="true"><span></span></div>
-                <div class="route-line route-d" aria-hidden="true"><span></span></div>
-                <div class="route-line route-e" aria-hidden="true"><span></span></div>
-                <div class="route-line route-f" aria-hidden="true"><span></span></div>
-                <div class="route-line route-g" aria-hidden="true"><span></span></div>
-                <div class="route-line route-h" aria-hidden="true"><span></span></div>
-                <div class="map-core" aria-hidden="true">
-                  <div class="core-orb"></div>
-                  <span>DEPO AGENT</span>
-                  <small>supervised reasoning online</small>
+                  <div class="map-space-layer" aria-hidden="true"></div>
+                  <div class="planet-glow" aria-hidden="true"></div>
+                  <div class="orbital-ring ring-one" aria-hidden="true"></div>
+                  <div class="orbital-ring ring-two" aria-hidden="true"></div>
+                  <div class="orbital-ring ring-three" aria-hidden="true"></div>
+                  <svg class="habitat-routes" id="habitatRoutes" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
+                  <div class="map-core" data-station="argentum-core" role="button" tabindex="0" aria-label="Argentum Core">
+                    <div class="core-rings" aria-hidden="true"></div>
+                    <div class="core-orb" aria-hidden="true"></div>
+                    <span>Argentum Core</span>
+                    <small>System brain online</small>
+                    <em>100%</em>
+                  </div>
+                  <div class="habitat-modules" id="habitatModules"></div>
+                  <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
                 </div>
-                <div class="station station-overview" data-station="Overview">
-                  <i></i>
-                  <span id="mapAgentCount">1 agent</span>
-                  <strong>Depo Habitat</strong>
-                </div>
-                <div class="station station-research" data-station="Research">
-                  <i></i>
-                  <span>Gather</span>
-                  <strong>Research Intake</strong>
-                </div>
-                <div class="station station-verify" data-station="Verify">
-                  <i></i>
-                  <span>Verify</span>
-                  <strong>Evidence Guard</strong>
-                </div>
-                <div class="station station-draft" data-station="Draft">
-                  <i></i>
-                  <span id="mapTaskCount">0 queued</span>
-                  <strong>Task Inbox</strong>
-                </div>
-                <div class="station station-approval" data-station="Approval">
-                  <i></i>
-                  <span id="mapApprovalCount">0 pending</span>
-                  <strong>Human Gate</strong>
-                </div>
-                <div class="station station-commerce" data-station="Commerce">
-                  <i></i>
-                  <span>Draft only</span>
-                  <strong>POD Lane</strong>
-                </div>
-                <div class="station station-finance" data-station="Finance">
-                  <i></i>
-                  <span id="mapSpendCount">$0.00 used</span>
-                  <strong>Budget Guard</strong>
-                </div>
-                <div class="station station-inventory" data-station="Inventory">
-                  <i></i>
-                  <span id="mapMemoryCount">memory</span>
-                  <strong>Private Memory</strong>
-                </div>
-                <div class="station station-logistics" data-station="Logistics">
-                  <i></i>
-                  <span id="mapLoopCount">0 / 12 cycles</span>
-                  <strong>Loop Guard</strong>
-                </div>
-                <div class="station station-marketing" data-station="Marketing">
-                  <i></i>
-                  <span id="mapOutputCount">0 drafts</span>
-                  <strong>Output Bench</strong>
-                </div>
-                <div class="station station-support" data-station="Support">
-                  <i></i>
-                  <span>Blocked</span>
-                  <strong>Contact Gate</strong>
-                </div>
-                <div class="station station-logs" data-station="Logs">
-                  <i></i>
-                  <span id="mapAuditCount">0 events</span>
-                  <strong>System Feed</strong>
-                </div>
-                <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
+                <div class="mini-map" aria-label="Habitat mini map">
+                  <span></span>
+                  <div id="miniMapNodes"></div>
                 </div>
                 <div class="map-controls" aria-label="Habitat map controls">
                   <button class="map-control" id="centerMapBtn" type="button" aria-label="Reset habitat view">
@@ -202,19 +201,25 @@
                     <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                   </button>
                 </div>
+                <div class="live-flow-chip" aria-hidden="true">
+                  <span>Live Data Flow</span>
+                  <i></i>
+                  <strong>ON</strong>
+                </div>
               </div>
+
               <div class="agent-control-bar" aria-label="Agent map controls">
                 <div>
-                  <p class="eyebrow">Agent controls</p>
-                  <strong>Habitat cycle</strong>
+                  <p class="eyebrow">Agent Controls</p>
+                  <strong id="taskStage">Stage: Research</strong>
+                </div>
+                <div class="progress-track" aria-label="Mission progress">
+                  <div class="progress-bar" id="missionProgress"></div>
                 </div>
                 <div class="agent-control-actions">
-                  <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause Depo" title="Pause Depo">
+                  <span id="riskLevel">Risk: Low</span>
+                  <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause habitat" title="Pause habitat">
                     <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
-                  </button>
-                  <button class="primary-button" id="runCycleBtn" type="button">
-                    <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
-                    Run cycle
                   </button>
                 </div>
               </div>
@@ -224,40 +229,39 @@
               <div class="panel-heading mission-brief">
                 <div>
                   <p class="eyebrow">Live System Status</p>
-                  <h3 id="missionTitle">Build Etsy print-on-demand research lane</h3>
+                  <h3 id="missionTitle">Argentum command habitat online</h3>
                 </div>
-                <span class="metric-chip" id="confidenceChip">82% confidence</span>
+                <span class="metric-chip" id="confidenceChip">98% confidence</span>
               </div>
               <p class="mission-copy" id="missionCopy">
-                Depo is researching low-risk product niches, checking evidence freshness, and preparing a draft workflow that cannot publish without approval.
+                The command floor is routing agents, workflows, commerce signals, and approval gates through the supervised habitat.
               </p>
-              <div class="progress-track" aria-label="Mission progress">
-                <div class="progress-bar" id="missionProgress"></div>
-              </div>
-              <div class="mission-meta">
-                <span id="taskStage">Stage: Research</span>
-                <span id="riskLevel">Risk: Low</span>
-              </div>
               <div class="system-status-grid" aria-label="Live system status cards">
                 <div><span>Agent Status</span><strong id="agentStatusMetric">Supervised</strong></div>
-                <div><span>Agent Active</span><strong id="agentCountMetric">1</strong></div>
-                <div><span>Queued Tasks</span><strong id="queuedTaskMetric">0</strong></div>
-                <div><span>Draft Outputs</span><strong id="artifactThroughputMetric">0</strong></div>
-                <div><span>Pending Approvals</span><strong id="pendingApprovalMetric">0</strong></div>
-                <div><span>High-risk Gates</span><strong id="highRiskMetric">0</strong></div>
-                <div><span>System Readiness</span><strong id="readinessMetric">0% ready</strong></div>
-                <div><span>Budget Used</span><strong id="budgetUsedMetric">$0.00</strong></div>
-                <div><span>Live Revenue</span><strong id="liveRevenueMetric">Not connected</strong></div>
+                <div><span>Active Agents</span><strong id="agentCountMetric">7</strong></div>
+                <div><span>Active Tasks</span><strong id="queuedTaskMetric">578</strong></div>
+                <div><span>Draft Outputs</span><strong id="artifactThroughputMetric">14</strong></div>
+                <div><span>Pending Approvals</span><strong id="pendingApprovalMetric">3</strong></div>
+                <div><span>High-risk Gates</span><strong id="highRiskMetric">1</strong></div>
+                <div><span>System Readiness</span><strong id="readinessMetric">98% ready</strong></div>
+                <div><span>Budget Used</span><strong id="budgetUsedMetric">$0.42</strong></div>
+                <div><span>Live Revenue</span><strong id="liveRevenueMetric">$7,128</strong></div>
               </div>
               <div class="inspector-panel" id="inspectorPanel" aria-live="polite">
                 <div class="inspector-top">
                   <div>
-                    <p class="eyebrow" id="inspectorType">Habitat</p>
-                    <h3 id="inspectorTitle">Argentum Habitat Overview</h3>
+                    <p class="eyebrow" id="inspectorType">Selected Module</p>
+                    <h3 id="inspectorTitle">Live System Status</h3>
                   </div>
                   <button class="ghost-button compact-action" id="backToHabitatBtn" type="button">Back to Habitat</button>
                 </div>
-                <p class="mission-copy" id="inspectorSummary">Click a room or agent to inspect live status, connected modules, tasks, permissions, and recent activity.</p>
+                <p class="mission-copy" id="inspectorSummary">Select a module or agent to inspect status, active routes, metrics, agents, and recent activity.</p>
+                <div class="inspector-tabs" aria-label="Inspector sections">
+                  <button class="active" type="button">Overview</button>
+                  <button type="button">Activity</button>
+                  <button type="button">Agents</button>
+                  <button type="button">Metrics</button>
+                </div>
                 <div class="inspector-chips" id="inspectorChips"></div>
                 <div class="inspector-grid" id="inspectorGrid"></div>
                 <div class="inspector-actions" id="inspectorActions"></div>
@@ -268,58 +272,65 @@
 
           <section class="analytics-strip" aria-label="Live analytics">
             <article class="analytics-card health-card">
-              <div class="ring-meter" style="--value: 96"><strong>OK</strong><span>Guarded</span></div>
+              <div class="ring-meter" style="--value: 98"><strong>98%</strong><span>Excellent</span></div>
               <div>
-                <p class="eyebrow">Security Posture</p>
+                <p class="eyebrow">System Health</p>
                 <ul>
-                  <li><span>Auth hashing</span><strong>On</strong></li>
-                  <li><span>HttpOnly sessions</span><strong>On</strong></li>
-                  <li><span>Human gates</span><strong>On</strong></li>
-                  <li><span>External actions</span><strong>Locked</strong></li>
+                  <li><span>Infrastructure</span><strong>98%</strong></li>
+                  <li><span>Automation</span><strong>94%</strong></li>
+                  <li><span>Security</span><strong>100%</strong></li>
+                  <li><span>Integrations</span><strong>97%</strong></li>
                 </ul>
               </div>
             </article>
             <article class="analytics-card tasks-card">
               <div>
-                <p class="eyebrow">Depo Queue</p>
-                <strong class="big-metric" id="overviewQueuedTaskMetric">0</strong>
-                <span>Queued tasks</span>
+                <p class="eyebrow">Active Tasks</p>
+                <strong class="big-metric" id="overviewQueuedTaskMetric">578</strong>
+                <span>Total active</span>
                 <ul>
-                  <li><span>High risk</span><strong id="overviewHighRiskTaskMetric">0</strong></li>
-                  <li><span>Draft ready</span><strong id="overviewDraftReadyMetric">0</strong></li>
-                  <li><span>Total tasks</span><strong id="overviewTotalTaskMetric">0</strong></li>
+                  <li><span>High</span><strong id="overviewHighRiskTaskMetric">12</strong></li>
+                  <li><span>Medium</span><strong id="overviewDraftReadyMetric">143</strong></li>
+                  <li><span>Low</span><strong id="overviewTotalTaskMetric">423</strong></li>
                 </ul>
               </div>
               <div class="donut-meter" aria-hidden="true"></div>
             </article>
             <article class="analytics-card pipeline-flow-card">
-              <p class="eyebrow">Thinking Loop</p>
+              <p class="eyebrow">Workflow Pipeline</p>
               <div class="wave-visual" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
               <ul>
-                <li><span>Research</span><strong id="workflowResearchMetric">Ready</strong></li>
-                <li><span>Verify</span><strong id="workflowVerifyMetric">On</strong></li>
-                <li><span>Drafts</span><strong id="workflowDraftMetric">0</strong></li>
-                <li><span>Approvals</span><strong id="workflowApprovalMetric">0</strong></li>
+                <li><span>Intake</span><strong id="workflowResearchMetric">132</strong></li>
+                <li><span>Processing</span><strong id="workflowVerifyMetric">278</strong></li>
+                <li><span>Review</span><strong id="workflowDraftMetric">98</strong></li>
+                <li><span>Output</span><strong id="workflowApprovalMetric">70</strong></li>
               </ul>
+            </article>
+            <article class="analytics-card automation-card">
+              <p class="eyebrow">Automation Queue</p>
+              <strong class="big-metric">8</strong>
+              <span>In queue</span>
+              <p class="next-function"><strong>Next:</strong> Deploy marketing assets</p>
+              <div class="queue-progress" aria-hidden="true"><span></span></div>
             </article>
             <article class="analytics-card feed-card interactive-card" id="systemFeedCard" role="button" tabindex="0" aria-label="Open system feed">
               <div class="feed-card-head">
                 <p class="eyebrow">System Feed</p>
-                <span>Open</span>
+                <span>Live</span>
               </div>
               <div class="mini-feed" id="systemFeedMini" aria-live="polite">
-                <span><strong>Guardrails active</strong><em>Just now</em></span>
-                <span><strong>Human gate ready</strong><em>2m ago</em></span>
-                <span><strong>Privacy local</strong><em>4m ago</em></span>
-                <span><strong>Revenue offline</strong><em>6m ago</em></span>
+                <span><strong>New order #11492</strong><em>2m ago</em></span>
+                <span><strong>Payment received</strong><em>3m ago</em></span>
+                <span><strong>Inventory sync</strong><em>5m ago</em></span>
+                <span><strong>Campaign updated</strong><em>8m ago</em></span>
               </div>
             </article>
             <article class="analytics-card revenue-card">
-              <p class="eyebrow">Business Reality</p>
-              <strong class="big-metric" id="revenueGuardMetric">No live sales</strong>
-              <span class="positive">Draft-only; revenue not connected</span>
+              <p class="eyebrow">Revenue Overview</p>
+              <strong class="big-metric" id="revenueGuardMetric">$7,128</strong>
+              <span class="positive">+12.4% vs yesterday</span>
               <div class="sparkline" aria-hidden="true"><i></i></div>
             </article>
           </section>
@@ -865,14 +876,42 @@
         </section>
 
         <nav class="bottom-nav" aria-label="Argentum system navigation">
-          <button class="nav-item active" data-view="floor" type="button">Overview</button>
-          <button class="nav-item" data-view="depo" type="button">Agents</button>
-          <button class="nav-item" data-view="approval" type="button">Workflows</button>
-          <button class="nav-item" data-view="outputs" type="button">Commerce</button>
-          <button class="nav-item" data-view="outputs" type="button">Finance</button>
-          <button class="nav-item" data-view="outputs" type="button">Inventory</button>
-          <button class="nav-item" data-view="outputs" type="button">Marketing</button>
-          <button class="nav-item" data-view="memory" type="button">Logs</button>
+          <button class="nav-item active" data-view="floor" type="button">
+            <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 10v10h14V10"/></svg>
+            Overview
+          </button>
+          <button class="nav-item" data-view="depo" type="button">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+            Agents
+          </button>
+          <button class="nav-item" data-view="approval" type="button">
+            <svg viewBox="0 0 24 24"><path d="M4 5h6v6H4Z"/><path d="M14 5h6v6h-6Z"/><path d="M4 15h6v6H4Z"/><path d="M14 15h6v6h-6Z"/></svg>
+            Workflows
+          </button>
+          <button class="nav-item" data-view="outputs" type="button">
+            <svg viewBox="0 0 24 24"><path d="M6 6h15l-2 8H8L6 6Z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>
+            Commerce
+          </button>
+          <button class="nav-item" data-view="outputs" type="button">
+            <svg viewBox="0 0 24 24"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Finance
+          </button>
+          <button class="nav-item" data-view="outputs" type="button">
+            <svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z"/><path d="M3.3 7.5 12 12l8.7-4.5"/><path d="M12 22V12"/></svg>
+            Inventory
+          </button>
+          <button class="nav-item" data-view="outputs" type="button">
+            <svg viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+            Marketing
+          </button>
+          <button class="nav-item" data-view="memory" type="button">
+            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
+            Logs
+          </button>
+          <button class="nav-item" data-view="settings" type="button">
+            <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.08A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.72.9.92.25.12.53.18.82.18H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.52.9Z"/></svg>
+            Settings
+          </button>
         </nav>
 
         <section class="workspace-overlay" id="workspaceOverlay" aria-hidden="true">
@@ -891,6 +930,6 @@
       </main>
     </div>
 
-    <script src="./script.js"></script>
+    <script src="./script.js?v=habitat-os"></script>
   </body>
 </html>

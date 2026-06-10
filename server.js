@@ -562,7 +562,7 @@ function setupPage(errorMessage = "") {
     title: "Create Admin Login",
     eyebrow: "Argentum OS first-run setup",
     copy: "Create the owner login before Argentum opens the console.",
-    action: "/setup",
+    action: "/",
     fields: `
       <label>
         Username
@@ -572,9 +572,13 @@ function setupPage(errorMessage = "") {
         Password
         <input name="password" type="password" autocomplete="new-password" minlength="12" required />
       </label>
+      <label class="remember-row">
+        <input name="savePassword" type="checkbox" value="on" autocomplete="off" />
+        <span>Save this login on this device</span>
+      </label>
     `,
     buttonLabel: "Create Admin",
-    note: "Use a unique password with at least 12 characters, including letters and numbers.",
+    note: "Your browser can save/autofill the password; Argentum only keeps a signed device session.",
     errorMessage,
   });
 }
@@ -1454,6 +1458,7 @@ async function readCredentials(req) {
     password: params.get("password") || "",
     confirmPassword: params.get("confirmPassword") || "",
     remember: params.get("remember") || "",
+    savePassword: params.get("savePassword") || "",
   };
 }
 
@@ -1487,14 +1492,26 @@ function issueSession(res, req, user, options = {}) {
 }
 
 async function handleSetup(req, res) {
-  if (!req.url.startsWith("/setup")) return false;
+  const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  const isRootRoute = url.pathname === "/";
+  const isSetupRoute = url.pathname === "/setup";
+  if (!isRootRoute && !isSetupRoute) return false;
+
   const store = readAuthStore();
   if (activeUserCount(store) > 0) {
-    redirect(res, currentSession(req) ? "/" : "/login", req);
+    if (isSetupRoute) {
+      redirect(res, currentSession(req) ? "/" : "/login", req);
+      return true;
+    }
+    return false;
+  }
+
+  if (isSetupRoute && req.method === "GET") {
+    redirect(res, "/", req);
     return true;
   }
 
-  if (req.method === "GET") {
+  if (isRootRoute && req.method === "GET") {
     sendHtml(req, res, 200, setupPage());
     return true;
   }
@@ -1508,7 +1525,9 @@ async function handleSetup(req, res) {
       const payload = await readCredentials(req);
       const user = createInitialAccessUser(payload);
       clearLoginFailures(req);
-      issueSession(res, req, user);
+      issueSession(res, req, user, {
+        remember: wantsRememberedSession(payload.savePassword),
+      });
     } catch (error) {
       recordLoginFailure(req);
       sendHtml(req, res, error.status || 400, setupPage(error.message));
@@ -1523,7 +1542,7 @@ async function handleSetup(req, res) {
 async function handleLogin(req, res) {
   if (req.method === "GET" && req.url.startsWith("/login")) {
     if (activeUserCount(readAuthStore()) === 0) {
-      redirect(res, "/setup", req);
+      redirect(res, "/", req);
       return true;
     }
     if (currentSession(req)) {
@@ -1539,7 +1558,7 @@ async function handleLogin(req, res) {
       if (req.url.startsWith("/api/login")) {
         sendJson(res, 409, { error: "Create the first admin login before signing in." });
       } else {
-        redirect(res, "/setup", req);
+        redirect(res, "/", req);
       }
       return true;
     }

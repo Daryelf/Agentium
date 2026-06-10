@@ -14,13 +14,13 @@ You can still open `index.html` directly for a static preview, but persistent ap
 
 ## Admin access
 
-Argentum is protected by a server-side admin login. On first run, open the app and create the owner admin login on the setup screen. There are no hardcoded default credentials.
+Argentum is protected by a server-side admin login. On first run, open the app at the site root and create the owner admin login on the setup screen. There are no hardcoded default credentials.
 
 After signing in, open **Settings -> Access** to create additional admin logins or rotate the current password.
 
 Account records are stored in `data/argentum-auth.json` with salted password hashes. That file is ignored by Git.
 
-The login form supports browser password managers and a **Remember this device** checkbox. Argentum does not store plaintext passwords; remembered access is a signed, HttpOnly, SameSite session cookie capped at 30 days.
+The login and first-run setup forms support browser password managers and a save/remember device checkbox. Argentum does not store plaintext passwords; remembered access is a signed, HttpOnly, SameSite session cookie capped at 30 days.
 
 Before using the public Railway site, you can also seed first-run Railway environment variables:
 

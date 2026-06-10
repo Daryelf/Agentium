@@ -297,6 +297,27 @@ const killSwitchBtn = document.querySelector("#killSwitchBtn");
 const resetLoopBtn = document.querySelector("#resetLoopBtn");
 const cycleLimitMetric = document.querySelector("#cycleLimitMetric");
 const spendMetric = document.querySelector("#spendMetric");
+const budgetUsedMetric = document.querySelector("#budgetUsedMetric");
+const agentCountMetric = document.querySelector("#agentCountMetric");
+const agentStatusMetric = document.querySelector("#agentStatusMetric");
+const liveRevenueMetric = document.querySelector("#liveRevenueMetric");
+const overviewQueuedTaskMetric = document.querySelector("#overviewQueuedTaskMetric");
+const overviewHighRiskTaskMetric = document.querySelector("#overviewHighRiskTaskMetric");
+const overviewDraftReadyMetric = document.querySelector("#overviewDraftReadyMetric");
+const overviewTotalTaskMetric = document.querySelector("#overviewTotalTaskMetric");
+const workflowResearchMetric = document.querySelector("#workflowResearchMetric");
+const workflowVerifyMetric = document.querySelector("#workflowVerifyMetric");
+const workflowDraftMetric = document.querySelector("#workflowDraftMetric");
+const workflowApprovalMetric = document.querySelector("#workflowApprovalMetric");
+const revenueGuardMetric = document.querySelector("#revenueGuardMetric");
+const mapAgentCount = document.querySelector("#mapAgentCount");
+const mapTaskCount = document.querySelector("#mapTaskCount");
+const mapApprovalCount = document.querySelector("#mapApprovalCount");
+const mapSpendCount = document.querySelector("#mapSpendCount");
+const mapMemoryCount = document.querySelector("#mapMemoryCount");
+const mapLoopCount = document.querySelector("#mapLoopCount");
+const mapOutputCount = document.querySelector("#mapOutputCount");
+const mapAuditCount = document.querySelector("#mapAuditCount");
 const taskRunMetric = document.querySelector("#taskRunMetric");
 const functionRunMetric = document.querySelector("#functionRunMetric");
 const lastWorkdayMetric = document.querySelector("#lastWorkdayMetric");
@@ -343,312 +364,224 @@ const createUserForm = document.querySelector("#createUserForm");
 
 const roomProfiles = {
   Overview: {
-    title: "Agent Habitat",
-    type: "Habitat Overview",
-    status: "Online",
+    title: "Depo Habitat",
+    type: "Agent Overview",
+    status: "Supervised",
     roomClass: "station-overview",
-    summary: "System-wide command view for agents, automations, approvals, commerce signals, and operating health.",
-    agents: ["Atlas", "Nexus", "Oracle"],
-    connected: ["AI Agents Room", "Workflow Pipeline", "Security Core"],
-    tasks: ["Balance automation queue", "Review system readiness", "Watch cross-room routing"],
-    activity: ["Atlas reconciled the command map.", "Nexus refreshed route links.", "Oracle tagged stale telemetry."],
+    summary: "One active agent, Depo, runs a bounded loop: gather evidence, verify claims, draft outputs, and package anything risky for human approval.",
+    agents: ["Depo"],
+    connected: ["Research Intake", "Evidence Guard", "Human Gate"],
+    tasks: ["Gather evidence", "Check contradictions", "Prepare approval-ready drafts"],
+    activity: ["Depo is the only active agent.", "Revenue and external actions are not connected.", "Human approval remains required for high-risk actions."],
     metrics: [
-      ["System health", "92%"],
-      ["Active modules", "12"],
-      ["Open routes", "8"],
+      ["Agent count", "1"],
+      ["Mode", "Draft only"],
+      ["Revenue", "Not connected"],
     ],
   },
   Research: {
-    title: "AI Agents Room",
-    type: "Agent Habitat",
-    status: "7 online",
+    title: "Research Intake",
+    type: "AI Thinking",
+    status: "Gathering",
     roomClass: "station-research",
-    summary: "Agent control room where Atlas, Forge, Prism, Ledger, Nexus, Sentry, and Oracle coordinate supervised work.",
-    agents: ["Atlas", "Oracle", "Nexus"],
-    connected: ["Agent Habitat", "Task Factory", "System Logs"],
-    tasks: ["Sync agent queues", "Inspect permissions", "Route handoffs"],
-    activity: ["Atlas assigned a task packet.", "Oracle summarized agent memory.", "Nexus checked automation dependencies."],
+    summary: "Depo collects source notes, labels freshness, and keeps assumptions separate from verified evidence.",
+    agents: ["Depo"],
+    connected: ["Private Memory", "Evidence Guard", "Task Inbox"],
+    tasks: ["Collect source notes", "Label evidence freshness", "Capture open assumptions"],
+    activity: ["Research stays read-only.", "Assumptions are labeled before reuse.", "Unclear evidence is routed to review."],
     metrics: [
-      ["Agents online", "7 / 7"],
-      ["Queues active", "5"],
-      ["Permission gates", "14"],
-    ],
-  },
-  Draft: {
-    title: "Task Factory",
-    type: "Production / Task Factory",
-    status: "Draft mode",
-    roomClass: "station-draft",
-    summary: "Production floor for turning approved prompts into bounded jobs, draft outputs, and approval packages.",
-    agents: ["Forge", "Nexus"],
-    connected: ["AI Agents Room", "Resources", "Workflow Pipeline"],
-    tasks: ["Build POD brief", "Package workflow proposal", "Run next supervised task"],
-    activity: ["Forge staged a build queue.", "Nexus paused a high-risk automation.", "Task runner prepared a draft artifact."],
-    metrics: [
-      ["Active jobs", "12"],
-      ["Completed", "38"],
-      ["Needs approval", "4"],
-    ],
-  },
-  Commerce: {
-    title: "Commerce Terminal",
-    type: "Commerce",
-    status: "Monitoring",
-    roomClass: "station-commerce",
-    summary: "Read-only commerce console for orders, storefront concepts, Printify/Etsy plans, and product lane status.",
-    agents: ["Ledger", "Forge"],
-    connected: ["Revenue Monitor", "Resources", "Customer Node"],
-    tasks: ["Review POD store lane", "Prepare order summary", "Check blocked publish actions"],
-    activity: ["Commerce lane synced pending orders.", "Print-on-demand plan stayed approval-gated.", "Storefront metrics refreshed."],
-    metrics: [
-      ["Orders processing", "197"],
-      ["Store lanes", "2"],
-      ["Draft listings", "56"],
-    ],
-  },
-  Finance: {
-    title: "Revenue Monitor",
-    type: "Finance",
-    status: "Read-only",
-    roomClass: "station-finance",
-    summary: "Finance monitor for revenue, expenses, profit, stock-watch notes, risk checks, and approval-gated money actions.",
-    agents: ["Ledger", "Oracle"],
-    connected: ["Commerce Terminal", "Security Core", "System Logs"],
-    tasks: ["Summarize revenue today", "Run risk check", "Prepare finance approval note"],
-    activity: ["Ledger marked broker access blocked.", "Oracle generated variance note.", "Finance queue stayed read-only."],
-    metrics: [
-      ["Revenue today", "$7,128"],
-      ["Expenses", "$1,204"],
-      ["Profit", "$5,924"],
-    ],
-  },
-  Inventory: {
-    title: "Resources",
-    type: "Inventory",
-    status: "Stable",
-    roomClass: "station-inventory",
-    summary: "Resource inventory for data inputs, creative assets, workflow materials, prompt templates, and tool capacity.",
-    agents: ["Forge", "Prism"],
-    connected: ["Task Factory", "Logistics Node", "Content Engine"],
-    tasks: ["Index asset supply", "Track prompt templates", "Check resource bottlenecks"],
-    activity: ["Inventory snapshot refreshed.", "Creative assets linked to Prism.", "Template supply marked healthy."],
-    metrics: [
-      ["Assets ready", "578"],
-      ["Prompt templates", "4"],
-      ["Capacity", "86%"],
-    ],
-  },
-  Logistics: {
-    title: "Logistics Node",
-    type: "Routing",
-    status: "Routing",
-    roomClass: "station-logistics",
-    summary: "Routing layer for workflow handoffs, agent queues, dependency checks, and task movement across the system.",
-    agents: ["Nexus", "Atlas"],
-    connected: ["Resources", "Workflow Pipeline", "Commerce Terminal"],
-    tasks: ["Optimize queue route", "Route agent handoff", "Confirm blocked action path"],
-    activity: ["Nexus rerouted two draft tasks.", "Atlas resolved a queue collision.", "Route health stayed nominal."],
-    metrics: [
-      ["Routes active", "8"],
-      ["ETA drift", "2m"],
-      ["Queue depth", "21"],
-    ],
-  },
-  Approval: {
-    title: "Workflow Pipeline",
-    type: "Workflow Pipeline",
-    status: "Human gate",
-    roomClass: "station-approval",
-    summary: "Approval-gated pipeline where draft artifacts become reusable functions only after human review.",
-    agents: ["Atlas", "Nexus", "Sentry"],
-    connected: ["Task Factory", "Security Core", "System Logs"],
-    tasks: ["Review POD lane", "Check stock monitor", "Promote approved function"],
-    activity: ["Workflow package reached human gate.", "Sentry checked risk tags.", "Nexus held deployment permissions."],
-    metrics: [
-      ["Pending approvals", "2"],
-      ["Functions", "1"],
-      ["Risk gates", "1"],
-    ],
-  },
-  Marketing: {
-    title: "Content Engine",
-    type: "Marketing",
-    status: "Drafting",
-    roomClass: "station-marketing",
-    summary: "Creative workspace for campaigns, listing copy, thumbnails, content queues, drafts, and approval-needed assets.",
-    agents: ["Prism", "Oracle"],
-    connected: ["Resources", "Commerce Terminal", "Customer Node"],
-    tasks: ["Draft campaign concepts", "Prepare listing copy", "Generate approval package"],
-    activity: ["Prism drafted campaign angles.", "Creative queue added thumbnail concepts.", "Oracle tagged keyword assumptions."],
-    metrics: [
-      ["Content generated", "24"],
-      ["Drafts waiting", "7"],
-      ["Approvals needed", "3"],
-    ],
-  },
-  Support: {
-    title: "Customer Node",
-    type: "Customer Support",
-    status: "Standby",
-    roomClass: "station-support",
-    summary: "Support command node for customer notes, policy-safe replies, service queues, and human-reviewed responses.",
-    agents: ["Sentry", "Prism"],
-    connected: ["Commerce Terminal", "Content Engine", "System Logs"],
-    tasks: ["Review support script", "Classify customer issue", "Hold outbound messages"],
-    activity: ["Customer-contact permission remained blocked.", "Support reply template staged.", "Sentry flagged external messaging gate."],
-    metrics: [
-      ["Tickets staged", "9"],
-      ["Reply drafts", "5"],
-      ["Outbound blocks", "9"],
+      ["Freshness checks", "Required"],
+      ["Evidence items", "2 min"],
+      ["Guessing", "Blocked"],
     ],
   },
   Verify: {
-    title: "Security Core",
-    type: "Security",
+    title: "Evidence Guard",
+    type: "Security / Quality",
     status: "Protected",
     roomClass: "station-verify",
-    summary: "Security and governance core for permissions, high-risk actions, blocked tools, kill switch, and policy gates.",
-    agents: ["Sentry", "Atlas"],
-    connected: ["Workflow Pipeline", "Revenue Monitor", "System Logs"],
-    tasks: ["Verify risk gates", "Audit permissions", "Monitor kill switch"],
-    activity: ["Sentry audited finance permissions.", "Blocked external account creation.", "Security core confirmed draft-only mode."],
+    summary: "Security and quality checks enforce contradiction review, confidence labels, password-protected access, and approval gates.",
+    agents: ["Depo"],
+    connected: ["Human Gate", "System Feed", "Budget Guard"],
+    tasks: ["Check contradictions", "Classify policy risk", "Keep external actions locked"],
+    activity: ["Password hashes stay server-side.", "Signed sessions use HttpOnly cookies.", "Financial, publishing, account, and customer actions are blocked."],
     metrics: [
       ["Blocked actions", "7"],
-      ["High-risk gates", "1"],
-      ["Kill switch", "Off"],
+      ["Auth", "Hashed"],
+      ["Sessions", "HttpOnly"],
+    ],
+  },
+  Draft: {
+    title: "Task Inbox",
+    type: "Work Queue",
+    status: "Queued",
+    roomClass: "station-draft",
+    summary: "Depo turns bounded operator requests into draft artifacts and never publishes or spends from this lane.",
+    agents: ["Depo"],
+    connected: ["Research Intake", "Output Bench", "Human Gate"],
+    tasks: ["Run next queued task", "Build draft artifact", "Attach evidence notes"],
+    activity: ["Tasks are operator assigned.", "Drafts are evidence-labeled.", "Promotion requires review."],
+    metrics: [
+      ["Queue", "Live"],
+      ["Outputs", "Draft"],
+      ["Publishing", "Blocked"],
+    ],
+  },
+  Commerce: {
+    title: "POD Lane",
+    type: "Commerce Drafts",
+    status: "Draft only",
+    roomClass: "station-commerce",
+    summary: "Print-on-demand planning is active as research and draft output only. Store setup, publishing, buying, and earnings claims remain blocked.",
+    agents: ["Depo"],
+    connected: ["Task Inbox", "Output Bench", "Human Gate"],
+    tasks: ["Draft POD brief", "List blocked store actions", "Package review notes"],
+    activity: ["No live storefront is connected.", "No order or revenue claims are shown.", "Listing plans stay approval-gated."],
+    metrics: [
+      ["Live orders", "0"],
+      ["Live sales", "0"],
+      ["Store access", "Blocked"],
+    ],
+  },
+  Finance: {
+    title: "Budget Guard",
+    type: "Finance Safety",
+    status: "Sandbox",
+    roomClass: "station-finance",
+    summary: "Budget tracking only covers local sandbox activity. Revenue, broker access, payment movement, and trades are not connected.",
+    agents: ["Depo"],
+    connected: ["Evidence Guard", "System Feed", "Human Gate"],
+    tasks: ["Track sandbox spend", "Keep trade permissions blocked", "Log finance-related risk"],
+    activity: ["Daily sandbox limit is $5.", "Money movement is blocked.", "Market notes remain paper-mode."],
+    metrics: [
+      ["Revenue", "Not connected"],
+      ["Spend cap", "$5/day"],
+      ["Money movement", "Blocked"],
+    ],
+  },
+  Inventory: {
+    title: "Private Memory",
+    type: "Memory",
+    status: "Local",
+    roomClass: "station-inventory",
+    summary: "Local memory stores working notes, verified shared notes, and agent-specific habits without committing runtime state to Git.",
+    agents: ["Depo"],
+    connected: ["Research Intake", "System Feed", "Output Bench"],
+    tasks: ["Write provenance", "Keep runtime state local", "Separate working and verified memory"],
+    activity: ["Runtime state is ignored by Git.", "Secrets are not stored in project memory.", "Depo memory is provenance-labeled."],
+    metrics: [
+      ["Memory layers", "3"],
+      ["Runtime files", "Ignored"],
+      ["Secrets", "Excluded"],
+    ],
+  },
+  Logistics: {
+    title: "Loop Guard",
+    type: "Efficiency",
+    status: "Bounded",
+    roomClass: "station-logistics",
+    summary: "The loop guard caps autonomous cycles and pauses Depo when the limit is reached or the kill switch is active.",
+    agents: ["Depo"],
+    connected: ["Task Inbox", "Evidence Guard", "System Feed"],
+    tasks: ["Track cycle count", "Respect kill switch", "Keep task runs bounded"],
+    activity: ["Cycle limits prevent runaway loops.", "Workday runs are capped.", "Every run writes audit history."],
+    metrics: [
+      ["Cycle cap", "12"],
+      ["Workday cap", "5"],
+      ["Kill switch", "Ready"],
+    ],
+  },
+  Approval: {
+    title: "Human Gate",
+    type: "Approval Pipeline",
+    status: "Required",
+    roomClass: "station-approval",
+    summary: "Draft outputs, future functions, business claims, publishing, finance actions, account changes, and new agents all wait for human review.",
+    agents: ["Depo"],
+    connected: ["Task Inbox", "Evidence Guard", "Output Bench"],
+    tasks: ["Review draft package", "Approve or block outputs", "Keep risky actions supervised"],
+    activity: ["High-risk actions require approval.", "Depo cannot approve its own work.", "Approved drafts can become reusable functions."],
+    metrics: [
+      ["Approval model", "Human"],
+      ["Self-approval", "Blocked"],
+      ["Promotion", "Reviewed"],
+    ],
+  },
+  Marketing: {
+    title: "Output Bench",
+    type: "Draft Outputs",
+    status: "Drafting",
+    roomClass: "station-marketing",
+    summary: "Depo produces bounded artifacts such as POD briefs, paper-mode market notes, and future-agent proposals.",
+    agents: ["Depo"],
+    connected: ["Task Inbox", "Private Memory", "Human Gate"],
+    tasks: ["Draft artifact", "Attach blocked actions", "Send review package"],
+    activity: ["Outputs are drafts.", "Claims need evidence.", "External publication is blocked."],
+    metrics: [
+      ["Artifacts", "Live"],
+      ["Claims", "Evidence"],
+      ["External post", "Blocked"],
+    ],
+  },
+  Support: {
+    title: "Contact Gate",
+    type: "Privacy",
+    status: "Blocked",
+    roomClass: "station-support",
+    summary: "Customer contact and outbound messages are blocked until the operator explicitly approves a future connector and workflow.",
+    agents: ["Depo"],
+    connected: ["Evidence Guard", "Human Gate", "System Feed"],
+    tasks: ["Hold outbound contact", "Protect personal data", "Route privacy-sensitive work to review"],
+    activity: ["No customer connector is enabled.", "No outbound messages are sent.", "Sensitive actions require explicit approval."],
+    metrics: [
+      ["Customer contact", "Blocked"],
+      ["Outbound messages", "0"],
+      ["Privacy gate", "On"],
     ],
   },
   Logs: {
-    title: "System Logs",
+    title: "System Feed",
     type: "Trace",
     status: "Recording",
     roomClass: "station-logs",
-    summary: "Trace room for audit events, function runs, memory writes, approval decisions, and agent activity history.",
-    agents: ["Oracle", "Sentry"],
-    connected: ["Security Core", "Workflow Pipeline", "AI Agents Room"],
-    tasks: ["Record cycle events", "Summarize recent actions", "Flag stale memory"],
-    activity: ["Audit trail captured latest cycle.", "Oracle summarized outputs.", "Sentry filed a permission note."],
+    summary: "The local audit feed records Depo cycles, operator actions, task runs, approval decisions, and security-relevant changes.",
+    agents: ["Depo"],
+    connected: ["Evidence Guard", "Loop Guard", "Private Memory"],
+    tasks: ["Record events", "Expose recent actions", "Keep operator-visible trace"],
+    activity: ["Audit entries are visible.", "Login/access history lives in settings.", "System feed opens from the overview card."],
     metrics: [
-      ["Audit entries", "12"],
-      ["Function runs", "0"],
-      ["Memory writes", "4"],
+      ["Trace", "Local"],
+      ["Feed", "Openable"],
+      ["Retention", "Latest 12"],
     ],
   },
 };
 
 const agentProfiles = {
-  atlas: {
-    name: "Atlas",
-    role: "System Overseer",
-    status: "Online",
+  depo: {
+    name: "Depo",
+    role: "Depository Operator",
+    status: "Active supervised",
     room: "Overview",
-    currentTask: "Balancing habitat routes and approval load.",
-    queue: ["Review system readiness", "Route agent handoff", "Confirm operator gates"],
-    actions: ["Reconciled command map", "Updated route priorities", "Prepared readiness summary"],
-    permissions: ["Read system state", "Assign supervised tasks", "Cannot deploy agents"],
-    modules: ["Agent Habitat", "Workflow Pipeline", "Security Core"],
-  },
-  forge: {
-    name: "Forge",
-    role: "Production Agent",
-    status: "Online",
-    room: "Draft",
-    currentTask: "Building draft-only production jobs for approval.",
-    queue: ["POD niche brief", "Listing outline", "Function proposal"],
-    actions: ["Staged build queue", "Prepared draft package", "Sent risky action to approval"],
-    permissions: ["Draft tasks", "Build artifacts", "Cannot publish"],
-    modules: ["Task Factory", "Resources", "Workflow Pipeline"],
-  },
-  prism: {
-    name: "Prism",
-    role: "Creative / Marketing Agent",
-    status: "Online",
-    room: "Marketing",
-    currentTask: "Turning approved lanes into creative concepts and content drafts.",
-    queue: ["Campaign angles", "Thumbnail concepts", "Listing copy"],
-    actions: ["Generated campaign outline", "Tagged approval-needed assets", "Queued creative drafts"],
-    permissions: ["Draft content", "Prepare assets", "Cannot post externally"],
-    modules: ["Content Engine", "Resources", "Customer Node"],
-  },
-  ledger: {
-    name: "Ledger",
-    role: "Finance Agent",
-    status: "Read-only",
-    room: "Finance",
-    currentTask: "Monitoring revenue and risk without moving money.",
-    queue: ["Revenue summary", "Expense check", "Finance approval note"],
-    actions: ["Updated profit snapshot", "Marked broker access blocked", "Prepared risk check"],
-    permissions: ["Read finance notes", "Draft summaries", "Cannot move money or trade"],
-    modules: ["Revenue Monitor", "Commerce Terminal", "Security Core"],
-  },
-  nexus: {
-    name: "Nexus",
-    role: "Automation Agent",
-    status: "Online",
-    room: "Logistics",
-    currentTask: "Routing tasks between modules while respecting gates.",
-    queue: ["Optimize route", "Check dependency", "Hold blocked automation"],
-    actions: ["Rerouted task queue", "Paused risky automation", "Synced workflow pipeline"],
-    permissions: ["Route tasks", "Run checks", "Cannot modify core systems"],
-    modules: ["Logistics Node", "Workflow Pipeline", "Agent Habitat"],
-  },
-  sentry: {
-    name: "Sentry",
-    role: "Security Agent",
-    status: "Guarding",
-    room: "Verify",
-    currentTask: "Auditing permissions and high-risk workflow gates.",
-    queue: ["Permission audit", "Kill switch check", "Customer-contact block"],
-    actions: ["Flagged external action", "Reviewed high-risk queue", "Confirmed draft-only controls"],
-    permissions: ["Read governance", "Block risky tasks", "Cannot approve itself"],
-    modules: ["Security Core", "System Logs", "Customer Node"],
-  },
-  oracle: {
-    name: "Oracle",
-    role: "Data Analyst",
-    status: "Online",
-    room: "Logs",
-    currentTask: "Summarizing system data, memory, and recent outputs.",
-    queue: ["Audit summary", "Market note", "Memory freshness check"],
-    actions: ["Summarized activity feed", "Tagged stale assumptions", "Prepared metric brief"],
-    permissions: ["Analyze data", "Write summaries", "Cannot invent certainty"],
-    modules: ["System Logs", "AI Agents Room", "Revenue Monitor"],
+    currentTask: "Gather evidence, verify assumptions, draft useful work, and package approval-ready decisions.",
+    queue: ["Research intake", "Contradiction check", "Draft approval package"],
+    actions: ["Maintains draft-only mode", "Keeps external actions gated", "Writes provenance-labeled memory"],
+    permissions: ["Read/write working memory", "Draft artifacts", "Cannot publish, spend, trade, contact customers, or deploy agents"],
+    modules: ["Research Intake", "Evidence Guard", "Human Gate"],
   },
 };
 
 const workspaceProfiles = {
-  prism: {
-    title: "Prism Creative Workspace",
-    eyebrow: "Marketing / Creative Agent",
+  depo: {
+    title: "Depo Workspace",
+    eyebrow: "Agent 001 / Depository Operator",
     sections: [
-      ["Active campaigns", "Moon Garden Club, Espresso After Dark, Secret Island"],
-      ["Content queue", "7 drafts, 3 approval-needed assets, 2 keyword studies"],
-      ["Generated assets", "Thumbnail concepts, listing title angles, social captions"],
-      ["Connected tools", "Content Engine, Resources, Commerce Terminal"],
+      ["Current loop", "Research -> verify -> draft -> approval. Every risky action stops at the human gate."],
+      ["Security", "Password-protected admin access, signed HttpOnly sessions, CSP headers, and blocked legacy defaults."],
+      ["Privacy", "Runtime state and auth files stay local and ignored by Git. No customer connector is enabled."],
+      ["Quality", "Requires evidence labels, contradiction checks, confidence labels, and policy classification before promotion."],
     ],
-    feed: ["Drafted campaign variations", "Queued thumbnail prompt set", "Held publishing behind approval"],
-  },
-  ledger: {
-    title: "Ledger Finance Workspace",
-    eyebrow: "Finance Agent",
-    sections: [
-      ["Revenue", "$7,128 today across simulated lanes"],
-      ["Expenses", "$1,204 tracked for draft planning"],
-      ["Profit", "$5,924 estimated; no money movement permitted"],
-      ["Risk checks", "Broker access blocked, finance approvals pending"],
-    ],
-    feed: ["Prepared revenue variance note", "Marked stock lane paper-only", "Logged finance approval requirement"],
-  },
-  forge: {
-    title: "Forge Production Workspace",
-    eyebrow: "Production Agent",
-    sections: [
-      ["Build queue", "POD brief, listing outline, workflow proposal"],
-      ["Active jobs", "12 draft jobs running in supervised mode"],
-      ["Completed jobs", "38 historical draft completions"],
-      ["Failed jobs", "2 blocked by missing evidence"],
-    ],
-    feed: ["Staged production packet", "Sent publish action to approval", "Refreshed build queue"],
+    feed: ["Depo is active supervised", "Live revenue is not connected", "External actions remain locked"],
   },
 };
 
@@ -843,7 +776,11 @@ function renderInspector() {
 
   inspectorChips.innerHTML = (agent
     ? [agent.status, activeRoom.title, `${agent.queue.length} queued`]
-    : [activeRoom.status, `${activeRoom.agents.length} agents`, `${activeRoom.connected.length} links`]
+    : [
+        activeRoom.status,
+        `${activeRoom.agents.length} ${activeRoom.agents.length === 1 ? "agent" : "agents"}`,
+        `${activeRoom.connected.length} links`,
+      ]
   )
     .map((chip) => `<span>${escapeHtml(chip)}</span>`)
     .join("");
@@ -913,7 +850,7 @@ function renderWorkspace(agentKey) {
 }
 
 function openWorkspace(agentKey) {
-  renderWorkspace(agentKey || selectedAgentKey || "atlas");
+  renderWorkspace(agentKey || selectedAgentKey || "depo");
   workspaceOverlay.classList.add("open");
   workspaceOverlay.setAttribute("aria-hidden", "false");
 }
@@ -1381,20 +1318,20 @@ function systemFeedEntries() {
   const auditEntries = Array.isArray(state.audit) ? state.audit : [];
   const seededEntries = [
     {
-      title: "Nexus completed automation cycle",
-      body: "Automation cycle completed inside the supervised local console.",
+      title: "Depo guardrails active",
+      body: "Draft-only mode is active and external actions remain blocked.",
     },
     {
-      title: "Forge deployed production batch",
-      body: "Production work was packaged for operator review.",
+      title: "Human gate ready",
+      body: "Risky work is routed to the approval queue before any external action.",
     },
     {
-      title: "Ledger reconciled transactions",
-      body: "Finance checks completed without opening money movement permissions.",
+      title: "Privacy mode local",
+      body: "Runtime state and auth files stay local and are ignored by Git.",
     },
     {
-      title: "Sentry blocked suspicious login",
-      body: "Security guard kept the console in protected access mode.",
+      title: "Revenue not connected",
+      body: "No storefront, payment, broker, or customer-contact connector is enabled.",
     },
   ];
 
@@ -1421,10 +1358,10 @@ function compactFeedTitle(title) {
   const normalizedTitle = String(title || "");
   const compactTitles = {
     "Static console loaded": "Console loaded",
-    "Nexus completed automation cycle": "Nexus cycle complete",
-    "Forge deployed production batch": "Forge batch deployed",
-    "Ledger reconciled transactions": "Ledger reconciled",
-    "Sentry blocked suspicious login": "Sentry login blocked",
+    "Depo guardrails active": "Guardrails active",
+    "Human gate ready": "Human gate ready",
+    "Privacy mode local": "Privacy local",
+    "Revenue not connected": "Revenue offline",
   };
 
   if (compactTitles[normalizedTitle]) return compactTitles[normalizedTitle];
@@ -1578,6 +1515,50 @@ function money(value) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
+function setText(element, value) {
+  if (element) element.textContent = value;
+}
+
+function renderOverviewTelemetry() {
+  const governance = state.governance || fallbackState.governance;
+  const tasks = state.tasks || [];
+  const artifacts = state.artifacts || [];
+  const approvals = state.approvals || [];
+  const memory = state.memory || {};
+  const auditEntries = state.audit || [];
+  const queuedTasks = tasks.filter((task) => task.status === "queued");
+  const draftReadyTasks = tasks.filter((task) => task.status === "draft_ready");
+  const highRiskTasks = tasks.filter((task) => task.risk === "high");
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const highRiskApprovals = pendingApprovals.filter((approval) => approval.risk === "high");
+  const memoryCount = ["working", "shared", "agent"].reduce((count, layer) => count + (memory[layer]?.length || 0), 0);
+  const agentStateLabel = statusLabel(state.agent?.state || "active_supervised");
+
+  setText(agentCountMetric, "1");
+  setText(agentStatusMetric, agentStateLabel);
+  setText(liveRevenueMetric, "Not connected");
+  setText(budgetUsedMetric, money(governance.estimatedSpendUsd));
+  setText(overviewQueuedTaskMetric, String(queuedTasks.length));
+  setText(overviewHighRiskTaskMetric, String(highRiskTasks.length));
+  setText(overviewDraftReadyMetric, String(draftReadyTasks.length));
+  setText(overviewTotalTaskMetric, String(tasks.length));
+  setText(workflowResearchMetric, queuedTasks.length ? "Queued" : "Ready");
+  setText(workflowVerifyMetric, "On");
+  setText(workflowDraftMetric, String(artifacts.length));
+  setText(workflowApprovalMetric, String(pendingApprovals.length));
+  setText(revenueGuardMetric, "No live sales");
+
+  setText(mapAgentCount, "1 agent");
+  setText(mapTaskCount, `${queuedTasks.length} queued`);
+  setText(mapApprovalCount, `${pendingApprovals.length} pending`);
+  setText(mapSpendCount, `${money(governance.estimatedSpendUsd)} used`);
+  setText(mapMemoryCount, `${memoryCount} notes`);
+  setText(mapLoopCount, `${governance.cycleCount} / ${governance.cycleLimit} cycles`);
+  setText(mapOutputCount, `${artifacts.length} drafts`);
+  setText(mapAuditCount, `${Math.min(auditEntries.length, 50)} events`);
+  setText(highRiskMetric, String(highRiskApprovals.length));
+}
+
 function renderGovernance() {
   const governance = state.governance || fallbackState.governance;
   const approvals = state.approvals || [];
@@ -1627,6 +1608,7 @@ function render() {
   renderNotifications();
   renderGovernance();
   renderKpis();
+  renderOverviewTelemetry();
   renderAgent();
   renderCapabilities();
   renderWorkflows();

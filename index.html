@@ -22,68 +22,14 @@
 
         <div class="agent-roster" aria-label="Agent roster">
           <p class="eyebrow">Agent Command</p>
-          <div class="roster-agent active" data-agent="atlas" role="button" tabindex="0">
-            <span class="agent-badge atlas-badge" aria-hidden="true">A</span>
+          <div class="roster-agent active" data-agent="depo" role="button" tabindex="0">
+            <span class="agent-badge depo-badge" aria-hidden="true">D</span>
             <div>
-              <strong>Atlas</strong>
-              <small>System Overseer</small>
-              <span class="agent-status">Online</span>
+              <strong>Depo</strong>
+              <small>Depository Operator</small>
+              <span class="agent-status">Active supervised</span>
             </div>
-            <em>01</em>
-          </div>
-          <div class="roster-agent" data-agent="forge" role="button" tabindex="0">
-            <span class="agent-badge forge-badge" aria-hidden="true">F</span>
-            <div>
-              <strong>Forge</strong>
-              <small>Production Agent</small>
-              <span class="agent-status busy">Busy</span>
-            </div>
-            <em>02</em>
-          </div>
-          <div class="roster-agent" data-agent="prism" role="button" tabindex="0">
-            <span class="agent-badge prism-badge" aria-hidden="true">P</span>
-            <div>
-              <strong>Prism</strong>
-              <small>Creative / Marketing</small>
-              <span class="agent-status">Online</span>
-            </div>
-            <em>03</em>
-          </div>
-          <div class="roster-agent" data-agent="ledger" role="button" tabindex="0">
-            <span class="agent-badge ledger-badge" aria-hidden="true">L</span>
-            <div>
-              <strong>Ledger</strong>
-              <small>Finance Agent</small>
-              <span class="agent-status">Online</span>
-            </div>
-            <em>04</em>
-          </div>
-          <div class="roster-agent" data-agent="nexus" role="button" tabindex="0">
-            <span class="agent-badge nexus-badge" aria-hidden="true">N</span>
-            <div>
-              <strong>Nexus</strong>
-              <small>Automation Agent</small>
-              <span class="agent-status">Online</span>
-            </div>
-            <em>05</em>
-          </div>
-          <div class="roster-agent" data-agent="sentry" role="button" tabindex="0">
-            <span class="agent-badge sentry-badge" aria-hidden="true">S</span>
-            <div>
-              <strong>Sentry</strong>
-              <small>Security Agent</small>
-              <span class="agent-status">Online</span>
-            </div>
-            <em>06</em>
-          </div>
-          <div class="roster-agent" data-agent="oracle" role="button" tabindex="0">
-            <span class="agent-badge oracle-badge" aria-hidden="true">O</span>
-            <div>
-              <strong>Oracle</strong>
-              <small>Data Analyst</small>
-              <span class="agent-status idle">Idle</span>
-            </div>
-            <em>07</em>
+            <em>001</em>
           </div>
         </div>
 
@@ -160,7 +106,7 @@
               <div class="floor-header">
                 <div>
                   <p class="eyebrow">Habitat Overview</p>
-                  <h3>Argentum orbital business system</h3>
+                  <h3>Depo supervised agent center</h3>
                 </div>
                 <span class="status-pill" id="cycleStatus">Cycle running</span>
               </div>
@@ -180,68 +126,68 @@
                 <div class="route-line route-h" aria-hidden="true"><span></span></div>
                 <div class="map-core" aria-hidden="true">
                   <div class="core-orb"></div>
-                  <span>ARGENTUM CORE</span>
-                  <small>System brain online</small>
+                  <span>DEPO AGENT</span>
+                  <small>supervised reasoning online</small>
                 </div>
                 <div class="station station-overview" data-station="Overview">
                   <i></i>
-                  <span>7 agents</span>
-                  <strong>Agent Habitat</strong>
+                  <span id="mapAgentCount">1 agent</span>
+                  <strong>Depo Habitat</strong>
                 </div>
                 <div class="station station-research" data-station="Research">
                   <i></i>
-                  <span>Active</span>
-                  <strong>AI Agents Room</strong>
+                  <span>Gather</span>
+                  <strong>Research Intake</strong>
                 </div>
                 <div class="station station-verify" data-station="Verify">
                   <i></i>
-                  <span>Secure</span>
-                  <strong>Security Core</strong>
+                  <span>Verify</span>
+                  <strong>Evidence Guard</strong>
                 </div>
                 <div class="station station-draft" data-station="Draft">
                   <i></i>
-                  <span>197 active</span>
-                  <strong>Task Factory</strong>
+                  <span id="mapTaskCount">0 queued</span>
+                  <strong>Task Inbox</strong>
                 </div>
                 <div class="station station-approval" data-station="Approval">
                   <i></i>
-                  <span>578 tasks</span>
-                  <strong>Workflow Pipeline</strong>
+                  <span id="mapApprovalCount">0 pending</span>
+                  <strong>Human Gate</strong>
                 </div>
                 <div class="station station-commerce" data-station="Commerce">
                   <i></i>
-                  <span>Live</span>
-                  <strong>Commerce Terminal</strong>
+                  <span>Draft only</span>
+                  <strong>POD Lane</strong>
                 </div>
                 <div class="station station-finance" data-station="Finance">
                   <i></i>
-                  <span>$7,128 today</span>
-                  <strong>Revenue Monitor</strong>
+                  <span id="mapSpendCount">$0.00 used</span>
+                  <strong>Budget Guard</strong>
                 </div>
                 <div class="station station-inventory" data-station="Inventory">
                   <i></i>
-                  <span>12,455 items</span>
-                  <strong>Resources</strong>
+                  <span id="mapMemoryCount">memory</span>
+                  <strong>Private Memory</strong>
                 </div>
                 <div class="station station-logistics" data-station="Logistics">
                   <i></i>
-                  <span>8 routes active</span>
-                  <strong>Logistics Node</strong>
+                  <span id="mapLoopCount">0 / 12 cycles</span>
+                  <strong>Loop Guard</strong>
                 </div>
                 <div class="station station-marketing" data-station="Marketing">
                   <i></i>
-                  <span>5 generating</span>
-                  <strong>Content Engine</strong>
+                  <span id="mapOutputCount">0 drafts</span>
+                  <strong>Output Bench</strong>
                 </div>
                 <div class="station station-support" data-station="Support">
                   <i></i>
-                  <span>24 active</span>
-                  <strong>Customer Node</strong>
+                  <span>Blocked</span>
+                  <strong>Contact Gate</strong>
                 </div>
                 <div class="station station-logs" data-station="Logs">
                   <i></i>
-                  <span>Live feed</span>
-                  <strong>System Logs</strong>
+                  <span id="mapAuditCount">0 events</span>
+                  <strong>System Feed</strong>
                 </div>
                 <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
                 </div>
@@ -293,14 +239,15 @@
                 <span id="riskLevel">Risk: Low</span>
               </div>
               <div class="system-status-grid" aria-label="Live system status cards">
-                <div><span>Agents Online</span><strong>7 / 7</strong></div>
-                <div><span>Active Tasks</span><strong id="queuedTaskMetric">0</strong></div>
-                <div><span>Revenue Today</span><strong>$7,128</strong></div>
-                <div><span>Orders Processing</span><strong>197</strong></div>
-                <div><span>Content Generated</span><strong id="artifactThroughputMetric">0</strong></div>
-                <div><span>Errors / Warnings</span><strong id="highRiskMetric">0</strong></div>
-                <div><span>System Health</span><strong id="readinessMetric">0% ready</strong></div>
-                <div><span>Automation Queue</span><strong id="pendingApprovalMetric">0</strong></div>
+                <div><span>Agent Status</span><strong id="agentStatusMetric">Supervised</strong></div>
+                <div><span>Agent Active</span><strong id="agentCountMetric">1</strong></div>
+                <div><span>Queued Tasks</span><strong id="queuedTaskMetric">0</strong></div>
+                <div><span>Draft Outputs</span><strong id="artifactThroughputMetric">0</strong></div>
+                <div><span>Pending Approvals</span><strong id="pendingApprovalMetric">0</strong></div>
+                <div><span>High-risk Gates</span><strong id="highRiskMetric">0</strong></div>
+                <div><span>System Readiness</span><strong id="readinessMetric">0% ready</strong></div>
+                <div><span>Budget Used</span><strong id="budgetUsedMetric">$0.00</strong></div>
+                <div><span>Live Revenue</span><strong id="liveRevenueMetric">Not connected</strong></div>
               </div>
               <div class="inspector-panel" id="inspectorPanel" aria-live="polite">
                 <div class="inspector-top">
@@ -321,40 +268,40 @@
 
           <section class="analytics-strip" aria-label="Live analytics">
             <article class="analytics-card health-card">
-              <div class="ring-meter" style="--value: 96"><strong>96%</strong><span>Healthy</span></div>
+              <div class="ring-meter" style="--value: 96"><strong>OK</strong><span>Guarded</span></div>
               <div>
-                <p class="eyebrow">System Health</p>
+                <p class="eyebrow">Security Posture</p>
                 <ul>
-                  <li><span>Infrastructure</span><strong>98%</strong></li>
-                  <li><span>Automation</span><strong>96%</strong></li>
-                  <li><span>Security</span><strong>97%</strong></li>
-                  <li><span>Integrations</span><strong>95%</strong></li>
+                  <li><span>Auth hashing</span><strong>On</strong></li>
+                  <li><span>HttpOnly sessions</span><strong>On</strong></li>
+                  <li><span>Human gates</span><strong>On</strong></li>
+                  <li><span>External actions</span><strong>Locked</strong></li>
                 </ul>
               </div>
             </article>
             <article class="analytics-card tasks-card">
               <div>
-                <p class="eyebrow">Active Tasks</p>
-                <strong class="big-metric">578</strong>
-                <span>Total active</span>
+                <p class="eyebrow">Depo Queue</p>
+                <strong class="big-metric" id="overviewQueuedTaskMetric">0</strong>
+                <span>Queued tasks</span>
                 <ul>
-                  <li><span>High</span><strong>12</strong></li>
-                  <li><span>Medium</span><strong>143</strong></li>
-                  <li><span>Low</span><strong>423</strong></li>
+                  <li><span>High risk</span><strong id="overviewHighRiskTaskMetric">0</strong></li>
+                  <li><span>Draft ready</span><strong id="overviewDraftReadyMetric">0</strong></li>
+                  <li><span>Total tasks</span><strong id="overviewTotalTaskMetric">0</strong></li>
                 </ul>
               </div>
               <div class="donut-meter" aria-hidden="true"></div>
             </article>
             <article class="analytics-card pipeline-flow-card">
-              <p class="eyebrow">Workflow Pipeline</p>
+              <p class="eyebrow">Thinking Loop</p>
               <div class="wave-visual" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
               <ul>
-                <li><span>Intake</span><strong>132</strong></li>
-                <li><span>Processing</span><strong>278</strong></li>
-                <li><span>Review</span><strong>98</strong></li>
-                <li><span>Output</span><strong>70</strong></li>
+                <li><span>Research</span><strong id="workflowResearchMetric">Ready</strong></li>
+                <li><span>Verify</span><strong id="workflowVerifyMetric">On</strong></li>
+                <li><span>Drafts</span><strong id="workflowDraftMetric">0</strong></li>
+                <li><span>Approvals</span><strong id="workflowApprovalMetric">0</strong></li>
               </ul>
             </article>
             <article class="analytics-card feed-card interactive-card" id="systemFeedCard" role="button" tabindex="0" aria-label="Open system feed">
@@ -363,16 +310,16 @@
                 <span>Open</span>
               </div>
               <div class="mini-feed" id="systemFeedMini" aria-live="polite">
-                <span><strong>Nexus completed automation cycle</strong><em>Just now</em></span>
-                <span><strong>Forge deployed production batch</strong><em>2m ago</em></span>
-                <span><strong>Ledger reconciled transactions</strong><em>4m ago</em></span>
-                <span><strong>Sentry blocked suspicious login</strong><em>6m ago</em></span>
+                <span><strong>Guardrails active</strong><em>Just now</em></span>
+                <span><strong>Human gate ready</strong><em>2m ago</em></span>
+                <span><strong>Privacy local</strong><em>4m ago</em></span>
+                <span><strong>Revenue offline</strong><em>6m ago</em></span>
               </div>
             </article>
             <article class="analytics-card revenue-card">
-              <p class="eyebrow">Revenue Overview</p>
-              <strong class="big-metric">$7,128 <small>Today</small></strong>
-              <span class="positive">+12.4% vs yesterday</span>
+              <p class="eyebrow">Business Reality</p>
+              <strong class="big-metric" id="revenueGuardMetric">No live sales</strong>
+              <span class="positive">Draft-only; revenue not connected</span>
               <div class="sparkline" aria-hidden="true"><i></i></div>
             </article>
           </section>

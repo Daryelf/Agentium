@@ -1088,6 +1088,7 @@ main {
 
 .inspector-panel {
   display: grid;
+  align-content: start;
   gap: 12px;
   margin-top: 12px;
   padding-top: 12px;
@@ -4961,8 +4962,8 @@ main {
   }
 
   .mini-feed {
-    gap: 3px;
-    margin-top: 6px;
+    gap: 2px;
+    margin-top: 4px;
     overflow: hidden;
   }
 
@@ -4970,18 +4971,22 @@ main {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
-    min-height: 18px;
-    padding-bottom: 3px;
+    min-height: 15px;
+    padding-bottom: 1px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.055);
     font-size: 0.68rem;
     line-height: 1.08;
+  }
+
+  .mini-feed span:last-child {
+    border-bottom: 0;
   }
 
   .mini-feed strong {
     min-width: 0;
     overflow: hidden;
     color: #dbeafe;
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     font-weight: 760;
     line-height: 1.08;
     text-overflow: ellipsis;
@@ -4989,7 +4994,13 @@ main {
   }
 
   .mini-feed em {
-    font-size: 0.64rem;
+    font-size: 0.58rem;
+  }
+
+  .feed-card-head span {
+    min-height: 20px;
+    padding: 0 7px;
+    font-size: 0.58rem;
   }
 
   .sparkline {
@@ -5114,8 +5125,8 @@ main {
 
   .mini-feed span {
     display: grid;
-    min-height: 17px;
-    padding-bottom: 2px;
+    min-height: 15px;
+    padding-bottom: 1px;
   }
 
   .mini-feed span:not(:first-child) {

@@ -1048,6 +1048,7 @@ function renderHabitatRoutes() {
       const target = moduleProfile(to);
       const active = routeIsActive(from, to);
       return `
+        <line class="route-bridge ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
         <line class="route-glow ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
         <line class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
       `;
@@ -1069,7 +1070,10 @@ function renderHabitatModules() {
         .join(" ");
       return `
         <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}">
-          <span class="module-platform" aria-hidden="true"></span>
+          <span class="module-platform" aria-hidden="true">
+            <span class="platform-deck"></span>
+            <span class="platform-ring"></span>
+          </span>
           <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
           <span class="module-copy">
             <small>${escapeHtml(room.metric)}</small>

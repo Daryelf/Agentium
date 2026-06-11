@@ -946,11 +946,12 @@ main {
   border-radius: 22px;
   border: 1px solid rgba(125, 211, 252, 0.18);
   background:
-    radial-gradient(circle at 78% 16%, rgba(96, 165, 250, 0.22), transparent 24%),
-    radial-gradient(circle at 47% 48%, rgba(139, 92, 246, 0.2), transparent 25%),
-    radial-gradient(circle at 16% 84%, rgba(34, 211, 238, 0.12), transparent 30%),
+    radial-gradient(circle at 80% 4%, rgba(147, 197, 253, 0.34), transparent 20%),
+    radial-gradient(circle at 48% 47%, rgba(139, 92, 246, 0.24), transparent 24%),
+    radial-gradient(circle at 11% 25%, rgba(59, 130, 246, 0.2), transparent 30%),
+    radial-gradient(circle at 16% 84%, rgba(34, 211, 238, 0.14), transparent 30%),
     linear-gradient(180deg, rgba(2, 6, 23, 0.72), rgba(2, 4, 10, 0.96));
-  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.74), 0 0 60px rgba(96, 165, 250, 0.1);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.7), inset 0 -90px 120px rgba(0, 0, 0, 0.46), 0 0 60px rgba(96, 165, 250, 0.1);
   touch-action: none;
 }
 
@@ -960,10 +961,13 @@ main {
   inset: 0;
   pointer-events: none;
   background:
+    radial-gradient(circle at 9% 18%, rgba(96, 165, 250, 0.9) 0 1px, transparent 2px),
+    radial-gradient(circle at 18% 68%, rgba(167, 139, 250, 0.7) 0 1px, transparent 2px),
+    radial-gradient(circle at 88% 74%, rgba(125, 211, 252, 0.7) 0 1px, transparent 2px),
     linear-gradient(rgba(125, 211, 252, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(125, 211, 252, 0.04) 1px, transparent 1px);
-  background-size: 96px 96px;
-  opacity: 0.44;
+  background-size: 220px 180px, 260px 210px, 300px 240px, 96px 96px, 96px 96px;
+  opacity: 0.5;
   mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.95), transparent 72%);
 }
 
@@ -974,15 +978,16 @@ main {
   z-index: 1;
   pointer-events: none;
   background:
-    radial-gradient(ellipse at 78% -8%, transparent 0 45%, rgba(125, 211, 252, 0.34) 47%, rgba(167, 139, 250, 0.16) 50%, transparent 55%),
-    linear-gradient(118deg, transparent 0 46%, rgba(96, 165, 250, 0.16) 48%, transparent 52%),
+    radial-gradient(ellipse at 78% -26%, transparent 0 49%, rgba(191, 219, 254, 0.68) 51%, rgba(96, 165, 250, 0.28) 53%, transparent 60%),
+    linear-gradient(116deg, transparent 0 45%, rgba(96, 165, 250, 0.1) 48%, transparent 53%),
     radial-gradient(ellipse at 12% 100%, rgba(96, 165, 250, 0.28), transparent 28%);
-  opacity: 0.78;
+  opacity: 0.68;
 }
 
 .habitat-canvas {
   position: absolute;
   inset: 0;
+  z-index: 2;
   transform-origin: 0 0;
   will-change: transform;
 }
@@ -998,7 +1003,7 @@ main {
     radial-gradient(circle, rgba(248, 250, 252, 0.7) 0 1px, transparent 1.6px),
     radial-gradient(circle, rgba(125, 211, 252, 0.5) 0 1px, transparent 1.5px);
   background-size: 180px 140px, 300px 220px;
-  opacity: 0.45;
+  opacity: 0.62;
   animation: mapStarDrift 80s linear infinite;
 }
 
@@ -1010,19 +1015,20 @@ main {
 
 .planet-glow {
   position: absolute;
-  right: -18%;
-  top: -25%;
-  width: 82%;
-  height: 68%;
+  right: -14%;
+  top: -45%;
+  width: 104%;
+  height: 95%;
   border-radius: 50%;
   background:
-    radial-gradient(ellipse at 52% 74%, rgba(96, 165, 250, 0.42), transparent 16%),
-    radial-gradient(ellipse at 48% 76%, rgba(167, 139, 250, 0.28), transparent 26%),
-    linear-gradient(145deg, transparent 0 53%, rgba(96, 165, 250, 0.2) 58%, rgba(167, 139, 250, 0.22) 63%, transparent 73%);
-  border: 1px solid rgba(125, 211, 252, 0.22);
+    radial-gradient(ellipse at 56% 74%, rgba(191, 219, 254, 0.48), transparent 12%),
+    radial-gradient(ellipse at 50% 77%, rgba(96, 165, 250, 0.42), transparent 24%),
+    radial-gradient(ellipse at 39% 77%, rgba(167, 139, 250, 0.3), transparent 32%),
+    linear-gradient(145deg, transparent 0 53%, rgba(147, 197, 253, 0.3) 58%, rgba(167, 139, 250, 0.24) 63%, transparent 75%);
+  border: 1px solid rgba(191, 219, 254, 0.3);
   opacity: 0.96;
   transform: rotate(-11deg);
-  box-shadow: 0 0 140px rgba(96, 165, 250, 0.26);
+  box-shadow: 0 0 180px rgba(96, 165, 250, 0.32);
 }
 
 .orbital-ring {
@@ -1076,28 +1082,28 @@ main {
 }
 
 .route-bridge {
-  stroke: rgba(37, 99, 235, 0.32);
-  stroke-width: 9;
-  opacity: 0.78;
-}
-
-.route-bridge.active {
-  stroke: rgba(34, 211, 238, 0.42);
+  stroke: rgba(37, 99, 235, 0.48);
+  stroke-width: 16;
   opacity: 0.9;
 }
 
+.route-bridge.active {
+  stroke: rgba(34, 211, 238, 0.58);
+  opacity: 1;
+}
+
 .route-glow {
-  stroke: rgba(96, 165, 250, 0.28);
-  stroke-width: 16;
-  filter: blur(10px);
-  opacity: 0.66;
+  stroke: rgba(96, 165, 250, 0.42);
+  stroke-width: 30;
+  filter: blur(13px);
+  opacity: 0.84;
 }
 
 .route-line {
   stroke: url("#routeGradient");
-  stroke: rgba(125, 211, 252, 0.7);
-  stroke-width: 1.9;
-  stroke-dasharray: 8 16;
+  stroke: rgba(125, 211, 252, 0.9);
+  stroke-width: 3;
+  stroke-dasharray: 6 14;
   animation: routeFlow 2.4s linear infinite;
   animation-delay: var(--delay, 0s);
 }
@@ -1282,8 +1288,8 @@ main {
   left: var(--x);
   top: var(--y);
   z-index: 4;
-  width: 172px;
-  height: 130px;
+  width: 210px;
+  height: 154px;
   padding: 0;
   border: 0;
   border-radius: 22px;
@@ -1298,14 +1304,14 @@ main {
   content: "";
   position: absolute;
   left: 50%;
-  top: 48%;
-  width: 118px;
-  height: 42px;
+  top: 66%;
+  width: 176px;
+  height: 58px;
   border-radius: 50%;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.78), transparent 72%);
   filter: blur(10px);
-  opacity: 0.68;
-  transform: translate(-50%, 18px);
+  opacity: 0.76;
+  transform: translate(-50%, 24px);
 }
 
 .station::after {
@@ -1331,7 +1337,7 @@ main {
 .station[data-station="ai-agents"],
 .station[data-station="security-core"],
 .station[data-station="system-logs"] {
-  z-index: 7;
+  z-index: 5;
 }
 
 .station[data-station="task-factory"],
@@ -1345,30 +1351,31 @@ main {
 .station[data-station="logistics-node"],
 .station[data-station="workflow-pipeline"],
 .station[data-station="content-engine"] {
-  z-index: 5;
+  z-index: 7;
 }
 
 .module-platform {
   position: absolute;
   left: 50%;
-  top: 36%;
+  top: 64%;
   z-index: 1;
-  width: 152px;
-  height: 92px;
+  width: 200px;
+  height: 118px;
   display: block;
   border-radius: 50%;
   background:
-    radial-gradient(ellipse at 50% 36%, rgba(248, 250, 252, 0.16), transparent 14%),
-    radial-gradient(ellipse at center, color-mix(in srgb, var(--module-color) 24%, transparent), transparent 56%),
-    repeating-radial-gradient(ellipse at center, transparent 0 10px, rgba(125, 211, 252, 0.1) 11px 12px),
-    linear-gradient(180deg, rgba(36, 47, 72, 0.92), rgba(5, 8, 18, 0.96));
+    radial-gradient(ellipse at 50% 30%, rgba(248, 250, 252, 0.28), transparent 13%),
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--module-color) 32%, transparent), transparent 53%),
+    repeating-radial-gradient(ellipse at center, transparent 0 11px, rgba(125, 211, 252, 0.12) 12px 13px),
+    repeating-conic-gradient(from 9deg, rgba(226, 232, 240, 0.16) 0 3deg, transparent 3deg 12deg),
+    linear-gradient(180deg, rgba(51, 65, 85, 0.95), rgba(8, 13, 26, 0.98) 52%, rgba(2, 6, 23, 0.98));
   border: 1px solid color-mix(in srgb, var(--module-color) 34%, rgba(255, 255, 255, 0.1));
   box-shadow:
-    0 20px 34px rgba(0, 0, 0, 0.56),
-    0 0 30px color-mix(in srgb, var(--module-color) 20%, transparent),
+    0 28px 40px rgba(0, 0, 0, 0.64),
+    0 0 38px color-mix(in srgb, var(--module-color) 24%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -12px 26px rgba(0, 0, 0, 0.66);
-  transform: translate(-50%, -50%) perspective(420px) rotateX(58deg);
+    inset 0 -18px 34px rgba(0, 0, 0, 0.72);
+  transform: translate(-50%, -50%) perspective(520px) rotateX(60deg);
   transition: border-color 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 
@@ -1387,11 +1394,11 @@ main {
 }
 
 .module-platform::before {
-  inset: 8px 12px;
+  inset: 10px 16px;
   border-radius: inherit;
   background:
-    radial-gradient(ellipse at 50% 46%, rgba(2, 6, 23, 0.9), rgba(15, 23, 42, 0.86) 48%, rgba(96, 165, 250, 0.12) 64%, transparent 66%),
-    repeating-conic-gradient(from 18deg, rgba(148, 163, 184, 0.28) 0 5deg, transparent 5deg 18deg);
+    radial-gradient(ellipse at 50% 44%, rgba(2, 6, 23, 0.94), rgba(15, 23, 42, 0.88) 45%, rgba(96, 165, 250, 0.18) 63%, transparent 67%),
+    repeating-conic-gradient(from 18deg, rgba(148, 163, 184, 0.3) 0 4deg, transparent 4deg 14deg);
   border: 1px solid rgba(148, 163, 184, 0.16);
   opacity: 0.82;
 }
@@ -1400,13 +1407,16 @@ main {
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 16% 50%, color-mix(in srgb, var(--module-color) 86%, white), transparent 4px),
-    radial-gradient(circle at 30% 24%, rgba(226, 232, 240, 0.72), transparent 3px),
-    radial-gradient(circle at 50% 14%, color-mix(in srgb, var(--module-color) 78%, white), transparent 3px),
-    radial-gradient(circle at 70% 24%, rgba(226, 232, 240, 0.7), transparent 3px),
-    radial-gradient(circle at 84% 50%, color-mix(in srgb, var(--module-color) 86%, white), transparent 4px),
-    radial-gradient(circle at 68% 78%, rgba(226, 232, 240, 0.62), transparent 3px),
-    radial-gradient(circle at 32% 78%, rgba(226, 232, 240, 0.62), transparent 3px);
+    radial-gradient(circle at 12% 50%, color-mix(in srgb, var(--module-color) 88%, white), transparent 4px),
+    radial-gradient(circle at 24% 25%, rgba(226, 232, 240, 0.76), transparent 3px),
+    radial-gradient(circle at 38% 14%, color-mix(in srgb, var(--module-color) 78%, white), transparent 3px),
+    radial-gradient(circle at 50% 10%, rgba(226, 232, 240, 0.7), transparent 3px),
+    radial-gradient(circle at 62% 14%, color-mix(in srgb, var(--module-color) 78%, white), transparent 3px),
+    radial-gradient(circle at 76% 25%, rgba(226, 232, 240, 0.76), transparent 3px),
+    radial-gradient(circle at 88% 50%, color-mix(in srgb, var(--module-color) 88%, white), transparent 4px),
+    radial-gradient(circle at 72% 78%, rgba(226, 232, 240, 0.66), transparent 3px),
+    radial-gradient(circle at 50% 88%, color-mix(in srgb, var(--module-color) 72%, white), transparent 3px),
+    radial-gradient(circle at 28% 78%, rgba(226, 232, 240, 0.66), transparent 3px);
   opacity: 0.9;
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--module-color) 70%, transparent));
 }
@@ -1414,8 +1424,8 @@ main {
 .platform-deck {
   left: 50%;
   top: 48%;
-  width: 50px;
-  height: 50px;
+  width: 64px;
+  height: 56px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--module-color) 22%, transparent), transparent 30%),
@@ -1426,7 +1436,7 @@ main {
 }
 
 .platform-ring {
-  inset: -7px -12px;
+  inset: -9px -16px;
   border-radius: inherit;
   border: 1px solid color-mix(in srgb, var(--module-color) 34%, transparent);
   opacity: 0.4;
@@ -1446,16 +1456,16 @@ main {
 
 .module-icon {
   position: absolute;
-  left: 50%;
-  top: 28%;
-  z-index: 4;
-  width: 30px;
-  height: 30px;
+  left: 45px;
+  top: 43px;
+  z-index: 6;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   border-radius: 12px;
   color: color-mix(in srgb, var(--module-color) 82%, white);
-  font-size: 0.62rem;
+  font-size: 0.76rem;
   font-weight: 900;
   background:
     radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--module-color) 34%, transparent), transparent 62%),
@@ -1468,21 +1478,23 @@ main {
 .module-copy {
   position: absolute;
   left: 50%;
-  top: 58%;
+  top: 8px;
   z-index: 5;
-  width: 146px;
-  min-height: 60px;
+  width: 160px;
+  min-height: 68px;
   display: grid;
   align-content: center;
   gap: 2px;
-  padding: 7px 9px;
-  border-radius: 13px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 9px 10px 9px 52px;
+  border-radius: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--module-color) 10%, transparent), transparent 48%),
-    rgba(5, 8, 18, 0.66);
-  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(16px);
+    radial-gradient(circle at 18% 50%, color-mix(in srgb, var(--module-color) 18%, transparent), transparent 32%),
+    linear-gradient(135deg, color-mix(in srgb, var(--module-color) 10%, transparent), transparent 46%),
+    rgba(5, 8, 18, 0.76);
+  box-shadow: 0 16px 28px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  text-align: left;
   transform: translateX(-50%);
 }
 
@@ -1535,19 +1547,19 @@ main {
   left: var(--agent-x, 35%);
   top: var(--agent-y, 17%);
   z-index: 6;
-  width: 18px;
-  height: 18px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   pointer-events: none;
-  background: #bfdbfe;
-  box-shadow: 0 0 22px rgba(96, 165, 250, 0.9);
+  background: #67e8f9;
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.9);
   transform: translate(-50%, -50%);
   transition: left 500ms ease, top 500ms ease;
 }
 
 .agent-avatar span {
   position: absolute;
-  inset: -9px;
+  inset: -7px;
   border-radius: 50%;
   border: 1px solid rgba(125, 211, 252, 0.42);
   animation: avatarPulse 1.8s ease-in-out infinite;
@@ -2771,14 +2783,27 @@ label {
   }
 
   .station {
-    width: 154px;
-    min-height: 76px;
-    padding-left: 52px;
+    width: 190px;
+    height: 146px;
+    min-height: 0;
+    padding-left: 0;
+  }
+
+  .module-platform {
+    width: 180px;
+    height: 108px;
+  }
+
+  .module-copy {
+    width: 152px;
+    min-height: 64px;
+    padding-left: 50px;
   }
 
   .module-icon {
-    width: 31px;
-    height: 31px;
+    left: 44px;
+    width: 34px;
+    height: 34px;
   }
 
   .analytics-strip {
@@ -2876,7 +2901,23 @@ label {
   }
 
   .station {
+    width: 168px;
+    height: 136px;
+  }
+
+  .module-platform {
+    width: 156px;
+    height: 98px;
+  }
+
+  .module-copy {
     width: 142px;
+    min-height: 62px;
+    padding-left: 46px;
+  }
+
+  .module-icon {
+    left: 40px;
   }
 
   .map-controls {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=habitat-os" />
+    <link rel="stylesheet" href="./styles.css?v=habitat-os-3" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -698,6 +698,10 @@
                   <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
                   Authentication
                 </button>
+                <button class="settings-nav-item" data-settings-target="settings-api-keys" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M15 7a4 4 0 1 0-4 4"/><path d="m14 10 7-7"/><path d="m17 3 4 4"/><path d="M5 21l5-5"/></svg>
+                  API Keys
+                </button>
                 <button class="settings-nav-item" data-settings-target="settings-sessions" type="button">
                   <svg viewBox="0 0 24 24"><path d="M4 5h16v12H4Z"/><path d="M9 21h6"/><path d="M12 17v4"/></svg>
                   Sessions
@@ -706,9 +710,25 @@
                   <svg viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h10"/></svg>
                   Audit Logs
                 </button>
-                <button class="settings-nav-item" data-settings-target="settings-overview" type="button">
-                  <svg viewBox="0 0 24 24"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/><path d="M12 8v4l3 2"/></svg>
-                  System Status
+                <button class="settings-nav-item" data-settings-target="settings-preferences" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6"/></svg>
+                  System Preferences
+                </button>
+                <button class="settings-nav-item" data-settings-target="settings-integrations" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M8 12h8"/><path d="M7 7h.01"/><path d="M17 17h.01"/><path d="M7 17a5 5 0 0 1 10-10"/></svg>
+                  Integrations
+                </button>
+                <button class="settings-nav-item" data-settings-target="settings-storage" type="button">
+                  <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+                  Data &amp; Storage
+                </button>
+                <button class="settings-nav-item" data-settings-target="settings-backup" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 19h16"/></svg>
+                  Backup &amp; Restore
+                </button>
+                <button class="settings-nav-item" data-settings-target="settings-billing" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4Z"/><path d="M4 11h16"/><path d="M8 15h3"/></svg>
+                  Billing &amp; Usage
                 </button>
               </aside>
 
@@ -840,6 +860,38 @@
                   </div>
                 </section>
 
+                <section class="settings-card" id="settings-api-keys">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>API Keys</h4>
+                      <p>External connectors stay locked until the operator approves them.</p>
+                    </div>
+                    <span class="status-chip">Approval required</span>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M15 7a4 4 0 1 0-4 4"/><path d="m14 10 7-7"/></svg>
+                      </span>
+                      <div>
+                        <strong>No active API keys</strong>
+                        <p>Keys are never stored in project memory or committed to Git.</p>
+                      </div>
+                      <em>Clean</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 5-3.3 8.5-8 10-4.7-1.5-8-5-8-10V6l8-3Z"/></svg>
+                      </span>
+                      <div>
+                        <strong>Scoped permissions</strong>
+                        <p>Future API access must declare purpose, risk, and revocation path.</p>
+                      </div>
+                      <em>Gated</em>
+                    </div>
+                  </div>
+                </section>
+
                 <section class="settings-card" id="settings-audit">
                   <div class="settings-card-heading">
                     <div>
@@ -867,6 +919,164 @@
                       <div><span>OK</span><p>Legacy defaults</p><strong>Blocked</strong></div>
                       <div><span>OK</span><p>Signed sessions</p><strong>Enabled</strong></div>
                       <div><span>OK</span><p>Approval gates</p><strong>Active</strong></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card" id="settings-preferences">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>System Preferences</h4>
+                      <p>Command-floor appearance, time, and operating defaults.</p>
+                    </div>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 6.5 6.5 0 0 1-9-9Z"/></svg>
+                      </span>
+                      <div>
+                        <strong>Appearance</strong>
+                        <p>Premium orbital dark mode with reduced-motion support.</p>
+                      </div>
+                      <em>Active</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/><path d="M12 8v4l3 2"/></svg>
+                      </span>
+                      <div>
+                        <strong>System time</strong>
+                        <p>UTC mission time mirrored across the shell.</p>
+                      </div>
+                      <em>UTC</em>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card" id="settings-integrations">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Integrations</h4>
+                      <p>Third-party services, automations, and webhook access.</p>
+                    </div>
+                    <span class="risk-tag medium">Locked</span>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M8 12h8"/><path d="M7 7h.01"/><path d="M17 17h.01"/></svg>
+                      </span>
+                      <div>
+                        <strong>External connectors</strong>
+                        <p>Commerce, email, and automation connectors require approval before activation.</p>
+                      </div>
+                      <em>Draft</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 12h6"/><path d="M14 12h6"/><path d="M10 8l4 4-4 4"/></svg>
+                      </span>
+                      <div>
+                        <strong>Workflow webhooks</strong>
+                        <p>Inbound webhooks are disabled until a signed connector policy exists.</p>
+                      </div>
+                      <em>Off</em>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card" id="settings-storage">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Data &amp; Storage</h4>
+                      <p>Local state, private memory, and export controls.</p>
+                    </div>
+                    <span class="status-chip">Local first</span>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>
+                      </span>
+                      <div>
+                        <strong>Runtime state</strong>
+                        <p>Persistent JSON state remains ignored by Git unless explicitly requested.</p>
+                      </div>
+                      <em>Protected</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
+                      </span>
+                      <div>
+                        <strong>Private memory</strong>
+                        <p>Evidence and memory remain local unless the operator approves export.</p>
+                      </div>
+                      <em>Guarded</em>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card" id="settings-backup">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Backup &amp; Restore</h4>
+                      <p>Disaster recovery controls for the local command floor.</p>
+                    </div>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 19h16"/></svg>
+                      </span>
+                      <div>
+                        <strong>Manual export</strong>
+                        <p>State export is planned as an explicit operator action.</p>
+                      </div>
+                      <em>Planned</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>
+                      </span>
+                      <div>
+                        <strong>Restore points</strong>
+                        <p>Restore will require a local file and confirmation before replacing state.</p>
+                      </div>
+                      <em>Gated</em>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card" id="settings-billing">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Billing &amp; Usage</h4>
+                      <p>Usage limits, spend visibility, and finance guardrails.</p>
+                    </div>
+                    <span class="risk-tag low">No spend authority</span>
+                  </div>
+                  <div class="settings-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4Z"/><path d="M4 11h16"/><path d="M8 15h3"/></svg>
+                      </span>
+                      <div>
+                        <strong>Spend controls</strong>
+                        <p>Argentum cannot move money, place trades, or purchase without approval.</p>
+                      </div>
+                      <em>Locked</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 3 5-7"/></svg>
+                      </span>
+                      <div>
+                        <strong>Usage estimate</strong>
+                        <p>Local prototype tracks task and function run counters for operator review.</p>
+                      </div>
+                      <em>Visible</em>
                     </div>
                   </div>
                 </section>
@@ -930,6 +1140,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=habitat-os"></script>
+    <script src="./script.js?v=habitat-os-3"></script>
   </body>
 </html>

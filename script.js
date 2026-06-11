@@ -266,6 +266,9 @@ const settingsSessionMeta = document.querySelector("#settingsSessionMeta");
 const settingsLoginHistory = document.querySelector("#settingsLoginHistory");
 const securityScanBtn = document.querySelector("#securityScanBtn");
 const settingsNavButtons = document.querySelectorAll("[data-settings-target]");
+const settingsTitleHeading = document.querySelector(".settings-title h3");
+const settingsTitleCopy = document.querySelector(".settings-title p");
+const settingsBreadcrumbCurrent = document.querySelector(".settings-breadcrumb strong");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
 const queueCount = document.querySelector("#queueCount");
@@ -540,7 +543,7 @@ const roomProfiles = {
     metric: "7 agents",
     icon: "AG",
     color: "#22D3EE",
-    position: { x: 18, y: 22 },
+    position: { x: 14, y: 22 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     agents: ["Atlas", "Depo", "Sentry"],
@@ -560,7 +563,7 @@ const roomProfiles = {
     metric: "7 active",
     icon: "AI",
     color: "#60A5FA",
-    position: { x: 35, y: 17 },
+    position: { x: 36, y: 18 },
     summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
     description: "Runtime coordination room where active agents exchange context, queues, and route state.",
     agents: ["Atlas", "Nexus", "Depo"],
@@ -580,7 +583,7 @@ const roomProfiles = {
     metric: "197 active",
     icon: "TF",
     color: "#FBBF24",
-    position: { x: 15, y: 45 },
+    position: { x: 14, y: 47 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     agents: ["Forge", "Nexus", "Depo"],
@@ -600,7 +603,7 @@ const roomProfiles = {
     metric: "$7,128 today",
     icon: "CT",
     color: "#38BDF8",
-    position: { x: 34, y: 45 },
+    position: { x: 34, y: 47 },
     summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     agents: ["Prism", "Nexus"],
@@ -620,7 +623,7 @@ const roomProfiles = {
     metric: "+12.4%",
     icon: "RM",
     color: "#60A5FA",
-    position: { x: 65, y: 45 },
+    position: { x: 66, y: 47 },
     summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     agents: ["Ledger", "Oracle"],
@@ -640,7 +643,7 @@ const roomProfiles = {
     metric: "12,455 items",
     icon: "RS",
     color: "#60A5FA",
-    position: { x: 24, y: 73 },
+    position: { x: 14, y: 66 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     agents: ["Oracle", "Depo"],
@@ -660,7 +663,7 @@ const roomProfiles = {
     metric: "8 routes",
     icon: "LN",
     color: "#38BDF8",
-    position: { x: 39, y: 76 },
+    position: { x: 32, y: 70 },
     summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     agents: ["Nexus", "Forge"],
@@ -680,7 +683,7 @@ const roomProfiles = {
     metric: "578 tasks",
     icon: "WP",
     color: "#8B5CF6",
-    position: { x: 55, y: 78 },
+    position: { x: 68, y: 70 },
     summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     agents: ["Nexus", "Forge", "Atlas"],
@@ -700,7 +703,7 @@ const roomProfiles = {
     metric: "5 generating",
     icon: "CE",
     color: "#A78BFA",
-    position: { x: 70, y: 73 },
+    position: { x: 86, y: 66 },
     summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     agents: ["Prism", "Forge"],
@@ -720,7 +723,7 @@ const roomProfiles = {
     metric: "24 active",
     icon: "CN",
     color: "#22D3EE",
-    position: { x: 83, y: 47 },
+    position: { x: 88, y: 47 },
     summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     agents: ["Prism", "Sentry"],
@@ -740,7 +743,7 @@ const roomProfiles = {
     metric: "No threats",
     icon: "SC",
     color: "#60A5FA",
-    position: { x: 61, y: 20 },
+    position: { x: 64, y: 18 },
     summary: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     description: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     agents: ["Sentry", "Atlas"],
@@ -760,7 +763,7 @@ const roomProfiles = {
     metric: "6 events",
     icon: "SL",
     color: "#38BDF8",
-    position: { x: 78, y: 24 },
+    position: { x: 86, y: 22 },
     summary: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     description: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     agents: ["Sentry", "Atlas", "Oracle"],
@@ -2129,6 +2132,12 @@ settingsNavButtons.forEach((button) => {
   button.addEventListener("click", () => {
     settingsNavButtons.forEach((item) => item.classList.toggle("active", item === button));
     const target = document.querySelector(`#${CSS.escape(button.dataset.settingsTarget)}`);
+    const title = button.textContent.trim().replace(/\s+/g, " ");
+    if (settingsTitleHeading) settingsTitleHeading.textContent = title;
+    if (settingsBreadcrumbCurrent) settingsBreadcrumbCurrent.textContent = title;
+    if (settingsTitleCopy && target) {
+      settingsTitleCopy.textContent = target.querySelector(".settings-card-heading p")?.textContent || "Manage Argentum command-floor settings.";
+    }
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 });

@@ -1100,8 +1100,8 @@ main {
   left: 50%;
   top: 50%;
   z-index: 5;
-  width: 160px;
-  height: 160px;
+  width: 138px;
+  height: 138px;
   border: 0;
   border-radius: 50%;
   display: grid;
@@ -1142,7 +1142,7 @@ main {
 }
 
 .core-rings {
-  inset: -38px;
+  inset: -32px;
   border: 1px solid rgba(96, 165, 250, 0.18);
   animation: spinSlow 18s linear infinite;
 }
@@ -1169,10 +1169,10 @@ main {
 }
 
 .core-orb {
-  width: 42px;
-  height: 42px;
-  top: 32px;
-  left: 59px;
+  width: 38px;
+  height: 38px;
+  top: 28px;
+  left: 50px;
   background: radial-gradient(circle at 38% 28%, #fff, var(--cyan) 25%, var(--purple) 66%, transparent 72%);
   box-shadow: 0 0 34px rgba(34, 211, 238, 0.72);
   animation: corePulse 2.5s ease-in-out infinite;
@@ -1184,12 +1184,12 @@ main {
   position: relative;
   z-index: 2;
   display: block;
-  width: 112px;
+  width: 104px;
 }
 
 .map-core span {
-  margin-top: 52px;
-  font-size: 0.78rem;
+  margin-top: 48px;
+  font-size: 0.72rem;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -1197,12 +1197,12 @@ main {
 .map-core small {
   margin-top: 3px;
   color: var(--text-soft);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
 }
 
 .map-core em {
   color: var(--success);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-style: normal;
   font-weight: 900;
 }
@@ -1230,9 +1230,9 @@ main {
   left: var(--x);
   top: var(--y);
   z-index: 4;
-  width: 172px;
-  min-height: 82px;
-  padding: 12px 13px 12px 58px;
+  width: 154px;
+  min-height: 76px;
+  padding: 11px 12px 11px 52px;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   color: var(--text);
@@ -1288,8 +1288,8 @@ main {
   position: absolute;
   left: 13px;
   top: 15px;
-  width: 34px;
-  height: 34px;
+  width: 31px;
+  height: 31px;
   border-radius: 13px;
   color: color-mix(in srgb, var(--module-color) 82%, white);
   font-size: 0.7rem;
@@ -1310,20 +1310,20 @@ main {
 
 .module-copy small {
   color: var(--text-soft);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 830;
 }
 
 .module-copy strong {
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   font-weight: 900;
   line-height: 1.08;
 }
 
 .module-copy em {
   color: var(--success);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-style: normal;
   font-weight: 850;
 }
@@ -1735,7 +1735,8 @@ main {
 }
 
 .analytics-strip {
-  min-height: 132px;
+  height: 160px;
+  min-height: 0;
   display: grid;
   grid-template-columns: 1.25fr 1.05fr 1.35fr 0.9fr 1.05fr 1.05fr;
   gap: 12px;
@@ -1743,12 +1744,13 @@ main {
 
 .analytics-card {
   min-width: 0;
-  min-height: 132px;
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
   border-radius: 18px;
-  padding: 13px;
+  padding: 12px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .health-card,
@@ -1760,8 +1762,8 @@ main {
 .ring-meter,
 .donut-meter,
 .security-ring {
-  width: 86px;
-  height: 86px;
+  width: 76px;
+  height: 76px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -1778,7 +1780,7 @@ main {
 
 .ring-meter strong,
 .security-ring strong {
-  font-size: 1.05rem;
+  font-size: 0.96rem;
 }
 
 .ring-meter span,
@@ -1797,7 +1799,7 @@ main {
 .big-metric {
   display: block;
   color: var(--text);
-  font-size: 1.55rem;
+  font-size: 1.38rem;
   line-height: 1.05;
   font-weight: 900;
 }
@@ -2318,6 +2320,8 @@ label {
 }
 
 #view-settings.active {
+  min-height: 0;
+  overflow: hidden auto;
   padding-bottom: 90px;
 }
 

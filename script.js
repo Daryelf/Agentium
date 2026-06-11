@@ -543,7 +543,7 @@ const roomProfiles = {
     metric: "7 agents",
     icon: "AG",
     color: "#22D3EE",
-    position: { x: 14, y: 22 },
+    position: { x: 14, y: 18 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     agents: ["Atlas", "Depo", "Sentry"],
@@ -583,7 +583,7 @@ const roomProfiles = {
     metric: "197 active",
     icon: "TF",
     color: "#FBBF24",
-    position: { x: 14, y: 47 },
+    position: { x: 14, y: 48 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     agents: ["Forge", "Nexus", "Depo"],
@@ -603,7 +603,7 @@ const roomProfiles = {
     metric: "$7,128 today",
     icon: "CT",
     color: "#38BDF8",
-    position: { x: 34, y: 47 },
+    position: { x: 34, y: 40 },
     summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     agents: ["Prism", "Nexus"],
@@ -623,7 +623,7 @@ const roomProfiles = {
     metric: "+12.4%",
     icon: "RM",
     color: "#60A5FA",
-    position: { x: 66, y: 47 },
+    position: { x: 66, y: 40 },
     summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     agents: ["Ledger", "Oracle"],
@@ -643,7 +643,7 @@ const roomProfiles = {
     metric: "12,455 items",
     icon: "RS",
     color: "#60A5FA",
-    position: { x: 14, y: 66 },
+    position: { x: 16.5, y: 65 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     agents: ["Oracle", "Depo"],
@@ -663,7 +663,7 @@ const roomProfiles = {
     metric: "8 routes",
     icon: "LN",
     color: "#38BDF8",
-    position: { x: 32, y: 70 },
+    position: { x: 34, y: 66 },
     summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     agents: ["Nexus", "Forge"],
@@ -683,7 +683,7 @@ const roomProfiles = {
     metric: "578 tasks",
     icon: "WP",
     color: "#8B5CF6",
-    position: { x: 68, y: 70 },
+    position: { x: 66, y: 66 },
     summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     agents: ["Nexus", "Forge", "Atlas"],
@@ -703,7 +703,7 @@ const roomProfiles = {
     metric: "5 generating",
     icon: "CE",
     color: "#A78BFA",
-    position: { x: 86, y: 66 },
+    position: { x: 86, y: 65 },
     summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     agents: ["Prism", "Forge"],
@@ -723,7 +723,7 @@ const roomProfiles = {
     metric: "24 active",
     icon: "CN",
     color: "#22D3EE",
-    position: { x: 88, y: 47 },
+    position: { x: 88, y: 40 },
     summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     agents: ["Prism", "Sentry"],
@@ -775,6 +775,21 @@ const roomProfiles = {
     workspaceType: "logs",
   },
 };
+
+const habitatMapModules = [
+  "agent-habitat",
+  "ai-agents",
+  "security-core",
+  "system-logs",
+  "task-factory",
+  "commerce-terminal",
+  "revenue-monitor",
+  "customer-node",
+  "resources",
+  "logistics-node",
+  "workflow-pipeline",
+  "content-engine",
+].map((id) => roomProfiles[id]);
 
 const moduleRoutes = [
   ["agent-habitat", "ai-agents"],
@@ -1060,8 +1075,7 @@ function renderHabitatModules() {
   if (!habitatModules) return;
   const selected = resolveRoomKey(selectedRoomKey);
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
-  habitatModules.innerHTML = Object.values(roomProfiles)
-    .filter((room) => room.id !== "argentum-core")
+  habitatModules.innerHTML = habitatMapModules
     .map((room) => {
       const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
       const isRelated = related.has(room.id);
@@ -1089,12 +1103,19 @@ function renderHabitatModules() {
 
 function renderMiniMap() {
   if (!miniMapNodes) return;
-  miniMapNodes.innerHTML = Object.values(roomProfiles)
-    .filter((room) => room.id !== "argentum-core")
+  const routeLines = moduleRoutes
+    .map(([from, to]) => {
+      const source = moduleProfile(from);
+      const target = moduleProfile(to);
+      return `<line x1="${source.position.x}" y1="${source.position.y}" x2="${target.position.x}" y2="${target.position.y}"></line>`;
+    })
+    .join("");
+  const dots = habitatMapModules
     .map(
       (room) => `<i class="${selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id ? "active" : ""}" style="--x: ${room.position.x}%; --y: ${room.position.y}%"></i>`,
     )
     .join("");
+  miniMapNodes.innerHTML = `<svg class="mini-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${routeLines}</svg>${dots}`;
 }
 
 function renderShellData() {

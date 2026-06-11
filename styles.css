@@ -1076,27 +1076,27 @@ main {
 }
 
 .route-bridge {
-  stroke: rgba(71, 85, 105, 0.38);
-  stroke-width: 7;
-  opacity: 0.72;
+  stroke: rgba(37, 99, 235, 0.32);
+  stroke-width: 9;
+  opacity: 0.78;
 }
 
 .route-bridge.active {
-  stroke: rgba(96, 165, 250, 0.34);
+  stroke: rgba(34, 211, 238, 0.42);
   opacity: 0.9;
 }
 
 .route-glow {
-  stroke: rgba(96, 165, 250, 0.2);
-  stroke-width: 13;
+  stroke: rgba(96, 165, 250, 0.28);
+  stroke-width: 16;
   filter: blur(10px);
-  opacity: 0.54;
+  opacity: 0.66;
 }
 
 .route-line {
   stroke: url("#routeGradient");
-  stroke: rgba(96, 165, 250, 0.62);
-  stroke-width: 1.65;
+  stroke: rgba(125, 211, 252, 0.7);
+  stroke-width: 1.9;
   stroke-dasharray: 8 16;
   animation: routeFlow 2.4s linear infinite;
   animation-delay: var(--delay, 0s);
@@ -1128,7 +1128,7 @@ main {
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 5;
+  z-index: 8;
   width: 138px;
   height: 138px;
   border: 0;
@@ -1282,8 +1282,8 @@ main {
   left: var(--x);
   top: var(--y);
   z-index: 4;
-  width: 168px;
-  height: 126px;
+  width: 172px;
+  height: 130px;
   padding: 0;
   border: 0;
   border-radius: 22px;
@@ -1327,13 +1327,34 @@ main {
   filter: saturate(0.6);
 }
 
+.station[data-station="agent-habitat"],
+.station[data-station="ai-agents"],
+.station[data-station="security-core"],
+.station[data-station="system-logs"] {
+  z-index: 7;
+}
+
+.station[data-station="task-factory"],
+.station[data-station="commerce-terminal"],
+.station[data-station="revenue-monitor"],
+.station[data-station="customer-node"] {
+  z-index: 6;
+}
+
+.station[data-station="resources"],
+.station[data-station="logistics-node"],
+.station[data-station="workflow-pipeline"],
+.station[data-station="content-engine"] {
+  z-index: 5;
+}
+
 .module-platform {
   position: absolute;
   left: 50%;
   top: 36%;
   z-index: 1;
-  width: 138px;
-  height: 86px;
+  width: 152px;
+  height: 92px;
   display: block;
   border-radius: 50%;
   background:
@@ -1447,12 +1468,14 @@ main {
 .module-copy {
   position: absolute;
   left: 50%;
-  top: 60%;
+  top: 58%;
   z-index: 5;
-  width: 136px;
+  width: 146px;
+  min-height: 60px;
   display: grid;
+  align-content: center;
   gap: 2px;
-  padding: 7px 9px 8px;
+  padding: 7px 9px;
   border-radius: 13px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   background:
@@ -1465,7 +1488,7 @@ main {
 
 .module-copy small {
   color: var(--text-soft);
-  font-size: 0.63rem;
+  font-size: 0.64rem;
   font-weight: 830;
 }
 
@@ -1540,10 +1563,10 @@ main {
 .mini-map {
   position: absolute;
   left: 14px;
-  bottom: 14px;
+  bottom: 0;
   z-index: 8;
   width: 118px;
-  height: 74px;
+  height: 60px;
   overflow: hidden;
   border-radius: 13px;
   border: 1px solid rgba(125, 211, 252, 0.18);
@@ -1559,7 +1582,7 @@ main {
   left: 50%;
   top: 50%;
   width: 82px;
-  height: 48px;
+  height: 40px;
   border-radius: 50%;
   border: 1px solid rgba(125, 211, 252, 0.2);
   transform: translate(-50%, -50%) rotate(-11deg);
@@ -1569,12 +1592,26 @@ main {
   content: "";
   position: absolute;
   left: 32px;
-  top: 21px;
+  top: 16px;
   width: 50px;
-  height: 30px;
+  height: 26px;
   border-radius: 7px;
   border: 1px solid rgba(167, 139, 250, 0.38);
   background: rgba(96, 165, 250, 0.06);
+}
+
+.mini-map-routes {
+  position: absolute;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  opacity: 0.48;
+}
+
+.mini-map-routes line {
+  stroke: rgba(96, 165, 250, 0.55);
+  stroke-width: 0.75;
+  vector-effect: non-scaling-stroke;
 }
 
 .mini-map > span {
@@ -1606,7 +1643,7 @@ main {
 .map-controls {
   position: absolute;
   right: 14px;
-  bottom: 14px;
+  bottom: 0;
   z-index: 8;
   min-height: 42px;
   display: flex;
@@ -1637,16 +1674,16 @@ main {
 .live-flow-chip {
   position: absolute;
   right: 14px;
-  top: 14px;
+  top: 4px;
   bottom: auto;
   z-index: 8;
   width: 176px;
   min-width: 0;
-  height: 34px;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid rgba(125, 211, 252, 0.18);
   background: rgba(8, 13, 26, 0.76);
@@ -1657,7 +1694,7 @@ main {
 
 .live-flow-chip i {
   flex: 1;
-  height: 12px;
+  height: 10px;
   background:
     radial-gradient(circle at 20% 50%, rgba(96, 165, 250, 0.8) 0 1px, transparent 2px),
     linear-gradient(90deg, transparent, rgba(96, 165, 250, 0.9), rgba(139, 92, 246, 0.8), transparent);

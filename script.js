@@ -523,7 +523,7 @@ const roomProfiles = {
     metric: "100%",
     icon: "AC",
     color: "#60A5FA",
-    position: { x: 50, y: 49 },
+    position: { x: 50, y: 50 },
     summary: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
     description: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
     agents: ["Atlas", "Sentry", "Nexus"],
@@ -543,7 +543,7 @@ const roomProfiles = {
     metric: "7 agents",
     icon: "AG",
     color: "#22D3EE",
-    position: { x: 11, y: 18 },
+    position: { x: 14, y: 21 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     agents: ["Atlas", "Depo", "Sentry"],
@@ -563,7 +563,7 @@ const roomProfiles = {
     metric: "7 active",
     icon: "AI",
     color: "#60A5FA",
-    position: { x: 37, y: 18 },
+    position: { x: 38, y: 21 },
     summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
     description: "Runtime coordination room where active agents exchange context, queues, and route state.",
     agents: ["Atlas", "Nexus", "Depo"],
@@ -583,7 +583,7 @@ const roomProfiles = {
     metric: "197 active",
     icon: "TF",
     color: "#FBBF24",
-    position: { x: 11, y: 48 },
+    position: { x: 14, y: 50 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     agents: ["Forge", "Nexus", "Depo"],
@@ -603,7 +603,7 @@ const roomProfiles = {
     metric: "$7,128 today",
     icon: "CT",
     color: "#38BDF8",
-    position: { x: 34.5, y: 48 },
+    position: { x: 34, y: 50 },
     summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     agents: ["Prism", "Nexus"],
@@ -623,7 +623,7 @@ const roomProfiles = {
     metric: "+12.4%",
     icon: "RM",
     color: "#60A5FA",
-    position: { x: 65.5, y: 48 },
+    position: { x: 66, y: 50 },
     summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     agents: ["Ledger", "Oracle"],
@@ -643,7 +643,7 @@ const roomProfiles = {
     metric: "12,455 items",
     icon: "RS",
     color: "#60A5FA",
-    position: { x: 11, y: 72 },
+    position: { x: 14, y: 78 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     agents: ["Oracle", "Depo"],
@@ -663,7 +663,7 @@ const roomProfiles = {
     metric: "8 routes",
     icon: "LN",
     color: "#38BDF8",
-    position: { x: 34.5, y: 72 },
+    position: { x: 38, y: 78 },
     summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     agents: ["Nexus", "Forge"],
@@ -683,7 +683,7 @@ const roomProfiles = {
     metric: "578 tasks",
     icon: "WP",
     color: "#8B5CF6",
-    position: { x: 65.5, y: 72 },
+    position: { x: 62, y: 78 },
     summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     agents: ["Nexus", "Forge", "Atlas"],
@@ -703,7 +703,7 @@ const roomProfiles = {
     metric: "5 generating",
     icon: "CE",
     color: "#A78BFA",
-    position: { x: 89, y: 72 },
+    position: { x: 86, y: 78 },
     summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     agents: ["Prism", "Forge"],
@@ -723,7 +723,7 @@ const roomProfiles = {
     metric: "24 active",
     icon: "CN",
     color: "#22D3EE",
-    position: { x: 89, y: 48 },
+    position: { x: 86, y: 50 },
     summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     agents: ["Prism", "Sentry"],
@@ -743,7 +743,7 @@ const roomProfiles = {
     metric: "No threats",
     icon: "SC",
     color: "#60A5FA",
-    position: { x: 63, y: 18 },
+    position: { x: 62, y: 21 },
     summary: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     description: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     agents: ["Sentry", "Atlas"],
@@ -763,7 +763,7 @@ const roomProfiles = {
     metric: "6 events",
     icon: "SL",
     color: "#38BDF8",
-    position: { x: 89, y: 24 },
+    position: { x: 86, y: 21 },
     summary: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     description: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     agents: ["Sentry", "Atlas", "Oracle"],
@@ -1055,20 +1055,96 @@ function routeIsActive(from, to) {
   return related.has(from) && related.has(to);
 }
 
+function coreBeamIsActive(moduleId) {
+  if (!selectedRoomKey && !selectedAgentKey) return true;
+  const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
+  if (selected === "argentum-core") return true;
+  return connectedModuleSet(selected).has(moduleId);
+}
+
+function routePoint(room) {
+  return {
+    x: room.position.x * 10,
+    y: room.position.y * 6.2,
+  };
+}
+
+function directRoutePath(source, target) {
+  const start = routePoint(source);
+  const end = routePoint(target);
+  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} L ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+}
+
+function bridgeRoutePath(source, target, index) {
+  const start = routePoint(source);
+  const end = routePoint(target);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const normalX = -dy / distance;
+  const normalY = dx / distance;
+  const bendDirection = index % 2 === 0 ? 1 : -1;
+  const bend = bendDirection * clamp(distance * 0.08, 18, 58);
+  const c1x = start.x + dx * 0.34 + normalX * bend;
+  const c1y = start.y + dy * 0.34 + normalY * bend;
+  const c2x = start.x + dx * 0.66 + normalX * bend;
+  const c2y = start.y + dy * 0.66 + normalY * bend;
+  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+}
+
+function moduleSecondaryDetail(room) {
+  const metricText = String(room.metric || "").toLowerCase();
+  const detail = (room.metrics || []).find(([, value]) => !metricText.includes(String(value).toLowerCase())) || room.metrics?.[0];
+  if (!detail) return room.type;
+  const [label, value] = detail;
+  return `${value} ${String(label).toLowerCase()}`;
+}
+
 function renderHabitatRoutes() {
   if (!habitatRoutes) return;
-  habitatRoutes.innerHTML = moduleRoutes
+  const core = roomProfiles["argentum-core"];
+  const defs = `
+    <defs>
+      <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(34, 211, 238, 0.12)" />
+        <stop offset="42%" stop-color="rgba(125, 211, 252, 0.95)" />
+        <stop offset="72%" stop-color="rgba(167, 139, 250, 0.86)" />
+        <stop offset="100%" stop-color="rgba(34, 211, 238, 0.16)" />
+      </linearGradient>
+      <linearGradient id="coreBeamGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="rgba(147, 197, 253, 0.08)" />
+        <stop offset="50%" stop-color="rgba(34, 211, 238, 0.62)" />
+        <stop offset="100%" stop-color="rgba(139, 92, 246, 0.08)" />
+      </linearGradient>
+    </defs>
+  `;
+  const coreRoutes = habitatMapModules
+    .map((room, index) => {
+      const path = directRoutePath(core, room);
+      const active = coreBeamIsActive(room.id);
+      return `
+        <path class="core-beam ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.11).toFixed(2)}s"></path>
+        <path class="core-flow ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.11).toFixed(2)}s"></path>
+      `;
+    })
+    .join("");
+  const moduleBridgeRoutes = moduleRoutes
     .map(([from, to], index) => {
       const source = moduleProfile(from);
       const target = moduleProfile(to);
       const active = routeIsActive(from, to);
+      const path = bridgeRoutePath(source, target, index);
       return `
-        <line class="route-bridge ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
-        <line class="route-glow ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
-        <line class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" x1="${source.position.x * 10}" y1="${source.position.y * 6.2}" x2="${target.position.x * 10}" y2="${target.position.y * 6.2}" style="--delay: ${index * 0.18}s"></line>
+        <path class="route-glow ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <path class="route-bridge ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <path class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <circle class="route-particle ${active ? "active" : ""}" r="2.7">
+          <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
+        </circle>
       `;
     })
     .join("");
+  habitatRoutes.innerHTML = `${defs}${coreRoutes}${moduleBridgeRoutes}`;
 }
 
 function renderHabitatModules() {
@@ -1085,15 +1161,27 @@ function renderHabitatModules() {
       return `
         <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}">
           <span class="module-platform" aria-hidden="true">
-            <span class="platform-deck"></span>
             <span class="platform-ring"></span>
+            <span class="platform-deck"></span>
+            <span class="platform-reactor"></span>
+            <span class="platform-windows"></span>
+            <span class="platform-ports"></span>
+            <span class="platform-socket socket-n"></span>
+            <span class="platform-socket socket-e"></span>
+            <span class="platform-socket socket-s"></span>
+            <span class="platform-socket socket-w"></span>
+            <span class="platform-antenna antenna-a"></span>
+            <span class="platform-antenna antenna-b"></span>
           </span>
           <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
           <span class="module-copy">
             <small>${escapeHtml(room.metric)}</small>
             <strong>${escapeHtml(room.title)}</strong>
-            <em>${escapeHtml(room.status)}</em>
+            <span><em>${escapeHtml(room.status)}</em><b>${escapeHtml(moduleSecondaryDetail(room))}</b></span>
           </span>
+          <span class="module-micro micro-a" aria-hidden="true">${escapeHtml(room.metrics[0]?.[0] || "SYS")} ${escapeHtml(room.metrics[0]?.[1] || room.status)}</span>
+          <span class="module-micro micro-b" aria-hidden="true">LINK ${escapeHtml(String(room.connectedModules.length).padStart(2, "0"))}</span>
+          <span class="module-micro micro-c" aria-hidden="true">${escapeHtml(room.type.split(" ")[0])}</span>
           <span class="module-tooltip" role="tooltip">${escapeHtml(room.description)}</span>
         </button>
       `;
@@ -1115,7 +1203,13 @@ function renderMiniMap() {
       (room) => `<i class="${selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id ? "active" : ""}" style="--x: ${room.position.x}%; --y: ${room.position.y}%"></i>`,
     )
     .join("");
-  miniMapNodes.innerHTML = `<svg class="mini-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${routeLines}</svg>${dots}`;
+  const rect = stationMap?.getBoundingClientRect();
+  const viewWidth = clamp(100 / mapView.scale, 22, 100);
+  const viewHeight = clamp(100 / mapView.scale, 24, 100);
+  const viewLeft = rect?.width ? clamp((-mapView.x / (mapView.scale * rect.width)) * 100, 0, 100 - viewWidth) : 0;
+  const viewTop = rect?.height ? clamp((-mapView.y / (mapView.scale * rect.height)) * 100, 0, 100 - viewHeight) : 0;
+  const viewport = `<b class="mini-map-viewport" style="--vx: ${viewLeft.toFixed(1)}%; --vy: ${viewTop.toFixed(1)}%; --vw: ${viewWidth.toFixed(1)}%; --vh: ${viewHeight.toFixed(1)}%"></b>`;
+  miniMapNodes.innerHTML = `<svg class="mini-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${routeLines}</svg>${dots}${viewport}`;
 }
 
 function renderShellData() {
@@ -1149,6 +1243,7 @@ function applyMapView(animated = true) {
   habitatCanvas.classList.toggle("is-animating", animated);
   habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
+  renderMiniMap();
   if (animated) {
     window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
   }

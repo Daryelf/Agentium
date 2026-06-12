@@ -458,7 +458,7 @@ const habitatFloorRooms = [
     visual: "clipboard",
     icon: "clipboard",
     color: "#38BDF8",
-    position: { x: 24, y: 15 },
+    position: { x: 22, y: 15 },
     size: { w: 24, h: 27 },
     purpose: "Captures new requests and turns them into structured work.",
     depoRole: "Depo reads the request and breaks it into safe steps.",
@@ -496,7 +496,7 @@ const habitatFloorRooms = [
     visual: "verify",
     icon: "shield",
     color: "#7DD3FC",
-    position: { x: 76, y: 15 },
+    position: { x: 78, y: 15 },
     size: { w: 24, h: 27 },
     purpose: "Checks claims, assumptions, and missing details.",
     depoRole: "Depo validates whether the work is safe and complete.",
@@ -515,7 +515,7 @@ const habitatFloorRooms = [
     visual: "vault",
     icon: "database",
     color: "#38BDF8",
-    position: { x: 24, y: 50 },
+    position: { x: 22, y: 50 },
     size: { w: 25, h: 28 },
     purpose: "Stores reusable notes, context, research, and internal knowledge.",
     depoRole: "Depo saves and retrieves project memory.",
@@ -534,7 +534,7 @@ const habitatFloorRooms = [
     visual: "studio",
     icon: "pen",
     color: "#A78BFA",
-    position: { x: 76, y: 50 },
+    position: { x: 78, y: 50 },
     size: { w: 25, h: 28 },
     purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
     depoRole: "Depo drafts work but does not publish it.",
@@ -553,7 +553,7 @@ const habitatFloorRooms = [
     visual: "terminal",
     icon: "log",
     color: "#22D3EE",
-    position: { x: 24, y: 85 },
+    position: { x: 22, y: 85 },
     size: { w: 25, h: 27 },
     purpose: "Tracks events, stage changes, and audit history.",
     depoRole: "Depo writes cycle updates here.",
@@ -591,7 +591,7 @@ const habitatFloorRooms = [
     visual: "gate",
     icon: "lock",
     color: "#F43F5E",
-    position: { x: 76, y: 85 },
+    position: { x: 78, y: 85 },
     size: { w: 25, h: 27 },
     purpose: "Blocks risky actions until the operator approves.",
     depoRole: "Depo packages work for human review.",
@@ -1536,7 +1536,7 @@ function routeAnchorPoint(room, toward) {
   const halfHeight = ((room.size?.h || 12) * 6.2) / 2;
   const horizontalExit = unitX ? halfWidth / Math.abs(unitX) : Number.POSITIVE_INFINITY;
   const verticalExit = unitY ? halfHeight / Math.abs(unitY) : Number.POSITIVE_INFINITY;
-  const edgeOffset = Math.min(horizontalExit, verticalExit) * 0.82;
+  const edgeOffset = Math.min(horizontalExit, verticalExit) * 1.04;
 
   return {
     x: center.x + unitX * edgeOffset,
@@ -1569,6 +1569,19 @@ function bridgeRouteGeometry(source, target, index) {
 
 function bridgeRoutePath(source, target, index) {
   return bridgeRouteGeometry(source, target, index).path;
+}
+
+function floorSpokeGeometry(source, target) {
+  const sourceCenter = routePoint(source);
+  const targetCenter = routePoint(target);
+  const start = routeAnchorPoint(source, targetCenter);
+  const end = routeAnchorPoint(target, sourceCenter);
+
+  return {
+    start,
+    end,
+    path: `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} L ${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
+  };
 }
 
 function moduleIconMarkup(id) {
@@ -2399,23 +2412,28 @@ function renderHabitatRoutes() {
     </defs>
   `;
 
-  const moduleBridgeRoutes = moduleRoutes
+  const visibleFloorRoutes = moduleRoutes.filter((route) => {
+    const { from, to } = routeEndpoints(route);
+    return from === "depo-habitat" || to === "depo-habitat";
+  });
+
+  const moduleBridgeRoutes = visibleFloorRoutes
     .map((route, index) => {
       const { from, to, kind } = routeEndpoints(route);
       const source = moduleProfile(from);
       const target = moduleProfile(to);
       const active = routeIsActive(route);
       const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
-      const geometry = bridgeRouteGeometry(source, target, index);
+      const geometry = floorSpokeGeometry(source, target);
       const { path, start, end } = geometry;
       return `
         <path class="route-glow ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-tube ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-bridge ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-line ${approval ? "approval" : ""} ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
-        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="${approval ? "5.2" : "4.6"}"></circle>
-        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="${approval ? "5.2" : "4.6"}"></circle>
-        <circle class="route-particle ${approval ? "approval" : ""} ${active ? "active" : ""}" r="${approval ? "4" : "3.2"}">
+        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="${approval ? "7.6" : "7"}"></circle>
+        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="${approval ? "7.6" : "7"}"></circle>
+        <circle class="route-particle ${approval ? "approval" : ""} ${active ? "active" : ""}" r="${approval ? "5.2" : "4.6"}">
           <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
         </circle>
       `;
@@ -2453,9 +2471,9 @@ function floorPropsMarkup(room) {
 
 function miniAgentRobotMarkup(room) {
   if (room.id === "human-gate") return "";
-  const posture = room.id === "human-gate" ? "guard" : room.id === "draft-studio" ? "typing" : room.id === "memory-vault" ? "archiving" : "working";
+  const posture = room.id === "draft-studio" ? "typing" : room.id === "memory-vault" ? "archiving" : "working";
   return `
-    <span class="mini-agent-robot ${posture}" aria-hidden="true">
+    <span class="mini-agent-robot ${posture} robot-${escapeHtml(room.visual)}" aria-hidden="true">
       <span class="robot-head"><i></i><i></i></span>
       <span class="robot-body"></span>
       <span class="robot-shadow"></span>
@@ -2463,11 +2481,44 @@ function miniAgentRobotMarkup(room) {
   `;
 }
 
+function floorCorridorMarkup() {
+  const core = habitatFloorRoomById["depo-habitat"];
+  const center = core.position;
+
+  return habitatMapModules
+    .map((room, index) => {
+      const dx = room.position.x - center.x;
+      const dy = room.position.y - center.y;
+      const distance = Math.hypot(dx, dy) || 1;
+      const unitX = dx / distance;
+      const unitY = dy / distance;
+      const startOffset = room.id === "output-bench" || room.id === "research-lab" ? 11 : 9;
+      const endOffset = room.id === "output-bench" || room.id === "research-lab" ? 11 : 12;
+      const startX = center.x + unitX * startOffset;
+      const startY = center.y + unitY * startOffset;
+      const endX = room.position.x - unitX * endOffset;
+      const endY = room.position.y - unitY * endOffset;
+      const corridorDx = endX - startX;
+      const corridorDy = endY - startY;
+      const corridorLength = Math.hypot(corridorDx, corridorDy);
+      const angle = Math.atan2(corridorDy, corridorDx) * (180 / Math.PI);
+      const approval = room.id === "human-gate";
+
+      return `
+        <span class="floor-corridor ${approval ? "approval" : ""}" style="--cx: ${startX.toFixed(2)}%; --cy: ${startY.toFixed(2)}%; --corridor-length: ${corridorLength.toFixed(2)}%; --corridor-angle: ${angle.toFixed(2)}deg; --corridor-delay: ${(index * 0.2).toFixed(2)}s" aria-hidden="true">
+          <i></i>
+        </span>
+      `;
+    })
+    .join("");
+}
+
 // HabitatRoom layer
 function renderHabitatModules() {
   if (!habitatModules) return;
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
-  habitatModules.innerHTML = habitatMapModules
+  const corridorLayer = `<div class="floor-corridors" aria-hidden="true">${floorCorridorMarkup()}</div>`;
+  const roomLayer = habitatMapModules
     .map((room) => {
       const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
       const isRelated = related.has(room.id);
@@ -2498,6 +2549,7 @@ function renderHabitatModules() {
       `;
     })
     .join("");
+  habitatModules.innerHTML = `${corridorLayer}${roomLayer}`;
 }
 
 // OrbitMiniMap

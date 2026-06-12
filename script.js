@@ -367,7 +367,9 @@ const createUserForm = document.querySelector("#createUserForm");
 const agentRosterList = document.querySelector("#agentRosterList");
 const habitatModules = document.querySelector("#habitatModules");
 const habitatRoutes = document.querySelector("#habitatRoutes");
+const stationArtwork = document.querySelector("#stationArtwork");
 const miniMapNodes = document.querySelector("#miniMapNodes");
+const moduleInfoCard = document.querySelector("#moduleInfoCard");
 const mapViewMode = document.querySelector("#mapViewMode");
 const scanBtn = document.querySelector("#scanBtn");
 const systemClockNodes = document.querySelectorAll("[data-system-clock]");
@@ -502,14 +504,14 @@ const agentProfiles = {
     number: "001",
     icon: "D",
     color: "#7DD3FC",
-    room: "agent-habitat",
-    connectedModules: ["agent-habitat", "ai-agents", "security-core", "resources", "system-logs"],
-    currentTask: "Research, verify, draft, and package approval-ready decisions without external execution.",
-    queue: ["Research intake", "Evidence guard", "Draft approval package"],
+    room: "depo-habitat",
+    connectedModules: ["depo-habitat", "argentum-core"],
+    currentTask: "Newborn first agent. Depo is ready to turn one bounded idea into evidence, draft output, and an approval package.",
+    queue: ["Receive first bounded workflow"],
     queueCount: 1,
     permissions: ["Read/write working memory", "Draft artifacts", "Cannot publish, spend, trade, contact customers, or deploy agents"],
     riskLevel: "Medium",
-    actions: ["Maintains draft-only mode", "Keeps external actions gated", "Writes provenance-labeled memory"],
+    actions: ["Depo born into the habitat", "Draft-only rules loaded", "External actions remain gated"],
   },
 };
 
@@ -520,19 +522,40 @@ const roomProfiles = {
     name: "Argentum Core",
     type: "AI Command Core",
     status: "Online",
-    metric: "100%",
+    metric: "Agent 001",
     icon: "AC",
     color: "#60A5FA",
-    position: { x: 50, y: 50 },
-    summary: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
-    description: "Central reasoning reactor for command routing, agent coordination, workflow timing, and system health.",
-    agents: ["Atlas", "Sentry", "Nexus"],
-    connectedModules: ["agent-habitat", "security-core", "commerce-terminal", "workflow-pipeline", "system-logs"],
-    connected: ["Agent Habitat", "Security Core", "Commerce Terminal", "Workflow Pipeline", "System Logs"],
-    tasks: ["Route system state", "Coordinate agent context", "Protect approval boundaries"],
-    activity: ["Core health is stable.", "Data routes are flowing.", "Human-gate constraints are active."],
-    metrics: [["Health", "100%"], ["Route load", "Live"], ["Mode", "Supervised"]],
+    position: { x: 50, y: 43 },
+    summary: "Central supervised habitat where Agent 001 lives, receives bounded work, and sends risky actions to the human gate.",
+    description: "Central supervised habitat where Agent 001 lives, receives bounded work, and sends risky actions to the human gate.",
+    agents: ["Depo"],
+    connectedModules: ["depo-habitat"],
+    connected: ["Depo Habitat"],
+    tasks: ["Hold Depo's identity", "Route one bounded task", "Protect approval boundaries"],
+    activity: ["Depo has entered the habitat.", "Revenue claims are cleared.", "Human-gate constraints are active."],
+    metrics: [["Active agents", "1"], ["Revenue", "None yet"], ["Mode", "Supervised"]],
     workspaceType: "core",
+  },
+  "depo-habitat": {
+    id: "depo-habitat",
+    title: "Depo Habitat",
+    name: "Depo Habitat",
+    type: "First Agent Home",
+    status: "Born",
+    metric: "Agent 001",
+    icon: "D",
+    color: "#7DD3FC",
+    position: { x: 50, y: 63 },
+    labelPosition: { x: 50, y: 72 },
+    summary: "The first real resident of Argentum. Depo can research, verify, draft, curate memory, and package approval-ready work.",
+    description: "The first real resident of Argentum. Depo can research, verify, draft, curate memory, and package approval-ready work.",
+    agents: ["Depo"],
+    connectedModules: ["argentum-core"],
+    connected: ["Argentum Core"],
+    tasks: ["Accept one bounded workflow", "Gather evidence", "Draft for approval"],
+    activity: ["Agent 001 initialized.", "Draft-only permission set loaded.", "No revenue has been claimed."],
+    metrics: [["Agent", "Depo"], ["Revenue", "None yet"], ["External actions", "Locked"]],
+    workspaceType: "depo",
   },
   "agent-habitat": {
     id: "agent-habitat",
@@ -540,15 +563,15 @@ const roomProfiles = {
     name: "Agent Habitat",
     type: "Agent Command",
     status: "Live",
-    metric: "7 agents",
+    metric: "1 active agent",
     icon: "👥",
     color: "#22D3EE",
-    position: { x: 22, y: 28 },
-    labelPosition: { x: 20, y: 33 },
+    position: { x: 18, y: 20 },
+    labelPosition: { x: 18, y: 13 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     agents: ["Atlas", "Depo", "Sentry"],
-    connectedModules: ["ai-agents", "task-factory", "security-core", "resources"],
+    connectedModules: ["argentum-core", "ai-agents", "task-factory", "system-logs"],
     connected: ["AI Agents Room", "Task Factory", "Security Core", "Resources"],
     tasks: ["Review active agents", "Check permissions", "Open supervised workspaces"],
     activity: ["Atlas reconciled the command map.", "Depo remains draft-only.", "Sentry verified approval gates."],
@@ -561,15 +584,15 @@ const roomProfiles = {
     name: "AI Agents Room",
     type: "Agent Runtime",
     status: "Live",
-    metric: "7 active",
+    metric: "1 active agent",
     icon: "🤖",
     color: "#60A5FA",
-    position: { x: 39, y: 28 },
-    labelPosition: { x: 39, y: 33 },
+    position: { x: 39, y: 20 },
+    labelPosition: { x: 39, y: 13 },
     summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
     description: "Runtime coordination room where active agents exchange context, queues, and route state.",
     agents: ["Atlas", "Nexus", "Depo"],
-    connectedModules: ["agent-habitat", "security-core", "workflow-pipeline"],
+    connectedModules: ["agent-habitat", "argentum-core", "workflow-pipeline", "security-core"],
     connected: ["Agent Habitat", "Security Core", "Workflow Pipeline"],
     tasks: ["Balance agent queues", "Route context", "Track active status"],
     activity: ["Nexus refreshed route links.", "Atlas synced agent state.", "Depo moved to Verify."],
@@ -581,16 +604,16 @@ const roomProfiles = {
     title: "Task Factory",
     name: "Task Factory",
     type: "Production Queue",
-    status: "Live",
-    metric: "197 active",
+    status: "Active",
+    metric: "1 queued task",
     icon: "⚙️",
     color: "#FBBF24",
-    position: { x: 12, y: 55 },
-    labelPosition: { x: 14, y: 58 },
+    position: { x: 12, y: 43 },
+    labelPosition: { x: 12, y: 40 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     agents: ["Forge", "Nexus", "Depo"],
-    connectedModules: ["agent-habitat", "commerce-terminal", "workflow-pipeline", "resources"],
+    connectedModules: ["commerce-terminal", "workflow-pipeline", "resources", "argentum-core"],
     connected: ["Agent Habitat", "Commerce Terminal", "Workflow Pipeline", "Resources"],
     tasks: ["Package task batch", "Prepare draft outputs", "Route risky actions to approval"],
     activity: ["Forge deployed a production batch.", "Depo packaged one approval.", "Nexus checked automation pressure."],
@@ -602,19 +625,19 @@ const roomProfiles = {
     title: "Commerce Terminal",
     name: "Commerce Terminal",
     type: "Commerce",
-    status: "Live",
-    metric: "$7,128 today",
+    status: "Draft only",
+    metric: "Mock value",
     icon: "🛒",
     color: "#38BDF8",
-    position: { x: 34, y: 55 },
-    labelPosition: { x: 34, y: 68 },
+    position: { x: 35, y: 43 },
+    labelPosition: { x: 31, y: 40 },
     summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     agents: ["Prism", "Nexus"],
-    connectedModules: ["task-factory", "revenue-monitor", "content-engine", "customer-node"],
+    connectedModules: ["task-factory", "revenue-monitor", "customer-node", "workflow-pipeline"],
     connected: ["Task Factory", "Revenue Monitor", "Content Engine", "Customer Node"],
     tasks: ["Scan orders", "Sync storefront telemetry", "Package campaign report"],
-    activity: ["New order #11492", "Payment received", "Inventory sync", "Campaign updated"],
+    activity: ["Commerce lane reserved.", "No live order feed connected.", "Publishing and checkout remain approval-gated."],
     metrics: [["Orders", "197"], ["Revenue", "$7,128"], ["AOV", "$36.21"]],
     workspaceType: "commerce",
   },
@@ -623,16 +646,16 @@ const roomProfiles = {
     title: "Revenue Monitor",
     name: "Revenue Monitor",
     type: "Finance Telemetry",
-    status: "Live",
-    metric: "+12.4%",
+    status: "Guarded",
+    metric: "Budget guard",
     icon: "📊",
     color: "#60A5FA",
-    position: { x: 66, y: 55 },
-    labelPosition: { x: 66, y: 68 },
+    position: { x: 65, y: 43 },
+    labelPosition: { x: 69, y: 40 },
     summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     agents: ["Ledger", "Oracle"],
-    connectedModules: ["commerce-terminal", "security-core", "resources", "system-logs"],
+    connectedModules: ["commerce-terminal", "resources", "argentum-core", "security-core"],
     connected: ["Commerce Terminal", "Security Core", "Resources", "System Logs"],
     tasks: ["Reconcile daily revenue", "Draft margin notes", "Hold money movement behind approval"],
     activity: ["Ledger reconciled transactions.", "Oracle tagged stale telemetry.", "Payment note routed to review."],
@@ -648,12 +671,12 @@ const roomProfiles = {
     metric: "12,455 items",
     icon: "📦",
     color: "#60A5FA",
-    position: { x: 18, y: 85 },
-    labelPosition: { x: 18, y: 65 },
+    position: { x: 14, y: 72 },
+    labelPosition: { x: 18, y: 68 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     agents: ["Oracle", "Depo"],
-    connectedModules: ["task-factory", "logistics-node", "workflow-pipeline", "revenue-monitor"],
+    connectedModules: ["task-factory", "logistics-node", "workflow-pipeline", "argentum-core"],
     connected: ["Task Factory", "Logistics Node", "Workflow Pipeline", "Revenue Monitor"],
     tasks: ["Index resources", "Label evidence freshness", "Separate private memory"],
     activity: ["Oracle scanned data inventory.", "Depo wrote provenance notes.", "Resource health remains optimal."],
@@ -669,12 +692,12 @@ const roomProfiles = {
     metric: "8 routes",
     icon: "🚚",
     color: "#38BDF8",
-    position: { x: 37, y: 85 },
-    labelPosition: { x: 37, y: 86 },
+    position: { x: 37, y: 72 },
+    labelPosition: { x: 37, y: 68 },
     summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     agents: ["Nexus", "Forge"],
-    connectedModules: ["resources", "workflow-pipeline", "task-factory"],
+    connectedModules: ["resources", "workflow-pipeline", "commerce-terminal", "customer-node"],
     connected: ["Resources", "Workflow Pipeline", "Task Factory"],
     tasks: ["Route queued work", "Check bottlenecks", "Report automation pressure"],
     activity: ["Nexus refreshed eight routes.", "Forge cleared production lane.", "No external connector opened."],
@@ -687,19 +710,19 @@ const roomProfiles = {
     name: "Workflow Pipeline",
     type: "Workflow",
     status: "Active",
-    metric: "578 tasks",
+    metric: "Current stage",
     icon: "🔗",
     color: "#8B5CF6",
-    position: { x: 61, y: 85 },
-    labelPosition: { x: 61, y: 86 },
+    position: { x: 63, y: 72 },
+    labelPosition: { x: 63, y: 68 },
     summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     agents: ["Nexus", "Forge", "Atlas"],
-    connectedModules: ["logistics-node", "content-engine", "ai-agents", "resources"],
+    connectedModules: ["agent-habitat", "task-factory", "logistics-node", "content-engine", "system-logs"],
     connected: ["Logistics Node", "Content Engine", "AI Agents Room", "Resources"],
     tasks: ["Track intake", "Monitor processing", "Send review packages"],
     activity: ["Nexus cycle complete.", "Review lane has 98 items.", "Output lane has 70 items."],
-    metrics: [["Intake", "132"], ["Processing", "278"], ["Review", "98"], ["Output", "70"]],
+    metrics: [["Intake", "1"], ["Processing", "0"], ["Review", "0"], ["Output", "0"]],
     workspaceType: "workflow",
   },
   "content-engine": {
@@ -708,15 +731,15 @@ const roomProfiles = {
     name: "Content Engine",
     type: "Creative Output",
     status: "Active",
-    metric: "5 generating",
+    metric: "5 drafts",
     icon: "✏️",
     color: "#A78BFA",
-    position: { x: 82, y: 85 },
-    labelPosition: { x: 82, y: 65 },
+    position: { x: 87, y: 72 },
+    labelPosition: { x: 82, y: 68 },
     summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     agents: ["Prism", "Forge"],
-    connectedModules: ["commerce-terminal", "workflow-pipeline", "customer-node"],
+    connectedModules: ["workflow-pipeline", "commerce-terminal", "customer-node", "system-logs"],
     connected: ["Commerce Terminal", "Workflow Pipeline", "Customer Node"],
     tasks: ["Generate creative set", "Draft campaign assets", "Prepare review package"],
     activity: ["Prism generated content variants.", "Forge packaged output set.", "Publication remains approval-gated."],
@@ -728,16 +751,16 @@ const roomProfiles = {
     title: "Customer Node",
     name: "Customer Node",
     type: "Customer Signals",
-    status: "Live",
-    metric: "24 active",
+    status: "Guarded",
+    metric: "Contact locked",
     icon: "👤",
     color: "#22D3EE",
-    position: { x: 86, y: 55 },
-    labelPosition: { x: 86, y: 58 },
+    position: { x: 88, y: 43 },
+    labelPosition: { x: 88, y: 40 },
     summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     agents: ["Prism", "Sentry"],
-    connectedModules: ["commerce-terminal", "content-engine", "security-core"],
+    connectedModules: ["commerce-terminal", "content-engine", "security-core", "system-logs"],
     connected: ["Commerce Terminal", "Content Engine", "Security Core"],
     tasks: ["Review customer signals", "Protect personal data", "Hold outbound contact for approval"],
     activity: ["Customer signal received.", "Sentry cleared privacy gate.", "Outbound contact remains locked."],
@@ -753,12 +776,12 @@ const roomProfiles = {
     metric: "No threats",
     icon: "🛡️",
     color: "#60A5FA",
-    position: { x: 61, y: 28 },
-    labelPosition: { x: 61, y: 33 },
+    position: { x: 61, y: 20 },
+    labelPosition: { x: 61, y: 13 },
     summary: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     description: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     agents: ["Sentry", "Atlas"],
-    connectedModules: ["ai-agents", "system-logs", "revenue-monitor", "customer-node"],
+    connectedModules: ["argentum-core", "ai-agents", "revenue-monitor", "customer-node", "system-logs"],
     connected: ["AI Agents Room", "System Logs", "Revenue Monitor", "Customer Node"],
     tasks: ["Scan sessions", "Enforce approval gates", "Record high-risk events"],
     activity: ["Sentry completed security scan.", "High-risk gate remains active.", "No threats found."],
@@ -774,12 +797,12 @@ const roomProfiles = {
     metric: "6 events",
     icon: "📋",
     color: "#38BDF8",
-    position: { x: 78, y: 28 },
-    labelPosition: { x: 80, y: 33 },
+    position: { x: 82, y: 20 },
+    labelPosition: { x: 82, y: 17 },
     summary: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     description: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     agents: ["Sentry", "Atlas", "Oracle"],
-    connectedModules: ["security-core", "revenue-monitor", "workflow-pipeline", "agent-habitat"],
+    connectedModules: ["agent-habitat", "content-engine", "customer-node", "security-core", "workflow-pipeline"],
     connected: ["Security Core", "Revenue Monitor", "Workflow Pipeline", "Agent Habitat"],
     tasks: ["Record events", "Expose audit trail", "Keep system feed readable"],
     activity: ["Sentry suspicious login review.", "Nexus cycle complete.", "Atlas reconciled command map."],
@@ -789,53 +812,179 @@ const roomProfiles = {
 };
 
 const habitatMapModules = [
-  "agent-habitat",
-  "ai-agents",
-  "security-core",
-  "system-logs",
-  "task-factory",
-  "commerce-terminal",
-  "revenue-monitor",
-  "customer-node",
-  "resources",
-  "logistics-node",
-  "workflow-pipeline",
-  "content-engine",
+  "depo-habitat",
 ].map((id) => roomProfiles[id]);
 
-const moduleRoutes = [
-  ["agent-habitat", "ai-agents"],
-  ["agent-habitat", "task-factory"],
-  ["ai-agents", "security-core"],
-  ["ai-agents", "workflow-pipeline"],
-  ["security-core", "system-logs"],
-  ["security-core", "revenue-monitor"],
-  ["security-core", "customer-node"],
-  ["task-factory", "commerce-terminal"],
-  ["task-factory", "resources"],
-  ["commerce-terminal", "revenue-monitor"],
-  ["commerce-terminal", "content-engine"],
-  ["commerce-terminal", "customer-node"],
-  ["resources", "logistics-node"],
-  ["resources", "workflow-pipeline"],
-  ["logistics-node", "workflow-pipeline"],
-  ["workflow-pipeline", "content-engine"],
-  ["workflow-pipeline", "system-logs"],
-];
+const moduleRoutes = [];
+
+const depoWorkflowState = {
+  activeAgent: "Depo",
+  currentTask: "Prepare supervised business action package for review.",
+  currentStage: "Workflow Pipeline",
+  mode: "Supervised",
+  riskMode: "Approval required",
+  externalActions: "Locked",
+  humanGate: "Enabled",
+  canDepoDo: ["Research", "Draft", "Organize", "Package for approval"],
+  cannotDepoDo: ["Publish", "Spend", "Contact externally"],
+};
+
+const habitatModuleCards = {
+  "argentum-core": {
+    purpose: "Central supervised habitat for Argentum's first real agent.",
+    status: "Supervised",
+    metric: "Agent 001 online",
+    depoRole: "Keeps Depo's work local, bounded, and routed through approval before any risky action.",
+    connections: ["depo-habitat"],
+    recentActivity: ["Depo has entered the habitat.", "Revenue counters reset to none.", "Risk gates are active."],
+    riskNote: "Approval is required before any risky external action.",
+    quickActions: ["Run cycle", "View system routes", "View approvals"],
+  },
+  "depo-habitat": {
+    purpose: "Home base for the first supervised agent.",
+    status: "Born",
+    metric: "Agent 001",
+    depoRole: "Depo lives here and starts with research, verification, drafting, and approval packaging.",
+    connections: ["argentum-core"],
+    recentActivity: ["Depo born into habitat.", "Draft-only rules loaded.", "First workflow waiting."],
+    riskNote: "Depo can draft and organize, but cannot publish, spend, trade, contact customers, or deploy agents.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "agent-habitat": {
+    purpose: "Home base for supervised agents.",
+    status: "Live",
+    metric: "1 active agent",
+    depoRole: "Depo lives here as the only active supervised operator.",
+    connections: ["argentum-core", "ai-agents", "task-factory", "system-logs"],
+    recentActivity: ["Depo active.", "Agent health checked.", "No new agents created."],
+    riskNote: "New agents require human approval.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "ai-agents": {
+    purpose: "Agent coordination and capability management.",
+    status: "Live",
+    metric: "1 active agent",
+    depoRole: "Depo receives instructions and sends completed drafts back for review.",
+    connections: ["agent-habitat", "argentum-core", "workflow-pipeline", "security-core"],
+    recentActivity: ["Depo cycle initialized.", "Permissions verified."],
+    riskNote: "Agent permissions are locked.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "task-factory": {
+    purpose: "Converts ideas into structured tasks.",
+    status: "Active",
+    metric: "197 active references / 1 queued task",
+    depoRole: "Depo breaks work into research, evidence, draft, and approval steps.",
+    connections: ["commerce-terminal", "workflow-pipeline", "resources", "argentum-core"],
+    recentActivity: ["New task queued.", "Research lane prepared."],
+    riskNote: "Tasks can be drafted, not deployed.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "commerce-terminal": {
+    purpose: "Commerce/storefront planning and order logic.",
+    status: "Draft only",
+    metric: "Revenue not connected / mock value only",
+    depoRole: "Depo can prepare commerce ideas, but cannot publish or charge customers.",
+    connections: ["task-factory", "revenue-monitor", "customer-node", "workflow-pipeline"],
+    recentActivity: ["Commerce draft prepared.", "No live sales action taken."],
+    riskNote: "Publishing, checkout, pricing, or money movement requires approval.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "revenue-monitor": {
+    purpose: "Finance, budget, revenue, and cost awareness.",
+    status: "Guarded",
+    metric: "Budget guard active",
+    depoRole: "Depo can estimate costs and summarize revenue, but cannot move money.",
+    connections: ["commerce-terminal", "resources", "argentum-core", "security-core"],
+    recentActivity: ["Budget check passed.", "Expense note prepared."],
+    riskNote: "Money movement is locked.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  resources: {
+    purpose: "Memory, files, inventory, and reusable knowledge.",
+    status: "Optimal",
+    metric: "12,455 items / private memory active",
+    depoRole: "Depo stores notes, references, and reusable research here.",
+    connections: ["task-factory", "logistics-node", "workflow-pipeline", "argentum-core"],
+    recentActivity: ["Research note saved.", "Memory updated."],
+    riskNote: "Sensitive data access should be logged.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "logistics-node": {
+    purpose: "Routes work between stages and modules.",
+    status: "Live",
+    metric: "8 routes active",
+    depoRole: "Depo uses this node to move drafts from research to approval.",
+    connections: ["resources", "workflow-pipeline", "commerce-terminal", "customer-node"],
+    recentActivity: ["Route to Workflow Pipeline active."],
+    riskNote: "External delivery actions require approval.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "workflow-pipeline": {
+    purpose: "Main stage tracker for Depo's supervised loop.",
+    status: "Active",
+    metric: "Current stage: Workflow Pipeline",
+    depoRole: "Depo moves through Intake -> Research -> Verify -> Draft -> Package -> Approval.",
+    connections: ["agent-habitat", "task-factory", "logistics-node", "content-engine", "system-logs"],
+    recentActivity: ["Stage moved to Workflow Pipeline."],
+    riskNote: "Final action must pass Human Gate.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "content-engine": {
+    purpose: "Drafts outputs, concepts, listings, posts, and creative assets.",
+    status: "Draft only",
+    metric: "5 generating / 0 published",
+    depoRole: "Depo can create drafts but cannot publish externally.",
+    connections: ["workflow-pipeline", "commerce-terminal", "customer-node", "system-logs"],
+    recentActivity: ["Draft output prepared.", "Awaiting review."],
+    riskNote: "Publishing requires approval.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "customer-node": {
+    purpose: "Customer-facing communication and support awareness.",
+    status: "Guarded",
+    metric: "Contact gate locked",
+    depoRole: "Depo can draft customer messages but cannot send them.",
+    connections: ["commerce-terminal", "content-engine", "security-core", "system-logs"],
+    recentActivity: ["Customer contact blocked by gate."],
+    riskNote: "Contacting customers requires approval.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "security-core": {
+    purpose: "Approval gates, permissions, risk checks, and blocked actions.",
+    status: "Secure",
+    metric: "No threats",
+    depoRole: "Depo checks whether actions are safe before packaging them for approval.",
+    connections: ["argentum-core", "ai-agents", "revenue-monitor", "customer-node", "system-logs"],
+    recentActivity: ["Permission check passed.", "External action blocked."],
+    riskNote: "High-risk actions must be approved.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+  "system-logs": {
+    purpose: "Live event stream and audit history.",
+    status: "Live feed",
+    metric: "6 events",
+    depoRole: "Depo writes cycle updates and action notes here.",
+    connections: ["agent-habitat", "content-engine", "customer-node", "security-core", "workflow-pipeline"],
+    recentActivity: ["Depo moved to Workflow Pipeline.", "Approval required."],
+    riskNote: "Logs should be append-only when possible.",
+    quickActions: ["Open workspace", "View logs", "Run check"],
+  },
+};
 
 const legacyRoomAliases = {
-  Overview: "agent-habitat",
-  Research: "ai-agents",
-  Verify: "security-core",
-  Draft: "task-factory",
-  Approval: "workflow-pipeline",
-  Commerce: "commerce-terminal",
-  Finance: "revenue-monitor",
-  Inventory: "resources",
-  Logistics: "logistics-node",
-  Marketing: "content-engine",
-  Support: "customer-node",
-  Logs: "system-logs",
+  Overview: "depo-habitat",
+  Research: "depo-habitat",
+  Verify: "depo-habitat",
+  Draft: "depo-habitat",
+  Approval: "depo-habitat",
+  Commerce: "depo-habitat",
+  Finance: "depo-habitat",
+  Inventory: "depo-habitat",
+  Logistics: "depo-habitat",
+  Marketing: "depo-habitat",
+  Support: "depo-habitat",
+  Logs: "depo-habitat",
 };
 
 const workspaceProfiles = {
@@ -923,6 +1072,7 @@ const workspaceProfiles = {
 
 let selectedRoomKey = null;
 let selectedAgentKey = null;
+const mapMinScale = 1;
 let mapView = { x: 0, y: 0, scale: 1 };
 let isPanning = false;
 let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
@@ -975,6 +1125,7 @@ async function loadState() {
     apiAvailable = false;
   }
   render();
+  applyMapView(false);
 }
 
 async function mutate(path) {
@@ -1042,7 +1193,7 @@ function shortStatusClass(status) {
 
 function renderAgentRoster() {
   if (!agentRosterList) return;
-  const rosterAgents = Object.values(agentProfiles).filter((agent) => agent.id !== "depo");
+  const rosterAgents = Object.values(agentProfiles).filter((agent) => agent.id === "depo");
   agentRosterList.innerHTML = rosterAgents
     .map(
       (agent) => `
@@ -1091,10 +1242,674 @@ function bridgeRoutePath(source, target, index) {
   return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
 }
 
+function moduleIconMarkup(id) {
+  const icons = {
+    "depo-habitat": '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7c0 5.5 7 11 7 11s7-5.5 7-11a7 7 0 0 0-7-7Z"/><path d="M9 10h6"/><path d="M9 14h4"/></svg>',
+    "agent-habitat": '<svg viewBox="0 0 24 24"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M16 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M3 21a5 5 0 0 1 10 0"/><path d="M11 21a5 5 0 0 1 10 0"/></svg>',
+    "ai-agents": '<svg viewBox="0 0 24 24"><path d="M5 19V5l7 14 7-14v14"/><path d="M8 15h8"/></svg>',
+    "security-core": '<svg viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3Z"/><path d="m9 12 2 2 4-5"/></svg>',
+    "system-logs": '<svg viewBox="0 0 24 24"><path d="M8 6h12"/><path d="M8 12h12"/><path d="M8 18h12"/><path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/></svg>',
+    "task-factory": '<svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3"/><path d="M5 19 16.6 7.4a2.1 2.1 0 0 1 3 3L8 22H5v-3Z"/><path d="M3 7h6"/><path d="M6 4v6"/></svg>',
+    "commerce-terminal": '<svg viewBox="0 0 24 24"><path d="M4 5h2l2.2 10.5a2 2 0 0 0 2 1.5h6.6a2 2 0 0 0 2-1.5L20 9H7"/><circle cx="10" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg>',
+    "revenue-monitor": '<svg viewBox="0 0 24 24"><path d="M5 20V10"/><path d="M12 20V4"/><path d="M19 20v-7"/><path d="M3 20h18"/></svg>',
+    "customer-node": '<svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    resources: '<svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5"/><path d="M12 12v9"/></svg>',
+    "logistics-node": '<svg viewBox="0 0 24 24"><path d="M3 6h12v10H3z"/><path d="M15 10h4l2 3v3h-6"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>',
+    "workflow-pipeline": '<svg viewBox="0 0 24 24"><path d="M10 7h4a5 5 0 0 1 0 10h-4"/><path d="M14 7h-4a5 5 0 0 0 0 10h4"/><path d="M8 12h8"/></svg>',
+    "content-engine": '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>',
+  };
+  return icons[id] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>';
+}
+
+const stationWorld = { width: 1000, height: 620 };
+const stationStarfield = Array.from({ length: 260 }, (_, index) => {
+  const unit = (seed) => {
+    const value = Math.sin(seed * 12.9898) * 43758.5453;
+    return value - Math.floor(value);
+  };
+  return {
+    x: unit(index + 1) * stationWorld.width,
+    y: unit(index + 27) * stationWorld.height,
+    radius: 0.35 + unit(index + 61) * 1.45,
+    alpha: 0.18 + unit(index + 103) * 0.68,
+    tint: unit(index + 151),
+    drift: unit(index + 197) * Math.PI * 2,
+  };
+});
+let stationRenderFrame = null;
+let stationRenderLastPaint = 0;
+
+function stationRgb(value) {
+  const fallback = { r: 34, g: 211, b: 238 };
+  const normalized = String(value || "").trim();
+  if (!normalized.startsWith("#")) return fallback;
+  const hex = normalized.slice(1);
+  const full = hex.length === 3 ? hex.split("").map((char) => `${char}${char}`).join("") : hex;
+  const parsed = Number.parseInt(full, 16);
+  if (!Number.isFinite(parsed)) return fallback;
+  return {
+    r: (parsed >> 16) & 255,
+    g: (parsed >> 8) & 255,
+    b: parsed & 255,
+  };
+}
+
+function stationColor(value, alpha = 1) {
+  const rgb = typeof value === "string" ? stationRgb(value) : value;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+function mixStationColor(base, target, amount) {
+  const baseRgb = typeof base === "string" ? stationRgb(base) : base;
+  const targetRgb = typeof target === "string" ? stationRgb(target) : target;
+  return {
+    r: Math.round(baseRgb.r + (targetRgb.r - baseRgb.r) * amount),
+    g: Math.round(baseRgb.g + (targetRgb.g - baseRgb.g) * amount),
+    b: Math.round(baseRgb.b + (targetRgb.b - baseRgb.b) * amount),
+  };
+}
+
+function stationCanvasPoint(room) {
+  return {
+    x: room.position.x * 10,
+    y: room.position.y * 6.2,
+  };
+}
+
+function stationCurve(source, target, index, bendScale = 0.08) {
+  const start = stationCanvasPoint(source);
+  const end = stationCanvasPoint(target);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const normalX = -dy / distance;
+  const normalY = dx / distance;
+  const bendDirection = index % 2 === 0 ? 1 : -1;
+  const bend = bendDirection * clamp(distance * bendScale, 16, 52);
+  return {
+    start,
+    c1: {
+      x: start.x + dx * 0.34 + normalX * bend,
+      y: start.y + dy * 0.34 + normalY * bend,
+    },
+    c2: {
+      x: start.x + dx * 0.66 + normalX * bend,
+      y: start.y + dy * 0.66 + normalY * bend,
+    },
+    end,
+  };
+}
+
+function drawStationCurve(ctx, curve) {
+  ctx.beginPath();
+  ctx.moveTo(curve.start.x, curve.start.y);
+  ctx.bezierCurveTo(curve.c1.x, curve.c1.y, curve.c2.x, curve.c2.y, curve.end.x, curve.end.y);
+}
+
+function sampleStationCurve(curve, t) {
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const t2 = t * t;
+  return {
+    x: mt2 * mt * curve.start.x + 3 * mt2 * t * curve.c1.x + 3 * mt * t2 * curve.c2.x + t2 * t * curve.end.x,
+    y: mt2 * mt * curve.start.y + 3 * mt2 * t * curve.c1.y + 3 * mt * t2 * curve.c2.y + t2 * t * curve.end.y,
+  };
+}
+
+function sampleStationTangent(curve, t) {
+  const mt = 1 - t;
+  const x =
+    3 * mt * mt * (curve.c1.x - curve.start.x) +
+    6 * mt * t * (curve.c2.x - curve.c1.x) +
+    3 * t * t * (curve.end.x - curve.c2.x);
+  const y =
+    3 * mt * mt * (curve.c1.y - curve.start.y) +
+    6 * mt * t * (curve.c2.y - curve.c1.y) +
+    3 * t * t * (curve.end.y - curve.c2.y);
+  const length = Math.hypot(x, y) || 1;
+  return { x: x / length, y: y / length };
+}
+
+function drawRoundedBox(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
+function drawEllipseFill(ctx, x, y, radiusX, radiusY, fillStyle) {
+  ctx.beginPath();
+  ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+}
+
+function drawSpaceBackdrop(ctx, time) {
+  const background = ctx.createLinearGradient(0, 0, stationWorld.width, stationWorld.height);
+  background.addColorStop(0, "#02040a");
+  background.addColorStop(0.38, "#071126");
+  background.addColorStop(0.72, "#030513");
+  background.addColorStop(1, "#010208");
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
+
+  const nebula = ctx.createRadialGradient(565, 340, 40, 565, 340, 430);
+  nebula.addColorStop(0, "rgba(37, 99, 235, 0.2)");
+  nebula.addColorStop(0.42, "rgba(88, 28, 135, 0.13)");
+  nebula.addColorStop(1, "rgba(2, 6, 23, 0)");
+  ctx.fillStyle = nebula;
+  ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
+
+  stationStarfield.forEach((star) => {
+    const twinkle = 0.72 + Math.sin(time * 0.0014 + star.drift) * 0.28;
+    const tint = star.tint > 0.74 ? "167, 139, 250" : star.tint > 0.42 ? "125, 211, 252" : "226, 232, 240";
+    ctx.fillStyle = `rgba(${tint}, ${star.alpha * twinkle})`;
+    ctx.beginPath();
+    ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawPlanetHorizon(ctx) {
+  ctx.save();
+  ctx.translate(735, -74);
+  ctx.rotate(0.15);
+  ctx.scale(1.08, 0.36);
+  const planet = ctx.createRadialGradient(170, -60, 12, 0, 0, 570);
+  planet.addColorStop(0, "rgba(248, 250, 252, 0.58)");
+  planet.addColorStop(0.15, "rgba(147, 197, 253, 0.48)");
+  planet.addColorStop(0.42, "rgba(37, 99, 235, 0.3)");
+  planet.addColorStop(0.74, "rgba(15, 23, 42, 0.16)");
+  planet.addColorStop(1, "rgba(2, 6, 23, 0)");
+  ctx.beginPath();
+  ctx.arc(0, 0, 570, 0, Math.PI * 2);
+  ctx.fillStyle = planet;
+  ctx.fill();
+  ctx.clip();
+  for (let index = 0; index < 44; index += 1) {
+    const y = -210 + index * 11;
+    const alpha = index % 4 === 0 ? 0.16 : 0.07;
+    ctx.strokeStyle = `rgba(125, 211, 252, ${alpha})`;
+    ctx.lineWidth = index % 5 === 0 ? 2.2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(-520, y);
+    ctx.bezierCurveTo(-190, y - 32, 180, y + 18, 560, y - 14);
+    ctx.stroke();
+  }
+  for (let index = 0; index < 90; index += 1) {
+    const x = -420 + ((index * 97) % 870);
+    const y = -180 + ((index * 53) % 295);
+    ctx.fillStyle = index % 6 === 0 ? "rgba(251, 146, 60, 0.34)" : "rgba(96, 165, 250, 0.22)";
+    ctx.fillRect(x, y, 2 + (index % 3), 1);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(219, 234, 254, 0.9)";
+  ctx.lineWidth = 3.2;
+  ctx.shadowBlur = 34;
+  ctx.shadowColor = "rgba(96, 165, 250, 0.92)";
+  ctx.beginPath();
+  ctx.ellipse(735, -62, 620, 214, 0.15, 0.36, Math.PI * 0.94);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(34, 211, 238, 0.34)";
+  ctx.lineWidth = 9;
+  ctx.shadowBlur = 42;
+  ctx.beginPath();
+  ctx.ellipse(735, -59, 620, 214, 0.15, 0.36, Math.PI * 0.94);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawOrbitalGuides(ctx) {
+  const guides = [
+    [500, 348, 458, 260, -0.08, "rgba(125, 211, 252, 0.16)", 1],
+    [500, 348, 366, 188, -0.08, "rgba(167, 139, 250, 0.14)", 1],
+    [500, 350, 250, 108, -0.08, "rgba(34, 211, 238, 0.14)", 1],
+    [520, 330, 560, 310, -0.28, "rgba(96, 165, 250, 0.09)", 1],
+  ];
+  guides.forEach(([x, y, rx, ry, rotation, color, lineWidth], index) => {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash(index === 2 ? [8, 13] : []);
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, rotation, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawTubeCollars(ctx, curve, color, alpha) {
+  [0.13, 0.24, 0.36, 0.52, 0.68, 0.82].forEach((t, index) => {
+    const point = sampleStationCurve(curve, t);
+    const tangent = sampleStationTangent(curve, t);
+    const normal = { x: -tangent.y, y: tangent.x };
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.strokeStyle = `rgba(3, 7, 18, ${0.78 * alpha})`;
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.moveTo(point.x - normal.x * 10, point.y - normal.y * 10);
+    ctx.lineTo(point.x + normal.x * 10, point.y + normal.y * 10);
+    ctx.stroke();
+    ctx.strokeStyle = stationColor(color, (index % 2 === 0 ? 0.5 : 0.28) * alpha);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(point.x - normal.x * 8, point.y - normal.y * 8);
+    ctx.lineTo(point.x + normal.x * 8, point.y + normal.y * 8);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawEnergyDots(ctx, curve, color, time, alpha, seed) {
+  const progress = ((time * 0.00018 + seed * 0.13) % 1 + 1) % 1;
+  for (let index = 0; index < 4; index += 1) {
+    const t = (progress + index * 0.23) % 1;
+    const point = sampleStationCurve(curve, t);
+    const radius = index === 0 ? 3.2 : 2.1;
+    const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, 18);
+    glow.addColorStop(0, "rgba(248, 250, 252, 0.95)");
+    glow.addColorStop(0.34, stationColor(color, 0.86 * alpha));
+    glow.addColorStop(1, stationColor(color, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius * 4.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(248, 250, 252, 0.9)";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawStationTube(ctx, curve, options) {
+  const color = stationRgb(options.color || "#22D3EE");
+  const altColor = stationRgb(options.altColor || "#8B5CF6");
+  const alpha = options.alpha ?? 1;
+  const width = options.width || 19;
+  const gradient = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
+  gradient.addColorStop(0, stationColor(color, 0.08 * alpha));
+  gradient.addColorStop(0.24, stationColor(color, 0.68 * alpha));
+  gradient.addColorStop(0.58, stationColor(altColor, 0.78 * alpha));
+  gradient.addColorStop(1, stationColor(color, 0.12 * alpha));
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.shadowBlur = 26;
+  ctx.shadowColor = stationColor(color, 0.46 * alpha);
+  ctx.strokeStyle = stationColor(color, 0.2 * alpha);
+  ctx.lineWidth = width + 26;
+  drawStationCurve(ctx, curve);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = `rgba(2, 8, 23, ${0.9 * alpha})`;
+  ctx.lineWidth = width;
+  drawStationCurve(ctx, curve);
+  ctx.stroke();
+
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = width * 0.52;
+  drawStationCurve(ctx, curve);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(219, 234, 254, ${0.34 * alpha})`;
+  ctx.lineWidth = 1.2;
+  drawStationCurve(ctx, curve);
+  ctx.stroke();
+
+  ctx.setLineDash([9, 18]);
+  ctx.lineDashOffset = -options.time * 0.045 - options.seed * 12;
+  ctx.strokeStyle = stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.35), 0.8 * alpha);
+  ctx.lineWidth = 2.4;
+  drawStationCurve(ctx, curve);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  drawTubeCollars(ctx, curve, color, alpha);
+  drawEnergyDots(ctx, curve, color, options.time || 0, alpha, options.seed || 0);
+}
+
+function activeRoomForRenderer() {
+  if (selectedAgentKey) return resolveRoomKey(agentProfiles[selectedAgentKey]?.room);
+  return resolveRoomKey(selectedRoomKey);
+}
+
+function rendererRoomAlpha(roomId) {
+  if (!selectedRoomKey && !selectedAgentKey) return 1;
+  const selected = activeRoomForRenderer();
+  const related = connectedModuleSet(selected);
+  if (roomId === selected) return 1;
+  return related.has(roomId) ? 0.82 : 0.34;
+}
+
+function drawStationPanelLines(ctx, x, y, rx, ry, color, alpha, offset = 0) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx * 0.98, ry * 0.82, 0, 0, Math.PI * 2);
+  ctx.clip();
+  for (let index = 0; index < 34; index += 1) {
+    const angle = (Math.PI * 2 * index) / 34 + offset;
+    const inner = 0.48 + (index % 3) * 0.055;
+    const outer = 0.92 + (index % 4) * 0.018;
+    ctx.strokeStyle = index % 5 === 0 ? stationColor(color, 0.32 * alpha) : `rgba(226, 232, 240, ${0.13 * alpha})`;
+    ctx.lineWidth = index % 5 === 0 ? 1.3 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(angle) * rx * inner, y + Math.sin(angle) * ry * inner);
+    ctx.lineTo(x + Math.cos(angle) * rx * outer, y + Math.sin(angle) * ry * outer);
+    ctx.stroke();
+  }
+  for (let ring = 0; ring < 4; ring += 1) {
+    ctx.strokeStyle = ring % 2 === 0 ? `rgba(148, 163, 184, ${0.16 * alpha})` : stationColor(color, 0.18 * alpha);
+    ctx.lineWidth = ring === 0 ? 1.4 : 0.9;
+    ctx.beginPath();
+    ctx.ellipse(x, y - ring * 1.5, rx * (0.82 - ring * 0.13), ry * (0.66 - ring * 0.1), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawPodLights(ctx, x, y, rx, ry, color, alpha, index, time) {
+  const pulse = 0.74 + Math.sin(time * 0.002 + index) * 0.26;
+  for (let light = 0; light < 30; light += 1) {
+    const angle = (Math.PI * 2 * light) / 30 + index * 0.17;
+    const warm = light % 4 === 0;
+    const lightColor = warm ? { r: 251, g: 146, b: 60 } : color;
+    const radius = warm ? 2.1 : 1.65;
+    const lx = x + Math.cos(angle) * rx * (0.72 + (light % 2) * 0.1);
+    const ly = y + Math.sin(angle) * ry * (0.56 + (light % 3) * 0.05);
+    ctx.fillStyle = stationColor(lightColor, (warm ? 0.88 : 0.82) * alpha * pulse);
+    ctx.shadowBlur = warm ? 9 : 12;
+    ctx.shadowColor = stationColor(lightColor, 0.78 * alpha);
+    ctx.beginPath();
+    ctx.arc(lx, ly, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawPodPorts(ctx, x, y, rx, ry, color, alpha) {
+  const ports = [
+    [x + rx - 12, y - 8, 24, 16, 8],
+    [x - rx - 12, y - 8, 24, 16, 8],
+    [x - 12, y - ry - 8, 24, 11, 6],
+    [x - 12, y + ry - 3, 24, 11, 6],
+  ];
+  ports.forEach(([px, py, width, height, radius]) => {
+    ctx.save();
+    drawRoundedBox(ctx, px, py, width, height, radius);
+    ctx.fillStyle = `rgba(2, 6, 23, ${0.92 * alpha})`;
+    ctx.fill();
+    ctx.strokeStyle = stationColor(color, 0.5 * alpha);
+    ctx.lineWidth = 1.1;
+    ctx.shadowBlur = 9;
+    ctx.shadowColor = stationColor(color, 0.38 * alpha);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawOrbitalPod(ctx, room, index, time) {
+  const point = stationCanvasPoint(room);
+  const color = stationRgb(room.color);
+  const alpha = rendererRoomAlpha(room.id);
+  const selected = activeRoomForRenderer() === room.id && (selectedRoomKey || selectedAgentKey);
+  const rowBoost = room.position.y > 60 ? 1.08 : room.position.y < 25 ? 0.98 : 1.04;
+  const rx = (82 + (index % 3) * 4) * rowBoost * (selected ? 1.04 : 1);
+  const ry = rx * 0.47;
+  const lift = selected ? -2 : 0;
+  const x = point.x;
+  const y = point.y + lift;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const halo = ctx.createRadialGradient(x, y, 4, x, y, rx * 1.38);
+  halo.addColorStop(0, stationColor(color, selected ? 0.3 : 0.18));
+  halo.addColorStop(0.54, stationColor(color, selected ? 0.18 : 0.09));
+  halo.addColorStop(1, stationColor(color, 0));
+  drawEllipseFill(ctx, x, y + 8, rx * 1.38, ry * 1.22, halo);
+
+  drawEllipseFill(ctx, x, y + ry * 0.8, rx * 1.04, ry * 0.5, "rgba(0, 0, 0, 0.42)");
+
+  for (let layer = 10; layer >= 0; layer -= 1) {
+    const depth = layer / 10;
+    const layerGradient = ctx.createLinearGradient(x - rx, y - ry + layer * 2, x + rx, y + ry + 24);
+    layerGradient.addColorStop(0, `rgba(71, 85, 105, ${0.48 + depth * 0.2})`);
+    layerGradient.addColorStop(0.5, `rgba(15, 23, 42, ${0.76 + depth * 0.18})`);
+    layerGradient.addColorStop(1, "rgba(1, 4, 12, 0.98)");
+    ctx.beginPath();
+    ctx.ellipse(x, y + 18 + layer * 1.9, rx - layer * 1.3, ry * 0.72 - layer * 0.26, 0, 0, Math.PI * 2);
+    ctx.fillStyle = layerGradient;
+    ctx.fill();
+  }
+
+  const shell = ctx.createLinearGradient(x - rx, y - ry, x + rx, y + ry + 24);
+  shell.addColorStop(0, stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.3), 0.4));
+  shell.addColorStop(0.2, "rgba(51, 65, 85, 0.96)");
+  shell.addColorStop(0.58, "rgba(8, 13, 26, 0.98)");
+  shell.addColorStop(1, "rgba(0, 0, 0, 1)");
+  ctx.shadowBlur = selected ? 34 : 22;
+  ctx.shadowColor = stationColor(color, selected ? 0.55 : 0.32);
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = shell;
+  ctx.fill();
+  ctx.strokeStyle = stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.26), selected ? 0.86 : 0.46);
+  ctx.lineWidth = selected ? 2 : 1.25;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  drawStationPanelLines(ctx, x, y - 2, rx, ry, color, alpha, index * 0.12);
+
+  const deck = ctx.createRadialGradient(x, y - 5, 2, x, y - 5, rx * 0.58);
+  deck.addColorStop(0, stationColor(color, 0.24));
+  deck.addColorStop(0.48, "rgba(15, 23, 42, 0.96)");
+  deck.addColorStop(1, "rgba(0, 0, 0, 0.94)");
+  ctx.beginPath();
+  ctx.ellipse(x, y - 4, rx * 0.55, ry * 0.48, 0, 0, Math.PI * 2);
+  ctx.fillStyle = deck;
+  ctx.fill();
+  ctx.strokeStyle = `rgba(226, 232, 240, ${0.16 * alpha})`;
+  ctx.stroke();
+
+  drawPodLights(ctx, x, y, rx, ry, color, alpha, index, time);
+
+  const corePulse = 0.78 + Math.sin(time * 0.0024 + index * 0.6) * 0.22;
+  const reactor = ctx.createRadialGradient(x, y - 5, 0, x, y - 5, 28);
+  reactor.addColorStop(0, "rgba(248, 250, 252, 0.98)");
+  reactor.addColorStop(0.24, stationColor(color, 0.92 * corePulse));
+  reactor.addColorStop(0.74, "rgba(34, 211, 238, 0.18)");
+  reactor.addColorStop(1, "rgba(34, 211, 238, 0)");
+  ctx.fillStyle = reactor;
+  ctx.beginPath();
+  ctx.arc(x, y - 5, selected ? 27 : 22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(248, 250, 252, 0.92)";
+  ctx.beginPath();
+  ctx.arc(x, y - 5, 4.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  drawPodPorts(ctx, x, y, rx, ry, color, alpha);
+
+  ctx.strokeStyle = `rgba(226, 232, 240, ${0.34 * alpha})`;
+  ctx.lineWidth = 1;
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = stationColor(color, 0.4 * alpha);
+  ctx.beginPath();
+  ctx.moveTo(x - rx * 0.42, y - ry * 0.75);
+  ctx.lineTo(x - rx * 0.5, y - ry * 1.2);
+  ctx.moveTo(x + rx * 0.4, y - ry * 0.78);
+  ctx.lineTo(x + rx * 0.5, y - ry * 1.18);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawReactorCore(ctx, time) {
+  const core = roomProfiles["argentum-core"];
+  const point = stationCanvasPoint(core);
+  const x = point.x;
+  const y = point.y;
+  const pulse = 0.78 + Math.sin(time * 0.002) * 0.22;
+  const color = stationRgb("#60A5FA");
+  const violet = stationRgb("#8B5CF6");
+
+  const halo = ctx.createRadialGradient(x, y, 0, x, y, 150);
+  halo.addColorStop(0, `rgba(248, 250, 252, ${0.38 * pulse})`);
+  halo.addColorStop(0.24, "rgba(34, 211, 238, 0.34)");
+  halo.addColorStop(0.58, "rgba(139, 92, 246, 0.18)");
+  halo.addColorStop(1, "rgba(34, 211, 238, 0)");
+  drawEllipseFill(ctx, x, y + 5, 154, 122, halo);
+
+  drawEllipseFill(ctx, x, y + 62, 116, 42, "rgba(0, 0, 0, 0.42)");
+
+  for (let layer = 9; layer >= 0; layer -= 1) {
+    const body = ctx.createLinearGradient(x - 110, y - 50, x + 110, y + 78);
+    body.addColorStop(0, "rgba(51, 65, 85, 0.88)");
+    body.addColorStop(0.45, "rgba(8, 13, 26, 0.98)");
+    body.addColorStop(1, "rgba(0, 0, 0, 1)");
+    ctx.beginPath();
+    ctx.ellipse(x, y + 30 + layer * 2.3, 104 - layer * 1.7, 58 - layer * 0.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = body;
+    ctx.fill();
+  }
+
+  ctx.save();
+  ctx.shadowBlur = 34;
+  ctx.shadowColor = "rgba(34, 211, 238, 0.54)";
+  ctx.strokeStyle = "rgba(125, 211, 252, 0.5)";
+  ctx.lineWidth = 1.4;
+  [96, 76, 56].forEach((rx, index) => {
+    ctx.setLineDash(index === 1 ? [8, 9] : [15, 10]);
+    ctx.lineDashOffset = -time * (0.015 + index * 0.006);
+    ctx.beginPath();
+    ctx.ellipse(x, y + index * 2, rx, rx * 0.55, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  drawStationPanelLines(ctx, x, y + 12, 100, 62, color, 1, time * 0.00012);
+  drawPodLights(ctx, x, y + 8, 98, 58, color, 0.78, 11, time);
+
+  const orb = ctx.createRadialGradient(x - 12, y - 30, 0, x, y - 8, 64);
+  orb.addColorStop(0, "rgba(255, 255, 255, 1)");
+  orb.addColorStop(0.18, "rgba(103, 232, 249, 0.98)");
+  orb.addColorStop(0.48, stationColor(violet, 0.86));
+  orb.addColorStop(0.78, stationColor(color, 0.34));
+  orb.addColorStop(1, "rgba(34, 211, 238, 0)");
+  ctx.save();
+  ctx.shadowBlur = 48;
+  ctx.shadowColor = "rgba(34, 211, 238, 0.92)";
+  ctx.fillStyle = orb;
+  ctx.beginPath();
+  ctx.arc(x, y - 12, 52 + pulse * 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(248, 250, 252, 0.96)";
+  ctx.beginPath();
+  ctx.arc(x, y - 12, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function resizeStationRenderer(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function drawStationScene(time = performance.now()) {
+  if (!stationArtwork || typeof stationArtwork.getContext !== "function") return;
+  const ctx = stationArtwork.getContext("2d");
+  if (!ctx) return;
+  resizeStationRenderer(stationArtwork);
+  ctx.setTransform(stationArtwork.width / stationWorld.width, 0, 0, stationArtwork.height / stationWorld.height, 0, 0);
+  ctx.clearRect(0, 0, stationWorld.width, stationWorld.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  drawSpaceBackdrop(ctx, time);
+  drawPlanetHorizon(ctx);
+  drawOrbitalGuides(ctx);
+
+  const core = roomProfiles["argentum-core"];
+  habitatMapModules.forEach((room, index) => {
+    const curve = stationCurve(core, room, index, 0.035);
+    const alpha = rendererRoomAlpha(room.id) * 0.7;
+    drawStationTube(ctx, curve, {
+      color: room.color,
+      altColor: "#8B5CF6",
+      alpha,
+      width: 11,
+      seed: index + 13,
+      time,
+    });
+  });
+
+  moduleRoutes.forEach(([from, to], index) => {
+    const source = moduleProfile(from);
+    const target = moduleProfile(to);
+    const active = routeIsActive(from, to);
+    const routeAlpha = active ? Math.min(rendererRoomAlpha(from), rendererRoomAlpha(to)) : 0.22;
+    drawStationTube(ctx, stationCurve(source, target, index), {
+      color: source.color,
+      altColor: target.color,
+      alpha: routeAlpha,
+      width: index % 3 === 0 ? 22 : 19,
+      seed: index + 1,
+      time,
+    });
+  });
+
+  habitatMapModules
+    .slice()
+    .sort((a, b) => a.position.y - b.position.y)
+    .forEach((room, index) => drawOrbitalPod(ctx, room, index, time));
+  drawReactorCore(ctx, time);
+
+  const vignette = ctx.createRadialGradient(500, 320, 120, 500, 320, 590);
+  vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vignette.addColorStop(0.72, "rgba(0, 0, 0, 0.12)");
+  vignette.addColorStop(1, "rgba(0, 0, 0, 0.58)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
+}
+
+function stationRenderLoop(time) {
+  stationRenderFrame = requestAnimationFrame(stationRenderLoop);
+  if (document.hidden) return;
+  if (time - stationRenderLastPaint < 32) return;
+  stationRenderLastPaint = time;
+  drawStationScene(time);
+}
+
+function renderStationArtwork() {
+  if (!stationArtwork || typeof stationArtwork.getContext !== "function") return;
+  drawStationScene(performance.now());
+  if (!stationRenderFrame) {
+    stationRenderFrame = requestAnimationFrame(stationRenderLoop);
+  }
+}
+
 function renderHabitatRoutes() {
   if (!habitatRoutes) return;
-  // Core is at CSS left:50% top:50% — map to SVG viewBox 1000×620
-  const corePos = { x: 500, y: 341 };
+  const coreRoom = roomProfiles["argentum-core"];
+  const corePos = { x: coreRoom.position.x * 10, y: coreRoom.position.y * 6.2 };
   const defs = `
     <defs>
       <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -1156,29 +1971,21 @@ function renderHabitatModules() {
     .map((room) => {
       const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
       const isRelated = related.has(room.id);
-      const className = ["station", "station-module", isSelected ? "selected" : "", isRelated ? "related" : ""]
+      const labelPosition = room.labelPosition || room.position;
+      const className = ["station", "station-module", room.title.length > 15 ? "long-title" : "", isSelected ? "selected" : "", isRelated ? "related" : ""]
         .filter(Boolean)
         .join(" ");
       return `
-        <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}">
-          <span class="station-pod" aria-hidden="true">
-            <span class="pod-deck"></span>
-            <span class="pod-reactor"></span>
-            <span class="pod-ring"></span>
-            <span class="pod-light pod-light-a"></span>
-            <span class="pod-light pod-light-b"></span>
-            <span class="pod-socket pod-socket-n"></span>
-            <span class="pod-socket pod-socket-s"></span>
-          </span>
+        <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${labelPosition.x}%; --y: ${labelPosition.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}" title="${escapeHtml(room.title)}">
           <span class="station-label">
-            <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
+            <span class="module-icon" aria-hidden="true">${moduleIconMarkup(room.id)}</span>
             <span class="module-copy">
               <strong>${escapeHtml(room.title)}</strong>
               <small>${escapeHtml(room.metric)}</small>
               <em>${escapeHtml(room.status)}</em>
             </span>
+            <span class="station-status-dot" aria-hidden="true"></span>
           </span>
-          <span class="module-tooltip" role="tooltip">${escapeHtml(room.description)}</span>
         </button>
       `;
     })
@@ -1187,33 +1994,240 @@ function renderHabitatModules() {
 
 function renderMiniMap() {
   if (!miniMapNodes) return;
+  const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
+  const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
+  const related = hasSelection ? connectedModuleSet(selected) : new Set();
+  const selectedCore = selected === "argentum-core";
+  const miniPoint = (room) => ({ x: room.position.x, y: room.position.y });
+  const curvePath = (source, target, index, bendScale = 0.09) => {
+    const start = miniPoint(source);
+    const end = miniPoint(target);
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    const normalX = -dy / distance;
+    const normalY = dx / distance;
+    const bend = (index % 2 === 0 ? 1 : -1) * clamp(distance * bendScale, 2.5, 7);
+    const c1x = start.x + dx * 0.34 + normalX * bend;
+    const c1y = start.y + dy * 0.34 + normalY * bend;
+    const c2x = start.x + dx * 0.66 + normalX * bend;
+    const c2y = start.y + dy * 0.66 + normalY * bend;
+    return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+  };
+  const core = roomProfiles["argentum-core"];
+  const coreSpokes = habitatMapModules
+    .map((room, index) => {
+      const active = !hasSelection || selectedCore || selected === room.id || related.has(room.id);
+      return `<path class="mini-core-spoke ${active ? "active" : "dim"}" d="${curvePath(core, room, index, 0.04)}"></path>`;
+    })
+    .join("");
   const routeLines = moduleRoutes
-    .map(([from, to]) => {
+    .map(([from, to], index) => {
       const source = moduleProfile(from);
       const target = moduleProfile(to);
-      return `<line x1="${source.position.x}" y1="${source.position.y}" x2="${target.position.x}" y2="${target.position.y}"></line>`;
+      const active = routeIsActive(from, to);
+      return `<path class="mini-route ${active ? "active" : "dim"}" d="${curvePath(source, target, index)}"></path>`;
     })
     .join("");
   const dots = habitatMapModules
-    .map(
-      (room) => `<i class="${selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id ? "active" : ""}" style="--x: ${room.position.x}%; --y: ${room.position.y}%"></i>`,
-    )
+    .map((room) => {
+      const isSelected = hasSelection && selected === room.id;
+      const isRelated = hasSelection && related.has(room.id);
+      return `<g class="mini-node ${isSelected ? "selected" : ""} ${isRelated ? "related" : ""}" style="--module-color: ${escapeHtml(room.color)}">
+        <circle class="mini-node-halo" cx="${room.position.x}" cy="${room.position.y}" r="4.4"></circle>
+        <circle class="mini-node-dot" cx="${room.position.x}" cy="${room.position.y}" r="2"></circle>
+      </g>`;
+    })
     .join("");
-  const rect = stationMap?.getBoundingClientRect();
-  const viewWidth = clamp(100 / mapView.scale, 22, 100);
-  const viewHeight = clamp(100 / mapView.scale, 24, 100);
-  const viewLeft = rect?.width ? clamp((-mapView.x / (mapView.scale * rect.width)) * 100, 0, 100 - viewWidth) : 0;
-  const viewTop = rect?.height ? clamp((-mapView.y / (mapView.scale * rect.height)) * 100, 0, 100 - viewHeight) : 0;
-  const viewport = `<b class="mini-map-viewport" style="--vx: ${viewLeft.toFixed(1)}%; --vy: ${viewTop.toFixed(1)}%; --vw: ${viewWidth.toFixed(1)}%; --vh: ${viewHeight.toFixed(1)}%"></b>`;
-  miniMapNodes.innerHTML = `<svg class="mini-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${routeLines}</svg>${dots}${viewport}`;
+  const platforms = habitatMapModules
+    .map((room) => {
+      const isSelected = hasSelection && selected === room.id;
+      const isRelated = hasSelection && related.has(room.id);
+      return `<g class="mini-platform ${isSelected ? "selected" : ""} ${isRelated ? "related" : ""}" style="--module-color: ${escapeHtml(room.color)}" transform="translate(${room.position.x} ${room.position.y})">
+        <ellipse class="mini-platform-glow" cx="0" cy="1.6" rx="8.2" ry="4.6"></ellipse>
+        <ellipse class="mini-platform-shell" cx="0" cy="0" rx="6.3" ry="3.2"></ellipse>
+        <ellipse class="mini-platform-ring" cx="0" cy="-0.2" rx="4.4" ry="2"></ellipse>
+        <circle class="mini-platform-core" cx="0" cy="-0.2" r="1.25"></circle>
+      </g>`;
+    })
+    .join("");
+  miniMapNodes.innerHTML = `
+    <svg class="mini-map-radar" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <radialGradient id="miniCoreGlow" cx="50%" cy="43%" r="42%">
+          <stop offset="0%" stop-color="rgba(248, 250, 252, 0.95)" />
+          <stop offset="32%" stop-color="rgba(34, 211, 238, 0.74)" />
+          <stop offset="78%" stop-color="rgba(139, 92, 246, 0.18)" />
+          <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
+        </radialGradient>
+        <linearGradient id="miniRouteGradient" x1="8%" y1="18%" x2="92%" y2="82%">
+          <stop offset="0%" stop-color="rgba(34, 211, 238, 0.1)" />
+          <stop offset="46%" stop-color="rgba(125, 211, 252, 0.85)" />
+          <stop offset="100%" stop-color="rgba(167, 139, 250, 0.74)" />
+        </linearGradient>
+        <linearGradient id="miniSweepGradient" x1="50%" y1="50%" x2="100%" y2="16%">
+          <stop offset="0%" stop-color="rgba(34, 211, 238, 0.36)" />
+          <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
+        </linearGradient>
+      </defs>
+      <g class="mini-starfield">
+        <circle cx="13" cy="16" r="0.45"></circle>
+        <circle cx="28" cy="11" r="0.35"></circle>
+        <circle cx="74" cy="15" r="0.5"></circle>
+        <circle cx="90" cy="34" r="0.4"></circle>
+        <circle cx="8" cy="76" r="0.4"></circle>
+        <circle cx="41" cy="88" r="0.34"></circle>
+        <circle cx="83" cy="84" r="0.42"></circle>
+      </g>
+      <ellipse class="mini-orbit orbit-a" cx="50" cy="47" rx="37" ry="20"></ellipse>
+      <ellipse class="mini-orbit orbit-b" cx="50" cy="47" rx="47" ry="28"></ellipse>
+      <ellipse class="mini-orbit orbit-c" cx="50" cy="47" rx="24" ry="12"></ellipse>
+      <ellipse class="mini-orbit orbit-d" cx="50" cy="47" rx="18" ry="8"></ellipse>
+      <line class="mini-crosshair" x1="50" y1="7" x2="50" y2="93"></line>
+      <line class="mini-crosshair" x1="6" y1="47" x2="94" y2="47"></line>
+      <g class="mini-core-spokes">${coreSpokes}</g>
+      <g class="mini-routes">${routeLines}</g>
+      <circle class="mini-core-glow" cx="${core.position.x}" cy="${core.position.y}" r="10"></circle>
+      <circle class="mini-core-node ${selectedCore ? "selected" : ""}" cx="${core.position.x}" cy="${core.position.y}" r="3.4"></circle>
+      <g class="mini-platforms">${platforms}</g>
+      <g class="mini-nodes">${dots}</g>
+      <path class="mini-sweep" d="M 50 47 L 93 16 A 48 32 0 0 1 96 47 Z"></path>
+    </svg>
+  `;
+}
+
+function moduleDisplayName(moduleId) {
+  if (moduleId === "argentum-core") return "Argentum Core";
+  return moduleProfile(moduleId)?.title || moduleId;
+}
+
+function moduleCardData(roomKey) {
+  const room = moduleProfile(roomKey);
+  const detail = habitatModuleCards[room.id] || {};
+  return {
+    ...room,
+    ...detail,
+    status: detail.status || room.status,
+    metric: detail.metric || room.metric,
+    quickActions: detail.quickActions || ["Open workspace", "View logs", "Run check"],
+    canDepoDo: detail.canDepoDo || depoWorkflowState.canDepoDo,
+    cannotDepoDo: detail.cannotDepoDo || depoWorkflowState.cannotDepoDo,
+  };
+}
+
+function cardListMarkup(items, className = "") {
+  return `<div class="${className}">${items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+}
+
+function moduleInfoMarkup(roomKey) {
+  const card = moduleCardData(roomKey);
+  const connectedNames = (card.connections || card.connectedModules || []).map(moduleDisplayName);
+  const recent = Array.isArray(card.recentActivity) ? card.recentActivity : [card.recentActivity].filter(Boolean);
+  const actions = card.quickActions || [];
+  return `
+    <div class="module-info-head">
+      <span class="module-info-icon" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+      <div>
+        <strong>${escapeHtml(card.title)}</strong>
+        <small>${escapeHtml(card.metric)}</small>
+      </div>
+      <em>${escapeHtml(card.status)}</em>
+      <button class="module-info-close" type="button" aria-label="Close module details">×</button>
+    </div>
+    <div class="module-info-body">
+      <section>
+        <h4>Purpose</h4>
+        <p>${escapeHtml(card.purpose || card.summary)}</p>
+      </section>
+      <div class="module-info-metrics">
+        <span><small>Active agent</small><strong>${escapeHtml(depoWorkflowState.activeAgent)}</strong></span>
+        <span><small>Mode</small><strong>${escapeHtml(card.id === "argentum-core" ? "Supervised local OS" : depoWorkflowState.mode)}</strong></span>
+        <span><small>Human gate</small><strong>${escapeHtml(depoWorkflowState.humanGate)}</strong></span>
+      </div>
+      <section>
+        <h4>Depo role</h4>
+        <p>${escapeHtml(card.depoRole)}</p>
+      </section>
+      <section>
+        <h4>Connected capsules</h4>
+        ${cardListMarkup(connectedNames, "module-info-tags")}
+      </section>
+      <section>
+        <h4>Recent activity</h4>
+        <ul>${recent.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </section>
+      <section class="module-info-risk">
+        <h4>Approval / risk</h4>
+        <p>${escapeHtml(card.riskNote)}</p>
+        ${cardListMarkup(card.canDepoDo, "module-info-permissions can-do")}
+        ${cardListMarkup(card.cannotDepoDo, "module-info-permissions cannot-do")}
+      </section>
+    </div>
+    <div class="module-info-actions">
+      ${actions.map((action) => `<button type="button" data-module-action="${escapeHtml(action)}">${escapeHtml(action)}</button>`).join("")}
+    </div>
+  `;
+}
+
+function closeModuleInfoCard() {
+  if (!moduleInfoCard) return;
+  moduleInfoCard.hidden = true;
+  moduleInfoCard.classList.remove("open");
+  moduleInfoCard.innerHTML = "";
+}
+
+function positionModuleInfoCard(roomKey) {
+  if (!stationMap || !moduleInfoCard || moduleInfoCard.hidden) return;
+  const mapRect = stationMap.getBoundingClientRect();
+  const cardRect = moduleInfoCard.getBoundingClientRect();
+  const room = moduleProfile(roomKey);
+  const anchorX = mapRect.width / 2;
+  const anchorY = mapRect.height / 2;
+  const bottomReserve = 96;
+  const preferLeft = Number(room.position?.x || 50) >= 75;
+  const gap = preferLeft ? 132 : 88;
+  let left = preferLeft ? anchorX - cardRect.width - gap : anchorX + gap;
+  let top = anchorY - cardRect.height / 2;
+  if (preferLeft && left < 180 && anchorX + gap + cardRect.width + 12 <= mapRect.width) {
+    left = anchorX + gap;
+  }
+  if (left < 12) {
+    left = anchorX + gap;
+  } else if (left + cardRect.width + 14 > mapRect.width) {
+    left = anchorX - cardRect.width - gap;
+  }
+  left = clamp(left, 12, Math.max(12, mapRect.width - cardRect.width - 12));
+  const minTop = mapRect.height > 380 ? 46 : 12;
+  top = clamp(top, minTop, Math.max(minTop, mapRect.height - cardRect.height - bottomReserve));
+  moduleInfoCard.style.setProperty("--card-left", `${left}px`);
+  moduleInfoCard.style.setProperty("--card-top", `${top}px`);
+}
+
+function openModuleInfoCard(roomKey) {
+  if (!moduleInfoCard) return;
+  const resolved = resolveRoomKey(roomKey);
+  moduleInfoCard.innerHTML = moduleInfoMarkup(resolved);
+  moduleInfoCard.dataset.station = resolved;
+  moduleInfoCard.hidden = false;
+  moduleInfoCard.classList.remove("open");
+  requestAnimationFrame(() => {
+    positionModuleInfoCard(resolved);
+    moduleInfoCard.classList.add("open");
+  });
+  window.setTimeout(() => positionModuleInfoCard(resolved), 430);
 }
 
 function renderShellData() {
   renderAgentRoster();
+  renderStationArtwork();
   renderHabitatRoutes();
   renderHabitatModules();
   renderMiniMap();
   applySelectionClasses();
+  if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
+    moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
+    positionModuleInfoCard(selectedRoomKey);
+  }
 }
 
 function applySelectionClasses() {
@@ -1239,6 +2253,7 @@ function applyMapView(animated = true) {
   habitatCanvas.classList.toggle("is-animating", animated);
   habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
+  if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + 0.001;
   renderMiniMap();
   if (animated) {
     window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
@@ -1249,7 +2264,7 @@ function setMapView(nextView, animated = true) {
   mapView = {
     x: Number.isFinite(nextView.x) ? nextView.x : mapView.x,
     y: Number.isFinite(nextView.y) ? nextView.y : mapView.y,
-    scale: clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, 0.72, 2.8),
+    scale: clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, mapMinScale, 2.8),
   };
   applyMapView(animated);
 }
@@ -1257,6 +2272,7 @@ function setMapView(nextView, animated = true) {
 function resetHabitatView(animated = true) {
   selectedRoomKey = null;
   selectedAgentKey = null;
+  closeModuleInfoCard();
   applySelectionClasses();
   setMapView({ x: 0, y: 0, scale: 1 }, animated);
   renderInspector();
@@ -1274,7 +2290,7 @@ function zoomMap(delta, point) {
   if (!stationMap) return;
   const rect = stationMap.getBoundingClientRect();
   const anchor = point || { x: rect.width / 2, y: rect.height / 2 };
-  const nextScale = clamp(mapView.scale + delta, 0.72, 2.8);
+  const nextScale = clamp(mapView.scale + delta, mapMinScale, 2.8);
   const worldX = (anchor.x - mapView.x) / mapView.scale;
   const worldY = (anchor.y - mapView.y) / mapView.scale;
   setMapView({
@@ -1895,24 +2911,24 @@ function systemFeedEntries() {
   const auditEntries = Array.isArray(state.audit) ? state.audit : [];
   const seededEntries = [
     {
-      title: "New order #11492",
-      body: "Commerce Terminal received a new order signal and routed revenue telemetry to Ledger.",
+      title: "Depo born into habitat",
+      body: "Agent 001 is active in draft-only mode with no revenue claimed.",
     },
     {
-      title: "Payment received",
-      body: "Revenue Monitor updated the daily total and held money movement behind approval gates.",
+      title: "First workflow waiting",
+      body: "Depo is ready for one bounded task with evidence, draft output, and approval packaging.",
     },
     {
-      title: "Inventory sync",
-      body: "Resources and Commerce Terminal exchanged product telemetry without opening customer contact.",
+      title: "Revenue cleared",
+      body: "The prototype is no longer showing invented earnings or mature-company counters.",
     },
     {
-      title: "Campaign updated",
-      body: "Prism drafted a campaign update and routed publication to operator approval.",
+      title: "External actions locked",
+      body: "Publishing, money movement, account changes, trades, customer contact, and new agents remain gated.",
     },
     {
       title: "Human gate ready",
-      body: "Publishing, money movement, account changes, trades, and new agents remain locked.",
+      body: "Risky work must be packaged for the operator instead of executed automatically.",
     },
   ];
 
@@ -1939,10 +2955,10 @@ function compactFeedTitle(title) {
   const normalizedTitle = String(title || "");
   const compactTitles = {
     "Static console loaded": "Console loaded",
-    "New order #11492": "New order #11492",
-    "Payment received": "Payment received",
-    "Inventory sync": "Inventory sync",
-    "Campaign updated": "Campaign updated",
+    "Depo born into habitat": "Depo born",
+    "First workflow waiting": "Workflow waiting",
+    "Revenue cleared": "Revenue cleared",
+    "External actions locked": "Actions locked",
     "Human gate ready": "Human gate ready",
   };
 
@@ -2104,22 +3120,37 @@ function setText(element, value) {
 function renderOverviewTelemetry() {
   const governance = state.governance || fallbackState.governance;
   const agentStateLabel = statusLabel(state.agent?.state || "active_supervised");
-  const safeSpend = Math.max(Number(governance.estimatedSpendUsd || 0), 0.42);
+  const safeSpend = Math.max(Number(governance.estimatedSpendUsd || 0), 0);
+  const tasks = state.tasks || [];
+  const queuedTasks = tasks.filter((task) => task.status === "queued");
+  const artifacts = state.artifacts || [];
+  const approvals = state.approvals || [];
+  const highRiskQueued = queuedTasks.filter((task) => String(task.risk || "").toLowerCase() === "high").length;
+  const mediumQueued = queuedTasks.filter((task) => String(task.risk || "").toLowerCase() === "medium").length;
+  const lowQueued = queuedTasks.length - highRiskQueued - mediumQueued;
+  const currentStage = currentStep()?.station || "Research";
+  const stageCounts = {
+    Research: currentStage === "Research" ? 1 : 0,
+    Verify: currentStage === "Verify" ? 1 : 0,
+    Draft: currentStage === "Draft" ? 1 : 0,
+    Approval: currentStage === "Approval" ? 1 : 0,
+  };
 
-  setText(agentCountMetric, "7");
+  setText(agentCountMetric, "1");
   setText(agentStatusMetric, agentStateLabel);
-  setText(liveRevenueMetric, "$7,128");
+  setText(liveRevenueMetric, "Not started");
   setText(budgetUsedMetric, money(safeSpend));
-  setText(overviewQueuedTaskMetric, "578");
-  setText(overviewHighRiskTaskMetric, "12");
-  setText(overviewDraftReadyMetric, "143");
-  setText(overviewTotalTaskMetric, "423");
-  setText(workflowResearchMetric, "132");
-  setText(workflowVerifyMetric, "278");
-  setText(workflowDraftMetric, "98");
-  setText(workflowApprovalMetric, "70");
-  setText(revenueGuardMetric, "$7,128");
-  setText(highRiskMetric, "1");
+  setText(overviewQueuedTaskMetric, String(queuedTasks.length));
+  setText(overviewHighRiskTaskMetric, String(highRiskQueued));
+  setText(overviewDraftReadyMetric, String(mediumQueued));
+  setText(overviewTotalTaskMetric, String(lowQueued));
+  setText(workflowResearchMetric, String(stageCounts.Research));
+  setText(workflowVerifyMetric, String(stageCounts.Verify));
+  setText(workflowDraftMetric, String(stageCounts.Draft));
+  setText(workflowApprovalMetric, String(stageCounts.Approval));
+  setText(revenueGuardMetric, "None yet");
+  setText(highRiskMetric, String(approvals.filter((approval) => approval.status === "pending" && approval.risk === "high").length));
+  setText(artifactThroughputMetric, String(artifacts.length));
 }
 
 function renderGovernance() {
@@ -2265,8 +3296,8 @@ securityScanBtn?.addEventListener("click", () => {
 
 scanBtn?.addEventListener("click", () => {
   selectedAgentKey = null;
-  focusRoom("security-core", { scale: 1.72 });
-  addLocalAudit("Focus scan", "Sentry scan opened the Security Core inspector.");
+  focusRoom("depo-habitat", { scale: 1.72 });
+  addLocalAudit("Focus scan", "Depo habitat scan confirmed Agent 001 is draft-only and ready for bounded work.");
   renderAudit();
 });
 
@@ -2306,14 +3337,16 @@ function activateStationFromEvent(event) {
   const station = event.target.closest(".station, .map-core");
   if (!station) return false;
   event.stopPropagation();
+  const stationId = station.dataset.station || "argentum-core";
   selectedAgentKey = null;
-  focusRoom(station.dataset.station || "argentum-core", { scale: station.classList.contains("map-core") ? 1.38 : 1.72 });
+  focusRoom(stationId, { scale: station.classList.contains("map-core") ? 1.38 : 1.72 });
+  openModuleInfoCard(stationId);
   return true;
 }
 
 stationMap?.addEventListener("click", (event) => {
   if (activateStationFromEvent(event)) return;
-  if (event.target === stationMap || event.target === habitatCanvas || event.target.closest(".map-space-layer")) {
+  if (event.target === stationMap || event.target === habitatCanvas || event.target === stationArtwork || event.target.closest(".map-space-layer, .station-renderer")) {
     resetHabitatView();
   }
 });
@@ -2355,7 +3388,7 @@ stationMap.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 stationMap.addEventListener("pointerdown", (event) => {
-  if (event.target.closest(".map-controls") || event.target.closest(".station") || event.target.closest(".map-core")) return;
+  if (event.target.closest(".map-controls") || event.target.closest(".module-info-card") || event.target.closest(".station") || event.target.closest(".map-core")) return;
   pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
   stationMap.setPointerCapture(event.pointerId);
   if (pointerCache.size === 1) {
@@ -2380,7 +3413,7 @@ stationMap.addEventListener("pointermove", (event) => {
   if (pointerCache.size === 2 && pinchStart) {
     const points = Array.from(pointerCache.values());
     const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-    const nextScale = clamp(pinchStart.scale * (distance / pinchStart.distance), 0.72, 2.8);
+    const nextScale = clamp(pinchStart.scale * (distance / pinchStart.distance), mapMinScale, 2.8);
     setMapView({ scale: nextScale }, false);
     return;
   }
@@ -2400,8 +3433,54 @@ function endPointer(event) {
 stationMap.addEventListener("pointerup", endPointer);
 stationMap.addEventListener("pointercancel", endPointer);
 stationMap.addEventListener("click", (event) => {
-  if (event.target === stationMap || event.target === habitatCanvas) {
+  if (event.target.closest(".module-info-card")) return;
+  if (event.target === stationMap || event.target === habitatCanvas || event.target === stationArtwork || event.target.closest(".station-renderer")) {
     resetHabitatView();
+  }
+});
+
+moduleInfoCard?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const closeButton = event.target.closest(".module-info-close");
+  if (closeButton) {
+    resetHabitatView();
+    return;
+  }
+  const actionButton = event.target.closest("[data-module-action]");
+  if (!actionButton) return;
+  const action = actionButton.dataset.moduleAction;
+  const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "argentum-core";
+  if (action === "Open workspace") {
+    openWorkspace(stationId);
+  } else if (action === "View logs") {
+    openSystemFeed();
+  } else if (action === "Run cycle") {
+    runCycleBtn?.click();
+  } else if (action === "View approvals") {
+    activateView("approvals");
+  } else {
+    addLocalAudit(`${action}: ${moduleDisplayName(stationId)}`, "Placeholder action recorded. External execution remains locked behind approval.");
+    renderAudit();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && moduleInfoCard && !moduleInfoCard.hidden) {
+    resetHabitatView();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (!moduleInfoCard || moduleInfoCard.hidden) return;
+  if (event.target.closest("#stationMap")) return;
+  resetHabitatView();
+});
+
+window.addEventListener("resize", () => {
+  renderStationArtwork();
+  renderMiniMap();
+  if (moduleInfoCard && !moduleInfoCard.hidden) {
+    positionModuleInfoCard(moduleInfoCard.dataset.station || selectedRoomKey || "argentum-core");
   }
 });
 

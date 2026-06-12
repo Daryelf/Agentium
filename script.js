@@ -458,8 +458,8 @@ const habitatFloorRooms = [
     visual: "clipboard",
     icon: "clipboard",
     color: "#38BDF8",
-    position: { x: 22, y: 18 },
-    size: { w: 22, h: 22 },
+    position: { x: 24, y: 15 },
+    size: { w: 24, h: 27 },
     purpose: "Captures new requests and turns them into structured work.",
     depoRole: "Depo reads the request and breaks it into safe steps.",
     connections: ["depo-habitat", "research-lab", "system-log"],
@@ -477,8 +477,8 @@ const habitatFloorRooms = [
     visual: "lab",
     icon: "research",
     color: "#22D3EE",
-    position: { x: 50, y: 16 },
-    size: { w: 22, h: 23 },
+    position: { x: 50, y: 15 },
+    size: { w: 24, h: 28 },
     purpose: "Gathers context, notes, and supporting information.",
     depoRole: "Depo collects research and saves useful evidence.",
     connections: ["task-intake", "memory-vault", "verify-station", "depo-habitat"],
@@ -496,8 +496,8 @@ const habitatFloorRooms = [
     visual: "verify",
     icon: "shield",
     color: "#7DD3FC",
-    position: { x: 78, y: 18 },
-    size: { w: 22, h: 22 },
+    position: { x: 76, y: 15 },
+    size: { w: 24, h: 27 },
     purpose: "Checks claims, assumptions, and missing details.",
     depoRole: "Depo validates whether the work is safe and complete.",
     connections: ["research-lab", "draft-studio", "human-gate"],
@@ -515,8 +515,8 @@ const habitatFloorRooms = [
     visual: "vault",
     icon: "database",
     color: "#38BDF8",
-    position: { x: 22, y: 50 },
-    size: { w: 23, h: 23 },
+    position: { x: 24, y: 50 },
+    size: { w: 25, h: 28 },
     purpose: "Stores reusable notes, context, research, and internal knowledge.",
     depoRole: "Depo saves and retrieves project memory.",
     connections: ["research-lab", "draft-studio", "depo-habitat"],
@@ -534,8 +534,8 @@ const habitatFloorRooms = [
     visual: "studio",
     icon: "pen",
     color: "#A78BFA",
-    position: { x: 78, y: 50 },
-    size: { w: 23, h: 23 },
+    position: { x: 76, y: 50 },
+    size: { w: 25, h: 28 },
     purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
     depoRole: "Depo drafts work but does not publish it.",
     connections: ["verify-station", "memory-vault", "human-gate", "output-bench"],
@@ -553,8 +553,8 @@ const habitatFloorRooms = [
     visual: "terminal",
     icon: "log",
     color: "#22D3EE",
-    position: { x: 22, y: 81 },
-    size: { w: 23, h: 22 },
+    position: { x: 24, y: 85 },
+    size: { w: 25, h: 27 },
     purpose: "Tracks events, stage changes, and audit history.",
     depoRole: "Depo writes cycle updates here.",
     connections: ["depo-habitat", "task-intake", "research-lab", "verify-station", "draft-studio", "human-gate", "output-bench", "memory-vault"],
@@ -572,8 +572,8 @@ const habitatFloorRooms = [
     visual: "bench",
     icon: "download",
     color: "#60A5FA",
-    position: { x: 50, y: 82 },
-    size: { w: 23, h: 22 },
+    position: { x: 50, y: 85 },
+    size: { w: 25, h: 27 },
     purpose: "Holds completed drafts and prepared deliverables.",
     depoRole: "Depo places reviewed work here for final handling.",
     connections: ["human-gate", "system-log", "depo-habitat"],
@@ -591,8 +591,8 @@ const habitatFloorRooms = [
     visual: "gate",
     icon: "lock",
     color: "#F43F5E",
-    position: { x: 78, y: 81 },
-    size: { w: 23, h: 22 },
+    position: { x: 76, y: 85 },
+    size: { w: 25, h: 27 },
     purpose: "Blocks risky actions until the operator approves.",
     depoRole: "Depo packages work for human review.",
     connections: ["draft-studio", "output-bench", "system-log"],
@@ -1525,9 +1525,30 @@ function routePoint(room) {
   };
 }
 
-function bridgeRoutePath(source, target, index) {
-  const start = routePoint(source);
-  const end = routePoint(target);
+function routeAnchorPoint(room, toward) {
+  const center = routePoint(room);
+  const dx = toward.x - center.x;
+  const dy = toward.y - center.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const unitX = dx / distance;
+  const unitY = dy / distance;
+  const halfWidth = ((room.size?.w || 12) * 10) / 2;
+  const halfHeight = ((room.size?.h || 12) * 6.2) / 2;
+  const horizontalExit = unitX ? halfWidth / Math.abs(unitX) : Number.POSITIVE_INFINITY;
+  const verticalExit = unitY ? halfHeight / Math.abs(unitY) : Number.POSITIVE_INFINITY;
+  const edgeOffset = Math.min(horizontalExit, verticalExit) * 0.82;
+
+  return {
+    x: center.x + unitX * edgeOffset,
+    y: center.y + unitY * edgeOffset,
+  };
+}
+
+function bridgeRouteGeometry(source, target, index) {
+  const sourceCenter = routePoint(source);
+  const targetCenter = routePoint(target);
+  const start = routeAnchorPoint(source, targetCenter);
+  const end = routeAnchorPoint(target, sourceCenter);
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const distance = Math.hypot(dx, dy) || 1;
@@ -1539,7 +1560,15 @@ function bridgeRoutePath(source, target, index) {
   const c1y = start.y + dy * 0.34 + normalY * bend;
   const c2x = start.x + dx * 0.66 + normalX * bend;
   const c2y = start.y + dy * 0.66 + normalY * bend;
-  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+  return {
+    start,
+    end,
+    path: `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
+  };
+}
+
+function bridgeRoutePath(source, target, index) {
+  return bridgeRouteGeometry(source, target, index).path;
 }
 
 function moduleIconMarkup(id) {
@@ -2377,12 +2406,15 @@ function renderHabitatRoutes() {
       const target = moduleProfile(to);
       const active = routeIsActive(route);
       const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
-      const path = bridgeRoutePath(source, target, index);
+      const geometry = bridgeRouteGeometry(source, target, index);
+      const { path, start, end } = geometry;
       return `
         <path class="route-glow ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-tube ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-bridge ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-line ${approval ? "approval" : ""} ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${start.x.toFixed(1)}" cy="${start.y.toFixed(1)}" r="${approval ? "5.2" : "4.6"}"></circle>
+        <circle class="route-node ${approval ? "approval" : ""} ${active ? "active" : ""}" cx="${end.x.toFixed(1)}" cy="${end.y.toFixed(1)}" r="${approval ? "5.2" : "4.6"}"></circle>
         <circle class="route-particle ${approval ? "approval" : ""} ${active ? "active" : ""}" r="${approval ? "4" : "3.2"}">
           <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
         </circle>
@@ -2399,12 +2431,20 @@ function floorPropsMarkup(room) {
   const plants = Array.from({ length: plantCount }, (_, index) => `<span class="floor-plant plant-${index + 1}" aria-hidden="true"><i></i><i></i><i></i></span>`).join("");
   const consoles = Array.from({ length: consoleCount }, (_, index) => `<span class="floor-screen screen-${index + 1}" aria-hidden="true"></span>`).join("");
   const storage = Array.from({ length: boxes }, (_, index) => `<span class="floor-storage storage-${index + 1}" aria-hidden="true"></span>`).join("");
+  const paperCount = room.id === "draft-studio" ? 4 : room.id === "task-intake" || room.id === "output-bench" ? 3 : 1;
+  const papers = Array.from({ length: paperCount }, (_, index) => `<span class="floor-paper paper-${index + 1}" aria-hidden="true"></span>`).join("");
   return `
+    <span class="back-console" aria-hidden="true"></span>
     <span class="floor-desk" aria-hidden="true"></span>
     <span class="floor-pad" aria-hidden="true"></span>
     ${consoles}
     ${storage}
+    ${papers}
     ${plants}
+    <span class="floor-cable cable-1" aria-hidden="true"></span>
+    <span class="floor-cable cable-2" aria-hidden="true"></span>
+    <span class="floor-panel panel-1" aria-hidden="true"></span>
+    <span class="floor-panel panel-2" aria-hidden="true"></span>
     <span class="floor-lamp" aria-hidden="true"></span>
     ${room.id === "human-gate" ? '<span class="gate-door" aria-hidden="true"><i></i></span>' : ""}
     ${room.id === "research-lab" ? '<span class="holo-panel" aria-hidden="true"></span>' : ""}
@@ -2412,6 +2452,7 @@ function floorPropsMarkup(room) {
 }
 
 function miniAgentRobotMarkup(room) {
+  if (room.id === "human-gate") return "";
   const posture = room.id === "human-gate" ? "guard" : room.id === "draft-studio" ? "typing" : room.id === "memory-vault" ? "archiving" : "working";
   return `
     <span class="mini-agent-robot ${posture}" aria-hidden="true">

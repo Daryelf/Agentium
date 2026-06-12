@@ -1355,10 +1355,11 @@ const workspaceProfiles = {
 
 let selectedRoomKey = null;
 let selectedAgentKey = null;
-const mapMinScale = 1;
+const mapHomeScale = 0.84;
+const mapMinScale = 0.72;
 const mapMaxScale = 2.8;
 const mapPanEpsilon = 0.001;
-let mapView = { x: 0, y: 0, scale: 1 };
+let mapView = { x: 0, y: 0, scale: mapHomeScale };
 let isPanning = false;
 let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
 let pointerCache = new Map();
@@ -2822,11 +2823,19 @@ function applySelectionClasses() {
 function normalizedMapView(nextView = mapView) {
   const scale = clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, mapMinScale, mapMaxScale);
 
-  if (!stationMap || scale <= mapMinScale + mapPanEpsilon) {
-    return { x: 0, y: 0, scale: mapMinScale };
+  if (!stationMap) {
+    return { x: 0, y: 0, scale };
   }
 
   const rect = stationMap.getBoundingClientRect();
+  if (scale <= 1 + mapPanEpsilon) {
+    return {
+      x: (rect.width - rect.width * scale) / 2,
+      y: (rect.height - rect.height * scale) / 2,
+      scale,
+    };
+  }
+
   const minX = rect.width - rect.width * scale;
   const minY = rect.height - rect.height * scale;
   const x = Number.isFinite(nextView.x) ? nextView.x : mapView.x;
@@ -2843,16 +2852,8 @@ function applyMapView(animated = true) {
   if (!habitatCanvas) return;
   mapView = normalizedMapView(mapView);
   habitatCanvas.classList.remove("is-animating");
-  const isHomeView = mapView.scale <= mapMinScale + mapPanEpsilon && Math.abs(mapView.x) <= mapPanEpsilon && Math.abs(mapView.y) <= mapPanEpsilon;
-  habitatCanvas.style.transform = isHomeView ? "" : `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
-  if (isHomeView) {
-    const previousDisplay = habitatCanvas.style.display;
-    habitatCanvas.style.display = "none";
-    habitatCanvas.offsetHeight;
-    habitatCanvas.style.display = previousDisplay;
-    requestAnimationFrame(() => renderStationArtwork());
-  }
-  stationMap?.classList.toggle("can-pan", mapView.scale > mapMinScale + mapPanEpsilon);
+  habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  stationMap?.classList.toggle("can-pan", mapView.scale > 1 + mapPanEpsilon);
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
   if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + mapPanEpsilon;
   renderMiniMap();
@@ -2872,7 +2873,7 @@ function resetHabitatView(animated = true) {
   selectedAgentKey = null;
   closeModuleInfoCard();
   applySelectionClasses();
-  setMapView({ x: 0, y: 0, scale: 1 }, animated);
+  setMapView({ x: 0, y: 0, scale: mapHomeScale }, animated);
   renderInspector();
 }
 
@@ -3990,11 +3991,11 @@ stationMap.addEventListener("wheel", (event) => {
 
 stationMap.addEventListener("pointerdown", (event) => {
   if (event.target.closest(".map-controls") || event.target.closest(".module-info-card") || event.target.closest(".station") || event.target.closest(".map-core")) return;
-  if (mapView.scale <= mapMinScale + mapPanEpsilon) {
+  if (mapView.scale <= 1 + mapPanEpsilon) {
     pointerCache.clear();
     isPanning = false;
     pinchStart = null;
-    setMapView({ x: 0, y: 0, scale: mapMinScale }, false);
+    setMapView({ x: 0, y: 0, scale: mapView.scale }, false);
     return;
   }
   pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -4025,7 +4026,7 @@ stationMap.addEventListener("pointermove", (event) => {
     setMapView({ scale: nextScale }, false);
     return;
   }
-  if (!isPanning || mapView.scale <= mapMinScale + mapPanEpsilon) return;
+  if (!isPanning || mapView.scale <= 1 + mapPanEpsilon) return;
   setMapView({
     x: panStart.viewX + event.clientX - panStart.x,
     y: panStart.viewY + event.clientY - panStart.y,
@@ -4037,8 +4038,8 @@ function endPointer(event) {
   if (pointerCache.size < 2) pinchStart = null;
   if (pointerCache.size === 0) {
     isPanning = false;
-    if (mapView.scale <= mapMinScale + mapPanEpsilon) {
-      setMapView({ x: 0, y: 0, scale: mapMinScale }, true);
+    if (mapView.scale <= 1 + mapPanEpsilon) {
+      setMapView({ x: 0, y: 0, scale: mapView.scale }, true);
     }
   }
 }

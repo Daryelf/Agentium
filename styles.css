@@ -2492,7 +2492,7 @@ main {
 }
 
 .habitat-routes {
-  z-index: 17;
+  z-index: 9;
   opacity: 1;
   mix-blend-mode: normal;
 }
@@ -2598,9 +2598,9 @@ main {
 .map-core {
   left: 50%;
   top: 50%;
-  z-index: 16;
-  width: 236px;
-  height: 166px;
+  z-index: 18;
+  width: 252px;
+  height: 178px;
   justify-content: center;
   padding: 0;
   transform: translate(-50%, -50%);
@@ -2616,8 +2616,8 @@ main {
 .map-core::before {
   left: 50%;
   top: 50%;
-  width: 226px;
-  height: 134px;
+  width: 244px;
+  height: 146px;
   background:
     radial-gradient(ellipse at 50% 40%, rgba(139, 92, 246, 0.34), transparent 38%),
     repeating-radial-gradient(ellipse at 50% 50%, rgba(125, 211, 252, 0.3) 0 1px, transparent 2px 19px),
@@ -2634,8 +2634,8 @@ main {
 .map-core::after {
   left: 50%;
   top: 50%;
-  width: 164px;
-  height: 88px;
+  width: 178px;
+  height: 96px;
   border: 3px solid rgba(167, 139, 250, 0.72);
   background:
     radial-gradient(ellipse at center, rgba(139, 92, 246, 0.28), transparent 68%),
@@ -2647,8 +2647,8 @@ main {
 .core-rings {
   left: 50%;
   top: 50%;
-  width: 206px;
-  height: 116px;
+  width: 222px;
+  height: 126px;
   border: 1px solid rgba(125, 211, 252, 0.44);
   box-shadow: inset 0 0 26px rgba(34, 211, 238, 0.15);
   transform: translate(-50%, -50%) perspective(520px) rotateX(60deg);
@@ -2667,14 +2667,16 @@ main {
 
 .core-agent {
   left: 50%;
-  top: 33%;
-  z-index: 5;
-  transform: translate(-50%, -50%) scale(1.18);
+  top: 29%;
+  z-index: 9;
+  transform: translate(-50%, -50%) scale(1.34);
 }
 
 .core-label {
+  position: relative;
+  z-index: 8;
   width: 166px;
-  margin-top: 72px;
+  margin-top: 82px;
   border-radius: 12px;
   padding: 9px 12px 8px;
   clip-path: none;

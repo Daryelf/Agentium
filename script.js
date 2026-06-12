@@ -1555,53 +1555,85 @@ function drawEnergyDots(ctx, curve, color, time, alpha, seed) {
   }
 }
 
+function drawDataStreamPulse(ctx, curve, color, altColor, time, alpha, seed, width) {
+  const progress = ((time * 0.00028 + seed * 0.19) % 1 + 1) % 1;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.globalCompositeOperation = "screen";
+  for (let index = 0; index < 3; index += 1) {
+    const t = (progress + index * 0.31) % 1;
+    const point = sampleStationCurve(curve, t);
+    const tangent = sampleStationTangent(curve, t);
+    const length = width * (2.4 - index * 0.24);
+    const start = { x: point.x - tangent.x * length, y: point.y - tangent.y * length };
+    const end = { x: point.x + tangent.x * length, y: point.y + tangent.y * length };
+    const pulse = ctx.createLinearGradient(start.x, start.y, end.x, end.y);
+    pulse.addColorStop(0, "rgba(255, 255, 255, 0)");
+    pulse.addColorStop(0.28, stationColor(altColor, 0.28 * alpha));
+    pulse.addColorStop(0.5, `rgba(255, 255, 255, ${0.92 * alpha})`);
+    pulse.addColorStop(0.72, stationColor(color, 0.48 * alpha));
+    pulse.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = stationColor(index % 2 === 0 ? color : altColor, 0.8 * alpha);
+    ctx.strokeStyle = pulse;
+    ctx.lineWidth = Math.max(2.2, width * (0.22 - index * 0.035));
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawStationTube(ctx, curve, options) {
   const color = stationRgb(options.color || "#22D3EE");
   const altColor = stationRgb(options.altColor || "#8B5CF6");
   const alpha = options.alpha ?? 1;
   const width = options.width || 19;
   const gradient = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
-  gradient.addColorStop(0, stationColor(color, 0.08 * alpha));
-  gradient.addColorStop(0.24, stationColor(color, 0.68 * alpha));
-  gradient.addColorStop(0.58, stationColor(altColor, 0.78 * alpha));
-  gradient.addColorStop(1, stationColor(color, 0.12 * alpha));
+  gradient.addColorStop(0, stationColor(altColor, 0.1 * alpha));
+  gradient.addColorStop(0.24, stationColor(altColor, 0.72 * alpha));
+  gradient.addColorStop(0.55, stationColor(color, 0.86 * alpha));
+  gradient.addColorStop(0.78, "rgba(255, 255, 255, 0.34)");
+  gradient.addColorStop(1, stationColor(color, 0.14 * alpha));
 
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.shadowBlur = 26;
-  ctx.shadowColor = stationColor(color, 0.46 * alpha);
-  ctx.strokeStyle = stationColor(color, 0.2 * alpha);
-  ctx.lineWidth = width + 26;
+  ctx.shadowBlur = 34;
+  ctx.shadowColor = stationColor(color, 0.55 * alpha);
+  ctx.strokeStyle = stationColor(color, 0.22 * alpha);
+  ctx.lineWidth = width + 30;
   drawStationCurve(ctx, curve);
   ctx.stroke();
 
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = `rgba(2, 8, 23, ${0.9 * alpha})`;
-  ctx.lineWidth = width;
+  ctx.strokeStyle = `rgba(1, 5, 17, ${0.92 * alpha})`;
+  ctx.lineWidth = width + 2;
   drawStationCurve(ctx, curve);
   ctx.stroke();
 
   ctx.strokeStyle = gradient;
-  ctx.lineWidth = width * 0.52;
+  ctx.lineWidth = width * 0.56;
   drawStationCurve(ctx, curve);
   ctx.stroke();
 
-  ctx.strokeStyle = `rgba(219, 234, 254, ${0.34 * alpha})`;
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = `rgba(219, 234, 254, ${0.42 * alpha})`;
+  ctx.lineWidth = 1.4;
   drawStationCurve(ctx, curve);
   ctx.stroke();
 
-  ctx.setLineDash([9, 18]);
-  ctx.lineDashOffset = -options.time * 0.045 - options.seed * 12;
-  ctx.strokeStyle = stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.35), 0.8 * alpha);
-  ctx.lineWidth = 2.4;
+  ctx.setLineDash([11, 20]);
+  ctx.lineDashOffset = -options.time * 0.058 - options.seed * 12;
+  ctx.strokeStyle = stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.5), 0.9 * alpha);
+  ctx.lineWidth = 2.6;
   drawStationCurve(ctx, curve);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.restore();
 
   drawTubeCollars(ctx, curve, color, alpha);
+  drawDataStreamPulse(ctx, curve, color, altColor, options.time || 0, alpha, options.seed || 0, width);
   drawEnergyDots(ctx, curve, color, options.time || 0, alpha, options.seed || 0);
 }
 
@@ -1789,6 +1821,18 @@ function drawOrbitalPod(ctx, room, index, time) {
   ctx.fillStyle = glass;
   ctx.fill();
 
+  ctx.save();
+  ctx.setLineDash([4, 8]);
+  ctx.lineDashOffset = -time * 0.028;
+  ctx.strokeStyle = stationColor(color, 0.42 * alpha);
+  ctx.lineWidth = 1.3;
+  ctx.shadowBlur = 16;
+  ctx.shadowColor = stationColor(color, 0.52 * alpha);
+  ctx.beginPath();
+  ctx.ellipse(x, y - 5, rx * 0.68, ry * 0.42, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
   const deck = ctx.createRadialGradient(x, y - 5, 2, x, y - 5, rx * 0.58);
   deck.addColorStop(0, stationColor(color, 0.24));
   deck.addColorStop(0.48, "rgba(15, 23, 42, 0.96)");
@@ -1894,6 +1938,14 @@ function drawReactorCore(ctx, time) {
   ctx.beginPath();
   ctx.arc(x, y - 12, 38 + pulse * 4, 0, Math.PI * 2);
   ctx.fill();
+  ctx.setLineDash([6, 12]);
+  ctx.lineDashOffset = -time * 0.04;
+  ctx.strokeStyle = "rgba(192, 132, 252, 0.38)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(x, y - 12, 54 + pulse * 2, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
   ctx.fillStyle = "rgba(248, 250, 252, 0.96)";
   ctx.beginPath();
   ctx.arc(x, y - 12, 9, 0, Math.PI * 2);
@@ -2356,16 +2408,20 @@ function normalizedMapView(nextView = mapView) {
 function applyMapView(animated = true) {
   if (!habitatCanvas) return;
   mapView = normalizedMapView(mapView);
-  habitatCanvas.classList.toggle("is-animating", animated);
+  habitatCanvas.classList.remove("is-animating");
   const isHomeView = mapView.scale <= mapMinScale + mapPanEpsilon && Math.abs(mapView.x) <= mapPanEpsilon && Math.abs(mapView.y) <= mapPanEpsilon;
-  habitatCanvas.style.transform = isHomeView ? "none" : `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  habitatCanvas.style.transform = isHomeView ? "" : `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  if (isHomeView) {
+    const previousDisplay = habitatCanvas.style.display;
+    habitatCanvas.style.display = "none";
+    habitatCanvas.offsetHeight;
+    habitatCanvas.style.display = previousDisplay;
+    requestAnimationFrame(() => renderStationArtwork());
+  }
   stationMap?.classList.toggle("can-pan", mapView.scale > mapMinScale + mapPanEpsilon);
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
   if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + mapPanEpsilon;
   renderMiniMap();
-  if (animated) {
-    window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
-  }
 }
 
 function setMapView(nextView, animated = true) {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=habitat-os-15" />
+    <link rel="stylesheet" href="./styles.css?v=habitat-os-17" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -171,6 +171,7 @@
               <div class="station-map" id="stationMap">
                 <div class="habitat-canvas" id="habitatCanvas">
                   <div class="map-space-layer" aria-hidden="true"></div>
+                  <img class="habitat-art-layer" src="assets/habitat-overview-bg.png" alt="" aria-hidden="true" />
                   <div class="planet-glow" aria-hidden="true"></div>
                   <div class="orbital-ring ring-one" aria-hidden="true"></div>
                   <div class="orbital-ring ring-two" aria-hidden="true"></div>
@@ -179,9 +180,11 @@
                   <div class="map-core" data-station="argentum-core" role="button" tabindex="0" aria-label="Argentum Core">
                     <div class="core-rings" aria-hidden="true"></div>
                     <div class="core-orb" aria-hidden="true"></div>
-                    <span>Argentum Core</span>
-                    <small>System brain online</small>
-                    <em>100%</em>
+                    <div class="core-label">
+                      <span>Argentum Core</span>
+                      <small>System brain online</small>
+                      <em>100%</em>
+                    </div>
                   </div>
                   <div class="habitat-modules" id="habitatModules"></div>
                   <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
@@ -1140,6 +1143,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=habitat-os-15"></script>
+    <script src="./script.js?v=habitat-os-17"></script>
   </body>
 </html>

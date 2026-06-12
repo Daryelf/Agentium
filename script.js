@@ -543,7 +543,8 @@ const roomProfiles = {
     metric: "7 agents",
     icon: "AG",
     color: "#22D3EE",
-    position: { x: 14, y: 21 },
+    position: { x: 22, y: 23 },
+    labelPosition: { x: 20, y: 33 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     agents: ["Atlas", "Depo", "Sentry"],
@@ -563,7 +564,8 @@ const roomProfiles = {
     metric: "7 active",
     icon: "AI",
     color: "#60A5FA",
-    position: { x: 38, y: 21 },
+    position: { x: 39, y: 23 },
+    labelPosition: { x: 39, y: 33 },
     summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
     description: "Runtime coordination room where active agents exchange context, queues, and route state.",
     agents: ["Atlas", "Nexus", "Depo"],
@@ -583,7 +585,8 @@ const roomProfiles = {
     metric: "197 active",
     icon: "TF",
     color: "#FBBF24",
-    position: { x: 14, y: 50 },
+    position: { x: 12, y: 46 },
+    labelPosition: { x: 14, y: 58 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     agents: ["Forge", "Nexus", "Depo"],
@@ -603,7 +606,8 @@ const roomProfiles = {
     metric: "$7,128 today",
     icon: "CT",
     color: "#38BDF8",
-    position: { x: 34, y: 50 },
+    position: { x: 34, y: 46 },
+    labelPosition: { x: 34, y: 68 },
     summary: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     description: "Core commerce and storefront operations hub for orders, revenue signals, campaigns, and handoffs.",
     agents: ["Prism", "Nexus"],
@@ -623,7 +627,8 @@ const roomProfiles = {
     metric: "+12.4%",
     icon: "RM",
     color: "#60A5FA",
-    position: { x: 66, y: 50 },
+    position: { x: 66, y: 46 },
+    labelPosition: { x: 66, y: 68 },
     summary: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     description: "Revenue telemetry station for daily sales, deltas, AOV, expense notes, and payment review.",
     agents: ["Ledger", "Oracle"],
@@ -643,7 +648,8 @@ const roomProfiles = {
     metric: "12,455 items",
     icon: "RS",
     color: "#60A5FA",
-    position: { x: 14, y: 78 },
+    position: { x: 18, y: 73 },
+    labelPosition: { x: 18, y: 65 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     agents: ["Oracle", "Depo"],
@@ -663,7 +669,8 @@ const roomProfiles = {
     metric: "8 routes",
     icon: "LN",
     color: "#38BDF8",
-    position: { x: 38, y: 78 },
+    position: { x: 37, y: 73 },
+    labelPosition: { x: 37, y: 86 },
     summary: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     description: "Route-control node for internal movement between tasks, workflows, resources, and output lanes.",
     agents: ["Nexus", "Forge"],
@@ -683,7 +690,8 @@ const roomProfiles = {
     metric: "578 tasks",
     icon: "WP",
     color: "#8B5CF6",
-    position: { x: 62, y: 78 },
+    position: { x: 61, y: 73 },
+    labelPosition: { x: 61, y: 86 },
     summary: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     description: "Pipeline for intake, processing, review, output, and approval handoffs across the business system.",
     agents: ["Nexus", "Forge", "Atlas"],
@@ -703,7 +711,8 @@ const roomProfiles = {
     metric: "5 generating",
     icon: "CE",
     color: "#A78BFA",
-    position: { x: 86, y: 78 },
+    position: { x: 82, y: 73 },
+    labelPosition: { x: 82, y: 65 },
     summary: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     description: "Creative and marketing output engine for drafts, campaign assets, listing copy, and content reviews.",
     agents: ["Prism", "Forge"],
@@ -723,7 +732,8 @@ const roomProfiles = {
     metric: "24 active",
     icon: "CN",
     color: "#22D3EE",
-    position: { x: 86, y: 50 },
+    position: { x: 86, y: 46 },
+    labelPosition: { x: 86, y: 58 },
     summary: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     description: "Customer signal node for inbound events, support visibility, privacy checks, and contact gating.",
     agents: ["Prism", "Sentry"],
@@ -743,7 +753,8 @@ const roomProfiles = {
     metric: "No threats",
     icon: "SC",
     color: "#60A5FA",
-    position: { x: 62, y: 21 },
+    position: { x: 61, y: 23 },
+    labelPosition: { x: 61, y: 33 },
     summary: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     description: "Security core enforcing signed sessions, approval gates, blocked external actions, and audit visibility.",
     agents: ["Sentry", "Atlas"],
@@ -763,7 +774,8 @@ const roomProfiles = {
     metric: "6 events",
     icon: "SL",
     color: "#38BDF8",
-    position: { x: 86, y: 21 },
+    position: { x: 78, y: 23 },
+    labelPosition: { x: 80, y: 33 },
     summary: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     description: "Visible event stream for agent activity, operator actions, security events, approvals, and workflow changes.",
     agents: ["Sentry", "Atlas", "Oracle"],
@@ -1055,24 +1067,11 @@ function routeIsActive(from, to) {
   return related.has(from) && related.has(to);
 }
 
-function coreBeamIsActive(moduleId) {
-  if (!selectedRoomKey && !selectedAgentKey) return true;
-  const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
-  if (selected === "argentum-core") return true;
-  return connectedModuleSet(selected).has(moduleId);
-}
-
 function routePoint(room) {
   return {
     x: room.position.x * 10,
     y: room.position.y * 6.2,
   };
-}
-
-function directRoutePath(source, target) {
-  const start = routePoint(source);
-  const end = routePoint(target);
-  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} L ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
 }
 
 function bridgeRoutePath(source, target, index) {
@@ -1092,42 +1091,44 @@ function bridgeRoutePath(source, target, index) {
   return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
 }
 
-function moduleSecondaryDetail(room) {
-  const metricText = String(room.metric || "").toLowerCase();
-  const detail = (room.metrics || []).find(([, value]) => !metricText.includes(String(value).toLowerCase())) || room.metrics?.[0];
-  if (!detail) return room.type;
-  const [label, value] = detail;
-  return `${value} ${String(label).toLowerCase()}`;
-}
-
 function renderHabitatRoutes() {
   if (!habitatRoutes) return;
-  const core = roomProfiles["argentum-core"];
+  // Core is at CSS left:50% top:57% — map to SVG viewBox 1000×620
+  const corePos = { x: 500, y: 353 };
   const defs = `
     <defs>
       <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="rgba(34, 211, 238, 0.12)" />
-        <stop offset="42%" stop-color="rgba(125, 211, 252, 0.95)" />
-        <stop offset="72%" stop-color="rgba(167, 139, 250, 0.86)" />
-        <stop offset="100%" stop-color="rgba(34, 211, 238, 0.16)" />
+        <stop offset="0%" stop-color="rgba(34, 211, 238, 0)" />
+        <stop offset="45%" stop-color="rgba(125, 211, 252, 0.82)" />
+        <stop offset="72%" stop-color="rgba(167, 139, 250, 0.7)" />
+        <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
       </linearGradient>
-      <linearGradient id="coreBeamGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="rgba(147, 197, 253, 0.08)" />
-        <stop offset="50%" stop-color="rgba(34, 211, 238, 0.62)" />
-        <stop offset="100%" stop-color="rgba(139, 92, 246, 0.08)" />
+      <linearGradient id="coreBeamGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(34, 211, 238, 0.72)" />
+        <stop offset="60%" stop-color="rgba(125, 211, 252, 0.42)" />
+        <stop offset="100%" stop-color="rgba(167, 139, 250, 0)" />
       </linearGradient>
     </defs>
   `;
-  const coreRoutes = habitatMapModules
-    .map((room, index) => {
-      const path = directRoutePath(core, room);
-      const active = coreBeamIsActive(room.id);
-      return `
-        <path class="core-beam ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.11).toFixed(2)}s"></path>
-        <path class="core-flow ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.11).toFixed(2)}s"></path>
-      `;
-    })
-    .join("");
+
+  const coreConnected = roomProfiles["argentum-core"].connectedModules;
+  const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
+  const activeSet = hasSelection ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : null;
+
+  const coreBeams = coreConnected.map((moduleId, index) => {
+    const target = moduleProfile(moduleId);
+    const end = routePoint(target);
+    const active = !hasSelection || (activeSet && activeSet.has(moduleId));
+    const path = `M ${corePos.x} ${corePos.y} L ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+    return `
+      <path class="core-beam ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.22).toFixed(2)}s"></path>
+      <path class="core-flow ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.22 + 0.12).toFixed(2)}s"></path>
+      <circle class="route-particle ${active ? "active" : ""}" r="2.2">
+        <animateMotion dur="${(2.6 + index * 0.3).toFixed(2)}s" begin="${(index * 0.18).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
+      </circle>
+    `;
+  }).join("");
+
   const moduleBridgeRoutes = moduleRoutes
     .map(([from, to], index) => {
       const source = moduleProfile(from);
@@ -1135,8 +1136,8 @@ function renderHabitatRoutes() {
       const active = routeIsActive(from, to);
       const path = bridgeRoutePath(source, target, index);
       return `
-        <path class="route-glow ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
-        <path class="route-bridge ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <path class="route-glow ${active ? "active" : ""}" d="${path}"></path>
+        <path class="route-bridge ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
         <circle class="route-particle ${active ? "active" : ""}" r="2.7">
           <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
@@ -1144,12 +1145,11 @@ function renderHabitatRoutes() {
       `;
     })
     .join("");
-  habitatRoutes.innerHTML = `${defs}${coreRoutes}${moduleBridgeRoutes}`;
+  habitatRoutes.innerHTML = `${defs}${coreBeams}${moduleBridgeRoutes}`;
 }
 
 function renderHabitatModules() {
   if (!habitatModules) return;
-  const selected = resolveRoomKey(selectedRoomKey);
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
   habitatModules.innerHTML = habitatMapModules
     .map((room) => {
@@ -1160,28 +1160,23 @@ function renderHabitatModules() {
         .join(" ");
       return `
         <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}">
-          <span class="module-platform" aria-hidden="true">
-            <span class="platform-ring"></span>
-            <span class="platform-deck"></span>
-            <span class="platform-reactor"></span>
-            <span class="platform-windows"></span>
-            <span class="platform-ports"></span>
-            <span class="platform-socket socket-n"></span>
-            <span class="platform-socket socket-e"></span>
-            <span class="platform-socket socket-s"></span>
-            <span class="platform-socket socket-w"></span>
-            <span class="platform-antenna antenna-a"></span>
-            <span class="platform-antenna antenna-b"></span>
+          <span class="station-pod" aria-hidden="true">
+            <span class="pod-deck"></span>
+            <span class="pod-reactor"></span>
+            <span class="pod-ring"></span>
+            <span class="pod-light pod-light-a"></span>
+            <span class="pod-light pod-light-b"></span>
+            <span class="pod-socket pod-socket-n"></span>
+            <span class="pod-socket pod-socket-s"></span>
           </span>
-          <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
-          <span class="module-copy">
-            <small>${escapeHtml(room.metric)}</small>
-            <strong>${escapeHtml(room.title)}</strong>
-            <span><em>${escapeHtml(room.status)}</em><b>${escapeHtml(moduleSecondaryDetail(room))}</b></span>
+          <span class="station-label">
+            <span class="module-icon" aria-hidden="true">${escapeHtml(room.icon)}</span>
+            <span class="module-copy">
+              <strong>${escapeHtml(room.title)}</strong>
+              <small>${escapeHtml(room.metric)}</small>
+              <em>${escapeHtml(room.status)}</em>
+            </span>
           </span>
-          <span class="module-micro micro-a" aria-hidden="true">${escapeHtml(room.metrics[0]?.[0] || "SYS")} ${escapeHtml(room.metrics[0]?.[1] || room.status)}</span>
-          <span class="module-micro micro-b" aria-hidden="true">LINK ${escapeHtml(String(room.connectedModules.length).padStart(2, "0"))}</span>
-          <span class="module-micro micro-c" aria-hidden="true">${escapeHtml(room.type.split(" ")[0])}</span>
           <span class="module-tooltip" role="tooltip">${escapeHtml(room.description)}</span>
         </button>
       `;

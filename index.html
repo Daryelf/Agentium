@@ -164,7 +164,7 @@
                     <option value="agent">Agent Map</option>
                     <option value="workflow">Workflow Map</option>
                   </select>
-                  <span class="status-pill" id="cycleStatus">Depo online</span>
+                  <span class="status-pill" id="cycleStatus">At Depo Habitat</span>
                 </div>
               </div>
 
@@ -184,9 +184,9 @@
                     <div class="core-rings" aria-hidden="true"></div>
                     <div class="core-orb" aria-hidden="true"></div>
                     <div class="core-label">
-                      <span>Depo Habitat</span>
-                      <small>Agent 001 born here</small>
-                      <em>001</em>
+                      <span id="coreLabelTitle">Depo Habitat</span>
+                      <small id="coreLabelStage">Stage: Depo Habitat</small>
+                      <em id="coreLabelAgent">001</em>
                     </div>
                   </div>
                   <div class="habitat-modules" id="habitatModules"></div>
@@ -220,13 +220,13 @@
               <div class="agent-control-bar" aria-label="Agent map controls">
                 <div>
                   <p class="eyebrow">Agent Controls</p>
-                  <strong id="taskStage">Stage: Research</strong>
+                  <strong id="taskStage">Stage: Depo Habitat</strong>
                 </div>
                 <div class="progress-track" aria-label="Mission progress">
                   <div class="progress-bar" id="missionProgress"></div>
                 </div>
                 <div class="agent-control-actions">
-                  <span id="riskLevel">Risk: Low</span>
+                  <span id="riskLevel">Risk: Approval required</span>
                   <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause habitat" title="Pause habitat">
                     <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
                   </button>

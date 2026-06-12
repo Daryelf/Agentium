@@ -367,6 +367,65 @@ const scanBtn = document.querySelector("#scanBtn");
 const systemClockNodes = document.querySelectorAll("[data-system-clock]");
 const systemDateNodes = document.querySelectorAll("[data-system-date]");
 const systemSearch = document.querySelector("#systemSearch");
+const coreLabelTitle = document.querySelector("#coreLabelTitle");
+const coreLabelStage = document.querySelector("#coreLabelStage");
+const coreLabelAgent = document.querySelector("#coreLabelAgent");
+
+const depoWorkflowStages = [
+  "Depo Habitat",
+  "Task Intake",
+  "Research",
+  "Verify",
+  "Draft",
+  "Package",
+  "Human Gate",
+  "Output Bench",
+  "Memory",
+  "System Log",
+];
+
+const depoAgent = {
+  id: "depo",
+  name: "Depo",
+  role: "Depository Operator",
+  status: "Active supervised",
+  mode: "Draft only",
+  currentStage: "Depo Habitat",
+  currentTask: "Prepare supervised business action package for review",
+  riskMode: "Approval required",
+  externalActions: "Locked",
+  humanGate: "Enabled",
+  number: "001",
+  icon: "D",
+  color: "#7DD3FC",
+  room: "depo-habitat",
+  connectedModules: ["depo-habitat", "argentum-core"],
+  can: [
+    "gather research",
+    "organize evidence",
+    "draft outputs",
+    "prepare POD ideas",
+    "monitor workflow stages",
+    "create internal notes",
+    "prepare reports",
+    "package actions for approval",
+  ],
+  cannot: [
+    "publish listings",
+    "spend money",
+    "move money",
+    "change accounts",
+    "contact customers",
+    "deploy campaigns",
+    "create new agents",
+    "perform risky external actions",
+  ],
+  workflowStages: depoWorkflowStages,
+  queue: ["Receive first bounded workflow"],
+  queueCount: 1,
+  riskLevel: "Medium",
+  actions: ["Depo active supervised", "Draft-only mode loaded", "External actions remain locked"],
+};
 
 const agentProfiles = {
   atlas: {
@@ -489,21 +548,13 @@ const agentProfiles = {
     actions: ["Tagged stale telemetry", "Drafted insight snapshot", "Updated report backlog"],
   },
   depo: {
-    id: "depo",
-    name: "Depo",
-    role: "Depository Operator",
-    status: "Draft only",
-    number: "001",
-    icon: "D",
-    color: "#7DD3FC",
-    room: "depo-habitat",
-    connectedModules: ["depo-habitat", "argentum-core"],
-    currentTask: "Newborn first agent. Depo is ready to turn one bounded idea into evidence, draft output, and an approval package.",
-    queue: ["Receive first bounded workflow"],
-    queueCount: 1,
-    permissions: ["Read/write working memory", "Draft artifacts", "Cannot publish, spend, trade, contact customers, or deploy agents"],
-    riskLevel: "Medium",
-    actions: ["Depo born into the habitat", "Draft-only rules loaded", "External actions remain gated"],
+    ...depoAgent,
+    permissions: [
+      "Read/write working memory",
+      "Draft artifacts",
+      "Package actions for approval",
+      "Cannot perform risky external actions",
+    ],
   },
 };
 
@@ -514,17 +565,17 @@ const roomProfiles = {
     name: "Argentum Core",
     type: "AI Command Core",
     status: "Online",
-    metric: "Agent 001",
+    metric: `Agent ${depoAgent.number}`,
     icon: "AC",
     color: "#60A5FA",
     position: { x: 50, y: 43 },
-    summary: "Central supervised habitat where Agent 001 lives, receives bounded work, and sends risky actions to the human gate.",
-    description: "Central supervised habitat where Agent 001 lives, receives bounded work, and sends risky actions to the human gate.",
-    agents: ["Depo"],
+    summary: `Central supervised habitat where ${depoAgent.name} lives, receives bounded work, and sends risky actions to the human gate.`,
+    description: `Central supervised habitat where ${depoAgent.name} lives, receives bounded work, and sends risky actions to the human gate.`,
+    agents: [depoAgent.name],
     connectedModules: ["depo-habitat"],
     connected: ["Depo Habitat"],
-    tasks: ["Hold Depo's identity", "Route one bounded task", "Protect approval boundaries"],
-    activity: ["Depo has entered the habitat.", "Revenue claims are cleared.", "Human-gate constraints are active."],
+    tasks: [`Hold ${depoAgent.name}'s identity`, "Route one bounded task", "Protect approval boundaries"],
+    activity: [`${depoAgent.name} has entered the habitat.`, "Revenue claims are cleared.", "Human-gate constraints are active."],
     metrics: [["Active agents", "1"], ["Revenue", "None yet"], ["Mode", "Supervised"]],
     workspaceType: "core",
   },
@@ -533,20 +584,20 @@ const roomProfiles = {
     title: "Depo Habitat",
     name: "Depo Habitat",
     type: "First Agent Home",
-    status: "Born",
-    metric: "Agent 001",
-    icon: "D",
-    color: "#7DD3FC",
+    status: depoAgent.status,
+    metric: `Agent ${depoAgent.number}`,
+    icon: depoAgent.icon,
+    color: depoAgent.color,
     position: { x: 50, y: 63 },
     labelPosition: { x: 50, y: 72 },
-    summary: "The first real resident of Argentum. Depo can research, verify, draft, curate memory, and package approval-ready work.",
-    description: "The first real resident of Argentum. Depo can research, verify, draft, curate memory, and package approval-ready work.",
-    agents: ["Depo"],
+    summary: `The first real resident of Argentum. ${depoAgent.name} can research, organize evidence, draft outputs, and package approval-ready work.`,
+    description: `The first real resident of Argentum. ${depoAgent.name} can research, organize evidence, draft outputs, and package approval-ready work.`,
+    agents: [depoAgent.name],
     connectedModules: ["argentum-core"],
     connected: ["Argentum Core"],
-    tasks: ["Accept one bounded workflow", "Gather evidence", "Draft for approval"],
-    activity: ["Agent 001 initialized.", "Draft-only permission set loaded.", "No revenue has been claimed."],
-    metrics: [["Agent", "Depo"], ["Revenue", "None yet"], ["External actions", "Locked"]],
+    tasks: ["Accept one bounded workflow", ...depoAgent.can.slice(0, 2)],
+    activity: [`Agent ${depoAgent.number} initialized.`, `${depoAgent.mode} permission set loaded.`, "No revenue has been claimed."],
+    metrics: [["Agent", depoAgent.name], ["Current stage", depoAgent.currentStage], ["External actions", depoAgent.externalActions]],
     workspaceType: "depo",
   },
   "agent-habitat": {
@@ -810,23 +861,24 @@ const habitatMapModules = [
 const moduleRoutes = [];
 
 const depoWorkflowState = {
-  activeAgent: "Depo",
-  currentTask: "Prepare supervised business action package for review.",
-  currentStage: "Workflow Pipeline",
-  mode: "Supervised",
-  riskMode: "Approval required",
-  externalActions: "Locked",
-  humanGate: "Enabled",
-  canDepoDo: ["Research", "Draft", "Organize", "Package for approval"],
-  cannotDepoDo: ["Publish", "Spend", "Contact externally"],
+  activeAgent: depoAgent.name,
+  currentTask: depoAgent.currentTask,
+  currentStage: depoAgent.currentStage,
+  mode: depoAgent.mode,
+  riskMode: depoAgent.riskMode,
+  externalActions: depoAgent.externalActions,
+  humanGate: depoAgent.humanGate,
+  canDepoDo: depoAgent.can,
+  cannotDepoDo: depoAgent.cannot,
+  stages: depoAgent.workflowStages,
 };
 
 const habitatModuleCards = {
   "argentum-core": {
     purpose: "Central supervised habitat for Argentum's first real agent.",
     status: "Supervised",
-    metric: "Agent 001 online",
-    depoRole: "Keeps Depo's work local, bounded, and routed through approval before any risky action.",
+    metric: `Agent ${depoAgent.number} online`,
+    depoRole: `Keeps ${depoAgent.name}'s work local, bounded, and routed through approval before any risky action.`,
     connections: ["depo-habitat"],
     recentActivity: ["Depo has entered the habitat.", "Revenue counters reset to none.", "Risk gates are active."],
     riskNote: "Approval is required before any risky external action.",
@@ -834,12 +886,12 @@ const habitatModuleCards = {
   },
   "depo-habitat": {
     purpose: "Home base for the first supervised agent.",
-    status: "Born",
-    metric: "Agent 001",
-    depoRole: "Depo lives here and starts with research, verification, drafting, and approval packaging.",
+    status: depoAgent.status,
+    metric: `Agent ${depoAgent.number}`,
+    depoRole: `${depoAgent.name} lives here and starts with research, evidence organization, drafting, and approval packaging.`,
     connections: ["argentum-core"],
-    recentActivity: ["Depo born into habitat.", "Draft-only rules loaded.", "First workflow waiting."],
-    riskNote: "Depo can draft and organize, but cannot publish, spend, trade, contact customers, or deploy agents.",
+    recentActivity: [`${depoAgent.name} born into habitat.`, `${depoAgent.mode} rules loaded.`, "First workflow waiting."],
+    riskNote: `${depoAgent.name} can prepare internal work, but cannot ${depoAgent.cannot.slice(0, 4).join(", ")} or perform risky external actions.`,
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
   "agent-habitat": {
@@ -1052,14 +1104,14 @@ const workspaceProfiles = {
     feed: ["Oracle tagged stale telemetry", "Oracle drafted insight snapshot", "Oracle updated report backlog"],
   },
   depo: {
-    title: "Depo Workspace",
-    eyebrow: "Depository Operator",
+    title: `${depoAgent.name} Workspace`,
+    eyebrow: depoAgent.role,
     sections: [
-      ["Mode", "Draft only. Depo researches, verifies, drafts, and packages work for approval."],
-      ["Current stage", "Research -> Evidence Guard -> Output Bench -> Human Gate."],
-      ["Security", "External actions, revenue claims, customer contact, and new-agent deployment remain locked."],
+      ["Mode", `${depoAgent.mode}. ${depoAgent.name} can ${depoAgent.can.slice(0, 4).join(", ")}.`],
+      ["Current stage", depoAgent.currentStage],
+      ["Security", `${depoAgent.externalActions}. ${depoAgent.name} cannot ${depoAgent.cannot.slice(0, 4).join(", ")}.`],
     ],
-    feed: ["Depo is active supervised", "Depo keeps external actions gated", "Depo writes provenance-labeled memory"],
+    feed: depoAgent.actions,
   },
 };
 
@@ -1136,23 +1188,32 @@ function currentStep() {
   return state.mission.steps[state.mission.currentStep % state.mission.steps.length];
 }
 
-function setStep() {
-  const step = currentStep();
-  const module = moduleProfile(step.station);
-  const coordinate = module?.position
-    ? { x: `${module.position.x}%`, y: `${module.position.y}%` }
-    : { x: step.x, y: step.y };
-  if (avatar) {
-    avatar.style.setProperty("--agent-x", coordinate.x);
-    avatar.style.setProperty("--agent-y", coordinate.y);
+function depoStageProgress(agent = depoAgent) {
+  const index = agent.workflowStages.indexOf(agent.currentStage);
+  if (index < 0) return 0;
+  return Math.round(((index + 1) / agent.workflowStages.length) * 100);
+}
+
+function renderDepoOrbitState(agent = depoAgent) {
+  const homeRoom = roomProfiles[agent.room] || roomProfiles["depo-habitat"];
+  if (avatar && homeRoom?.position) {
+    avatar.style.setProperty("--agent-x", `${homeRoom.position.x}%`);
+    avatar.style.setProperty("--agent-y", `${homeRoom.position.y}%`);
   }
-  if (progress) progress.style.width = `${step.progress}%`;
-  if (cycleStatus) cycleStatus.textContent = state.mission.paused ? "Cycle paused" : `At ${module?.title || step.station}`;
-  if (missionTitle) missionTitle.textContent = step.title;
-  if (missionCopy) missionCopy.textContent = step.copy;
-  if (confidenceChip) confidenceChip.textContent = `${step.confidence}% confidence`;
-  if (taskStage) taskStage.textContent = `Stage: ${module?.title || step.station}`;
-  if (riskLevel) riskLevel.textContent = `Risk: ${step.risk}`;
+  if (progress) progress.style.width = `${depoStageProgress(agent)}%`;
+  if (cycleStatus) cycleStatus.textContent = state.mission.paused ? `Paused at ${agent.currentStage}` : `At ${agent.currentStage}`;
+  if (missionTitle) missionTitle.textContent = `${agent.name} is ${agent.status.toLowerCase()}`;
+  if (missionCopy) missionCopy.textContent = agent.currentTask;
+  if (confidenceChip) confidenceChip.textContent = agent.mode;
+  if (taskStage) taskStage.textContent = `Stage: ${agent.currentStage}`;
+  if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
+  if (coreLabelTitle) coreLabelTitle.textContent = agent.currentStage;
+  if (coreLabelStage) coreLabelStage.textContent = `Stage: ${agent.currentStage}`;
+  if (coreLabelAgent) coreLabelAgent.textContent = agent.number;
+}
+
+function setStep() {
+  renderDepoOrbitState();
 }
 
 function clamp(value, min, max) {

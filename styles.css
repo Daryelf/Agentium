@@ -1113,7 +1113,7 @@ main {
 .habitat-routes {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 8;
   overflow: visible;
   pointer-events: none;
   mix-blend-mode: screen;
@@ -1247,7 +1247,7 @@ main {
   position: absolute;
   left: 50%;
   top: 57%;
-  z-index: 8;
+  z-index: 12;
   width: 190px;
   height: 200px;
   border: 0;
@@ -1464,6 +1464,7 @@ main {
 .habitat-modules {
   position: absolute;
   inset: 0;
+  z-index: 9;
 }
 
 .station {
@@ -1471,19 +1472,18 @@ main {
   left: var(--x);
   top: var(--y);
   z-index: 7;
-  width: 240px;
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
-  gap: 0;
+  /* Sized to pod — transform centers on pod, label floats above */
+  width: 176px;
+  height: 116px;
+  display: block;
   padding: 0;
   border: 0;
   color: var(--text);
-  text-align: left;
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
   cursor: pointer;
+  overflow: visible;
   transform: translate(-50%, -50%);
   transition: opacity 180ms ease, filter 180ms ease, transform 180ms ease;
 }
@@ -1499,7 +1499,7 @@ main {
 .station:hover,
 .station.selected,
 .station.search-match {
-  transform: translate(-50%, calc(-50% - 2px));
+  transform: translate(-50%, calc(-50% - 3px));
 }
 
 .station.related:not(.selected) {
@@ -1534,11 +1534,9 @@ main {
 
 /* ── Station pod (metallic orbital disc) ─────────────────────── */
 .station-pod {
-  position: relative;
-  flex: 0 0 auto;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  width: 176px;
-  height: 116px;
   border-radius: 50%;
   background:
     radial-gradient(ellipse at 50% 22%, rgba(248, 250, 252, 0.3), transparent 10%),
@@ -1680,9 +1678,11 @@ main {
 
 /* ── Station label (compact glass overlay) ───────────────────── */
 .station-label {
-  position: relative;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 2;
-  margin-bottom: -8px;
   width: 234px;
   min-height: 68px;
   display: flex;
@@ -1704,11 +1704,12 @@ main {
 .station:hover .station-label,
 .station.selected .station-label,
 .station.search-match .station-label {
-  border-color: color-mix(in srgb, var(--module-color) 48%, rgba(255, 255, 255, 0.12));
+  border-color: color-mix(in srgb, var(--module-color) 52%, rgba(255, 255, 255, 0.14));
   box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.44),
-    0 0 26px color-mix(in srgb, var(--module-color) 24%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 12px 28px rgba(0, 0, 0, 0.48),
+    0 0 28px color-mix(in srgb, var(--module-color) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transform: translateX(-50%) translateY(-2px);
 }
 
 .station-label .module-icon {
@@ -3343,7 +3344,8 @@ label {
   }
 
   .station {
-    width: 210px;
+    width: 152px;
+    height: 100px;
   }
 
   .station-label {
@@ -3445,7 +3447,8 @@ label {
   }
 
   .station {
-    width: 180px;
+    width: 130px;
+    height: 86px;
   }
 
   .station-label {
@@ -3453,8 +3456,7 @@ label {
   }
 
   .station-pod {
-    width: 130px;
-    height: 86px;
+    inset: 0;
   }
 
   .map-controls {

@@ -2605,6 +2605,7 @@ main {
   justify-content: center;
   padding: 0;
   transform: translate(-50%, -50%);
+  transition: none;
 }
 
 .map-core::before,
@@ -2612,6 +2613,8 @@ main {
 .core-rings,
 .core-orb {
   display: block;
+  animation: none;
+  transition: none;
 }
 
 .map-core::before {
@@ -2666,10 +2669,14 @@ main {
 .core-rings::before {
   inset: 18px;
   border: 1px dashed rgba(167, 139, 250, 0.34);
+  animation: none;
+  transition: none;
 }
 
 .core-rings::after {
   display: none;
+  animation: none;
+  transition: none;
 }
 
 .core-orb {

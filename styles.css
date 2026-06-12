@@ -1116,7 +1116,6 @@ main {
   z-index: 8;
   overflow: visible;
   pointer-events: none;
-  mix-blend-mode: screen;
 }
 
 .core-beam,
@@ -1246,7 +1245,7 @@ main {
 .map-core {
   position: absolute;
   left: 50%;
-  top: 57%;
+  top: 50%;
   z-index: 12;
   width: 190px;
   height: 200px;
@@ -1464,7 +1463,7 @@ main {
 .habitat-modules {
   position: absolute;
   inset: 0;
-  z-index: 9;
+  z-index: 6;
 }
 
 .station {
@@ -1472,10 +1471,11 @@ main {
   left: var(--x);
   top: var(--y);
   z-index: 7;
-  /* Sized to pod — transform centers on pod, label floats above */
-  width: 176px;
-  height: 116px;
-  display: block;
+  width: 234px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   padding: 0;
   border: 0;
   color: var(--text);
@@ -1484,7 +1484,8 @@ main {
   backdrop-filter: none;
   cursor: pointer;
   overflow: visible;
-  transform: translate(-50%, -50%);
+  /* -32% ≈ -(pod_height/2 ÷ total_height) centers pod at (x,y) */
+  transform: translate(-50%, -32%);
   transition: opacity 180ms ease, filter 180ms ease, transform 180ms ease;
 }
 
@@ -1499,7 +1500,7 @@ main {
 .station:hover,
 .station.selected,
 .station.search-match {
-  transform: translate(-50%, calc(-50% - 3px));
+  transform: translate(-50%, calc(-32% - 3px));
 }
 
 .station.related:not(.selected) {
@@ -1534,9 +1535,11 @@ main {
 
 /* ── Station pod (metallic orbital disc) ─────────────────────── */
 .station-pod {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 0 0 auto;
   z-index: 1;
+  width: 176px;
+  height: 116px;
   border-radius: 50%;
   background:
     radial-gradient(ellipse at 50% 22%, rgba(248, 250, 252, 0.3), transparent 10%),
@@ -1678,13 +1681,10 @@ main {
 
 /* ── Station label (compact glass overlay) ───────────────────── */
 .station-label {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   z-index: 2;
   width: 234px;
-  min-height: 68px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1709,7 +1709,7 @@ main {
     0 12px 28px rgba(0, 0, 0, 0.48),
     0 0 28px color-mix(in srgb, var(--module-color) 28%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  transform: translateX(-50%) translateY(-2px);
+  transform: translateY(-2px);
 }
 
 .station-label .module-icon {

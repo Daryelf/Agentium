@@ -458,8 +458,8 @@ const habitatFloorRooms = [
     visual: "clipboard",
     icon: "clipboard",
     color: "#38BDF8",
-    position: { x: 22, y: 15 },
-    size: { w: 24, h: 27 },
+    position: { x: 22, y: 20.5 },
+    size: { w: 28, h: 31 },
     purpose: "Captures new requests and turns them into structured work.",
     depoRole: "Depo reads the request and breaks it into safe steps.",
     connections: ["depo-habitat", "research-lab", "system-log"],
@@ -477,8 +477,8 @@ const habitatFloorRooms = [
     visual: "lab",
     icon: "research",
     color: "#22D3EE",
-    position: { x: 50, y: 15 },
-    size: { w: 24, h: 28 },
+    position: { x: 50, y: 20.5 },
+    size: { w: 28, h: 31 },
     purpose: "Gathers context, notes, and supporting information.",
     depoRole: "Depo collects research and saves useful evidence.",
     connections: ["task-intake", "memory-vault", "verify-station", "depo-habitat"],
@@ -496,8 +496,8 @@ const habitatFloorRooms = [
     visual: "verify",
     icon: "shield",
     color: "#7DD3FC",
-    position: { x: 78, y: 15 },
-    size: { w: 24, h: 27 },
+    position: { x: 78, y: 20.5 },
+    size: { w: 28, h: 31 },
     purpose: "Checks claims, assumptions, and missing details.",
     depoRole: "Depo validates whether the work is safe and complete.",
     connections: ["research-lab", "draft-studio", "human-gate"],
@@ -516,7 +516,7 @@ const habitatFloorRooms = [
     icon: "database",
     color: "#38BDF8",
     position: { x: 22, y: 50 },
-    size: { w: 25, h: 28 },
+    size: { w: 28, h: 31 },
     purpose: "Stores reusable notes, context, research, and internal knowledge.",
     depoRole: "Depo saves and retrieves project memory.",
     connections: ["research-lab", "draft-studio", "depo-habitat"],
@@ -535,7 +535,7 @@ const habitatFloorRooms = [
     icon: "pen",
     color: "#A78BFA",
     position: { x: 78, y: 50 },
-    size: { w: 25, h: 28 },
+    size: { w: 28, h: 31 },
     purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
     depoRole: "Depo drafts work but does not publish it.",
     connections: ["verify-station", "memory-vault", "human-gate", "output-bench"],
@@ -553,8 +553,8 @@ const habitatFloorRooms = [
     visual: "terminal",
     icon: "log",
     color: "#22D3EE",
-    position: { x: 22, y: 85 },
-    size: { w: 25, h: 27 },
+    position: { x: 22, y: 79.5 },
+    size: { w: 28, h: 31 },
     purpose: "Tracks events, stage changes, and audit history.",
     depoRole: "Depo writes cycle updates here.",
     connections: ["depo-habitat", "task-intake", "research-lab", "verify-station", "draft-studio", "human-gate", "output-bench", "memory-vault"],
@@ -572,8 +572,8 @@ const habitatFloorRooms = [
     visual: "bench",
     icon: "download",
     color: "#60A5FA",
-    position: { x: 50, y: 85 },
-    size: { w: 25, h: 27 },
+    position: { x: 50, y: 79.5 },
+    size: { w: 28, h: 31 },
     purpose: "Holds completed drafts and prepared deliverables.",
     depoRole: "Depo places reviewed work here for final handling.",
     connections: ["human-gate", "system-log", "depo-habitat"],
@@ -591,8 +591,8 @@ const habitatFloorRooms = [
     visual: "gate",
     icon: "lock",
     color: "#F43F5E",
-    position: { x: 78, y: 85 },
-    size: { w: 25, h: 27 },
+    position: { x: 78, y: 79.5 },
+    size: { w: 28, h: 31 },
     purpose: "Blocks risky actions until the operator approves.",
     depoRole: "Depo packages work for human review.",
     connections: ["draft-studio", "output-bench", "system-log"],
@@ -1355,8 +1355,8 @@ const workspaceProfiles = {
 
 let selectedRoomKey = null;
 let selectedAgentKey = null;
-const mapHomeScale = 0.84;
-const mapMinScale = 0.72;
+const mapHomeScale = 1;
+const mapMinScale = 0.86;
 const mapMaxScale = 2.8;
 const mapPanEpsilon = 0.001;
 let mapView = { x: 0, y: 0, scale: mapHomeScale };
@@ -2485,6 +2485,7 @@ function miniAgentRobotMarkup(room) {
 function floorCorridorMarkup() {
   const core = habitatFloorRoomById["depo-habitat"];
   const center = core.position;
+  const wideMapAspect = 0.36;
 
   return habitatMapModules
     .map((room, index) => {
@@ -2501,8 +2502,8 @@ function floorCorridorMarkup() {
       const endY = room.position.y - unitY * endOffset;
       const corridorDx = endX - startX;
       const corridorDy = endY - startY;
-      const corridorLength = Math.hypot(corridorDx, corridorDy);
-      const angle = Math.atan2(corridorDy, corridorDx) * (180 / Math.PI);
+      const corridorLength = Math.hypot(corridorDx, corridorDy * wideMapAspect);
+      const angle = Math.atan2(corridorDy * wideMapAspect, corridorDx) * (180 / Math.PI);
       const approval = room.id === "human-gate";
 
       return `

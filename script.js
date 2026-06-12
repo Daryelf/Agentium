@@ -1073,6 +1073,8 @@ const workspaceProfiles = {
 let selectedRoomKey = null;
 let selectedAgentKey = null;
 const mapMinScale = 1;
+const mapMaxScale = 2.8;
+const mapPanEpsilon = 0.001;
 let mapView = { x: 0, y: 0, scale: 1 };
 let isPanning = false;
 let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
@@ -2248,12 +2250,34 @@ function applySelectionClasses() {
   renderMiniMap();
 }
 
+function normalizedMapView(nextView = mapView) {
+  const scale = clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, mapMinScale, mapMaxScale);
+
+  if (!stationMap || scale <= mapMinScale + mapPanEpsilon) {
+    return { x: 0, y: 0, scale: mapMinScale };
+  }
+
+  const rect = stationMap.getBoundingClientRect();
+  const minX = rect.width - rect.width * scale;
+  const minY = rect.height - rect.height * scale;
+  const x = Number.isFinite(nextView.x) ? nextView.x : mapView.x;
+  const y = Number.isFinite(nextView.y) ? nextView.y : mapView.y;
+
+  return {
+    x: clamp(x, minX, 0),
+    y: clamp(y, minY, 0),
+    scale,
+  };
+}
+
 function applyMapView(animated = true) {
   if (!habitatCanvas) return;
+  mapView = normalizedMapView(mapView);
   habitatCanvas.classList.toggle("is-animating", animated);
   habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  stationMap?.classList.toggle("can-pan", mapView.scale > mapMinScale + mapPanEpsilon);
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
-  if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + 0.001;
+  if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + mapPanEpsilon;
   renderMiniMap();
   if (animated) {
     window.setTimeout(() => habitatCanvas.classList.remove("is-animating"), 420);
@@ -2261,11 +2285,11 @@ function applyMapView(animated = true) {
 }
 
 function setMapView(nextView, animated = true) {
-  mapView = {
+  mapView = normalizedMapView({
     x: Number.isFinite(nextView.x) ? nextView.x : mapView.x,
     y: Number.isFinite(nextView.y) ? nextView.y : mapView.y,
-    scale: clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, mapMinScale, 2.8),
-  };
+    scale: Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale,
+  });
   applyMapView(animated);
 }
 
@@ -2290,7 +2314,11 @@ function zoomMap(delta, point) {
   if (!stationMap) return;
   const rect = stationMap.getBoundingClientRect();
   const anchor = point || { x: rect.width / 2, y: rect.height / 2 };
-  const nextScale = clamp(mapView.scale + delta, mapMinScale, 2.8);
+  const nextScale = clamp(mapView.scale + delta, mapMinScale, mapMaxScale);
+  if (nextScale <= mapMinScale + mapPanEpsilon) {
+    setMapView({ x: 0, y: 0, scale: mapMinScale });
+    return;
+  }
   const worldX = (anchor.x - mapView.x) / mapView.scale;
   const worldY = (anchor.y - mapView.y) / mapView.scale;
   setMapView({
@@ -3389,6 +3417,13 @@ stationMap.addEventListener("wheel", (event) => {
 
 stationMap.addEventListener("pointerdown", (event) => {
   if (event.target.closest(".map-controls") || event.target.closest(".module-info-card") || event.target.closest(".station") || event.target.closest(".map-core")) return;
+  if (mapView.scale <= mapMinScale + mapPanEpsilon) {
+    pointerCache.clear();
+    isPanning = false;
+    pinchStart = null;
+    setMapView({ x: 0, y: 0, scale: mapMinScale }, false);
+    return;
+  }
   pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
   stationMap.setPointerCapture(event.pointerId);
   if (pointerCache.size === 1) {
@@ -3413,11 +3448,11 @@ stationMap.addEventListener("pointermove", (event) => {
   if (pointerCache.size === 2 && pinchStart) {
     const points = Array.from(pointerCache.values());
     const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-    const nextScale = clamp(pinchStart.scale * (distance / pinchStart.distance), mapMinScale, 2.8);
+    const nextScale = clamp(pinchStart.scale * (distance / pinchStart.distance), mapMinScale, mapMaxScale);
     setMapView({ scale: nextScale }, false);
     return;
   }
-  if (!isPanning) return;
+  if (!isPanning || mapView.scale <= mapMinScale + mapPanEpsilon) return;
   setMapView({
     x: panStart.viewX + event.clientX - panStart.x,
     y: panStart.viewY + event.clientY - panStart.y,
@@ -3427,7 +3462,12 @@ stationMap.addEventListener("pointermove", (event) => {
 function endPointer(event) {
   pointerCache.delete(event.pointerId);
   if (pointerCache.size < 2) pinchStart = null;
-  if (pointerCache.size === 0) isPanning = false;
+  if (pointerCache.size === 0) {
+    isPanning = false;
+    if (mapView.scale <= mapMinScale + mapPanEpsilon) {
+      setMapView({ x: 0, y: 0, scale: mapMinScale }, true);
+    }
+  }
 }
 
 stationMap.addEventListener("pointerup", endPointer);

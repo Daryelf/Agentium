@@ -973,11 +973,15 @@ main {
     inset 0 0 120px rgba(0, 0, 0, 0.82),
     inset 0 -110px 160px rgba(0, 0, 0, 0.58),
     0 0 70px rgba(96, 165, 250, 0.1);
-  cursor: grab;
+  cursor: default;
   touch-action: none;
 }
 
-.station-map:active {
+.station-map.can-pan {
+  cursor: grab;
+}
+
+.station-map.can-pan:active {
   cursor: grabbing;
 }
 

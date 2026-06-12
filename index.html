@@ -152,11 +152,11 @@
 
         <section class="view active" id="view-floor" aria-label="Argentum habitat overview">
           <div class="command-grid">
-            <section class="operations-floor" aria-label="First-agent orbital habitat map">
+            <section class="operations-floor" aria-label="First-agent command floor map">
               <div class="floor-header">
                 <div>
                   <p class="eyebrow">Habitat Overview</p>
-                  <h3>First-agent birth orbit</h3>
+                  <h3>First-agent command floor</h3>
                 </div>
                 <div class="map-view-tools">
                   <select id="mapViewMode" aria-label="Habitat map view">
@@ -169,9 +169,9 @@
               </div>
 
               <div class="station-map" id="stationMap">
-                <!-- OrbitScene -->
+                <!-- HabitatFloorMap -->
                 <div class="habitat-canvas" id="habitatCanvas">
-                  <!-- SpaceBackground -->
+                  <!-- CommandFloorBackground -->
                   <div class="map-space-layer" aria-hidden="true"></div>
                   <div class="planet-glow" aria-hidden="true"></div>
                   <div class="orbital-ring ring-one" aria-hidden="true"></div>
@@ -179,13 +179,17 @@
                   <div class="orbital-ring ring-three" aria-hidden="true"></div>
                   <canvas class="station-artwork station-renderer" id="stationArtwork" width="1000" height="620" aria-hidden="true"></canvas>
                   <svg class="habitat-routes" id="habitatRoutes" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
-                  <!-- DepoCapsule -->
-                  <div class="map-core" data-station="argentum-core" role="button" tabindex="0" aria-label="Argentum Core">
+                  <!-- DepoCorePlatform -->
+                  <div class="map-core" data-station="depo-habitat" role="button" tabindex="0" aria-label="Depo Habitat">
                     <div class="core-rings" aria-hidden="true"></div>
                     <div class="core-orb" aria-hidden="true"></div>
+                    <div class="mini-agent-robot core-agent" aria-hidden="true">
+                      <span class="robot-head"><i></i><i></i></span>
+                      <span class="robot-body"></span>
+                    </div>
                     <div class="core-label">
                       <span id="coreLabelTitle">Depo Habitat</span>
-                      <small id="coreLabelStage">Stage: Depo Habitat</small>
+                      <small id="coreLabelStage">Active agent</small>
                       <em id="coreLabelAgent">001</em>
                     </div>
                   </div>
@@ -243,7 +247,7 @@
                 <span class="metric-chip" id="confidenceChip">0% earned revenue</span>
               </div>
               <p class="mission-copy" id="missionCopy">
-                Argentum now has one real supervised agent. The orbit is no longer pretending at scale; it is the home base where Depo starts gathering evidence, drafting, and asking for approval.
+                Argentum now has one real supervised agent. The command floor is Depo's local workspace for intake, research, verification, drafting, memory, outputs, and human approval.
               </p>
               <div class="system-status-grid" aria-label="Live system status cards">
                 <div><span>Agent Status</span><strong id="agentStatusMetric">Supervised</strong></div>

@@ -427,6 +427,180 @@ const depoAgent = {
   actions: ["Depo active supervised", "Draft-only mode loaded", "External actions remain locked"],
 };
 
+const habitatFloorRooms = [
+  {
+    id: "depo-habitat",
+    title: "Depo Habitat",
+    name: "Depo Habitat",
+    subtitle: "Active agent",
+    metric: depoAgent.number,
+    status: depoAgent.status,
+    type: "core",
+    visual: "core",
+    icon: "D",
+    color: "#8B5CF6",
+    position: { x: 50, y: 50 },
+    size: { w: 19, h: 22 },
+    purpose: "Home base for the first supervised Argentum agent.",
+    depoRole: "Depo coordinates the safe local workflow from here.",
+    connections: ["task-intake", "research-lab", "verify-station", "draft-studio", "memory-vault", "human-gate", "output-bench", "system-log"],
+    riskNote: "External actions remain locked.",
+    recentActivity: ["Depo initialized as Agent 001.", "Draft-only mode loaded.", "Human Gate is active."],
+  },
+  {
+    id: "task-intake",
+    title: "Task Intake",
+    name: "Task Intake",
+    subtitle: "New requests",
+    metric: "3 pending",
+    status: "Intake",
+    type: "intake",
+    visual: "clipboard",
+    icon: "clipboard",
+    color: "#38BDF8",
+    position: { x: 22, y: 18 },
+    size: { w: 22, h: 22 },
+    purpose: "Captures new requests and turns them into structured work.",
+    depoRole: "Depo reads the request and breaks it into safe steps.",
+    connections: ["depo-habitat", "research-lab", "system-log"],
+    riskNote: "Intake creates drafts only.",
+    recentActivity: ["Three requests waiting.", "Task pad warmed.", "No external action opened."],
+  },
+  {
+    id: "research-lab",
+    title: "Research Lab",
+    name: "Research Lab",
+    subtitle: "Gathering info",
+    metric: "12 items",
+    status: "Researching",
+    type: "research",
+    visual: "lab",
+    icon: "research",
+    color: "#22D3EE",
+    position: { x: 50, y: 16 },
+    size: { w: 22, h: 23 },
+    purpose: "Gathers context, notes, and supporting information.",
+    depoRole: "Depo collects research and saves useful evidence.",
+    connections: ["task-intake", "memory-vault", "verify-station", "depo-habitat"],
+    riskNote: "No spending, publishing, or external contact.",
+    recentActivity: ["Twelve evidence items staged.", "Source notes grouped.", "Research screens online."],
+  },
+  {
+    id: "verify-station",
+    title: "Verify Station",
+    name: "Verify Station",
+    subtitle: "Checking details",
+    metric: "5 checks",
+    status: "Verifying",
+    type: "verify",
+    visual: "verify",
+    icon: "shield",
+    color: "#7DD3FC",
+    position: { x: 78, y: 18 },
+    size: { w: 22, h: 22 },
+    purpose: "Checks claims, assumptions, and missing details.",
+    depoRole: "Depo validates whether the work is safe and complete.",
+    connections: ["research-lab", "draft-studio", "human-gate"],
+    riskNote: "Uncertain claims require human review.",
+    recentActivity: ["Five checks open.", "Claim review in progress.", "Unsafe assumptions flagged."],
+  },
+  {
+    id: "memory-vault",
+    title: "Memory Vault",
+    name: "Memory Vault",
+    subtitle: "Stored knowledge",
+    metric: "12,455 items",
+    status: "Stored",
+    type: "memory",
+    visual: "vault",
+    icon: "database",
+    color: "#38BDF8",
+    position: { x: 22, y: 50 },
+    size: { w: 23, h: 23 },
+    purpose: "Stores reusable notes, context, research, and internal knowledge.",
+    depoRole: "Depo saves and retrieves project memory.",
+    connections: ["research-lab", "draft-studio", "depo-habitat"],
+    riskNote: "Sensitive data should be logged.",
+    recentActivity: ["Memory drawers indexed.", "Evidence note saved.", "Private context kept local."],
+  },
+  {
+    id: "draft-studio",
+    title: "Draft Studio",
+    name: "Draft Studio",
+    subtitle: "Creating drafts",
+    metric: "2 in progress",
+    status: "Drafting",
+    type: "draft",
+    visual: "studio",
+    icon: "pen",
+    color: "#A78BFA",
+    position: { x: 78, y: 50 },
+    size: { w: 23, h: 23 },
+    purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
+    depoRole: "Depo drafts work but does not publish it.",
+    connections: ["verify-station", "memory-vault", "human-gate", "output-bench"],
+    riskNote: "Publishing is locked.",
+    recentActivity: ["Two drafts in progress.", "Listing notes remain internal.", "Creative desk active."],
+  },
+  {
+    id: "system-log",
+    title: "System Log",
+    name: "System Log",
+    subtitle: "Event stream",
+    metric: "Live",
+    status: "Live",
+    type: "log",
+    visual: "terminal",
+    icon: "log",
+    color: "#22D3EE",
+    position: { x: 22, y: 81 },
+    size: { w: 23, h: 22 },
+    purpose: "Tracks events, stage changes, and audit history.",
+    depoRole: "Depo writes cycle updates here.",
+    connections: ["depo-habitat", "task-intake", "research-lab", "verify-station", "draft-studio", "human-gate", "output-bench", "memory-vault"],
+    riskNote: "Logs should be append-only where possible.",
+    recentActivity: ["Event stream live.", "Stage update written.", "Approval status recorded."],
+  },
+  {
+    id: "output-bench",
+    title: "Output Bench",
+    name: "Output Bench",
+    subtitle: "Prepared outputs",
+    metric: "4 items",
+    status: "Prepared",
+    type: "output",
+    visual: "bench",
+    icon: "download",
+    color: "#60A5FA",
+    position: { x: 50, y: 82 },
+    size: { w: 23, h: 22 },
+    purpose: "Holds completed drafts and prepared deliverables.",
+    depoRole: "Depo places reviewed work here for final handling.",
+    connections: ["human-gate", "system-log", "depo-habitat"],
+    riskNote: "Outputs remain internal until approved.",
+    recentActivity: ["Four output items staged.", "Delivery bench organized.", "No publish action sent."],
+  },
+  {
+    id: "human-gate",
+    title: "Human Gate",
+    name: "Human Gate",
+    subtitle: "Approval required",
+    metric: "Locked",
+    status: "Locked",
+    type: "approval",
+    visual: "gate",
+    icon: "lock",
+    color: "#F43F5E",
+    position: { x: 78, y: 81 },
+    size: { w: 23, h: 22 },
+    purpose: "Blocks risky actions until the operator approves.",
+    depoRole: "Depo packages work for human review.",
+    connections: ["draft-studio", "output-bench", "system-log"],
+    riskNote: "Required for publishing, money movement, customer contact, account changes, and new agents.",
+    recentActivity: ["Approval lock engaged.", "Risk package waiting.", "External action blocked."],
+  },
+];
+
 const agentProfiles = {
   atlas: {
     id: "atlas",
@@ -854,11 +1028,60 @@ const roomProfiles = {
   },
 };
 
-const habitatMapModules = [
-  "depo-habitat",
-].map((id) => roomProfiles[id]);
+const habitatFloorRoomById = Object.fromEntries(habitatFloorRooms.map((room) => [room.id, room]));
 
-const moduleRoutes = [];
+habitatFloorRooms.forEach((room) => {
+  roomProfiles[room.id] = {
+    ...(roomProfiles[room.id] || {}),
+    id: room.id,
+    title: room.title,
+    name: room.name,
+    type: room.type,
+    status: room.status,
+    metric: room.metric,
+    icon: room.icon,
+    color: room.color,
+    position: room.position,
+    size: room.size,
+    visual: room.visual,
+    summary: room.purpose,
+    description: room.purpose,
+    agents: [depoAgent.name],
+    connectedModules: room.connections,
+    connected: room.connections.map((connectionId) => habitatFloorRoomById[connectionId]?.title || moduleDisplayName(connectionId)),
+    tasks: room.id === "depo-habitat" ? [depoAgent.currentTask] : [room.subtitle, room.metric, room.riskNote],
+    activity: room.recentActivity,
+    metrics: [
+      ["Status", room.status],
+      ["Metric", room.metric],
+      ["Human Gate", depoAgent.humanGate],
+    ],
+    workspaceType: room.id === "depo-habitat" ? "depo" : room.type,
+  };
+});
+
+const habitatMapModules = habitatFloorRooms
+  .filter((room) => room.id !== "depo-habitat")
+  .map((room) => roomProfiles[room.id]);
+
+const moduleRoutes = [
+  { from: "depo-habitat", to: "task-intake", kind: "spoke" },
+  { from: "depo-habitat", to: "research-lab", kind: "spoke" },
+  { from: "depo-habitat", to: "verify-station", kind: "spoke" },
+  { from: "depo-habitat", to: "draft-studio", kind: "spoke" },
+  { from: "depo-habitat", to: "memory-vault", kind: "spoke" },
+  { from: "depo-habitat", to: "output-bench", kind: "spoke" },
+  { from: "depo-habitat", to: "system-log", kind: "spoke" },
+  { from: "depo-habitat", to: "human-gate", kind: "approval" },
+  { from: "task-intake", to: "research-lab", kind: "flow" },
+  { from: "research-lab", to: "verify-station", kind: "flow" },
+  { from: "verify-station", to: "draft-studio", kind: "flow" },
+  { from: "draft-studio", to: "human-gate", kind: "approval" },
+  { from: "human-gate", to: "output-bench", kind: "approval" },
+  { from: "output-bench", to: "system-log", kind: "flow" },
+  { from: "memory-vault", to: "research-lab", kind: "memory" },
+  { from: "memory-vault", to: "draft-studio", kind: "memory" },
+];
 
 const depoWorkflowState = {
   activeAgent: depoAgent.name,
@@ -1015,6 +1238,21 @@ const habitatModuleCards = {
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
 };
+
+habitatFloorRooms.forEach((room) => {
+  habitatModuleCards[room.id] = {
+    purpose: room.purpose,
+    status: room.status,
+    metric: room.metric,
+    depoRole: room.depoRole,
+    connections: room.connections,
+    recentActivity: room.recentActivity,
+    riskNote: room.riskNote,
+    quickActions: ["View tasks", "View logs", "Run check"],
+    canDepoDo: depoAgent.can,
+    cannotDepoDo: depoAgent.cannot,
+  };
+});
 
 // OrbitScene state
 const legacyRoomAliases = {
@@ -1208,7 +1446,7 @@ function renderDepoOrbitState(agent = depoAgent) {
   if (taskStage) taskStage.textContent = `Stage: ${agent.currentStage}`;
   if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
   if (coreLabelTitle) coreLabelTitle.textContent = agent.currentStage;
-  if (coreLabelStage) coreLabelStage.textContent = `Stage: ${agent.currentStage}`;
+  if (coreLabelStage) coreLabelStage.textContent = "Active agent";
   if (coreLabelAgent) coreLabelAgent.textContent = agent.number;
 }
 
@@ -1267,11 +1505,17 @@ function renderAgentRoster() {
     .join("");
 }
 
-function routeIsActive(from, to) {
+function routeEndpoints(route) {
+  if (Array.isArray(route)) return { from: route[0], to: route[1], kind: "flow" };
+  return route;
+}
+
+function routeIsActive(routeOrFrom, maybeTo) {
+  const { from, to } = maybeTo ? { from: routeOrFrom, to: maybeTo } : routeEndpoints(routeOrFrom);
   if (!selectedRoomKey && !selectedAgentKey) return true;
   const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
   const related = connectedModuleSet(selected);
-  return related.has(from) && related.has(to);
+  return from === selected || to === selected || (related.has(from) && related.has(to));
 }
 
 function routePoint(room) {
@@ -1300,6 +1544,14 @@ function bridgeRoutePath(source, target, index) {
 
 function moduleIconMarkup(id) {
   const icons = {
+    "task-intake": '<svg viewBox="0 0 24 24"><path d="M9 3h6l1 3H8l1-3Z"/><path d="M6 6h12v15H6z"/><path d="M9 11h6"/><path d="M9 15h4"/></svg>',
+    "research-lab": '<svg viewBox="0 0 24 24"><path d="M10 3v5l-5 9a3 3 0 0 0 2.6 4.5h8.8A3 3 0 0 0 19 17l-5-9V3"/><path d="M8 3h8"/><path d="M8 15h8"/></svg>',
+    "verify-station": '<svg viewBox="0 0 24 24"><path d="M12 3 20 7v5c0 4.8-3.1 7.6-8 9-4.9-1.4-8-4.2-8-9V7l8-4Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>',
+    "memory-vault": '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg>',
+    "draft-studio": '<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5Z"/></svg>',
+    "system-log": '<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>',
+    "output-bench": '<svg viewBox="0 0 24 24"><path d="M12 3v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>',
+    "human-gate": '<svg viewBox="0 0 24 24"><rect x="6" y="10" width="12" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v2"/></svg>',
     "depo-habitat": '<svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7c0 5.5 7 11 7 11s7-5.5 7-11a7 7 0 0 0-7-7Z"/><path d="M9 10h6"/><path d="M9 14h4"/></svg>',
     "agent-habitat": '<svg viewBox="0 0 24 24"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M16 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M3 21a5 5 0 0 1 10 0"/><path d="M11 21a5 5 0 0 1 10 0"/></svg>',
     "ai-agents": '<svg viewBox="0 0 24 24"><path d="M5 19V5l7 14 7-14v14"/><path d="M8 15h8"/></svg>',
@@ -1940,7 +2192,7 @@ function drawOrbitalPod(ctx, room, index, time) {
 }
 
 function drawReactorCore(ctx, time) {
-  const core = roomProfiles["argentum-core"];
+  const core = roomProfiles["depo-habitat"];
   const point = stationCanvasPoint(core);
   const x = point.x;
   const y = point.y;
@@ -2039,7 +2291,7 @@ function drawStationScene(time = performance.now()) {
   drawPlanetHorizon(ctx);
   drawOrbitalGuides(ctx, time);
 
-  const core = roomProfiles["argentum-core"];
+  const core = roomProfiles["depo-habitat"];
   habitatMapModules.forEach((room, index) => {
     const curve = stationCurve(core, room, index, 0.035);
     const alpha = rendererRoomAlpha(room.id) * 0.7;
@@ -2053,10 +2305,11 @@ function drawStationScene(time = performance.now()) {
     });
   });
 
-  moduleRoutes.forEach(([from, to], index) => {
+  moduleRoutes.forEach((route, index) => {
+    const { from, to } = routeEndpoints(route);
     const source = moduleProfile(from);
     const target = moduleProfile(to);
-    const active = routeIsActive(from, to);
+    const active = routeIsActive(route);
     const routeAlpha = active ? Math.min(rendererRoomAlpha(from), rendererRoomAlpha(to)) : 0.22;
     drawStationTube(ctx, stationCurve(source, target, index), {
       color: source.color,
@@ -2091,73 +2344,85 @@ function stationRenderLoop(time) {
 }
 
 function renderStationArtwork() {
-  if (!stationArtwork || typeof stationArtwork.getContext !== "function") return;
-  drawStationScene(performance.now());
-  if (!stationRenderFrame) {
-    stationRenderFrame = requestAnimationFrame(stationRenderLoop);
+  if (stationRenderFrame) {
+    cancelAnimationFrame(stationRenderFrame);
+    stationRenderFrame = null;
   }
+  if (stationArtwork) stationArtwork.hidden = true;
 }
 
-// OrbitScene routes
+// FloorRouteLayer
 function renderHabitatRoutes() {
   if (!habitatRoutes) return;
-  const coreRoom = roomProfiles["argentum-core"];
-  const corePos = { x: coreRoom.position.x * 10, y: coreRoom.position.y * 6.2 };
   const defs = `
     <defs>
       <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="rgba(34, 211, 238, 0)" />
-        <stop offset="45%" stop-color="rgba(125, 211, 252, 0.82)" />
-        <stop offset="72%" stop-color="rgba(167, 139, 250, 0.7)" />
-        <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
+        <stop offset="0%" stop-color="rgba(34, 211, 238, 0.2)" />
+        <stop offset="46%" stop-color="rgba(96, 165, 250, 0.96)" />
+        <stop offset="74%" stop-color="rgba(167, 139, 250, 0.78)" />
+        <stop offset="100%" stop-color="rgba(34, 211, 238, 0.22)" />
       </linearGradient>
-      <linearGradient id="coreBeamGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="rgba(34, 211, 238, 0.72)" />
-        <stop offset="60%" stop-color="rgba(125, 211, 252, 0.42)" />
-        <stop offset="100%" stop-color="rgba(167, 139, 250, 0)" />
+      <linearGradient id="approvalRouteGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(248, 113, 113, 0.15)" />
+        <stop offset="48%" stop-color="rgba(248, 113, 113, 0.98)" />
+        <stop offset="100%" stop-color="rgba(244, 63, 94, 0.84)" />
       </linearGradient>
     </defs>
   `;
 
-  const coreConnected = roomProfiles["argentum-core"].connectedModules;
-  const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
-  const activeSet = hasSelection ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : null;
-
-  const coreBeams = coreConnected.map((moduleId, index) => {
-    const target = moduleProfile(moduleId);
-    const end = routePoint(target);
-    const active = !hasSelection || (activeSet && activeSet.has(moduleId));
-    const path = `M ${corePos.x} ${corePos.y} L ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
-    return `
-      <path class="core-beam ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.22).toFixed(2)}s"></path>
-      <path class="core-flow ${active ? "active" : ""}" d="${path}" style="--delay: ${(index * 0.22 + 0.12).toFixed(2)}s"></path>
-      <circle class="route-particle ${active ? "active" : ""}" r="2.2">
-        <animateMotion dur="${(2.6 + index * 0.3).toFixed(2)}s" begin="${(index * 0.18).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
-      </circle>
-    `;
-  }).join("");
-
   const moduleBridgeRoutes = moduleRoutes
-    .map(([from, to], index) => {
+    .map((route, index) => {
+      const { from, to, kind } = routeEndpoints(route);
       const source = moduleProfile(from);
       const target = moduleProfile(to);
-      const active = routeIsActive(from, to);
+      const active = routeIsActive(route);
+      const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
       const path = bridgeRoutePath(source, target, index);
       return `
-        <path class="route-glow ${active ? "active" : ""}" d="${path}"></path>
-        <path class="route-tube ${active ? "active" : ""}" d="${path}"></path>
-        <path class="route-bridge ${active ? "active" : ""}" d="${path}"></path>
-        <path class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
-        <circle class="route-particle ${active ? "active" : ""}" r="3.5">
+        <path class="route-glow ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
+        <path class="route-tube ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
+        <path class="route-bridge ${approval ? "approval" : ""} ${active ? "active" : ""}" d="${path}"></path>
+        <path class="route-line ${approval ? "approval" : ""} ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
+        <circle class="route-particle ${approval ? "approval" : ""} ${active ? "active" : ""}" r="${approval ? "4" : "3.2"}">
           <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
         </circle>
       `;
     })
     .join("");
-  habitatRoutes.innerHTML = `${defs}${coreBeams}${moduleBridgeRoutes}`;
+  habitatRoutes.innerHTML = `${defs}${moduleBridgeRoutes}`;
 }
 
-// DepoCapsule label layer
+function floorPropsMarkup(room) {
+  const plantCount = room.id === "memory-vault" || room.id === "draft-studio" || room.id === "output-bench" ? 2 : room.id === "task-intake" || room.id === "human-gate" ? 1 : 0;
+  const consoleCount = room.id === "research-lab" ? 4 : room.id === "verify-station" || room.id === "system-log" ? 3 : 2;
+  const boxes = room.id === "output-bench" ? 3 : room.id === "memory-vault" ? 5 : 1;
+  const plants = Array.from({ length: plantCount }, (_, index) => `<span class="floor-plant plant-${index + 1}" aria-hidden="true"><i></i><i></i><i></i></span>`).join("");
+  const consoles = Array.from({ length: consoleCount }, (_, index) => `<span class="floor-screen screen-${index + 1}" aria-hidden="true"></span>`).join("");
+  const storage = Array.from({ length: boxes }, (_, index) => `<span class="floor-storage storage-${index + 1}" aria-hidden="true"></span>`).join("");
+  return `
+    <span class="floor-desk" aria-hidden="true"></span>
+    <span class="floor-pad" aria-hidden="true"></span>
+    ${consoles}
+    ${storage}
+    ${plants}
+    <span class="floor-lamp" aria-hidden="true"></span>
+    ${room.id === "human-gate" ? '<span class="gate-door" aria-hidden="true"><i></i></span>' : ""}
+    ${room.id === "research-lab" ? '<span class="holo-panel" aria-hidden="true"></span>' : ""}
+  `;
+}
+
+function miniAgentRobotMarkup(room) {
+  const posture = room.id === "human-gate" ? "guard" : room.id === "draft-studio" ? "typing" : room.id === "memory-vault" ? "archiving" : "working";
+  return `
+    <span class="mini-agent-robot ${posture}" aria-hidden="true">
+      <span class="robot-head"><i></i><i></i></span>
+      <span class="robot-body"></span>
+      <span class="robot-shadow"></span>
+    </span>
+  `;
+}
+
+// HabitatRoom layer
 function renderHabitatModules() {
   if (!habitatModules) return;
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
@@ -2165,18 +2430,26 @@ function renderHabitatModules() {
     .map((room) => {
       const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
       const isRelated = related.has(room.id);
-      const labelPosition = room.labelPosition || room.position;
-      const className = ["station", "station-module", room.title.length > 15 ? "long-title" : "", isSelected ? "selected" : "", isRelated ? "related" : ""]
+      const className = ["station", "habitat-room", `room-${room.type}`, room.title.length > 15 ? "long-title" : "", isSelected ? "selected" : "", isRelated ? "related" : ""]
         .filter(Boolean)
         .join(" ");
       return `
-        <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${labelPosition.x}%; --y: ${labelPosition.y}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}" title="${escapeHtml(room.title)}">
+        <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --room-w: ${room.size.w}%; --room-h: ${room.size.h}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}" title="${escapeHtml(room.title)}">
+          <span class="room-shell" aria-hidden="true">
+            <span class="room-floor"></span>
+            <span class="room-wall room-wall-top"></span>
+            <span class="room-wall room-wall-right"></span>
+            <span class="room-wall room-wall-bottom"></span>
+            <span class="room-wall room-wall-left"></span>
+            <span class="floor-props floor-props-${escapeHtml(room.visual)}">${floorPropsMarkup(room)}</span>
+            ${miniAgentRobotMarkup(room)}
+          </span>
           <span class="station-label">
             <span class="module-icon" aria-hidden="true">${moduleIconMarkup(room.id)}</span>
             <span class="module-copy">
               <strong>${escapeHtml(room.title)}</strong>
-              <small>${escapeHtml(room.metric)}</small>
-              <em>${escapeHtml(room.status)}</em>
+              <small>${escapeHtml(room.subtitle)}</small>
+              <em>${escapeHtml(room.metric)}</em>
             </span>
             <span class="station-status-dot" aria-hidden="true"></span>
           </span>
@@ -2192,7 +2465,7 @@ function renderMiniMap() {
   const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
   const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
   const related = hasSelection ? connectedModuleSet(selected) : new Set();
-  const selectedCore = selected === "argentum-core";
+  const selectedCore = selected === "depo-habitat";
   const miniPoint = (room) => ({ x: room.position.x, y: room.position.y });
   const curvePath = (source, target, index, bendScale = 0.09) => {
     const start = miniPoint(source);
@@ -2209,7 +2482,7 @@ function renderMiniMap() {
     const c2y = start.y + dy * 0.66 + normalY * bend;
     return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
   };
-  const core = roomProfiles["argentum-core"];
+  const core = roomProfiles["depo-habitat"];
   const coreSpokes = habitatMapModules
     .map((room, index) => {
       const active = !hasSelection || selectedCore || selected === room.id || related.has(room.id);
@@ -2217,11 +2490,13 @@ function renderMiniMap() {
     })
     .join("");
   const routeLines = moduleRoutes
-    .map(([from, to], index) => {
+    .map((route, index) => {
+      const { from, to, kind } = routeEndpoints(route);
       const source = moduleProfile(from);
       const target = moduleProfile(to);
-      const active = routeIsActive(from, to);
-      return `<path class="mini-route ${active ? "active" : "dim"}" d="${curvePath(source, target, index)}"></path>`;
+      const active = routeIsActive(route);
+      const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
+      return `<path class="mini-route ${approval ? "approval" : ""} ${active ? "active" : "dim"}" d="${curvePath(source, target, index)}"></path>`;
     })
     .join("");
   const dots = habitatMapModules
@@ -2344,7 +2619,7 @@ function moduleInfoMarkup(roomKey) {
         <p>${escapeHtml(card.depoRole)}</p>
       </section>
       <section>
-        <h4>Connected capsules</h4>
+        <h4>Connected rooms</h4>
         ${cardListMarkup(connectedNames, "module-info-tags")}
       </section>
       <section>
@@ -2376,14 +2651,14 @@ function positionModuleInfoCard(roomKey) {
   const mapRect = stationMap.getBoundingClientRect();
   const cardRect = moduleInfoCard.getBoundingClientRect();
   const room = moduleProfile(roomKey);
-  const anchorX = mapRect.width / 2;
-  const anchorY = mapRect.height / 2;
+  const anchorX = (Number(room.position?.x || 50) / 100) * mapRect.width * mapView.scale + mapView.x;
+  const anchorY = (Number(room.position?.y || 50) / 100) * mapRect.height * mapView.scale + mapView.y;
   const bottomReserve = 96;
   const preferLeft = Number(room.position?.x || 50) >= 75;
-  const gap = preferLeft ? 132 : 88;
+  const gap = preferLeft ? 34 : 30;
   let left = preferLeft ? anchorX - cardRect.width - gap : anchorX + gap;
-  let top = anchorY - cardRect.height / 2;
-  if (preferLeft && left < 180 && anchorX + gap + cardRect.width + 12 <= mapRect.width) {
+  let top = anchorY - cardRect.height * 0.45;
+  if (preferLeft && left < 12 && anchorX + gap + cardRect.width + 12 <= mapRect.width) {
     left = anchorX + gap;
   }
   if (left < 12) {
@@ -2434,6 +2709,11 @@ function applySelectionClasses() {
 
   document.querySelectorAll(".station").forEach((item) => {
     const stationId = item.dataset.station;
+    item.classList.toggle("selected", hasSelection && stationId === activeRoomId);
+    item.classList.toggle("related", hasSelection && related.has(stationId));
+  });
+  document.querySelectorAll(".map-core").forEach((item) => {
+    const stationId = item.dataset.station || "depo-habitat";
     item.classList.toggle("selected", hasSelection && stationId === activeRoomId);
     item.classList.toggle("related", hasSelection && related.has(stationId));
   });
@@ -3574,10 +3854,9 @@ function activateStationFromEvent(event) {
 }
 
 stationMap?.addEventListener("click", (event) => {
+  if (event.target.closest(".map-controls, .module-info-card")) return;
   if (activateStationFromEvent(event)) return;
-  if (event.target === stationMap || event.target === habitatCanvas || event.target === stationArtwork || event.target.closest(".map-space-layer, .station-renderer")) {
-    resetHabitatView();
-  }
+  resetHabitatView();
 });
 
 stationMap?.addEventListener("keydown", (event) => {
@@ -3674,10 +3953,8 @@ function endPointer(event) {
 stationMap.addEventListener("pointerup", endPointer);
 stationMap.addEventListener("pointercancel", endPointer);
 stationMap.addEventListener("click", (event) => {
-  if (event.target.closest(".module-info-card")) return;
-  if (event.target === stationMap || event.target === habitatCanvas || event.target === stationArtwork || event.target.closest(".station-renderer")) {
-    resetHabitatView();
-  }
+  if (event.target.closest(".module-info-card, .map-controls, .station, .map-core")) return;
+  resetHabitatView();
 });
 
 moduleInfoCard?.addEventListener("click", (event) => {

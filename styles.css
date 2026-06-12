@@ -872,6 +872,7 @@ main {
 
 #view-floor .command-grid {
   grid-template-columns: minmax(0, 1fr);
+  align-items: start;
 }
 
 #view-floor .inspector-sidebar {
@@ -882,15 +883,16 @@ main {
   min-width: 0;
   min-height: 0;
   border-radius: 22px;
-  padding: 12px;
+  padding: 9px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  gap: 7px;
   overflow: hidden;
 }
 
 .floor-header h3 {
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .map-view-tools {
@@ -1795,13 +1797,13 @@ main {
 
 .mini-map {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
+  left: 10px;
+  bottom: 10px;
   z-index: 8;
-  width: 142px;
-  height: 106px;
+  width: 112px;
+  height: 82px;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 13px;
   border: 1px solid rgba(125, 211, 252, 0.28);
   background:
     radial-gradient(circle at 50% 45%, rgba(34, 211, 238, 0.16), transparent 34%),
@@ -2066,10 +2068,10 @@ main {
 
 .map-controls {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 10px;
+  bottom: 10px;
   z-index: 8;
-  min-height: 34px;
+  min-height: 30px;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -2082,10 +2084,10 @@ main {
 }
 
 .map-controls .map-control {
-  width: 33px;
-  height: 33px;
-  border-radius: 8px;
-  font-size: 0.74rem;
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  font-size: 0.68rem;
 }
 
 .map-controls .map-control:disabled {
@@ -2095,10 +2097,10 @@ main {
 }
 
 .zoom-readout {
-  min-width: 36px;
+  min-width: 34px;
   text-align: center;
   color: #dbeafe;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 840;
 }
 
@@ -2384,9 +2386,10 @@ main {
 
 /* HabitatFloorMap: top-down command floor replacement */
 .station-map {
-  min-height: clamp(620px, 70dvh, 820px);
-  aspect-ratio: 16 / 10;
-  border-radius: 20px;
+  height: clamp(360px, 46dvh, 480px);
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: 18px;
   background:
     radial-gradient(circle at 50% 50%, rgba(96, 165, 250, 0.12), transparent 22%),
     radial-gradient(circle at 80% 80%, rgba(244, 63, 94, 0.08), transparent 22%),
@@ -2498,8 +2501,8 @@ main {
   left: 50%;
   top: 50%;
   z-index: 14;
-  width: 250px;
-  height: 208px;
+  width: 190px;
+  height: 154px;
   justify-content: center;
   padding: 0;
   transform: translate(-50%, -50%);
@@ -2515,8 +2518,8 @@ main {
 .map-core::before {
   left: 50%;
   top: 50%;
-  width: 220px;
-  height: 148px;
+  width: 162px;
+  height: 108px;
   background:
     radial-gradient(ellipse at 50% 42%, rgba(139, 92, 246, 0.28), transparent 38%),
     repeating-radial-gradient(ellipse at 50% 50%, rgba(125, 211, 252, 0.24) 0 1px, transparent 2px 18px),
@@ -2532,8 +2535,8 @@ main {
 .map-core::after {
   left: 50%;
   top: 50%;
-  width: 154px;
-  height: 98px;
+  width: 114px;
+  height: 72px;
   border: 2px solid rgba(167, 139, 250, 0.62);
   background: radial-gradient(ellipse at center, rgba(139, 92, 246, 0.24), transparent 70%);
   box-shadow: 0 0 34px rgba(139, 92, 246, 0.45), inset 0 0 22px rgba(34, 211, 238, 0.2);
@@ -2543,8 +2546,8 @@ main {
 .core-rings {
   left: 50%;
   top: 50%;
-  width: 200px;
-  height: 126px;
+  width: 148px;
+  height: 92px;
   border: 1px solid rgba(125, 211, 252, 0.34);
   box-shadow: inset 0 0 22px rgba(34, 211, 238, 0.12);
   transform: translate(-50%, -50%) perspective(520px) rotateX(60deg);
@@ -2565,37 +2568,38 @@ main {
   left: 50%;
   top: 39%;
   z-index: 5;
-  transform: translate(-50%, -50%) scale(1.05);
+  transform: translate(-50%, -50%) scale(0.82);
 }
 
 .core-label {
-  width: 178px;
-  margin-top: 82px;
-  border-radius: 14px;
+  width: 138px;
+  margin-top: 58px;
+  border-radius: 12px;
+  padding: 8px 10px 7px;
   clip-path: none;
   border: 1px solid rgba(125, 211, 252, 0.34);
   background: linear-gradient(180deg, rgba(8, 13, 26, 0.96), rgba(2, 6, 23, 0.94));
 }
 
 .core-label span {
-  font-size: 0.9rem;
+  font-size: 0.72rem;
 }
 
 .core-label small {
-  font-size: 0.7rem;
+  font-size: 0.58rem;
 }
 
 .core-label em {
-  font-size: 0.86rem;
+  font-size: 0.68rem;
 }
 
 .habitat-room.station {
   left: var(--x);
   top: var(--y);
-  width: var(--room-w);
-  height: var(--room-h);
-  min-width: 184px;
-  min-height: 126px;
+  width: min(var(--room-w), 230px);
+  height: min(var(--room-h), 116px);
+  min-width: 142px;
+  min-height: 88px;
   z-index: 10;
   transform: translate(-50%, -50%);
 }
@@ -2683,7 +2687,7 @@ main {
   left: 38%;
   top: 50%;
   width: 42%;
-  height: 22%;
+  height: 20%;
   border-radius: 7px;
   background: linear-gradient(180deg, rgba(71, 85, 105, 0.95), rgba(15, 23, 42, 0.98));
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -2703,8 +2707,8 @@ main {
 }
 
 .floor-screen {
-  width: 15%;
-  height: 18%;
+  width: 13%;
+  height: 15%;
   border-radius: 5px;
   border: 1px solid rgba(34, 211, 238, 0.28);
   background:
@@ -2736,8 +2740,8 @@ main {
 }
 
 .floor-storage {
-  width: 13%;
-  height: 10%;
+  width: 12%;
+  height: 9%;
   border-radius: 4px;
   background: linear-gradient(180deg, rgba(100, 116, 139, 0.6), rgba(15, 23, 42, 0.96));
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -2769,8 +2773,8 @@ main {
 }
 
 .floor-plant {
-  width: 28px;
-  height: 32px;
+  width: 22px;
+  height: 26px;
   right: 14px;
   bottom: 15px;
 }
@@ -2799,8 +2803,8 @@ main {
   position: absolute;
   left: 10px;
   bottom: 8px;
-  width: 9px;
-  height: 20px;
+  width: 7px;
+  height: 16px;
   border-radius: 100% 0;
   background: linear-gradient(180deg, #166534, #052e16);
   transform-origin: bottom;
@@ -2879,8 +2883,8 @@ main {
   left: 45%;
   top: 58%;
   z-index: 4;
-  width: 34px;
-  height: 46px;
+  width: 28px;
+  height: 38px;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
@@ -2889,9 +2893,9 @@ main {
   position: absolute;
   left: 50%;
   top: 0;
-  width: 32px;
-  height: 27px;
-  border-radius: 13px 13px 10px 10px;
+  width: 26px;
+  height: 22px;
+  border-radius: 11px 11px 9px 9px;
   background: linear-gradient(180deg, #dbeafe, #64748b 42%, #0f172a 74%);
   border: 1px solid rgba(226, 232, 240, 0.44);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.36);
@@ -2903,8 +2907,8 @@ main {
   position: absolute;
   left: 5px;
   right: 5px;
-  top: 10px;
-  height: 10px;
+  top: 8px;
+  height: 8px;
   border-radius: 999px;
   background: rgba(2, 6, 23, 0.92);
   box-shadow: inset 0 0 8px rgba(59, 130, 246, 0.3);
@@ -2912,29 +2916,29 @@ main {
 
 .robot-head i {
   position: absolute;
-  top: 13px;
+  top: 10px;
   z-index: 2;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: #60a5fa;
   box-shadow: 0 0 9px rgba(96, 165, 250, 1);
 }
 
 .robot-head i:first-child {
-  left: 10px;
+  left: 8px;
 }
 
 .robot-head i:last-child {
-  right: 10px;
+  right: 8px;
 }
 
 .robot-body {
   position: absolute;
   left: 50%;
-  top: 25px;
-  width: 22px;
-  height: 20px;
+  top: 21px;
+  width: 18px;
+  height: 17px;
   border-radius: 8px 8px 10px 10px;
   background: linear-gradient(180deg, #94a3b8, #334155 50%, #0f172a);
   border: 1px solid rgba(226, 232, 240, 0.26);
@@ -2945,8 +2949,8 @@ main {
   position: absolute;
   left: 50%;
   bottom: -3px;
-  width: 42px;
-  height: 13px;
+  width: 34px;
+  height: 10px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.38);
   filter: blur(2px);
@@ -2977,14 +2981,14 @@ main {
 .station-label {
   position: absolute;
   left: 50%;
-  top: 15px;
+  top: 10px;
   z-index: 8;
-  width: min(78%, 236px);
-  min-height: 62px;
+  width: min(82%, 190px);
+  min-height: 48px;
   transform: translateX(-50%);
-  border-radius: 15px;
+  border-radius: 12px;
   clip-path: none;
-  padding: 10px 12px;
+  padding: 7px 9px;
   background:
     radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--module-color) 20%, transparent), transparent 38%),
     rgba(2, 8, 23, 0.9);
@@ -2993,20 +2997,20 @@ main {
 }
 
 .station-label .module-copy strong {
-  font-size: 0.78rem;
+  font-size: 0.65rem;
   letter-spacing: 0.01em;
   text-transform: uppercase;
 }
 
 .station-label .module-copy small {
-  margin-top: 3px;
-  font-size: 0.66rem;
+  margin-top: 2px;
+  font-size: 0.56rem;
 }
 
 .station-label .module-copy em {
-  margin-top: 2px;
+  margin-top: 1px;
   color: color-mix(in srgb, var(--module-color) 72%, #22d3ee);
-  font-size: 0.66rem;
+  font-size: 0.56rem;
 }
 
 .room-approval .station-label .module-copy em,
@@ -3048,18 +3052,18 @@ main {
 }
 
 .agent-control-bar {
-  min-height: 66px;
+  min-height: 52px;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border-radius: 18px;
+  padding: 8px 10px;
+  border-radius: 16px;
   border: 1px solid var(--line);
   background: rgba(12, 18, 31, 0.76);
 }
 
 .progress-track {
   flex: 1;
-  height: 7px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(100, 116, 139, 0.22);
@@ -4152,7 +4156,8 @@ label {
   }
 
   .station-map {
-    min-height: 560px;
+    height: clamp(360px, 48dvh, 440px);
+    min-height: 0;
   }
 
   .analytics-strip {
@@ -4260,7 +4265,8 @@ label {
   }
 
   .station-map {
-    min-height: 620px;
+    height: 480px;
+    min-height: 0;
   }
 
   .habitat-canvas {

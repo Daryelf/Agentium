@@ -541,7 +541,7 @@ const roomProfiles = {
     type: "Agent Command",
     status: "Live",
     metric: "7 agents",
-    icon: "AG",
+    icon: "👥",
     color: "#22D3EE",
     position: { x: 22, y: 23 },
     labelPosition: { x: 20, y: 33 },
@@ -562,7 +562,7 @@ const roomProfiles = {
     type: "Agent Runtime",
     status: "Live",
     metric: "7 active",
-    icon: "AI",
+    icon: "🤖",
     color: "#60A5FA",
     position: { x: 39, y: 23 },
     labelPosition: { x: 39, y: 33 },
@@ -583,7 +583,7 @@ const roomProfiles = {
     type: "Production Queue",
     status: "Live",
     metric: "197 active",
-    icon: "TF",
+    icon: "⚙️",
     color: "#FBBF24",
     position: { x: 12, y: 46 },
     labelPosition: { x: 14, y: 58 },
@@ -604,7 +604,7 @@ const roomProfiles = {
     type: "Commerce",
     status: "Live",
     metric: "$7,128 today",
-    icon: "CT",
+    icon: "🛒",
     color: "#38BDF8",
     position: { x: 34, y: 46 },
     labelPosition: { x: 34, y: 68 },
@@ -625,7 +625,7 @@ const roomProfiles = {
     type: "Finance Telemetry",
     status: "Live",
     metric: "+12.4%",
-    icon: "RM",
+    icon: "📊",
     color: "#60A5FA",
     position: { x: 66, y: 46 },
     labelPosition: { x: 66, y: 68 },
@@ -646,7 +646,7 @@ const roomProfiles = {
     type: "Data Store",
     status: "Optimal",
     metric: "12,455 items",
-    icon: "RS",
+    icon: "📦",
     color: "#60A5FA",
     position: { x: 18, y: 73 },
     labelPosition: { x: 18, y: 65 },
@@ -667,7 +667,7 @@ const roomProfiles = {
     type: "Route Control",
     status: "Live",
     metric: "8 routes",
-    icon: "LN",
+    icon: "🚚",
     color: "#38BDF8",
     position: { x: 37, y: 73 },
     labelPosition: { x: 37, y: 86 },
@@ -688,7 +688,7 @@ const roomProfiles = {
     type: "Workflow",
     status: "Active",
     metric: "578 tasks",
-    icon: "WP",
+    icon: "🔗",
     color: "#8B5CF6",
     position: { x: 61, y: 73 },
     labelPosition: { x: 61, y: 86 },
@@ -709,7 +709,7 @@ const roomProfiles = {
     type: "Creative Output",
     status: "Active",
     metric: "5 generating",
-    icon: "CE",
+    icon: "✏️",
     color: "#A78BFA",
     position: { x: 82, y: 73 },
     labelPosition: { x: 82, y: 65 },
@@ -730,7 +730,7 @@ const roomProfiles = {
     type: "Customer Signals",
     status: "Live",
     metric: "24 active",
-    icon: "CN",
+    icon: "👤",
     color: "#22D3EE",
     position: { x: 86, y: 46 },
     labelPosition: { x: 86, y: 58 },
@@ -751,7 +751,7 @@ const roomProfiles = {
     type: "Security",
     status: "Secure",
     metric: "No threats",
-    icon: "SC",
+    icon: "🛡️",
     color: "#60A5FA",
     position: { x: 61, y: 23 },
     labelPosition: { x: 61, y: 33 },
@@ -772,7 +772,7 @@ const roomProfiles = {
     type: "Audit Trail",
     status: "Live feed",
     metric: "6 events",
-    icon: "SL",
+    icon: "📋",
     color: "#38BDF8",
     position: { x: 78, y: 23 },
     labelPosition: { x: 80, y: 33 },
@@ -1137,9 +1137,10 @@ function renderHabitatRoutes() {
       const path = bridgeRoutePath(source, target, index);
       return `
         <path class="route-glow ${active ? "active" : ""}" d="${path}"></path>
+        <path class="route-tube ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-bridge ${active ? "active" : ""}" d="${path}"></path>
         <path class="route-line ${active ? "active" : ""}" data-from="${escapeHtml(from)}" data-to="${escapeHtml(to)}" d="${path}" style="--delay: ${(index * 0.18).toFixed(2)}s"></path>
-        <circle class="route-particle ${active ? "active" : ""}" r="2.7">
+        <circle class="route-particle ${active ? "active" : ""}" r="3.5">
           <animateMotion dur="${(3.4 + (index % 5) * 0.28).toFixed(2)}s" begin="${(index * 0.16).toFixed(2)}s" repeatCount="indefinite" path="${path}" />
         </circle>
       `;

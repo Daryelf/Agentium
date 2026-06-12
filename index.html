@@ -169,7 +169,9 @@
               </div>
 
               <div class="station-map" id="stationMap">
+                <!-- OrbitScene -->
                 <div class="habitat-canvas" id="habitatCanvas">
+                  <!-- SpaceBackground -->
                   <div class="map-space-layer" aria-hidden="true"></div>
                   <div class="planet-glow" aria-hidden="true"></div>
                   <div class="orbital-ring ring-one" aria-hidden="true"></div>
@@ -177,6 +179,7 @@
                   <div class="orbital-ring ring-three" aria-hidden="true"></div>
                   <canvas class="station-artwork station-renderer" id="stationArtwork" width="1000" height="620" aria-hidden="true"></canvas>
                   <svg class="habitat-routes" id="habitatRoutes" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
+                  <!-- DepoCapsule -->
                   <div class="map-core" data-station="argentum-core" role="button" tabindex="0" aria-label="Argentum Core">
                     <div class="core-rings" aria-hidden="true"></div>
                     <div class="core-orb" aria-hidden="true"></div>
@@ -189,9 +192,11 @@
                   <div class="habitat-modules" id="habitatModules"></div>
                   <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
                 </div>
+                <!-- OrbitMiniMap -->
                 <div class="mini-map" aria-label="Habitat mini map">
                   <div id="miniMapNodes"></div>
                 </div>
+                <!-- OrbitControls -->
                 <div class="map-controls" aria-label="Habitat map controls">
                   <button class="map-control" id="centerMapBtn" type="button" aria-label="Reset habitat view">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>
@@ -203,6 +208,7 @@
                     <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                   </button>
                 </div>
+                <!-- LocalTaskFlowChip -->
                 <div class="live-flow-chip" aria-hidden="true">
                   <span>Local Task Flow</span>
                   <i></i>

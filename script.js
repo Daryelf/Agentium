@@ -313,14 +313,6 @@ const workflowVerifyMetric = document.querySelector("#workflowVerifyMetric");
 const workflowDraftMetric = document.querySelector("#workflowDraftMetric");
 const workflowApprovalMetric = document.querySelector("#workflowApprovalMetric");
 const revenueGuardMetric = document.querySelector("#revenueGuardMetric");
-const mapAgentCount = document.querySelector("#mapAgentCount");
-const mapTaskCount = document.querySelector("#mapTaskCount");
-const mapApprovalCount = document.querySelector("#mapApprovalCount");
-const mapSpendCount = document.querySelector("#mapSpendCount");
-const mapMemoryCount = document.querySelector("#mapMemoryCount");
-const mapLoopCount = document.querySelector("#mapLoopCount");
-const mapOutputCount = document.querySelector("#mapOutputCount");
-const mapAuditCount = document.querySelector("#mapAuditCount");
 const taskRunMetric = document.querySelector("#taskRunMetric");
 const functionRunMetric = document.querySelector("#functionRunMetric");
 const lastWorkdayMetric = document.querySelector("#lastWorkdayMetric");
@@ -972,6 +964,7 @@ const habitatModuleCards = {
   },
 };
 
+// OrbitScene state
 const legacyRoomAliases = {
   Overview: "depo-habitat",
   Research: "depo-habitat",
@@ -1263,8 +1256,9 @@ function moduleIconMarkup(id) {
   return icons[id] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>';
 }
 
+// SpaceBackground and DepoCapsule canvas renderer
 const stationWorld = { width: 1000, height: 620 };
-const stationStarfield = Array.from({ length: 260 }, (_, index) => {
+const stationStarfield = Array.from({ length: 340 }, (_, index) => {
   const unit = (seed) => {
     const value = Math.sin(seed * 12.9898) * 43758.5453;
     return value - Math.floor(value);
@@ -1395,93 +1389,121 @@ function drawEllipseFill(ctx, x, y, radiusX, radiusY, fillStyle) {
 
 function drawSpaceBackdrop(ctx, time) {
   const background = ctx.createLinearGradient(0, 0, stationWorld.width, stationWorld.height);
-  background.addColorStop(0, "#02040a");
-  background.addColorStop(0.38, "#071126");
-  background.addColorStop(0.72, "#030513");
-  background.addColorStop(1, "#010208");
+  background.addColorStop(0, "#01030a");
+  background.addColorStop(0.34, "#031026");
+  background.addColorStop(0.66, "#020515");
+  background.addColorStop(1, "#000106");
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
 
-  const nebula = ctx.createRadialGradient(565, 340, 40, 565, 340, 430);
-  nebula.addColorStop(0, "rgba(37, 99, 235, 0.2)");
-  nebula.addColorStop(0.42, "rgba(88, 28, 135, 0.13)");
-  nebula.addColorStop(1, "rgba(2, 6, 23, 0)");
-  ctx.fillStyle = nebula;
+  const glows = [
+    [560, 340, 34, 440, "rgba(34, 211, 238, 0.2)", "rgba(88, 28, 135, 0.15)"],
+    [790, 145, 28, 360, "rgba(96, 165, 250, 0.18)", "rgba(2, 6, 23, 0)"],
+    [360, 505, 30, 390, "rgba(139, 92, 246, 0.13)", "rgba(14, 165, 233, 0.05)"],
+  ];
+  glows.forEach(([x, y, inner, outer, start, middle]) => {
+    const nebula = ctx.createRadialGradient(x, y, inner, x, y, outer);
+    nebula.addColorStop(0, start);
+    nebula.addColorStop(0.44, middle);
+    nebula.addColorStop(1, "rgba(0, 1, 8, 0)");
+    ctx.fillStyle = nebula;
+    ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
+  });
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const dust = ctx.createLinearGradient(80, 70, 930, 560);
+  dust.addColorStop(0, "rgba(125, 211, 252, 0)");
+  dust.addColorStop(0.42, "rgba(125, 211, 252, 0.045)");
+  dust.addColorStop(0.62, "rgba(167, 139, 250, 0.04)");
+  dust.addColorStop(1, "rgba(125, 211, 252, 0)");
+  ctx.fillStyle = dust;
   ctx.fillRect(0, 0, stationWorld.width, stationWorld.height);
+  ctx.restore();
 
   stationStarfield.forEach((star) => {
     const twinkle = 0.72 + Math.sin(time * 0.0014 + star.drift) * 0.28;
     const tint = star.tint > 0.74 ? "167, 139, 250" : star.tint > 0.42 ? "125, 211, 252" : "226, 232, 240";
-    ctx.fillStyle = `rgba(${tint}, ${star.alpha * twinkle})`;
+    const glowAlpha = star.radius > 1.25 ? star.alpha * twinkle * 0.1 : 0;
+    if (glowAlpha) {
+      ctx.fillStyle = `rgba(${tint}, ${glowAlpha})`;
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.radius * 4.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = `rgba(${tint}, ${star.alpha * twinkle * 0.78})`;
     ctx.beginPath();
-    ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+    ctx.arc(star.x, star.y, star.radius * 0.78, 0, Math.PI * 2);
     ctx.fill();
   });
 }
 
 function drawPlanetHorizon(ctx) {
   ctx.save();
-  ctx.translate(735, -74);
-  ctx.rotate(0.15);
-  ctx.scale(1.08, 0.36);
-  const planet = ctx.createRadialGradient(170, -60, 12, 0, 0, 570);
-  planet.addColorStop(0, "rgba(248, 250, 252, 0.58)");
-  planet.addColorStop(0.15, "rgba(147, 197, 253, 0.48)");
-  planet.addColorStop(0.42, "rgba(37, 99, 235, 0.3)");
-  planet.addColorStop(0.74, "rgba(15, 23, 42, 0.16)");
+  ctx.translate(705, -88);
+  ctx.rotate(0.13);
+  ctx.scale(1.12, 0.32);
+  const planet = ctx.createRadialGradient(150, -70, 16, 0, 0, 600);
+  planet.addColorStop(0, "rgba(248, 250, 252, 0.42)");
+  planet.addColorStop(0.18, "rgba(147, 197, 253, 0.36)");
+  planet.addColorStop(0.46, "rgba(37, 99, 235, 0.2)");
+  planet.addColorStop(0.76, "rgba(15, 23, 42, 0.11)");
   planet.addColorStop(1, "rgba(2, 6, 23, 0)");
   ctx.beginPath();
-  ctx.arc(0, 0, 570, 0, Math.PI * 2);
+  ctx.arc(0, 0, 600, 0, Math.PI * 2);
   ctx.fillStyle = planet;
   ctx.fill();
   ctx.clip();
-  for (let index = 0; index < 44; index += 1) {
-    const y = -210 + index * 11;
-    const alpha = index % 4 === 0 ? 0.16 : 0.07;
+  for (let index = 0; index < 38; index += 1) {
+    const y = -210 + index * 12;
+    const alpha = index % 4 === 0 ? 0.1 : 0.045;
     ctx.strokeStyle = `rgba(125, 211, 252, ${alpha})`;
-    ctx.lineWidth = index % 5 === 0 ? 2.2 : 1;
+    ctx.lineWidth = index % 5 === 0 ? 1.6 : 0.8;
     ctx.beginPath();
-    ctx.moveTo(-520, y);
-    ctx.bezierCurveTo(-190, y - 32, 180, y + 18, 560, y - 14);
+    ctx.moveTo(-540, y);
+    ctx.bezierCurveTo(-210, y - 28, 180, y + 16, 590, y - 12);
     ctx.stroke();
   }
-  for (let index = 0; index < 90; index += 1) {
-    const x = -420 + ((index * 97) % 870);
-    const y = -180 + ((index * 53) % 295);
-    ctx.fillStyle = index % 6 === 0 ? "rgba(251, 146, 60, 0.34)" : "rgba(96, 165, 250, 0.22)";
-    ctx.fillRect(x, y, 2 + (index % 3), 1);
+  for (let index = 0; index < 44; index += 1) {
+    const x = -430 + ((index * 97) % 900);
+    const y = -174 + ((index * 53) % 266);
+    ctx.fillStyle = index % 7 === 0 ? "rgba(251, 146, 60, 0.14)" : "rgba(96, 165, 250, 0.1)";
+    ctx.fillRect(x, y, 1 + (index % 2), 1);
   }
   ctx.restore();
 
   ctx.save();
-  ctx.strokeStyle = "rgba(219, 234, 254, 0.9)";
-  ctx.lineWidth = 3.2;
-  ctx.shadowBlur = 34;
-  ctx.shadowColor = "rgba(96, 165, 250, 0.92)";
-  ctx.beginPath();
-  ctx.ellipse(735, -62, 620, 214, 0.15, 0.36, Math.PI * 0.94);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(34, 211, 238, 0.34)";
-  ctx.lineWidth = 9;
+  ctx.strokeStyle = "rgba(219, 234, 254, 0.62)";
+  ctx.lineWidth = 2.4;
   ctx.shadowBlur = 42;
+  ctx.shadowColor = "rgba(96, 165, 250, 0.78)";
   ctx.beginPath();
-  ctx.ellipse(735, -59, 620, 214, 0.15, 0.36, Math.PI * 0.94);
+  ctx.ellipse(705, -70, 666, 204, 0.13, 0.35, Math.PI * 0.95);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(34, 211, 238, 0.2)";
+  ctx.lineWidth = 10;
+  ctx.shadowBlur = 48;
+  ctx.beginPath();
+  ctx.ellipse(705, -67, 666, 204, 0.13, 0.35, Math.PI * 0.95);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawOrbitalGuides(ctx) {
+function drawOrbitalGuides(ctx, time) {
   const guides = [
-    [500, 348, 458, 260, -0.08, "rgba(125, 211, 252, 0.16)", 1],
-    [500, 348, 366, 188, -0.08, "rgba(167, 139, 250, 0.14)", 1],
-    [500, 350, 250, 108, -0.08, "rgba(34, 211, 238, 0.14)", 1],
-    [520, 330, 560, 310, -0.28, "rgba(96, 165, 250, 0.09)", 1],
+    [500, 350, 460, 258, -0.08, "rgba(125, 211, 252, 0.13)", 1],
+    [500, 350, 365, 188, -0.08, "rgba(167, 139, 250, 0.12)", 1],
+    [500, 352, 246, 108, -0.08, "rgba(34, 211, 238, 0.13)", 1],
+    [522, 328, 568, 312, -0.28, "rgba(96, 165, 250, 0.075)", 1],
   ];
   guides.forEach(([x, y, rx, ry, rotation, color, lineWidth], index) => {
     ctx.save();
+    ctx.shadowBlur = index === 2 ? 16 : 8;
+    ctx.shadowColor = index === 1 ? "rgba(139, 92, 246, 0.24)" : "rgba(34, 211, 238, 0.2)";
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
     ctx.setLineDash(index === 2 ? [8, 13] : []);
+    ctx.lineDashOffset = -time * (0.012 + index * 0.003);
     ctx.beginPath();
     ctx.ellipse(x, y, rx, ry, rotation, 0, Math.PI * 2);
     ctx.stroke();
@@ -1662,6 +1684,46 @@ function drawPodPorts(ctx, x, y, rx, ry, color, alpha) {
   });
 }
 
+function drawOrbitalParticles(ctx, x, y, radiusX, radiusY, color, time, count, alpha = 1) {
+  ctx.save();
+  for (let index = 0; index < count; index += 1) {
+    const phase = (Math.PI * 2 * index) / count + time * (0.00062 + index * 0.000012);
+    const depth = 0.68 + (index % 4) * 0.08;
+    const px = x + Math.cos(phase) * radiusX * depth;
+    const py = y + Math.sin(phase) * radiusY * depth;
+    const size = index % 5 === 0 ? 2.2 : 1.25;
+    const particleAlpha = (0.34 + Math.sin(time * 0.0018 + index) * 0.16) * alpha;
+    ctx.fillStyle = index % 3 === 0 ? stationColor("#A78BFA", particleAlpha) : stationColor(color, particleAlpha);
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = index % 3 === 0 ? "rgba(167, 139, 250, 0.58)" : stationColor(color, 0.58 * alpha);
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawCapsuleRings(ctx, x, y, rx, ry, color, alpha, time) {
+  ctx.save();
+  ctx.lineCap = "round";
+  [
+    [1.18, 0.88, -0.14, "rgba(125, 211, 252, 0.26)", [18, 26], 0.022],
+    [0.98, 0.64, 0.1, "rgba(167, 139, 250, 0.22)", [8, 16], -0.018],
+    [0.72, 0.42, -0.02, stationColor(color, 0.3 * alpha), [5, 14], 0.028],
+  ].forEach(([scaleX, scaleY, rotation, stroke, dash, speed], index) => {
+    ctx.setLineDash(dash);
+    ctx.lineDashOffset = time * speed + index * 18;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = index === 0 ? 1.4 : 1;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = index === 1 ? "rgba(167, 139, 250, 0.38)" : stationColor(color, 0.32 * alpha);
+    ctx.beginPath();
+    ctx.ellipse(x, y - 4, rx * scaleX, ry * scaleY, rotation, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 function drawOrbitalPod(ctx, room, index, time) {
   const point = stationCanvasPoint(room);
   const color = stationRgb(room.color);
@@ -1677,19 +1739,22 @@ function drawOrbitalPod(ctx, room, index, time) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  const halo = ctx.createRadialGradient(x, y, 4, x, y, rx * 1.38);
-  halo.addColorStop(0, stationColor(color, selected ? 0.3 : 0.18));
-  halo.addColorStop(0.54, stationColor(color, selected ? 0.18 : 0.09));
+  const halo = ctx.createRadialGradient(x, y, 4, x, y, rx * 1.62);
+  halo.addColorStop(0, stationColor(color, selected ? 0.34 : 0.2));
+  halo.addColorStop(0.54, stationColor(color, selected ? 0.18 : 0.1));
+  halo.addColorStop(0.75, "rgba(139, 92, 246, 0.07)");
   halo.addColorStop(1, stationColor(color, 0));
-  drawEllipseFill(ctx, x, y + 8, rx * 1.38, ry * 1.22, halo);
+  drawEllipseFill(ctx, x, y + 6, rx * 1.62, ry * 1.32, halo);
 
-  drawEllipseFill(ctx, x, y + ry * 0.8, rx * 1.04, ry * 0.5, "rgba(0, 0, 0, 0.42)");
+  drawCapsuleRings(ctx, x, y, rx, ry, color, alpha, time);
+
+  drawEllipseFill(ctx, x, y + ry * 0.9, rx * 1.15, ry * 0.54, "rgba(0, 0, 0, 0.5)");
 
   for (let layer = 10; layer >= 0; layer -= 1) {
     const depth = layer / 10;
     const layerGradient = ctx.createLinearGradient(x - rx, y - ry + layer * 2, x + rx, y + ry + 24);
-    layerGradient.addColorStop(0, `rgba(71, 85, 105, ${0.48 + depth * 0.2})`);
-    layerGradient.addColorStop(0.5, `rgba(15, 23, 42, ${0.76 + depth * 0.18})`);
+    layerGradient.addColorStop(0, `rgba(100, 116, 139, ${0.42 + depth * 0.18})`);
+    layerGradient.addColorStop(0.42, `rgba(15, 23, 42, ${0.78 + depth * 0.16})`);
     layerGradient.addColorStop(1, "rgba(1, 4, 12, 0.98)");
     ctx.beginPath();
     ctx.ellipse(x, y + 18 + layer * 1.9, rx - layer * 1.3, ry * 0.72 - layer * 0.26, 0, 0, Math.PI * 2);
@@ -1698,9 +1763,9 @@ function drawOrbitalPod(ctx, room, index, time) {
   }
 
   const shell = ctx.createLinearGradient(x - rx, y - ry, x + rx, y + ry + 24);
-  shell.addColorStop(0, stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.3), 0.4));
-  shell.addColorStop(0.2, "rgba(51, 65, 85, 0.96)");
-  shell.addColorStop(0.58, "rgba(8, 13, 26, 0.98)");
+  shell.addColorStop(0, stationColor(mixStationColor(color, { r: 248, g: 250, b: 252 }, 0.46), 0.5));
+  shell.addColorStop(0.18, "rgba(71, 85, 105, 0.94)");
+  shell.addColorStop(0.52, "rgba(8, 13, 26, 0.99)");
   shell.addColorStop(1, "rgba(0, 0, 0, 1)");
   ctx.shadowBlur = selected ? 34 : 22;
   ctx.shadowColor = stationColor(color, selected ? 0.55 : 0.32);
@@ -1714,6 +1779,15 @@ function drawOrbitalPod(ctx, room, index, time) {
   ctx.shadowBlur = 0;
 
   drawStationPanelLines(ctx, x, y - 2, rx, ry, color, alpha, index * 0.12);
+
+  const glass = ctx.createLinearGradient(x - rx * 0.52, y - ry * 0.65, x + rx * 0.42, y + ry * 0.08);
+  glass.addColorStop(0, "rgba(219, 234, 254, 0.18)");
+  glass.addColorStop(0.48, stationColor(color, 0.14 * alpha));
+  glass.addColorStop(1, "rgba(2, 6, 23, 0)");
+  ctx.beginPath();
+  ctx.ellipse(x - rx * 0.03, y - ry * 0.24, rx * 0.58, ry * 0.24, -0.08, 0, Math.PI * 2);
+  ctx.fillStyle = glass;
+  ctx.fill();
 
   const deck = ctx.createRadialGradient(x, y - 5, 2, x, y - 5, rx * 0.58);
   deck.addColorStop(0, stationColor(color, 0.24));
@@ -1743,6 +1817,8 @@ function drawOrbitalPod(ctx, room, index, time) {
   ctx.arc(x, y - 5, 4.3, 0, Math.PI * 2);
   ctx.fill();
 
+  drawOrbitalParticles(ctx, x, y - 4, rx * 1.05, ry * 0.84, color, time, 14, 0.7 * alpha);
+
   drawPodPorts(ctx, x, y, rx, ry, color, alpha);
 
   ctx.strokeStyle = `rgba(226, 232, 240, ${0.34 * alpha})`;
@@ -1767,22 +1843,22 @@ function drawReactorCore(ctx, time) {
   const color = stationRgb("#60A5FA");
   const violet = stationRgb("#8B5CF6");
 
-  const halo = ctx.createRadialGradient(x, y, 0, x, y, 150);
-  halo.addColorStop(0, `rgba(248, 250, 252, ${0.38 * pulse})`);
-  halo.addColorStop(0.24, "rgba(34, 211, 238, 0.34)");
-  halo.addColorStop(0.58, "rgba(139, 92, 246, 0.18)");
+  const halo = ctx.createRadialGradient(x, y, 0, x, y, 132);
+  halo.addColorStop(0, `rgba(248, 250, 252, ${0.32 * pulse})`);
+  halo.addColorStop(0.24, "rgba(34, 211, 238, 0.28)");
+  halo.addColorStop(0.58, "rgba(139, 92, 246, 0.16)");
   halo.addColorStop(1, "rgba(34, 211, 238, 0)");
-  drawEllipseFill(ctx, x, y + 5, 154, 122, halo);
+  drawEllipseFill(ctx, x, y + 4, 136, 108, halo);
 
-  drawEllipseFill(ctx, x, y + 62, 116, 42, "rgba(0, 0, 0, 0.42)");
+  drawEllipseFill(ctx, x, y + 58, 104, 38, "rgba(0, 0, 0, 0.44)");
 
   for (let layer = 9; layer >= 0; layer -= 1) {
-    const body = ctx.createLinearGradient(x - 110, y - 50, x + 110, y + 78);
-    body.addColorStop(0, "rgba(51, 65, 85, 0.88)");
+    const body = ctx.createLinearGradient(x - 96, y - 44, x + 96, y + 70);
+    body.addColorStop(0, "rgba(71, 85, 105, 0.78)");
     body.addColorStop(0.45, "rgba(8, 13, 26, 0.98)");
     body.addColorStop(1, "rgba(0, 0, 0, 1)");
     ctx.beginPath();
-    ctx.ellipse(x, y + 30 + layer * 2.3, 104 - layer * 1.7, 58 - layer * 0.8, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y + 29 + layer * 2.1, 92 - layer * 1.55, 50 - layer * 0.72, 0, 0, Math.PI * 2);
     ctx.fillStyle = body;
     ctx.fill();
   }
@@ -1792,7 +1868,7 @@ function drawReactorCore(ctx, time) {
   ctx.shadowColor = "rgba(34, 211, 238, 0.54)";
   ctx.strokeStyle = "rgba(125, 211, 252, 0.5)";
   ctx.lineWidth = 1.4;
-  [96, 76, 56].forEach((rx, index) => {
+  [84, 66, 48].forEach((rx, index) => {
     ctx.setLineDash(index === 1 ? [8, 9] : [15, 10]);
     ctx.lineDashOffset = -time * (0.015 + index * 0.006);
     ctx.beginPath();
@@ -1801,10 +1877,11 @@ function drawReactorCore(ctx, time) {
   });
   ctx.restore();
 
-  drawStationPanelLines(ctx, x, y + 12, 100, 62, color, 1, time * 0.00012);
-  drawPodLights(ctx, x, y + 8, 98, 58, color, 0.78, 11, time);
+  drawStationPanelLines(ctx, x, y + 11, 90, 54, color, 1, time * 0.00012);
+  drawPodLights(ctx, x, y + 8, 88, 50, color, 0.62, 11, time);
+  drawOrbitalParticles(ctx, x, y - 8, 82, 46, color, time, 18, 0.78);
 
-  const orb = ctx.createRadialGradient(x - 12, y - 30, 0, x, y - 8, 64);
+  const orb = ctx.createRadialGradient(x - 9, y - 27, 0, x, y - 8, 52);
   orb.addColorStop(0, "rgba(255, 255, 255, 1)");
   orb.addColorStop(0.18, "rgba(103, 232, 249, 0.98)");
   orb.addColorStop(0.48, stationColor(violet, 0.86));
@@ -1815,11 +1892,11 @@ function drawReactorCore(ctx, time) {
   ctx.shadowColor = "rgba(34, 211, 238, 0.92)";
   ctx.fillStyle = orb;
   ctx.beginPath();
-  ctx.arc(x, y - 12, 52 + pulse * 5, 0, Math.PI * 2);
+  ctx.arc(x, y - 12, 38 + pulse * 4, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "rgba(248, 250, 252, 0.96)";
   ctx.beginPath();
-  ctx.arc(x, y - 12, 11, 0, Math.PI * 2);
+  ctx.arc(x, y - 12, 9, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -1847,7 +1924,7 @@ function drawStationScene(time = performance.now()) {
 
   drawSpaceBackdrop(ctx, time);
   drawPlanetHorizon(ctx);
-  drawOrbitalGuides(ctx);
+  drawOrbitalGuides(ctx, time);
 
   const core = roomProfiles["argentum-core"];
   habitatMapModules.forEach((room, index) => {
@@ -1908,6 +1985,7 @@ function renderStationArtwork() {
   }
 }
 
+// OrbitScene routes
 function renderHabitatRoutes() {
   if (!habitatRoutes) return;
   const coreRoom = roomProfiles["argentum-core"];
@@ -1966,6 +2044,7 @@ function renderHabitatRoutes() {
   habitatRoutes.innerHTML = `${defs}${coreBeams}${moduleBridgeRoutes}`;
 }
 
+// DepoCapsule label layer
 function renderHabitatModules() {
   if (!habitatModules) return;
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
@@ -1994,6 +2073,7 @@ function renderHabitatModules() {
     .join("");
 }
 
+// OrbitMiniMap
 function renderMiniMap() {
   if (!miniMapNodes) return;
   const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
@@ -2219,13 +2299,15 @@ function openModuleInfoCard(roomKey) {
   window.setTimeout(() => positionModuleInfoCard(resolved), 430);
 }
 
+function renderOrbitScene() {
+  renderStationArtwork();
+  renderHabitatModules();
+  applySelectionClasses();
+}
+
 function renderShellData() {
   renderAgentRoster();
-  renderStationArtwork();
-  renderHabitatRoutes();
-  renderHabitatModules();
-  renderMiniMap();
-  applySelectionClasses();
+  renderOrbitScene();
   if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
     moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
     positionModuleInfoCard(selectedRoomKey);
@@ -2250,6 +2332,7 @@ function applySelectionClasses() {
   renderMiniMap();
 }
 
+// OrbitControls
 function normalizedMapView(nextView = mapView) {
   const scale = clamp(Number.isFinite(nextView.scale) ? nextView.scale : mapView.scale, mapMinScale, mapMaxScale);
 
@@ -2274,7 +2357,8 @@ function applyMapView(animated = true) {
   if (!habitatCanvas) return;
   mapView = normalizedMapView(mapView);
   habitatCanvas.classList.toggle("is-animating", animated);
-  habitatCanvas.style.transform = `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
+  const isHomeView = mapView.scale <= mapMinScale + mapPanEpsilon && Math.abs(mapView.x) <= mapPanEpsilon && Math.abs(mapView.y) <= mapPanEpsilon;
+  habitatCanvas.style.transform = isHomeView ? "none" : `translate3d(${mapView.x}px, ${mapView.y}px, 0) scale(${mapView.scale})`;
   stationMap?.classList.toggle("can-pan", mapView.scale > mapMinScale + mapPanEpsilon);
   if (zoomReadout) zoomReadout.textContent = `${Math.round(mapView.scale * 100)}%`;
   if (zoomOutBtn) zoomOutBtn.disabled = mapView.scale <= mapMinScale + mapPanEpsilon;

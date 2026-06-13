@@ -2725,10 +2725,10 @@ main {
 .habitat-room.station {
   left: var(--x);
   top: var(--y);
-  width: min(var(--room-w), 306px);
-  height: min(var(--room-h), 158px);
-  min-width: 196px;
-  min-height: 128px;
+  width: min(var(--room-w), 292px);
+  height: min(var(--room-h), 146px);
+  min-width: 188px;
+  min-height: 120px;
   z-index: 12;
   transform: translate(-50%, -50%);
 }

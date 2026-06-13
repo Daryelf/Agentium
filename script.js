@@ -356,6 +356,26 @@ const accessUserList = document.querySelector("#accessUserList");
 const accessAlert = document.querySelector("#accessAlert");
 const passwordForm = document.querySelector("#passwordForm");
 const createUserForm = document.querySelector("#createUserForm");
+const aiProviderCurrentProvider = document.querySelector("#aiProviderCurrentProvider");
+const aiProviderConnectionStatus = document.querySelector("#aiProviderConnectionStatus");
+const aiProviderActiveModel = document.querySelector("#aiProviderActiveModel");
+const aiProviderMode = document.querySelector("#aiProviderMode");
+const aiProviderLastTest = document.querySelector("#aiProviderLastTest");
+const aiProviderModeChip = document.querySelector("#aiProviderModeChip");
+const aiProviderForm = document.querySelector("#aiProviderForm");
+const aiProviderSelect = document.querySelector("#aiProviderSelect");
+const aiModeSelect = document.querySelector("#aiModeSelect");
+const aiModelInput = document.querySelector("#aiModelInput");
+const aiInlineKeyStatus = document.querySelector("#aiInlineKeyStatus");
+const aiTemperatureInput = document.querySelector("#aiTemperatureInput");
+const aiMaxTokensInput = document.querySelector("#aiMaxTokensInput");
+const aiProviderKeyForm = document.querySelector("#aiProviderKeyForm");
+const aiKeyProviderSelect = document.querySelector("#aiKeyProviderSelect");
+const aiKeyInput = document.querySelector("#aiKeyInput");
+const aiKeyStatus = document.querySelector("#aiKeyStatus");
+const aiProviderTestBtn = document.querySelector("#aiProviderTestBtn");
+const aiProviderRemoveKeyBtn = document.querySelector("#aiProviderRemoveKeyBtn");
+const aiProviderTestResult = document.querySelector("#aiProviderTestResult");
 const agentRosterList = document.querySelector("#agentRosterList");
 const habitatModules = document.querySelector("#habitatModules");
 const habitatRoutes = document.querySelector("#habitatRoutes");
@@ -1671,6 +1691,21 @@ let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
 let pointerCache = new Map();
 let pinchStart = null;
 let accessState = null;
+let aiProviderSettings = {
+  provider: "local",
+  providerLabel: "Local Demo",
+  mode: "demo",
+  modeLabel: "Local Demo",
+  connectionStatus: "Not configured",
+  activeModel: "Not selected",
+  lastTest: null,
+  providers: {
+    local: { keyConfigured: false, keyStatus: "No key required", model: "local-demo" },
+    openai: { keyConfigured: false, keyStatus: "Not configured", model: "gpt-4.1-mini", temperature: 0.4, maxOutputTokens: 700 },
+    anthropic: { keyConfigured: false, keyStatus: "Not configured", model: "claude-3-5-sonnet-latest", temperature: 0.4, maxOutputTokens: 700 },
+  },
+};
+let aiProviderNotice = "";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1716,6 +1751,7 @@ async function loadState() {
     state = fallbackState;
     apiAvailable = false;
   }
+  await loadAiProviderSettings();
   render();
   applyMapView(false);
 }
@@ -3130,9 +3166,10 @@ function agentChatMarkup(card) {
         <strong>Talk to Depo</strong>
         <small>Master Agent · Supervised · Draft-only</small>
       </div>
-      <em>${escapeHtml(card.id === depoAgent.currentStage ? "Now active" : depoAgent.status)}</em>
+      <em class="${aiProviderChatLabel() === "Provider Error" ? "danger-status" : ""}">${escapeHtml(aiProviderChatLabel())}</em>
       <button class="module-info-close" type="button" aria-label="Close module details">×</button>
     </div>
+    ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
     <div class="agent-chat-summary">
       <span><small>Agent</small><strong>Depo 001</strong></span>
       <span><small>Mode</small><strong>Draft-only</strong></span>
@@ -3702,6 +3739,98 @@ function renderLoginHistory(users) {
       `,
     )
     .join("");
+}
+
+function formatAiProviderTime(value) {
+  if (!value) return "Never";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return "Never";
+  }
+}
+
+function activeAiProviderDetail() {
+  const provider = aiProviderSettings.provider || "local";
+  return aiProviderSettings.providers?.[provider] || aiProviderSettings.providers?.local || {};
+}
+
+function aiProviderChatLabel() {
+  if (aiProviderNotice) return "Provider Error";
+  const provider = aiProviderSettings.provider || "local";
+  if (provider === "openai" && aiProviderSettings.mode === "live") return "OpenAI Live";
+  if (provider === "anthropic" && aiProviderSettings.mode === "live") return "Anthropic Live";
+  return "Local Demo";
+}
+
+function renderAiProviderSettings() {
+  const detail = activeAiProviderDetail();
+  const provider = aiProviderSettings.provider || "local";
+  const keyProvider = aiKeyProviderSelect?.value || (provider === "anthropic" ? "anthropic" : "openai");
+  const keyDetail = aiProviderSettings.providers?.[keyProvider] || {};
+  if (aiProviderCurrentProvider) aiProviderCurrentProvider.textContent = aiProviderSettings.providerLabel || "Local Demo";
+  if (aiProviderConnectionStatus) aiProviderConnectionStatus.textContent = aiProviderSettings.connectionStatus || "Not configured";
+  if (aiProviderActiveModel) aiProviderActiveModel.textContent = aiProviderSettings.activeModel || detail.model || "Not selected";
+  if (aiProviderMode) aiProviderMode.textContent = aiProviderSettings.modeLabel || "Local Demo";
+  if (aiProviderModeChip) {
+    aiProviderModeChip.textContent = aiProviderChatLabel();
+    aiProviderModeChip.classList.toggle("danger-status", aiProviderChatLabel() === "Provider Error");
+  }
+  if (aiProviderLastTest) {
+    const testedAt = aiProviderSettings.lastTest?.testedAt || aiProviderSettings.lastTest?.timestamp;
+    aiProviderLastTest.textContent = formatAiProviderTime(testedAt);
+  }
+  if (aiProviderSelect) aiProviderSelect.value = provider;
+  if (aiModeSelect) {
+    aiModeSelect.value = aiProviderSettings.mode || "demo";
+    aiModeSelect.disabled = provider === "local";
+  }
+  if (aiModelInput) {
+    aiModelInput.value = provider === "local" ? "" : detail.model || "";
+    aiModelInput.disabled = provider === "local";
+    aiModelInput.placeholder = provider === "local" ? "Local demo uses scripted responses" : "Model name";
+  }
+  if (aiInlineKeyStatus) {
+    aiInlineKeyStatus.textContent = provider === "local" ? "No key required" : detail.keyConfigured ? "•••••••• configured" : "Not configured";
+  }
+  if (aiTemperatureInput) {
+    aiTemperatureInput.value = Number.isFinite(Number(detail.temperature)) ? detail.temperature : 0.4;
+    aiTemperatureInput.disabled = provider === "local";
+  }
+  if (aiMaxTokensInput) {
+    aiMaxTokensInput.value = Number.isFinite(Number(detail.maxOutputTokens)) ? detail.maxOutputTokens : 700;
+    aiMaxTokensInput.disabled = provider === "local";
+  }
+  if (aiKeyStatus) {
+    aiKeyStatus.textContent = keyDetail.keyConfigured ? "•••••••• configured" : keyDetail.keyStatus || "Not configured";
+    aiKeyStatus.classList.toggle("danger-status", !keyDetail.keyConfigured && keyProvider !== "local");
+  }
+}
+
+async function loadAiProviderSettings() {
+  if (!apiAvailable) {
+    renderAiProviderSettings();
+    return;
+  }
+  try {
+    aiProviderSettings = await api("/api/settings/ai-provider");
+    aiProviderNotice = "";
+  } catch (error) {
+    aiProviderNotice = error.message;
+  }
+  renderAiProviderSettings();
+}
+
+function renderAiProviderTestResult(result, type = "info") {
+  if (!aiProviderTestResult) return;
+  const ok = result?.success === true;
+  const title = ok ? "Connection test passed" : result?.success === false ? "Connection test failed" : "Provider settings updated";
+  const message = result?.message || result?.error || result || "No provider test yet.";
+  aiProviderTestResult.className = `ai-provider-test-result ${ok ? "success" : type === "error" || result?.success === false ? "error" : ""}`;
+  aiProviderTestResult.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <p>${escapeHtml(message)}</p>
+  `;
 }
 
 function renderCapabilities() {
@@ -4595,20 +4724,80 @@ function changeApprovalStatus(id, action, source = "Human Gate") {
   });
 }
 
-function submitDepoChat(roomKey, message) {
+function addBlockedActionApproval(actionType, roomKey, source = "Depo chat") {
+  state.approvals = Array.isArray(state.approvals) ? state.approvals : [];
+  const room = moduleProfile(roomKey);
+  state.approvals.unshift({
+    id: `approval-${actionType}-${Date.now()}`,
+    title: `Review blocked action: ${actionType}`,
+    risk: "high",
+    evidence: `${source} requested or suggested ${actionType} from ${room.title}.`,
+    action: "Human Gate approval required before this can continue. No external action was executed.",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  });
+  state.approvals = state.approvals.slice(0, 16);
+}
+
+async function submitDepoChat(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const trimmed = String(message || "").trim();
   if (!trimmed) return;
   depoChatMessages.push({ roomId: resolved, speaker: "operator", text: trimmed });
-  depoChatMessages.push({ roomId: resolved, speaker: "depo", text: depoChatResponse(trimmed, resolved) });
+  let responseText = depoChatResponse(trimmed, resolved);
+  let responseMeta = { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [] };
+  if (apiAvailable) {
+    try {
+      const payload = await postJson("/api/depo/chat", {
+        message: trimmed,
+        roomId: resolved,
+        currentStage: depoAgent.currentStage,
+        selectedRoom: selectedRoomKey,
+      });
+      responseText = payload.message || responseText;
+      responseMeta = payload;
+      aiProviderNotice = "";
+    } catch (error) {
+      aiProviderNotice = error.message;
+      addSystemLogEntry({
+        type: "provider_error",
+        message: `AI provider failed; Depo used Local Demo fallback. ${error.message}`,
+        riskLevel: "medium",
+        roomId: resolved,
+      });
+    }
+  }
+  depoChatMessages.push({ roomId: resolved, speaker: "depo", text: responseText });
   depoChatMessages = depoChatMessages.slice(-18);
   addSystemLogEntry({
     type: "depo_chat",
     message: `Asked Depo about ${moduleDisplayName(resolved)}.`,
-    riskLevel: "low",
+    riskLevel: responseMeta.riskLevel || "low",
     roomId: resolved,
     actor: "Operator",
   });
+  (responseMeta.logs || []).forEach((log) => {
+    addSystemLogEntry({
+      type: "depo_brain",
+      message: String(log),
+      riskLevel: responseMeta.riskLevel || "low",
+      roomId: resolved,
+    });
+  });
+  if (responseMeta.requiresApproval || responseMeta.blockedAction) {
+    const actionType = responseMeta.blockedAction || "external_api_action";
+    addBlockedActionApproval(actionType, resolved, "Depo brain");
+    addSystemLogEntry({
+      type: "human_gate_block",
+      message: `Human Gate approval required for ${actionType}.`,
+      riskLevel: "high",
+      roomId: "human-gate",
+    });
+    selectedRoomKey = "human-gate";
+    render();
+    openModuleInfoCard("human-gate");
+    return;
+  }
   renderSystemFeed();
   openModuleInfoCard(resolved);
 }
@@ -4750,6 +4939,7 @@ function activateView(viewName) {
   target.classList.add("active");
   if (viewName === "settings") {
     loadAccessState();
+    loadAiProviderSettings();
   }
 }
 
@@ -4786,7 +4976,106 @@ settingsNavButtons.forEach((button) => {
 
 securityScanBtn?.addEventListener("click", () => {
   loadAccessState();
+  loadAiProviderSettings();
   showAccessMessage("Security scan complete. Password hashing, signed sessions, legacy-default blocking, and approval gates are active.", "success");
+});
+
+aiProviderSelect?.addEventListener("change", () => {
+  const provider = aiProviderSelect.value;
+  const detail = aiProviderSettings.providers?.[provider] || {};
+  if (aiModeSelect) {
+    aiModeSelect.value = provider === "local" ? "demo" : aiProviderSettings.mode || "demo";
+    aiModeSelect.disabled = provider === "local";
+  }
+  if (aiModelInput) {
+    aiModelInput.value = provider === "local" ? "" : detail.model || "";
+    aiModelInput.disabled = provider === "local";
+  }
+  if (aiInlineKeyStatus) {
+    aiInlineKeyStatus.textContent = provider === "local" ? "No key required" : detail.keyConfigured ? "•••••••• configured" : "Not configured";
+  }
+  if (aiTemperatureInput) {
+    aiTemperatureInput.value = Number.isFinite(Number(detail.temperature)) ? detail.temperature : 0.4;
+    aiTemperatureInput.disabled = provider === "local";
+  }
+  if (aiMaxTokensInput) {
+    aiMaxTokensInput.value = Number.isFinite(Number(detail.maxOutputTokens)) ? detail.maxOutputTokens : 700;
+    aiMaxTokensInput.disabled = provider === "local";
+  }
+});
+
+aiKeyProviderSelect?.addEventListener("change", renderAiProviderSettings);
+
+aiProviderForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(aiProviderForm);
+  try {
+    aiProviderSettings = await postJson("/api/settings/ai-provider", {
+      provider: form.get("provider"),
+      mode: form.get("mode"),
+      model: form.get("model"),
+      temperature: form.get("temperature"),
+      maxOutputTokens: form.get("maxOutputTokens"),
+    });
+    aiProviderNotice = "";
+    renderAiProviderSettings();
+    showAccessMessage("AI provider settings saved. Depo will use the selected backend mode.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+aiProviderKeyForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(aiProviderKeyForm);
+  try {
+    aiProviderSettings = await postJson("/api/settings/ai-provider/key", {
+      provider: form.get("provider"),
+      apiKey: form.get("apiKey"),
+    });
+    if (aiKeyInput) aiKeyInput.value = "";
+    aiProviderNotice = "";
+    renderAiProviderSettings();
+    showAccessMessage("Provider key saved server-side. The raw key was not returned to the browser.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+aiProviderRemoveKeyBtn?.addEventListener("click", async () => {
+  clearAccessMessage();
+  try {
+    aiProviderSettings = await api("/api/settings/ai-provider/key", {
+      method: "DELETE",
+      body: JSON.stringify({
+        provider: aiKeyProviderSelect?.value || "openai",
+      }),
+    });
+    if (aiKeyInput) aiKeyInput.value = "";
+    aiProviderNotice = "";
+    renderAiProviderSettings();
+    showAccessMessage("Local provider key removed. Environment keys, if configured, remain server-side.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+aiProviderTestBtn?.addEventListener("click", async () => {
+  clearAccessMessage();
+  try {
+    const result = await postJson("/api/settings/ai-provider/test", {
+      provider: aiProviderSelect?.value || aiProviderSettings.provider,
+      mode: aiModeSelect?.value || aiProviderSettings.mode,
+    });
+    await loadAiProviderSettings();
+    renderAiProviderTestResult(result, result.success ? "success" : "error");
+    showAccessMessage(result.success ? "Provider test complete." : "Provider test returned a clean error.", result.success ? "success" : "error");
+  } catch (error) {
+    renderAiProviderTestResult({ success: false, error: error.message }, "error");
+    showAccessMessage(error.message, "error");
+  }
 });
 
 scanBtn?.addEventListener("click", () => {

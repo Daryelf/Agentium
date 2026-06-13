@@ -5011,6 +5011,144 @@ label {
   background: rgba(6, 78, 59, 0.18);
 }
 
+.ai-provider-status-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-provider-status-grid div,
+.ai-provider-test-result {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background:
+    radial-gradient(circle at 10% 0%, rgba(125, 211, 252, 0.12), transparent 42%),
+    rgba(2, 6, 23, 0.42);
+}
+
+.ai-provider-status-grid small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ai-provider-status-grid strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.88rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-provider-note {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.ai-provider-inline-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  color: var(--text-soft);
+  background: rgba(2, 6, 23, 0.36);
+}
+
+.ai-provider-inline-status span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ai-provider-inline-status strong {
+  color: #dbeafe;
+  font-size: 0.82rem;
+}
+
+.ai-provider-card {
+  min-height: 0;
+}
+
+.ai-provider-form select,
+.ai-key-form select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.ai-key-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.ai-key-actions button {
+  min-width: 128px;
+}
+
+.ai-safety-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-provider-test-result {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-provider-test-result strong {
+  color: #f8fafc;
+  font-size: 0.9rem;
+}
+
+.ai-provider-test-result p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+
+.ai-provider-test-result.success {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(6, 78, 59, 0.18);
+}
+
+.ai-provider-test-result.error,
+.status-chip.danger-status,
+.module-info-head em.danger-status {
+  border-color: rgba(248, 113, 113, 0.32);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.2);
+}
+
+.agent-provider-notice {
+  margin: 7px 9px 0;
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.18);
+  font-size: 0.56rem;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
 @media (max-width: 1480px) {
   :root {
     --side-width: 282px;

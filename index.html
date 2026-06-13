@@ -715,6 +715,10 @@
                   <svg viewBox="0 0 24 24"><path d="M15 7a4 4 0 1 0-4 4"/><path d="m14 10 7-7"/><path d="m17 3 4 4"/><path d="M5 21l5-5"/></svg>
                   API Keys
                 </button>
+                <button class="settings-nav-item" data-settings-target="settings-ai-providers" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3a7 7 0 0 0 14 0v-3a7 7 0 0 0-7-7Z"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>
+                  AI Providers
+                </button>
                 <button class="settings-nav-item" data-settings-target="settings-sessions" type="button">
                   <svg viewBox="0 0 24 24"><path d="M4 5h16v12H4Z"/><path d="M9 21h6"/><path d="M12 17v4"/></svg>
                   Sessions
@@ -902,6 +906,137 @@
                       </div>
                       <em>Gated</em>
                     </div>
+                  </div>
+                </section>
+
+                <section class="settings-card settings-span-2 ai-provider-status-card" id="settings-ai-providers">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>AI Brain Status</h4>
+                      <p>Manage the server-side provider Depo can use for future LLM calls.</p>
+                    </div>
+                    <span class="status-chip" id="aiProviderModeChip">Local Demo</span>
+                  </div>
+                  <div class="ai-provider-status-grid">
+                    <div><small>Current Provider</small><strong id="aiProviderCurrentProvider">Local Demo</strong></div>
+                    <div><small>Connection Status</small><strong id="aiProviderConnectionStatus">Not configured</strong></div>
+                    <div><small>Active Model</small><strong id="aiProviderActiveModel">Not selected</strong></div>
+                    <div><small>Mode</small><strong id="aiProviderMode">Local Demo</strong></div>
+                    <div><small>Last Test</small><strong id="aiProviderLastTest">Never</strong></div>
+                  </div>
+                  <p class="ai-provider-note">Frontend JavaScript never receives raw API keys. Live calls go through the authenticated backend only.</p>
+                </section>
+
+                <section class="settings-card ai-provider-card">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Provider Selection</h4>
+                      <p>Choose Local Demo Mode, OpenAI, or Anthropic for Depo.</p>
+                    </div>
+                  </div>
+                  <form class="access-form ai-provider-form" id="aiProviderForm">
+                    <label>
+                      Provider
+                      <select name="provider" id="aiProviderSelect">
+                        <option value="local">Local Demo Mode</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                      </select>
+                    </label>
+                    <label>
+                      Mode
+                      <select name="mode" id="aiModeSelect">
+                        <option value="demo">Local Demo</option>
+                        <option value="live">Live API</option>
+                      </select>
+                    </label>
+                    <label>
+                      Model name
+                      <input name="model" id="aiModelInput" autocomplete="off" placeholder="Not selected" />
+                    </label>
+                    <div class="ai-provider-inline-status">
+                      <span>API key status</span>
+                      <strong id="aiInlineKeyStatus">No key required</strong>
+                    </div>
+                    <div class="settings-form-grid">
+                      <label>
+                        Temperature
+                        <input name="temperature" id="aiTemperatureInput" type="number" min="0" max="2" step="0.1" value="0.4" />
+                      </label>
+                      <label>
+                        Max output tokens
+                        <input name="maxOutputTokens" id="aiMaxTokensInput" type="number" min="64" max="4096" step="1" value="700" />
+                      </label>
+                    </div>
+                    <button class="primary-button" type="submit">Save provider settings</button>
+                  </form>
+                </section>
+
+                <section class="settings-card ai-provider-card">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>API Key Management</h4>
+                      <p>Save, remove, and test provider keys without exposing them in the browser.</p>
+                    </div>
+                    <span class="status-chip" id="aiKeyStatus">No key required</span>
+                  </div>
+                  <form class="access-form ai-key-form" id="aiProviderKeyForm">
+                    <label>
+                      Provider
+                      <select name="provider" id="aiKeyProviderSelect">
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                      </select>
+                    </label>
+                    <label>
+                      API key
+                      <input name="apiKey" id="aiKeyInput" type="password" autocomplete="off" placeholder="Paste key to save; never displayed after saving" />
+                    </label>
+                    <div class="settings-action-row ai-key-actions">
+                      <button class="primary-button" type="submit">Save key</button>
+                      <button class="ghost-button" id="aiProviderTestBtn" type="button">Test connection</button>
+                      <button class="danger-button" id="aiProviderRemoveKeyBtn" type="button">Remove key</button>
+                    </div>
+                    <p class="ai-provider-note">If a key exists, Argentum only shows “Key saved securely” or “•••••••• configured”.</p>
+                  </form>
+                </section>
+
+                <section class="settings-card ai-provider-card">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Depo Safety Rules</h4>
+                      <p>Live model output is still supervised by Human Gate.</p>
+                    </div>
+                    <span class="status-chip">Approval gated</span>
+                  </div>
+                  <div class="settings-list ai-safety-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 5-3.3 8.5-8 10-4.7-1.5-8-5-8-10V6l8-3Z"/><path d="m9 12 2 2 4-5"/></svg>
+                      </span>
+                      <div><strong>Allowed</strong><p>Research, organize, draft, plan workflows, prepare reports, save notes, and package work for approval.</p></div>
+                      <em>Draft only</em>
+                    </div>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
+                      </span>
+                      <div><strong>Blocked</strong><p>Publishing, spending, money movement, customer contact, account changes, live agents, permissions, keys, campaigns, and external API actions.</p></div>
+                      <em>Human Gate</em>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="settings-card ai-provider-card">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Test Results / Logs</h4>
+                      <p>Connection tests return clean success or error messages.</p>
+                    </div>
+                  </div>
+                  <div class="ai-provider-test-result" id="aiProviderTestResult">
+                    <strong>No provider test yet</strong>
+                    <p>Use Local Demo Mode without keys, or test a configured live provider from the backend.</p>
                   </div>
                 </section>
 

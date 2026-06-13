@@ -11,8 +11,15 @@ const DATA_DIR = path.join(ROOT, "data");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
+const AI_PROVIDER_FILE = path.join(DATA_DIR, "argentum-ai-provider.json");
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ENV_OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const ENV_OPENAI_MODEL = process.env.OPENAI_MODEL || "";
+const ENV_ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const ENV_ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "";
+const ENV_AI_PROVIDER = process.env.AI_PROVIDER || "";
+const ENV_AI_MODE = process.env.AI_MODE || "";
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
@@ -23,6 +30,26 @@ const PASSWORD_ITERATIONS = 210_000;
 const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
+const AI_PROVIDER_OPTIONS = new Set(["local", "openai", "anthropic"]);
+const AI_MODE_OPTIONS = new Set(["demo", "live"]);
+const AI_RISKY_ACTION_TYPES = new Set([
+  "publish",
+  "spend_money",
+  "move_money",
+  "contact_customer",
+  "modify_account",
+  "create_live_agent",
+  "change_permissions",
+  "change_api_key",
+  "deploy_campaign",
+  "external_api_action",
+]);
+const DEPO_SYSTEM_RULES = [
+  "Depo is the supervised Master Agent inside Argentum OS.",
+  "Depo can research, organize evidence, draft outputs, create task plans, create workflow plans, prepare prompts, prepare reports, save internal notes, package work for approval, and create future agent blueprints.",
+  "Depo cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.",
+  "Any risky action must be returned as pending approval, not executed.",
+].join(" ");
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -977,6 +1004,428 @@ function addMemory(state, layer, title, body, provenance) {
   state.memory[layer] = entries.slice(0, 20);
 }
 
+function defaultAiProviderConfig() {
+  return {
+    version: 1,
+    provider: sanitizeProvider(ENV_AI_PROVIDER || "local"),
+    mode: sanitizeAiMode(ENV_AI_MODE || "demo"),
+    providers: {
+      openai: {
+        model: ENV_OPENAI_MODEL || "gpt-4.1-mini",
+        temperature: 0.4,
+        maxOutputTokens: 700,
+      },
+      anthropic: {
+        model: ENV_ANTHROPIC_MODEL || "claude-3-5-sonnet-latest",
+        temperature: 0.4,
+        maxOutputTokens: 700,
+      },
+    },
+    keys: {},
+    lastTest: null,
+    createdAt: now(),
+    updatedAt: now(),
+  };
+}
+
+function sanitizeProvider(provider) {
+  const normalized = String(provider || "").trim().toLowerCase();
+  return AI_PROVIDER_OPTIONS.has(normalized) ? normalized : "local";
+}
+
+function sanitizeAiMode(mode) {
+  const normalized = String(mode || "").trim().toLowerCase();
+  return AI_MODE_OPTIONS.has(normalized) ? normalized : "demo";
+}
+
+function readAiProviderConfig() {
+  ensureDataDir();
+  const fresh = defaultAiProviderConfig();
+  if (!fs.existsSync(AI_PROVIDER_FILE)) return fresh;
+  try {
+    const stored = JSON.parse(fs.readFileSync(AI_PROVIDER_FILE, "utf8"));
+    return {
+      ...fresh,
+      ...stored,
+      provider: sanitizeProvider(stored.provider || fresh.provider),
+      mode: sanitizeAiMode(stored.mode || fresh.mode),
+      providers: {
+        openai: { ...fresh.providers.openai, ...(stored.providers?.openai || {}) },
+        anthropic: { ...fresh.providers.anthropic, ...(stored.providers?.anthropic || {}) },
+      },
+      keys: stored.keys && typeof stored.keys === "object" ? stored.keys : {},
+    };
+  } catch {
+    return fresh;
+  }
+}
+
+function writeAiProviderConfig(config) {
+  ensureDataDir();
+  const nextConfig = {
+    ...config,
+    provider: sanitizeProvider(config.provider),
+    mode: sanitizeAiMode(config.mode),
+    updatedAt: now(),
+  };
+  fs.writeFileSync(AI_PROVIDER_FILE, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: 0o600 });
+  try {
+    fs.chmodSync(AI_PROVIDER_FILE, 0o600);
+  } catch {
+    // Best effort on external drives/filesystems that do not support POSIX modes.
+  }
+  return nextConfig;
+}
+
+function keyFromConfig(config, provider) {
+  const stored = String(config.keys?.[provider] || "");
+  if (stored) return stored;
+  if (provider === "openai") return ENV_OPENAI_API_KEY;
+  if (provider === "anthropic") return ENV_ANTHROPIC_API_KEY;
+  return "";
+}
+
+function keySource(config, provider) {
+  if (String(config.keys?.[provider] || "")) return "server-config";
+  if (provider === "openai" && ENV_OPENAI_API_KEY) return "environment";
+  if (provider === "anthropic" && ENV_ANTHROPIC_API_KEY) return "environment";
+  return "none";
+}
+
+function activeProviderSettings(config) {
+  const provider = sanitizeProvider(config.provider);
+  if (provider === "anthropic") return config.providers.anthropic;
+  if (provider === "openai") return config.providers.openai;
+  return { model: "local-demo", temperature: 0, maxOutputTokens: 700 };
+}
+
+function publicAiProviderSettings(config = readAiProviderConfig()) {
+  const provider = sanitizeProvider(config.provider);
+  const mode = provider === "local" ? "demo" : sanitizeAiMode(config.mode);
+  const activeSettings = activeProviderSettings({ ...config, provider });
+  const keyConfigured = provider === "local" ? false : Boolean(keyFromConfig(config, provider));
+  const connectionStatus = provider === "local"
+    ? "Not configured"
+    : keyConfigured
+      ? "Connected"
+      : "Not configured";
+  return {
+    provider,
+    providerLabel: provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Anthropic" : "Local Demo",
+    mode,
+    modeLabel: mode === "live" ? "Live API" : "Local Demo",
+    connectionStatus,
+    activeModel: provider === "local" ? "Not selected" : activeSettings.model || "Not selected",
+    temperature: activeSettings.temperature,
+    maxOutputTokens: activeSettings.maxOutputTokens,
+    lastTest: config.lastTest || null,
+    providers: {
+      local: {
+        keyConfigured: false,
+        keyStatus: "No key required",
+        model: "local-demo",
+      },
+      openai: {
+        keyConfigured: Boolean(keyFromConfig(config, "openai")),
+        keyStatus: keyFromConfig(config, "openai") ? "Key saved securely" : "Not configured",
+        keySource: keySource(config, "openai"),
+        model: config.providers.openai.model,
+        temperature: config.providers.openai.temperature,
+        maxOutputTokens: config.providers.openai.maxOutputTokens,
+      },
+      anthropic: {
+        keyConfigured: Boolean(keyFromConfig(config, "anthropic")),
+        keyStatus: keyFromConfig(config, "anthropic") ? "Key saved securely" : "Not configured",
+        keySource: keySource(config, "anthropic"),
+        model: config.providers.anthropic.model,
+        temperature: config.providers.anthropic.temperature,
+        maxOutputTokens: config.providers.anthropic.maxOutputTokens,
+      },
+    },
+    storageNote: "API keys are held server-side only. Prefer environment variables on Railway; local saved keys live in ignored backend config.",
+  };
+}
+
+function updateAiProviderSettings(payload) {
+  const config = readAiProviderConfig();
+  const provider = sanitizeProvider(payload.provider || config.provider);
+  const mode = provider === "local" ? "demo" : sanitizeAiMode(payload.mode || config.mode);
+  config.provider = provider;
+  config.mode = mode;
+  if (provider === "openai" || provider === "anthropic") {
+    const current = config.providers[provider];
+    const temperature = Number(payload.temperature);
+    const maxOutputTokens = Number(payload.maxOutputTokens);
+    config.providers[provider] = {
+      ...current,
+      model: String(payload.model || current.model || "").trim() || current.model,
+      temperature: Number.isFinite(temperature) ? Math.max(0, Math.min(2, temperature)) : current.temperature,
+      maxOutputTokens: Number.isFinite(maxOutputTokens) ? Math.max(64, Math.min(4096, Math.round(maxOutputTokens))) : current.maxOutputTokens,
+    };
+  }
+  return publicAiProviderSettings(writeAiProviderConfig(config));
+}
+
+function saveAiProviderKey(payload) {
+  const provider = sanitizeProvider(payload.provider);
+  if (!["openai", "anthropic"].includes(provider)) {
+    throw guardedError("Choose OpenAI or Anthropic before saving a provider key.", 400);
+  }
+  const apiKey = String(payload.apiKey || "").trim();
+  if (apiKey.length < 12) {
+    throw guardedError("API key is too short.", 400);
+  }
+  const config = readAiProviderConfig();
+  config.keys = config.keys || {};
+  config.keys[provider] = apiKey;
+  writeAiProviderConfig(config);
+  return publicAiProviderSettings(config);
+}
+
+function removeAiProviderKey(payload) {
+  const provider = sanitizeProvider(payload.provider);
+  if (!["openai", "anthropic"].includes(provider)) {
+    throw guardedError("Choose OpenAI or Anthropic before removing a provider key.", 400);
+  }
+  const config = readAiProviderConfig();
+  if (config.keys) delete config.keys[provider];
+  writeAiProviderConfig(config);
+  return publicAiProviderSettings(config);
+}
+
+function detectRiskyAction(text) {
+  const value = String(text || "").toLowerCase();
+  const checks = [
+    ["publish", ["publish", "post listing", "go live", "external publish"]],
+    ["spend_money", ["spend money", "buy ", "purchase", "pay for", "charge card"]],
+    ["move_money", ["move money", "transfer money", "wire funds", "withdraw"]],
+    ["contact_customer", ["contact customer", "email customer", "call customer", "message customer"]],
+    ["modify_account", ["modify account", "change account", "update account", "delete account"]],
+    ["create_live_agent", ["create live agent", "activate agent", "launch agent", "make agent live"]],
+    ["change_permissions", ["change permission", "grant permission", "admin permission"]],
+    ["change_api_key", ["change api key", "rotate key", "replace key"]],
+    ["deploy_campaign", ["deploy campaign", "launch campaign", "send campaign"]],
+    ["external_api_action", ["call external api", "run external api", "external api action"]],
+  ];
+  const match = checks.find(([, phrases]) => phrases.some((phrase) => value.includes(phrase)));
+  return match ? match[0] : null;
+}
+
+function requiresHumanGate(actionType) {
+  return AI_RISKY_ACTION_TYPES.has(actionType);
+}
+
+function localDepoDemoResponse(message) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("what can you do") || text.includes("can you do")) {
+    return "I can help you turn ideas into safe, structured work: research, organize evidence, draft outputs, create task plans, draft workflows, save internal notes, prepare reports, and package risky work for Human Gate review.";
+  }
+  if (text.includes("blocked") || text.includes("cannot") || text.includes("can't")) {
+    return "I cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.";
+  }
+  if (text.includes("workflow")) {
+    return "A safe workflow is: Task Intake -> Research Lab -> Verify Station -> Draft Studio -> Human Gate -> Output Bench -> System Log.";
+  }
+  if (text.includes("agent") || text.includes("grow")) {
+    return "There is only one live agent: Depo 001. I can draft future-agent blueprints, but activation stays behind Human Gate.";
+  }
+  return "I can work on this locally in draft-only mode. Give me one bounded task, and I will structure it into research, verification, draft, approval, output, and log steps.";
+}
+
+function safeJsonParse(raw, fallback) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeDepoAiPayload(payload, fallbackMessage) {
+  const parsed = typeof payload === "string" ? safeJsonParse(payload, null) : payload;
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      message: String(fallbackMessage || payload || "").trim() || "Depo returned an empty response.",
+      suggestedActions: [],
+      requiresApproval: false,
+      riskLevel: "low",
+      logs: [],
+    };
+  }
+  return {
+    message: String(parsed.message || fallbackMessage || "Depo response ready.").trim(),
+    suggestedActions: Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions : [],
+    requiresApproval: Boolean(parsed.requiresApproval),
+    riskLevel: ["low", "medium", "high"].includes(parsed.riskLevel) ? parsed.riskLevel : "low",
+    blockedAction: parsed.blockedAction ? String(parsed.blockedAction) : undefined,
+    logs: Array.isArray(parsed.logs) ? parsed.logs.map(String).slice(0, 6) : [],
+  };
+}
+
+function depoResponseSchemaInstruction() {
+  return "Return only JSON with keys: message string, suggestedActions array, requiresApproval boolean, riskLevel low|medium|high, logs array. If a risky action is requested, set requiresApproval true, riskLevel high, and blockedAction to the action type.";
+}
+
+async function callOpenAiProvider(config, message, context) {
+  const provider = "openai";
+  const key = keyFromConfig(config, provider);
+  if (!key) throw guardedError("OpenAI API key is not configured.", 400);
+  const settings = config.providers.openai;
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      instructions: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
+      input: [
+        {
+          role: "user",
+          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Depo Habitat"}\nMessage: ${message}`,
+        },
+      ],
+      temperature: settings.temperature,
+      max_output_tokens: settings.maxOutputTokens,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+  }
+  const outputText = payload.output_text || payload.output?.flatMap((item) => item.content || []).map((part) => part.text || "").join("\n");
+  return normalizeDepoAiPayload(outputText, outputText);
+}
+
+async function callAnthropicProvider(config, message, context) {
+  const provider = "anthropic";
+  const key = keyFromConfig(config, provider);
+  if (!key) throw guardedError("Anthropic API key is not configured.", 400);
+  const settings = config.providers.anthropic;
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      max_tokens: settings.maxOutputTokens,
+      temperature: settings.temperature,
+      system: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
+      messages: [
+        {
+          role: "user",
+          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Depo Habitat"}\nMessage: ${message}`,
+        },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw guardedError(payload.error?.message || `Anthropic request failed with ${response.status}.`, response.status);
+  }
+  const outputText = (payload.content || []).map((part) => part.text || "").join("\n");
+  return normalizeDepoAiPayload(outputText, outputText);
+}
+
+function blockedDepoResponse(actionType) {
+  return {
+    message: "Human Gate approval required before this can continue.",
+    suggestedActions: [],
+    requiresApproval: true,
+    riskLevel: "high",
+    blockedAction: actionType,
+    logs: [`Blocked risky action: ${actionType}`],
+  };
+}
+
+async function testAiProvider(payload = {}) {
+  const config = readAiProviderConfig();
+  const provider = sanitizeProvider(payload.provider || config.provider);
+  const testConfig = {
+    ...config,
+    provider,
+    mode: provider === "local" ? "demo" : sanitizeAiMode(payload.mode || config.mode),
+  };
+  try {
+    let result;
+    if (provider === "local" || testConfig.mode !== "live") {
+      result = {
+        success: true,
+        provider,
+        model: "local-demo",
+        message: "Local Demo Mode is ready. No external API call was made.",
+      };
+    } else if (provider === "openai") {
+      const response = await callOpenAiProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
+      result = { success: true, provider, model: testConfig.providers.openai.model, message: response.message };
+    } else if (provider === "anthropic") {
+      const response = await callAnthropicProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
+      result = { success: true, provider, model: testConfig.providers.anthropic.model, message: response.message };
+    } else {
+      throw guardedError("Unknown AI provider.", 400);
+    }
+    config.lastTest = { ...result, testedAt: now() };
+    writeAiProviderConfig(config);
+    return result;
+  } catch (error) {
+    const result = {
+      success: false,
+      provider,
+      model: provider === "local" ? "local-demo" : activeProviderSettings({ ...config, provider }).model,
+      error: error.message,
+    };
+    config.lastTest = { ...result, testedAt: now() };
+    writeAiProviderConfig(config);
+    return result;
+  }
+}
+
+async function handleDepoChat(payload = {}) {
+  const message = String(payload.message || "").trim();
+  if (!message) throw guardedError("Message is required.", 400);
+  const riskyRequest = detectRiskyAction(message);
+  if (riskyRequest && requiresHumanGate(riskyRequest)) return blockedDepoResponse(riskyRequest);
+  const config = readAiProviderConfig();
+  const provider = sanitizeProvider(config.provider);
+  const mode = provider === "local" ? "demo" : sanitizeAiMode(config.mode);
+  if (mode !== "live" || provider === "local") {
+    return {
+      message: localDepoDemoResponse(message),
+      suggestedActions: [],
+      requiresApproval: false,
+      riskLevel: "low",
+      logs: ["Local Demo Mode response. No external API call was made."],
+      provider: "local",
+      mode: "demo",
+    };
+  }
+
+  let response;
+  if (provider === "openai") {
+    response = await callOpenAiProvider(config, message, payload);
+  } else if (provider === "anthropic") {
+    response = await callAnthropicProvider(config, message, payload);
+  } else {
+    response = {
+      message: localDepoDemoResponse(message),
+      suggestedActions: [],
+      requiresApproval: false,
+      riskLevel: "low",
+      logs: ["Unknown provider; used Local Demo Mode."],
+    };
+  }
+  const riskyResponse = detectRiskyAction(`${response.message} ${(response.suggestedActions || []).join(" ")}`);
+  if (riskyResponse && requiresHumanGate(riskyResponse)) return blockedDepoResponse(riskyResponse);
+  return {
+    ...response,
+    provider,
+    mode,
+  };
+}
+
 function guardedError(message, status = 409) {
   const error = new Error(message);
   error.status = status;
@@ -1772,6 +2221,61 @@ function deleteAccessUser(req, userIdToDelete, payload) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/settings/ai-provider") {
+    sendJson(res, 200, publicAiProviderSettings());
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings/ai-provider") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, updateAiProviderSettings(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings/ai-provider/key") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, saveAiProviderKey(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/settings/ai-provider/key") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, removeAiProviderKey(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings/ai-provider/test") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, await testAiProvider(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/depo/chat") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, await handleDepoChat(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/state") {
     sendJson(res, 200, readState());
     return;

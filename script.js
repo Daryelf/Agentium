@@ -4,8 +4,8 @@ const fallbackState = {
   },
   agent: {
     id: "agent-001-depo",
-    name: "Depo",
-    role: "Depository Operator",
+    name: "Agent 101",
+    role: "Draft-only Operator",
     state: "active_supervised",
     spendLimit: "$5/day sandbox",
     externalActions: "Draft only",
@@ -46,7 +46,7 @@ const fallbackState = {
         progress: 28,
         confidence: 72,
         title: "Build Etsy print-on-demand research lane",
-        copy: "Depo is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
+        copy: "Agent 101 is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
         risk: "Low",
       },
       {
@@ -56,7 +56,7 @@ const fallbackState = {
         progress: 51,
         confidence: 82,
         title: "Check contradictions and policy risk",
-        copy: "Depo is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
+        copy: "Agent 101 is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
         risk: "Medium",
       },
       {
@@ -66,7 +66,7 @@ const fallbackState = {
         progress: 74,
         confidence: 88,
         title: "Draft the first workflow",
-        copy: "Depo is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
+        copy: "Agent 101 is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
         risk: "Low",
       },
       {
@@ -76,7 +76,7 @@ const fallbackState = {
         progress: 92,
         confidence: 91,
         title: "Package decision for the operator",
-        copy: "Depo is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
+        copy: "Agent 101 is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
         risk: "Approval required",
       },
     ],
@@ -143,7 +143,7 @@ const fallbackState = {
       status: "proposal_only",
       risk: "medium",
       description: "Draft new agent manifests, tests, budgets, and permissions as proposals.",
-      nextFunction: "Propose a second agent only after Depo's first workflow is approved.",
+      nextFunction: "Propose a second agent only after Agent 101's first workflow is approved.",
     },
   ],
   taskTemplates: [
@@ -185,7 +185,7 @@ const fallbackState = {
       title: "Approve POD research lane v0",
       risk: "low",
       evidence: "3 source notes, 1 contradiction check, 1 spend estimate",
-      action: "Allow Depo to save this workflow as a reusable playbook.",
+      action: "Allow Agent 101 to save this workflow as a reusable playbook.",
       status: "pending",
     },
     {
@@ -201,7 +201,7 @@ const fallbackState = {
     working: [
       {
         title: "Current task",
-        body: "Design a visible first-agent system for Argentum with Depo as the supervised starting worker.",
+        body: "Design a visible first-agent system for Argentum with Agent 101 as the supervised starting worker.",
       },
       {
         title: "Open question",
@@ -220,19 +220,19 @@ const fallbackState = {
     ],
     agent: [
       {
-        title: "Depo identity",
-        body: "Depo is the depository operator: gather, verify, draft, and package work for approval.",
+        title: "Agent 101 identity",
+        body: "Agent 101 is the draft-only operator: gather, verify, draft, and package work for approval.",
       },
       {
         title: "Failure habit",
-        body: "When evidence is stale, contradictory, or missing, Depo must ask for review instead of inventing certainty.",
+        body: "When evidence is stale, contradictory, or missing, Agent 101 must ask for review instead of inventing certainty.",
       },
     ],
   },
   audit: [
     {
       title: "Static console loaded",
-      body: "Start the local server with npm start to enable persistent memory, approvals, and Depo cycles.",
+      body: "Start the local server with npm start to enable persistent memory, approvals, and Agent 101 cycles.",
     },
   ],
 };
@@ -434,7 +434,7 @@ const depoWorkflowStages = [
 ];
 
 const depoWorkflowStageLabels = {
-  "depo-habitat": "Depo Habitat",
+  "depo-habitat": "Agent Habitat",
   "task-intake": "Task Intake",
   "research-lab": "Research Lab",
   "verify-station": "Verify Station",
@@ -486,9 +486,9 @@ const riskyActionTypes = new Set([
 
 const depoAgent = {
   id: "depo",
-  name: "Depo",
+  name: "Agent 101",
   title: "Master Agent",
-  role: "Depository Operator",
+  role: "Draft-only Operator",
   status: "Active supervised",
   mode: "Draft only",
   authorityLevel: "Head Agent",
@@ -502,8 +502,8 @@ const depoAgent = {
   canSpendMoney: false,
   canContactCustomers: false,
   canModifyAccounts: false,
-  number: "Agent 101",
-  icon: "D",
+  number: "101",
+  icon: "A",
   color: "#7DD3FC",
   room: "depo-habitat",
   connectedModules: ["depo-habitat", "argentum-core"],
@@ -513,16 +513,16 @@ const depoAgent = {
   queue: ["Receive first bounded workflow"],
   queueCount: 1,
   riskLevel: "Medium",
-  actions: ["Depo active supervised", "Draft-only mode loaded", "External actions remain locked"],
+  actions: ["Agent 101 active supervised", "Draft-only mode loaded", "External actions remain locked"],
 };
 
 const habitatFloorRooms = [
   {
     id: "depo-habitat",
-    title: "Depo Habitat",
-    name: "Depo Habitat",
+    title: "Agent Habitat",
+    name: "Agent Habitat",
     subtitle: "Active agent",
-    metric: depoAgent.number,
+    metric: `Agent ${depoAgent.number}`,
     status: depoAgent.status,
     type: "core",
     visual: "core",
@@ -531,10 +531,10 @@ const habitatFloorRooms = [
     position: { x: 50, y: 50 },
     size: { w: 19, h: 22 },
     purpose: "Home base for the first supervised Argentum agent.",
-    depoRole: "Depo coordinates the safe local workflow from here.",
+    depoRole: "Agent 101 coordinates the safe local workflow from here.",
     connections: ["task-intake", "research-lab", "verify-station", "draft-studio", "memory-vault", "human-gate", "output-bench", "system-log"],
     riskNote: "External actions remain locked.",
-    recentActivity: ["Depo initialized as Agent 101.", "Draft-only mode loaded.", "Human Gate is active."],
+    recentActivity: ["Agent 101 initialized.", "Draft-only mode loaded.", "Human Gate is active."],
   },
   {
     id: "task-intake",
@@ -550,7 +550,7 @@ const habitatFloorRooms = [
     position: { x: 20.8, y: 17.5 },
     size: { w: 27, h: 28 },
     purpose: "Captures new requests and turns them into structured work.",
-    depoRole: "Depo reads the request and breaks it into safe steps.",
+    depoRole: "Agent 101 reads the request and breaks it into safe steps.",
     connections: ["depo-habitat", "research-lab", "system-log"],
     riskNote: "Intake creates drafts only.",
     recentActivity: ["Three requests waiting.", "Task pad warmed.", "No external action opened."],
@@ -569,7 +569,7 @@ const habitatFloorRooms = [
     position: { x: 50, y: 17.5 },
     size: { w: 27, h: 28 },
     purpose: "Gathers context, notes, and supporting information.",
-    depoRole: "Depo collects research and saves useful evidence.",
+    depoRole: "Agent 101 collects research and saves useful evidence.",
     connections: ["task-intake", "memory-vault", "verify-station", "depo-habitat"],
     riskNote: "No spending, publishing, or external contact.",
     recentActivity: ["Twelve evidence items staged.", "Source notes grouped.", "Research screens online."],
@@ -588,7 +588,7 @@ const habitatFloorRooms = [
     position: { x: 79.2, y: 17.5 },
     size: { w: 27, h: 28 },
     purpose: "Checks claims, assumptions, and missing details.",
-    depoRole: "Depo validates whether the work is safe and complete.",
+    depoRole: "Agent 101 validates whether the work is safe and complete.",
     connections: ["research-lab", "draft-studio", "human-gate"],
     riskNote: "Uncertain claims require human review.",
     recentActivity: ["Five checks open.", "Claim review in progress.", "Unsafe assumptions flagged."],
@@ -607,7 +607,7 @@ const habitatFloorRooms = [
     position: { x: 20.8, y: 50 },
     size: { w: 27, h: 28 },
     purpose: "Stores reusable notes, context, research, and internal knowledge.",
-    depoRole: "Depo saves and retrieves project memory.",
+    depoRole: "Agent 101 saves and retrieves project memory.",
     connections: ["research-lab", "draft-studio", "depo-habitat"],
     riskNote: "Sensitive data should be logged.",
     recentActivity: ["Memory drawers indexed.", "Evidence note saved.", "Private context kept local."],
@@ -626,7 +626,7 @@ const habitatFloorRooms = [
     position: { x: 79.2, y: 50 },
     size: { w: 27, h: 28 },
     purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
-    depoRole: "Depo drafts work but does not publish it.",
+    depoRole: "Agent 101 drafts work but does not publish it.",
     connections: ["verify-station", "memory-vault", "human-gate", "output-bench"],
     riskNote: "Publishing is locked.",
     recentActivity: ["Two drafts in progress.", "Listing notes remain internal.", "Creative desk active."],
@@ -645,7 +645,7 @@ const habitatFloorRooms = [
     position: { x: 20.8, y: 84 },
     size: { w: 27, h: 28 },
     purpose: "Tracks events, stage changes, and audit history.",
-    depoRole: "Depo writes cycle updates here.",
+    depoRole: "Agent 101 writes cycle updates here.",
     connections: ["depo-habitat", "task-intake", "research-lab", "verify-station", "draft-studio", "human-gate", "output-bench", "memory-vault"],
     riskNote: "Logs should be append-only where possible.",
     recentActivity: ["Event stream live.", "Stage update written.", "Approval status recorded."],
@@ -664,7 +664,7 @@ const habitatFloorRooms = [
     position: { x: 50, y: 84 },
     size: { w: 27, h: 28 },
     purpose: "Holds completed drafts and prepared deliverables.",
-    depoRole: "Depo places reviewed work here for final handling.",
+    depoRole: "Agent 101 places reviewed work here for final handling.",
     connections: ["human-gate", "system-log", "depo-habitat"],
     riskNote: "Outputs remain internal until approved.",
     recentActivity: ["Four output items staged.", "Delivery bench organized.", "No publish action sent."],
@@ -683,7 +683,7 @@ const habitatFloorRooms = [
     position: { x: 79.2, y: 84 },
     size: { w: 27, h: 28 },
     purpose: "Blocks risky actions until the operator approves.",
-    depoRole: "Depo packages work for human review.",
+    depoRole: "Agent 101 packages work for human review.",
     connections: ["draft-studio", "output-bench", "system-log"],
     riskNote: "Required for publishing, money movement, customer contact, account changes, and new agents.",
     recentActivity: ["Approval lock engaged.", "Risk package waiting.", "External action blocked."],
@@ -980,7 +980,7 @@ const roomProfiles = {
     description: `Central supervised habitat where ${depoAgent.name} lives, receives bounded work, and sends risky actions to the human gate.`,
     agents: [depoAgent.name],
     connectedModules: ["depo-habitat"],
-    connected: ["Depo Habitat"],
+    connected: ["Agent Habitat"],
     tasks: [`Hold ${depoAgent.name}'s identity`, "Route one bounded task", "Protect approval boundaries"],
     activity: [`${depoAgent.name} has entered the habitat.`, "Revenue claims are cleared.", "Human-gate constraints are active."],
     metrics: [["Active agents", "1"], ["Revenue", "None yet"], ["Mode", "Supervised"]],
@@ -988,8 +988,8 @@ const roomProfiles = {
   },
   "depo-habitat": {
     id: "depo-habitat",
-    title: "Depo Habitat",
-    name: "Depo Habitat",
+    title: "Agent Habitat",
+    name: "Agent Habitat",
     type: "First Agent Home",
     status: depoAgent.status,
     metric: `Agent ${depoAgent.number}`,
@@ -1003,8 +1003,8 @@ const roomProfiles = {
     connectedModules: ["argentum-core"],
     connected: ["Argentum Core"],
     tasks: ["Accept one bounded workflow", ...depoAgent.can.slice(0, 2)],
-    activity: [`Agent ${depoAgent.number} initialized.`, `${depoAgent.mode} permission set loaded.`, "No revenue has been claimed."],
-    metrics: [["Agent", depoAgent.name], ["Current stage", depoStageLabel(depoAgent.currentStage)], ["External actions", depoAgent.externalActions]],
+    activity: [`${depoAgent.name} initialized.`, `${depoAgent.mode} permission set loaded.`, "No revenue has been claimed."],
+    metrics: [["Identity", depoAgent.name], ["Current stage", depoStageLabel(depoAgent.currentStage)], ["External actions", depoAgent.externalActions]],
     workspaceType: "depo",
   },
   "agent-habitat": {
@@ -1020,11 +1020,11 @@ const roomProfiles = {
     labelPosition: { x: 18, y: 13 },
     summary: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
     description: "Central habitat for visible agents, supervision rules, permissions, and operator coordination.",
-    agents: ["Atlas", "Depo", "Sentry"],
+    agents: ["Atlas", "Agent 101", "Sentry"],
     connectedModules: ["argentum-core", "ai-agents", "task-factory", "system-logs"],
     connected: ["AI Agents Room", "Task Factory", "Security Core", "Resources"],
     tasks: ["Review active agents", "Check permissions", "Open supervised workspaces"],
-    activity: ["Atlas reconciled the command map.", "Depo remains draft-only.", "Sentry verified approval gates."],
+    activity: ["Atlas reconciled the command map.", "Agent 101 remains draft-only.", "Sentry verified approval gates."],
     metrics: [["Agents", "7"], ["Mode", "Supervised"], ["External actions", "Locked"]],
     workspaceType: "agent",
   },
@@ -1041,11 +1041,11 @@ const roomProfiles = {
     labelPosition: { x: 39, y: 13 },
     summary: "Runtime coordination room where active agents exchange context, queues, and route state.",
     description: "Runtime coordination room where active agents exchange context, queues, and route state.",
-    agents: ["Atlas", "Nexus", "Depo"],
+    agents: ["Atlas", "Nexus", "Agent 101"],
     connectedModules: ["agent-habitat", "argentum-core", "workflow-pipeline", "security-core"],
     connected: ["Agent Habitat", "Security Core", "Workflow Pipeline"],
     tasks: ["Balance agent queues", "Route context", "Track active status"],
-    activity: ["Nexus refreshed route links.", "Atlas synced agent state.", "Depo moved to Verify."],
+    activity: ["Nexus refreshed route links.", "Atlas synced agent state.", "Agent 101 moved to Verify."],
     metrics: [["Active agents", "7"], ["Context sync", "Live"], ["Queue pressure", "Normal"]],
     workspaceType: "agents",
   },
@@ -1062,11 +1062,11 @@ const roomProfiles = {
     labelPosition: { x: 12, y: 40 },
     summary: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
     description: "Production factory for intake, prioritization, draft generation, and approval-ready task packages.",
-    agents: ["Forge", "Nexus", "Depo"],
+    agents: ["Forge", "Nexus", "Agent 101"],
     connectedModules: ["commerce-terminal", "workflow-pipeline", "resources", "argentum-core"],
     connected: ["Agent Habitat", "Commerce Terminal", "Workflow Pipeline", "Resources"],
     tasks: ["Package task batch", "Prepare draft outputs", "Route risky actions to approval"],
-    activity: ["Forge deployed a production batch.", "Depo packaged one approval.", "Nexus checked automation pressure."],
+    activity: ["Forge deployed a production batch.", "Agent 101 packaged one approval.", "Nexus checked automation pressure."],
     metrics: [["Active", "197"], ["Queued", "8"], ["Failed", "0"]],
     workspaceType: "forge",
   },
@@ -1125,11 +1125,11 @@ const roomProfiles = {
     labelPosition: { x: 18, y: 68 },
     summary: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
     description: "Private resource inventory for memory, evidence, assets, product data, and local telemetry.",
-    agents: ["Oracle", "Depo"],
+    agents: ["Oracle", "Agent 101"],
     connectedModules: ["task-factory", "logistics-node", "workflow-pipeline", "argentum-core"],
     connected: ["Task Factory", "Logistics Node", "Workflow Pipeline", "Revenue Monitor"],
     tasks: ["Index resources", "Label evidence freshness", "Separate private memory"],
-    activity: ["Oracle scanned data inventory.", "Depo wrote provenance notes.", "Resource health remains optimal."],
+    activity: ["Oracle scanned data inventory.", "Agent 101 wrote provenance notes.", "Resource health remains optimal."],
     metrics: [["Items", "12,455"], ["Freshness", "97%"], ["Private", "On"]],
     workspaceType: "oracle",
   },
@@ -1341,7 +1341,7 @@ const habitatModuleCards = {
     metric: `Agent ${depoAgent.number} online`,
     depoRole: `Keeps ${depoAgent.name}'s work local, bounded, and routed through approval before any risky action.`,
     connections: ["depo-habitat"],
-    recentActivity: ["Depo has entered the habitat.", "Revenue counters reset to none.", "Risk gates are active."],
+    recentActivity: ["Agent 101 is active.", "Revenue counters reset to none.", "Risk gates are active."],
     riskNote: "Approval is required before any risky external action.",
     quickActions: ["Run cycle", "View system routes", "View approvals"],
   },
@@ -1351,7 +1351,7 @@ const habitatModuleCards = {
     metric: `Agent ${depoAgent.number}`,
     depoRole: `${depoAgent.name} lives here and starts with research, evidence organization, drafting, and approval packaging.`,
     connections: ["argentum-core"],
-    recentActivity: [`${depoAgent.name} born into habitat.`, `${depoAgent.mode} rules loaded.`, "First workflow waiting."],
+    recentActivity: [`${depoAgent.name} activated.`, `${depoAgent.mode} rules loaded.`, "First workflow waiting."],
     riskNote: `${depoAgent.name} can prepare internal work, but cannot ${depoAgent.cannot.slice(0, 4).join(", ")} or perform risky external actions.`,
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
@@ -1359,9 +1359,9 @@ const habitatModuleCards = {
     purpose: "Home base for supervised agents.",
     status: "Live",
     metric: "1 active agent",
-    depoRole: "Depo lives here as the only active supervised operator.",
+    depoRole: "Agent 101 lives here as the only active supervised operator.",
     connections: ["argentum-core", "ai-agents", "task-factory", "system-logs"],
-    recentActivity: ["Depo active.", "Agent health checked.", "No new agents created."],
+    recentActivity: ["Agent 101 active.", "Agent health checked.", "No new agents created."],
     riskNote: "New agents require human approval.",
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
@@ -1369,9 +1369,9 @@ const habitatModuleCards = {
     purpose: "Agent coordination and capability management.",
     status: "Live",
     metric: "1 active agent",
-    depoRole: "Depo receives instructions and sends completed drafts back for review.",
+    depoRole: "Agent 101 receives instructions and sends completed drafts back for review.",
     connections: ["agent-habitat", "argentum-core", "workflow-pipeline", "security-core"],
-    recentActivity: ["Depo cycle initialized.", "Permissions verified."],
+    recentActivity: ["Agent 101 cycle initialized.", "Permissions verified."],
     riskNote: "Agent permissions are locked.",
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
@@ -1379,7 +1379,7 @@ const habitatModuleCards = {
     purpose: "Converts ideas into structured tasks.",
     status: "Active",
     metric: "197 active references / 1 queued task",
-    depoRole: "Depo breaks work into research, evidence, draft, and approval steps.",
+    depoRole: "Agent 101 breaks work into research, evidence, draft, and approval steps.",
     connections: ["commerce-terminal", "workflow-pipeline", "resources", "argentum-core"],
     recentActivity: ["New task queued.", "Research lane prepared."],
     riskNote: "Tasks can be drafted, not deployed.",
@@ -1389,7 +1389,7 @@ const habitatModuleCards = {
     purpose: "Commerce/storefront planning and order logic.",
     status: "Draft only",
     metric: "Revenue not connected / mock value only",
-    depoRole: "Depo can prepare commerce ideas, but cannot publish or charge customers.",
+    depoRole: "Agent 101 can prepare commerce ideas, but cannot publish or charge customers.",
     connections: ["task-factory", "revenue-monitor", "customer-node", "workflow-pipeline"],
     recentActivity: ["Commerce draft prepared.", "No live sales action taken."],
     riskNote: "Publishing, checkout, pricing, or money movement requires approval.",
@@ -1399,7 +1399,7 @@ const habitatModuleCards = {
     purpose: "Finance, budget, revenue, and cost awareness.",
     status: "Guarded",
     metric: "Budget guard active",
-    depoRole: "Depo can estimate costs and summarize revenue, but cannot move money.",
+    depoRole: "Agent 101 can estimate costs and summarize revenue, but cannot move money.",
     connections: ["commerce-terminal", "resources", "argentum-core", "security-core"],
     recentActivity: ["Budget check passed.", "Expense note prepared."],
     riskNote: "Money movement is locked.",
@@ -1409,7 +1409,7 @@ const habitatModuleCards = {
     purpose: "Memory, files, inventory, and reusable knowledge.",
     status: "Optimal",
     metric: "12,455 items / private memory active",
-    depoRole: "Depo stores notes, references, and reusable research here.",
+    depoRole: "Agent 101 stores notes, references, and reusable research here.",
     connections: ["task-factory", "logistics-node", "workflow-pipeline", "argentum-core"],
     recentActivity: ["Research note saved.", "Memory updated."],
     riskNote: "Sensitive data access should be logged.",
@@ -1419,17 +1419,17 @@ const habitatModuleCards = {
     purpose: "Routes work between stages and modules.",
     status: "Live",
     metric: "8 routes active",
-    depoRole: "Depo uses this node to move drafts from research to approval.",
+    depoRole: "Agent 101 uses this node to move drafts from research to approval.",
     connections: ["resources", "workflow-pipeline", "commerce-terminal", "customer-node"],
     recentActivity: ["Route to Workflow Pipeline active."],
     riskNote: "External delivery actions require approval.",
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
   "workflow-pipeline": {
-    purpose: "Main stage tracker for Depo's supervised loop.",
+    purpose: "Main stage tracker for Agent 101's supervised loop.",
     status: "Active",
     metric: "Current stage: Workflow Pipeline",
-    depoRole: "Depo moves through Intake -> Research -> Verify -> Draft -> Package -> Approval.",
+    depoRole: "Agent 101 moves through Intake -> Research -> Verify -> Draft -> Package -> Approval.",
     connections: ["agent-habitat", "task-factory", "logistics-node", "content-engine", "system-logs"],
     recentActivity: ["Stage moved to Workflow Pipeline."],
     riskNote: "Final action must pass Human Gate.",
@@ -1439,7 +1439,7 @@ const habitatModuleCards = {
     purpose: "Drafts outputs, concepts, listings, posts, and creative assets.",
     status: "Draft only",
     metric: "5 generating / 0 published",
-    depoRole: "Depo can create drafts but cannot publish externally.",
+    depoRole: "Agent 101 can create drafts but cannot publish externally.",
     connections: ["workflow-pipeline", "commerce-terminal", "customer-node", "system-logs"],
     recentActivity: ["Draft output prepared.", "Awaiting review."],
     riskNote: "Publishing requires approval.",
@@ -1449,7 +1449,7 @@ const habitatModuleCards = {
     purpose: "Customer-facing communication and support awareness.",
     status: "Guarded",
     metric: "Contact gate locked",
-    depoRole: "Depo can draft customer messages but cannot send them.",
+    depoRole: "Agent 101 can draft customer messages but cannot send them.",
     connections: ["commerce-terminal", "content-engine", "security-core", "system-logs"],
     recentActivity: ["Customer contact blocked by gate."],
     riskNote: "Contacting customers requires approval.",
@@ -1459,7 +1459,7 @@ const habitatModuleCards = {
     purpose: "Approval gates, permissions, risk checks, and blocked actions.",
     status: "Secure",
     metric: "No threats",
-    depoRole: "Depo checks whether actions are safe before packaging them for approval.",
+    depoRole: "Agent 101 checks whether actions are safe before packaging them for approval.",
     connections: ["argentum-core", "ai-agents", "revenue-monitor", "customer-node", "system-logs"],
     recentActivity: ["Permission check passed.", "External action blocked."],
     riskNote: "High-risk actions must be approved.",
@@ -1469,9 +1469,9 @@ const habitatModuleCards = {
     purpose: "Live event stream and audit history.",
     status: "Live feed",
     metric: "6 events",
-    depoRole: "Depo writes cycle updates and action notes here.",
+    depoRole: "Agent 101 writes cycle updates and action notes here.",
     connections: ["agent-habitat", "content-engine", "customer-node", "security-core", "workflow-pipeline"],
-    recentActivity: ["Depo moved to Workflow Pipeline.", "Approval required."],
+    recentActivity: ["Agent 101 moved to Workflow Pipeline.", "Approval required."],
     riskNote: "Logs should be append-only when possible.",
     quickActions: ["Open workspace", "View logs", "Run check"],
   },
@@ -1522,7 +1522,7 @@ function updateHabitatRoomRuntimeFromState() {
     metric: depoAgent.number,
     status: depoAgent.status,
     runtimeActivity: [
-      "Only Depo is active.",
+      "Only Agent 101 is active.",
       `${depoAgent.mode} mode loaded.`,
       `${depoStageLabel(depoAgent.currentStage)} is the current stage.`,
     ],
@@ -1533,7 +1533,7 @@ function updateHabitatRoomRuntimeFromState() {
     status: queuedTasks.length ? "Intake ready" : "Clear",
     runtimeActivity: [
       `${pluralize(queuedTasks.length, "queued task")} in intake.`,
-      activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} across Depo.` : "No active task backlog.",
+      activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} across Agent 101.` : "No active task backlog.",
       "New work stays internal.",
     ],
   });
@@ -1564,7 +1564,7 @@ function updateHabitatRoomRuntimeFromState() {
     runtimeActivity: [
       `${pluralize(memoryCount, "memory note")} stored across working, shared, and agent memory.`,
       "No secrets are displayed here.",
-      "Depo can read and organize memory.",
+      "Agent 101 can read and organize memory.",
     ],
   });
   syncRoomRuntime("draft-studio", {
@@ -1852,9 +1852,9 @@ function renderDepoOrbitState(agent = depoAgent) {
   if (confidenceChip) confidenceChip.textContent = agent.mode;
   if (taskStage) taskStage.textContent = `Stage: ${stageLabel}`;
   if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
-  if (coreLabelTitle) coreLabelTitle.textContent = "Depo Habitat";
+  if (coreLabelTitle) coreLabelTitle.textContent = "Agent Habitat";
   if (coreLabelStage) coreLabelStage.textContent = "Active agent";
-  if (coreLabelAgent) coreLabelAgent.textContent = agent.number;
+  if (coreLabelAgent) coreLabelAgent.textContent = `Agent ${agent.number}`;
 }
 
 function setStep() {
@@ -1905,7 +1905,7 @@ function renderAgentRoster() {
             <small>${escapeHtml(agent.role)}</small>
             <span class="agent-status ${escapeHtml(shortStatusClass(agent.status))}">${escapeHtml(agent.status)}</span>
           </span>
-          <em>${escapeHtml(agent.number)}</em>
+          <em>${escapeHtml(`Agent ${agent.number}`)}</em>
         </button>
       `,
     )
@@ -3170,7 +3170,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("grow") || text.includes("new agent") || text.includes("future agent") || text.includes("agent blueprint")) {
-    return `There is only one live agent: Depo, Agent 101. I can draft future-agent blueprints, like a Research Agent, but those stay inactive proposals. Live agent creation is locked behind Human Gate. Current blueprints: ${pluralize(snapshot.agentBlueprints.length, "draft")}.`;
+    return `There is only one live agent: Agent 101. I can draft future-agent blueprints, like a Research Agent, but those stay inactive proposals. Live agent creation is locked behind Human Gate. Current blueprints: ${pluralize(snapshot.agentBlueprints.length, "draft")}.`;
   }
 
   if (text.includes("workflow")) {
@@ -3186,7 +3186,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("stage") || text.includes("where are you")) {
-    return `Current stage: ${depoWorkflowStageLabels[depoAgent.currentStage] || "Depo Habitat"}. Mode: ${depoAgent.mode}. Risk mode: ${depoAgent.riskMode}.`;
+    return `Current stage: ${depoWorkflowStageLabels[depoAgent.currentStage] || "Agent Habitat"}. Mode: ${depoAgent.mode}. Risk mode: ${depoAgent.riskMode}.`;
   }
 
   if (text.includes("know") || text.includes("memory") || text.includes("remember")) {
@@ -3198,7 +3198,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("agent") || text.includes("agents")) {
-    return "There is only one active agent: Depo, Agent 101. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
+    return "There is only one active agent: Agent 101. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
   }
 
   return `For ${card.title}: ${card.purpose || card.summary} I can help from local state only. Ask me "what can you do?", "create a task plan", "draft a workflow", "propose a new agent", "what is blocked?", or "view Human Gate rules."`;
@@ -3214,7 +3214,7 @@ function depoChatMessagesFor(roomKey) {
 function agentChatMarkup(card) {
   const messages = depoChatMessagesFor(card.id);
   const snapshot = depoKnowledgeSnapshot();
-  const stageLabel = depoWorkflowStageLabels[depoAgent.currentStage] || "Depo Habitat";
+  const stageLabel = depoWorkflowStageLabels[depoAgent.currentStage] || "Agent Habitat";
   const promptButtons = [
     "What can you do?",
     "Create a task plan",
@@ -3229,7 +3229,7 @@ function agentChatMarkup(card) {
     <div class="module-info-head agent-chat-head">
       <span class="module-info-icon" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
       <div>
-        <strong>Talk to Depo</strong>
+        <strong>Talk to Agent 101</strong>
         <small>Master Agent · Supervised · Draft-only</small>
       </div>
       <em class="${aiProviderChatLabel() === "Provider Error" ? "danger-status" : ""}">${escapeHtml(aiProviderChatLabel())}</em>
@@ -3237,14 +3237,14 @@ function agentChatMarkup(card) {
     </div>
     ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
     <div class="agent-chat-summary">
-      <span><small>Agent</small><strong>Depo Agent 101</strong></span>
+      <span><small>Identity</small><strong>Agent 101</strong></span>
       <span><small>Mode</small><strong>Draft-only</strong></span>
       <span><small>Stage</small><strong>${escapeHtml(stageLabel)}</strong></span>
       <span><small>Approval</small><strong>Required</strong></span>
       <span><small>Memory</small><strong>${escapeHtml(pluralize(snapshot.memoryCount, "note"))}</strong></span>
       <span><small>Queue</small><strong>${escapeHtml(pluralize(snapshot.queuedTasks.length, "task"))}</strong></span>
     </div>
-    <div class="agent-unlock-status" aria-label="Depo unlock status">
+    <div class="agent-unlock-status" aria-label="Agent 101 unlock status">
       <span><strong>1</strong> Local reasoning</span>
       <span><strong>2</strong> Task planning</span>
       <span><strong>3</strong> Workflow drafting</span>
@@ -3256,7 +3256,7 @@ function agentChatMarkup(card) {
         .map(
           (message) => `
             <article class="chat-message ${message.speaker === "operator" ? "operator" : "depo"}">
-              <span>${message.speaker === "operator" ? "You" : message.prompt ? `You · ${escapeHtml(message.prompt)}` : "Depo"}</span>
+              <span>${message.speaker === "operator" ? "You" : message.prompt ? `You · ${escapeHtml(message.prompt)}` : "Agent 101"}</span>
               <p>${escapeHtml(message.text)}</p>
             </article>
           `,
@@ -3267,7 +3267,7 @@ function agentChatMarkup(card) {
       ${promptButtons.map((prompt) => `<button type="button" data-chat-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`).join("")}
     </div>
     <form class="agent-chat-form" data-depo-chat-form>
-      <input name="message" type="text" autocomplete="off" placeholder="Ask Depo about this room..." />
+      <input name="message" type="text" autocomplete="off" placeholder="Ask Agent 101 about this room..." />
       <button type="submit">Ask</button>
     </form>
   `;
@@ -3323,7 +3323,7 @@ function humanGateMarkup(card) {
                 <div>
                   <span>Human Gate</span>
                   <strong>No pending approvals</strong>
-                  <p>Depo will place packages here when work needs operator review.</p>
+                  <p>Agent 101 will place packages here when work needs operator review.</p>
                 </div>
               </article>
             `
@@ -3971,7 +3971,7 @@ function fallbackSidebarStatus() {
   const queue = queued + pending;
   return {
     health: "Local systems operational",
-    agentId: "Agent 101",
+    agentId: "Agent 101 active",
     agentMode: depoAgent.mode,
     metrics: [
       { label: "State", value: "Ready", percent: 100 },
@@ -4010,7 +4010,7 @@ function renderSidebarSystemStatus() {
     sidebarSystemHealth.innerHTML = `<span class="status-dot"></span>${escapeHtml(status.health || "Local systems operational")}`;
     sidebarSystemHealth.classList.toggle("attention", String(status.health || "").toLowerCase().includes("attention"));
   }
-  if (sidebarAgentId) sidebarAgentId.textContent = status.agentId || "Agent 101";
+  if (sidebarAgentId) sidebarAgentId.textContent = status.agentId || "Agent 101 active";
   if (sidebarAgentMode) sidebarAgentMode.textContent = status.agentMode || depoAgent.mode;
   const metrics = Array.isArray(status.metrics) ? status.metrics : [];
   sidebarStatusRows.forEach((row, index) => {
@@ -4129,7 +4129,7 @@ function renderApprovals() {
     approvalList.innerHTML = `
       <article class="approval-item empty-state">
         <strong>No pending approvals</strong>
-        <p>Depo will create new approval packages when a workflow reaches the human gate.</p>
+        <p>Agent 101 will create new approval packages when a workflow reaches the human gate.</p>
       </article>
     `;
     return;
@@ -4164,7 +4164,7 @@ function renderArtifacts() {
     artifactList.innerHTML = `
       <article class="artifact-item empty-state">
         <strong>No artifacts yet</strong>
-        <p>Run a Depo task to produce a POD brief, stock watch note, or agent proposal.</p>
+        <p>Run an Agent 101 task to produce a POD brief, stock watch note, or agent proposal.</p>
       </article>
     `;
     return;
@@ -4228,7 +4228,7 @@ function renderTasks() {
     taskList.innerHTML = `
       <article class="task-item empty-state">
         <strong>No tasks yet</strong>
-        <p>Assign Depo one bounded business job and it will prepare a draft for approval.</p>
+        <p>Assign Agent 101 one bounded business job and it will prepare a draft for approval.</p>
       </article>
     `;
     return;
@@ -4257,7 +4257,7 @@ function renderTasks() {
               : ""
           }
           <div class="task-actions">
-            <button class="small-button" type="button" data-task-run="${escapeHtml(task.id)}" ${runnable ? "" : "disabled"}>Run Depo</button>
+            <button class="small-button" type="button" data-task-run="${escapeHtml(task.id)}" ${runnable ? "" : "disabled"}>Run Agent 101</button>
           </div>
         </article>
       `;
@@ -4272,7 +4272,7 @@ function renderFunctions() {
     functionList.innerHTML = `
       <article class="function-item empty-state">
         <strong>No reusable functions yet</strong>
-        <p>Approve a Depo task output to promote it into a reusable function.</p>
+        <p>Approve an Agent 101 task output to promote it into a reusable function.</p>
       </article>
     `;
     return;
@@ -4320,7 +4320,7 @@ function renderExecutions() {
     executionList.innerHTML = `
       <article class="execution-item empty-state">
         <strong>No function runs yet</strong>
-        <p>Run an approved function to create a supervised Depo task.</p>
+        <p>Run an approved function to create a supervised Agent 101 task.</p>
       </article>
     `;
     return;
@@ -4366,12 +4366,12 @@ function systemFeedEntries() {
   const auditEntries = Array.isArray(state.audit) ? state.audit : [];
   const seededEntries = [
     {
-      title: "Depo born into habitat",
+      title: "Agent 101 activated",
       body: "Agent 101 is active in draft-only mode with no revenue claimed.",
     },
     {
       title: "First workflow waiting",
-      body: "Depo is ready for one bounded task with evidence, draft output, and approval packaging.",
+      body: "Agent 101 is ready for one bounded task with evidence, draft output, and approval packaging.",
     },
     {
       title: "Revenue cleared",
@@ -4410,7 +4410,7 @@ function compactFeedTitle(title) {
   const normalizedTitle = String(title || "");
   const compactTitles = {
     "Static console loaded": "Console loaded",
-    "Depo born into habitat": "Depo born",
+    "Agent 101 activated": "Agent active",
     "First workflow waiting": "Workflow waiting",
     "Revenue cleared": "Revenue cleared",
     "External actions locked": "Actions locked",
@@ -4483,8 +4483,8 @@ function renderAgent() {
 function renderStatus() {
   const paused = Boolean(state.mission.paused);
   pauseBtn.classList.toggle("is-active", paused);
-  pauseBtn.setAttribute("aria-label", paused ? "Resume Depo" : "Pause Depo");
-  pauseBtn.title = paused ? "Resume Depo" : "Pause Depo";
+  pauseBtn.setAttribute("aria-label", paused ? "Resume Agent 101" : "Pause Agent 101");
+  pauseBtn.title = paused ? "Resume Agent 101" : "Pause Agent 101";
   pauseBtn.innerHTML = paused
     ? `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
     : `<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>`;
@@ -4519,7 +4519,7 @@ function notificationItems() {
   if (state.mission.paused) {
     items.push({
       title: "Cycle paused",
-      body: "Depo will hold the current stage until resumed.",
+      body: "Agent 101 will hold the current stage until resumed.",
     });
   }
   return items.slice(0, 4);
@@ -4684,7 +4684,7 @@ function addLocalAudit(title, body) {
   state.audit = state.audit.slice(0, 12);
 }
 
-function addSystemLogEntry({ type = "note", message, riskLevel = "low", roomId = "depo-habitat", actor = "Depo" }) {
+function addSystemLogEntry({ type = "note", message, riskLevel = "low", roomId = "depo-habitat", actor = "Agent 101" }) {
   const entry = {
     id: `log-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     timestamp: new Date().toISOString(),
@@ -4739,10 +4739,10 @@ function setDepoWorkflowStage(stageId, context = "Run cycle") {
   depoWorkflowState.currentTask = depoAgent.currentTask;
   selectedAgentKey = null;
   selectedRoomKey = resolved;
-  pushRoomActivity(resolved, `${context}: Depo moved to ${stageLabel}.`);
-  if (resolved !== "system-log") pushRoomActivity("system-log", `Stage update: Depo moved to ${stageLabel}.`);
+  pushRoomActivity(resolved, `${context}: Agent 101 moved to ${stageLabel}.`);
+  if (resolved !== "system-log") pushRoomActivity("system-log", `Stage update: Agent 101 moved to ${stageLabel}.`);
   depoAgent.actions = [`Moved to ${stageLabel}`, ...depoAgent.actions].slice(0, 8);
-  addLocalAudit(`Depo moved to ${stageLabel}`, `${context}. Human Gate remains required for external or risky actions.`);
+  addLocalAudit(`Agent 101 moved to ${stageLabel}`, `${context}. Human Gate remains required for external or risky actions.`);
   render();
   openModuleInfoCard(resolved);
 }
@@ -4784,7 +4784,7 @@ function createDepoTaskPlan(roomKey = "task-intake") {
   depoTasks().unshift(task);
   addSystemLogEntry({
     type: "create_task_plan",
-    message: "Depo created a local task plan.",
+    message: "Agent 101 created a local task plan.",
     riskLevel: "medium",
     roomId: roomKey,
   });
@@ -4801,7 +4801,7 @@ function createDepoTaskPlan(roomKey = "task-intake") {
 function draftDepoWorkflow(roomKey = "draft-studio") {
   const workflow = {
     id: `workflow-draft-${Date.now()}`,
-    name: "Depo supervised workflow",
+    name: "Agent 101 supervised workflow",
     stages: ["Task Intake", "Research Lab", "Verify Station", "Draft Studio", "Human Gate", "Output Bench", "System Log"],
     status: "draft",
     createdBy: "depo",
@@ -4810,7 +4810,7 @@ function draftDepoWorkflow(roomKey = "draft-studio") {
   workflowDrafts().unshift(workflow);
   addSystemLogEntry({
     type: "draft_workflow",
-    message: "Depo drafted a workflow.",
+    message: "Agent 101 drafted a workflow.",
     riskLevel: "low",
     roomId: roomKey,
   });
@@ -4829,7 +4829,7 @@ function draftAgentBlueprint(roomKey = "depo-habitat") {
     id: `agent-blueprint-${Date.now()}`,
     proposedName: "Research Agent",
     proposedRole: "Evidence Researcher",
-    purpose: "Gather sources, summarize findings, and prepare research packs for Depo.",
+    purpose: "Gather sources, summarize findings, and prepare research packs for Agent 101.",
     requestedPermissions: ["Internal notes only", "No external actions"],
     riskLevel: "Low",
     status: "draft",
@@ -4840,7 +4840,7 @@ function draftAgentBlueprint(roomKey = "depo-habitat") {
   requiresHumanGate("create_live_agent", "human-gate");
   addSystemLogEntry({
     type: "draft_agent_blueprint",
-    message: "Depo drafted a future agent blueprint. Human Gate approval required before activation.",
+    message: "Agent 101 drafted a future agent blueprint. Human Gate approval required before activation.",
     riskLevel: "low",
     roomId: roomKey,
   });
@@ -4859,7 +4859,7 @@ function saveDepoNote(roomKey = "memory-vault") {
   if (!Array.isArray(state.memory.working)) state.memory.working = [];
   const note = {
     id: `mem-working-${Date.now()}`,
-    title: "Depo internal note",
+    title: "Agent 101 internal note",
     body: `Local note saved from ${moduleDisplayName(roomKey)}. External actions remain locked.`,
     provenance: "depo_local_note",
     updatedAt: new Date().toISOString(),
@@ -4867,7 +4867,7 @@ function saveDepoNote(roomKey = "memory-vault") {
   state.memory.working.unshift(note);
   addSystemLogEntry({
     type: "save_note",
-    message: "Depo saved an internal note.",
+    message: "Agent 101 saved an internal note.",
     riskLevel: "low",
     roomId: roomKey,
   });
@@ -4929,7 +4929,7 @@ function changeApprovalStatus(id, action, source = "Human Gate") {
   });
 }
 
-function addBlockedActionApproval(actionType, roomKey, source = "Depo chat") {
+function addBlockedActionApproval(actionType, roomKey, source = "Agent 101 chat") {
   state.approvals = Array.isArray(state.approvals) ? state.approvals : [];
   const room = moduleProfile(roomKey);
   state.approvals.unshift({
@@ -4966,7 +4966,7 @@ async function submitDepoChat(roomKey, message) {
       aiProviderNotice = error.message;
       addSystemLogEntry({
         type: "provider_error",
-        message: `AI provider failed; Depo used Local Demo fallback. ${error.message}`,
+        message: `AI provider failed; Agent 101 used Local Demo fallback. ${error.message}`,
         riskLevel: "medium",
         roomId: resolved,
       });
@@ -4976,7 +4976,7 @@ async function submitDepoChat(roomKey, message) {
   depoChatMessages = depoChatMessages.slice(-18);
   addSystemLogEntry({
     type: "depo_chat",
-    message: `Asked Depo about ${moduleDisplayName(resolved)}.`,
+    message: `Asked Agent 101 about ${moduleDisplayName(resolved)}.`,
     riskLevel: responseMeta.riskLevel || "low",
     roomId: resolved,
     actor: "Operator",
@@ -4991,7 +4991,7 @@ async function submitDepoChat(roomKey, message) {
   });
   if (responseMeta.requiresApproval || responseMeta.blockedAction) {
     const actionType = responseMeta.blockedAction || "external_api_action";
-    addBlockedActionApproval(actionType, resolved, "Depo brain");
+    addBlockedActionApproval(actionType, resolved, "Agent 101 brain");
     addSystemLogEntry({
       type: "human_gate_block",
       message: `Human Gate approval required for ${actionType}.`,
@@ -5016,7 +5016,7 @@ function packageRoomForApproval(roomKey) {
     id: packageId,
     title: `Review ${room.title} package`,
     risk: resolved === "human-gate" ? "high" : "medium",
-    evidence: `${room.title} purpose, Depo role, allowed actions, blocked actions, and recent activity.`,
+    evidence: `${room.title} purpose, Agent 101 role, allowed actions, blocked actions, and recent activity.`,
     action: "Operator review only. No external execution has been approved.",
     status: "pending",
   });
@@ -5235,7 +5235,7 @@ aiProviderForm?.addEventListener("submit", async (event) => {
     });
     aiProviderNotice = "";
     renderAiProviderSettings();
-    showAccessMessage("AI provider settings saved. Depo will use the selected backend mode.", "success");
+    showAccessMessage("AI provider settings saved. Agent 101 will use the selected backend mode.", "success");
   } catch (error) {
     showAccessMessage(error.message, "error");
   }
@@ -5296,7 +5296,7 @@ aiProviderTestBtn?.addEventListener("click", async () => {
 scanBtn?.addEventListener("click", () => {
   selectedAgentKey = null;
   focusRoom("depo-habitat", { scale: 1.72 });
-  addLocalAudit("Focus scan", "Depo habitat scan confirmed Agent 101 is draft-only and ready for bounded work.");
+  addLocalAudit("Focus scan", "Agent Habitat scan confirmed Agent 101 is draft-only and ready for bounded work.");
   renderAudit();
 });
 
@@ -5654,11 +5654,11 @@ runCycleBtn.addEventListener("click", (event) => {
   mutate("/api/cycle").then((changed) => {
     if (changed) return;
     state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", `Depo advanced to ${depoStageLabel(nextStage)}. Start the app with npm start to persist backend mission state.`);
+    addLocalAudit("Cycle changed locally", `Agent 101 advanced to ${depoStageLabel(nextStage)}. Start the app with npm start to persist backend mission state.`);
     render();
   }).catch((error) => {
     state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", `${error.message}. Depo command-floor stage remains ${depoStageLabel(nextStage)} locally.`);
+    addLocalAudit("Cycle changed locally", `${error.message}. Agent 101 command-floor stage remains ${depoStageLabel(nextStage)} locally.`);
     render();
   });
 });
@@ -5701,12 +5701,12 @@ runNextTaskBtn.addEventListener("click", () => {
   if (!apiAvailable) {
     const task = state.tasks.find((item) => item.status === "queued" || item.status === "needs_revision");
     if (!task) {
-      addLocalAudit("No queued task", "Assign or queue a task before running Depo.");
+      addLocalAudit("No queued task", "Assign or queue a task before running Agent 101.");
       render();
       return;
     }
     task.status = "draft_ready";
-    task.output = "Depo prepared a local draft. Start the server to persist artifacts and approvals.";
+    task.output = "Agent 101 prepared a local draft. Start the server to persist artifacts and approvals.";
     task.evidence = ["Static preview only.", "Persistent artifacts require the local server."];
     addLocalAudit("Next task ran locally", task.title);
     render();
@@ -5725,7 +5725,7 @@ runWorkdayBtn.addEventListener("click", () => {
     state.tasks.forEach((task) => {
       if (ran >= 3 || !["queued", "needs_revision"].includes(task.status)) return;
       task.status = "draft_ready";
-      task.output = "Depo prepared a local draft. Start the server to persist artifacts and approvals.";
+      task.output = "Agent 101 prepared a local draft. Start the server to persist artifacts and approvals.";
       task.evidence = ["Static preview only.", "Persistent artifacts require the local server."];
       ran += 1;
     });
@@ -5734,7 +5734,7 @@ runWorkdayBtn.addEventListener("click", () => {
       limit: 3,
       completedAt: new Date().toISOString(),
     };
-    addLocalAudit("Workday ran locally", `Depo processed ${ran} local task${ran === 1 ? "" : "s"}.`);
+    addLocalAudit("Workday ran locally", `Agent 101 processed ${ran} local task${ran === 1 ? "" : "s"}.`);
     render();
     return;
   }
@@ -5837,7 +5837,7 @@ taskList.addEventListener("click", (event) => {
     const task = state.tasks.find((item) => item.id === id);
     if (!task) return;
     task.status = "draft_ready";
-    task.output = "Depo prepared a local draft. Start the server to create persistent evidence, memory, and approvals.";
+    task.output = "Agent 101 prepared a local draft. Start the server to create persistent evidence, memory, and approvals.";
     task.evidence = ["Static preview only.", "Persistent approval package requires the local server."];
     addLocalAudit("Task ran locally", task.title);
     render();

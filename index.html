@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=depo-chat-stable-1" />
+    <link rel="stylesheet" href="./styles.css?v=agent-101-labels-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -50,8 +50,8 @@
           </div>
           <strong id="sidebarSystemHealth"><span class="status-dot"></span>All systems operational</strong>
           <div class="health-summary-grid" aria-label="Live system summary">
-            <div><small>Agent</small><b id="sidebarAgentId">Agent 101</b></div>
-            <div><small>Mode</small><b id="sidebarAgentMode">Draft</b></div>
+            <div><small>Mode</small><b id="sidebarAgentMode">Draft only</b></div>
+            <div><small>Activity</small><b id="sidebarAgentId">Agent 101 active</b></div>
           </div>
           <div class="resource-bars">
             <div><span id="sidebarStatusLabelA">State</span><em id="sidebarStatusBarA" style="--bar: 100%"></em><strong id="sidebarStatusValueA">Ready</strong></div>
@@ -79,13 +79,13 @@
           <small data-system-date>May 12, 2025</small>
         </section>
 
-        <button class="user-profile-card" type="button" data-agent="depo" aria-label="Open Depo agent">
-          <span class="profile-photo" aria-hidden="true">D</span>
+        <button class="user-profile-card" type="button" data-agent="depo" aria-label="Open Agent 101">
+          <span class="profile-photo" aria-hidden="true">A</span>
           <span>
-            <strong>Depo</strong>
-            <small>Depository Operator</small>
+            <strong>Agent 101</strong>
+            <small>Draft-only operator</small>
           </span>
-          <em>Agent 101</em>
+          <em>Active</em>
         </button>
       </aside>
 
@@ -127,7 +127,7 @@
                 </button>
                 <button class="admin-menu-item" type="button" data-agent="depo">
                   <svg viewBox="0 0 24 24"><path d="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
-                  Depo profile
+                  Agent 101 profile
                 </button>
                 <a class="admin-menu-item" href="/logout">
                   <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
@@ -159,7 +159,7 @@
                     <option value="agent">Agent Map</option>
                     <option value="workflow">Workflow Map</option>
                   </select>
-                  <span class="status-pill" id="cycleStatus">At Depo Habitat</span>
+                  <span class="status-pill" id="cycleStatus">At Agent Habitat</span>
                 </div>
               </div>
 
@@ -174,8 +174,8 @@
                   <div class="orbital-ring ring-three" aria-hidden="true"></div>
                   <canvas class="station-artwork station-renderer" id="stationArtwork" width="1000" height="620" aria-hidden="true"></canvas>
                   <svg class="habitat-routes" id="habitatRoutes" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true"></svg>
-                  <!-- DepoCorePlatform -->
-                  <div class="map-core" data-station="depo-habitat" role="button" tabindex="0" aria-label="Depo Habitat">
+                  <!-- AgentCorePlatform -->
+                  <div class="map-core" data-station="depo-habitat" role="button" tabindex="0" aria-label="Agent Habitat">
                     <div class="core-rings" aria-hidden="true"></div>
                     <div class="core-orb" aria-hidden="true"></div>
                     <div class="mini-agent-robot core-agent" aria-hidden="true">
@@ -183,7 +183,7 @@
                       <span class="robot-body"></span>
                     </div>
                     <div class="core-label">
-                      <span id="coreLabelTitle">Depo Habitat</span>
+                      <span id="coreLabelTitle">Agent Habitat</span>
                       <small id="coreLabelStage">Active agent</small>
                       <em id="coreLabelAgent">Agent 101</em>
                     </div>
@@ -219,7 +219,7 @@
               <div class="agent-control-bar" aria-label="Agent map controls">
                 <div>
                   <p class="eyebrow">Agent Controls</p>
-                  <strong id="taskStage">Stage: Depo Habitat</strong>
+                  <strong id="taskStage">Stage: Agent Habitat</strong>
                 </div>
                 <div class="progress-track" aria-label="Mission progress">
                   <div class="progress-bar" id="missionProgress"></div>
@@ -237,12 +237,12 @@
               <div class="panel-heading mission-brief">
                 <div>
                   <p class="eyebrow">Live System Status</p>
-                  <h3 id="missionTitle">Depo has entered the habitat</h3>
+                  <h3 id="missionTitle">Agent 101 is active</h3>
                 </div>
                 <span class="metric-chip" id="confidenceChip">0% earned revenue</span>
               </div>
               <p class="mission-copy" id="missionCopy">
-                Argentum now has one real supervised agent. The command floor is Depo's local workspace for intake, research, verification, drafting, memory, outputs, and human approval.
+                Argentum now has one real supervised agent. The command floor is the local workspace for intake, research, verification, drafting, memory, outputs, and human approval.
               </p>
               <div class="system-status-grid" aria-label="Live system status cards">
                 <div><span>Agent Status</span><strong id="agentStatusMetric">Supervised</strong></div>
@@ -284,7 +284,7 @@
               <div>
                 <p class="eyebrow">First Agent</p>
                 <ul>
-                  <li><span>Name</span><strong>Depo</strong></li>
+                  <li><span>Name</span><strong>Agent 101</strong></li>
                   <li><span>Mode</span><strong>Draft only</strong></li>
                   <li><span>Home</span><strong>Habitat</strong></li>
                   <li><span>External actions</span><strong>Locked</strong></li>
@@ -295,7 +295,7 @@
               <div>
                 <p class="eyebrow">Queued Work</p>
                 <strong class="big-metric" id="overviewQueuedTaskMetric">1</strong>
-                <span>Ready for Depo</span>
+                <span>Ready for Agent 101</span>
                 <ul>
                   <li><span>High</span><strong id="overviewHighRiskTaskMetric">0</strong></li>
                   <li><span>Medium</span><strong id="overviewDraftReadyMetric">0</strong></li>
@@ -320,7 +320,7 @@
               <p class="eyebrow">Automation Queue</p>
               <strong class="big-metric">0</strong>
               <span>In queue</span>
-              <p class="next-function"><strong>Next:</strong> Give Depo the first bounded workflow</p>
+              <p class="next-function"><strong>Next:</strong> Give Agent 101 the first bounded workflow</p>
               <div class="queue-progress" aria-hidden="true"><span></span></div>
             </article>
             <article class="analytics-card feed-card interactive-card" id="systemFeedCard" role="button" tabindex="0" aria-label="Open system feed">
@@ -329,7 +329,7 @@
                 <span>Live</span>
               </div>
               <div class="mini-feed" id="systemFeedMini" aria-live="polite">
-                <span><strong>Depo born into habitat</strong><em>now</em></span>
+                <span><strong>Agent 101 activated</strong><em>now</em></span>
                 <span><strong>Draft-only rules loaded</strong><em>now</em></span>
                 <span><strong>External actions locked</strong><em>now</em></span>
                 <span><strong>First workflow waiting</strong><em>now</em></span>
@@ -358,7 +358,7 @@
               <div>
                 <span>Artifacts</span>
                 <strong>0</strong>
-                <p>Drafts created by Depo</p>
+                <p>Drafts created by Agent 101</p>
               </div>
               <div>
                 <span>POD briefs</span>
@@ -473,7 +473,7 @@
           </section>
         </section>
 
-        <section class="view" id="view-depo" aria-label="Depo agent details">
+        <section class="view" id="view-depo" aria-label="Agent 101 details">
           <div class="detail-layout">
             <section class="panel">
               <div class="agent-profile">
@@ -485,8 +485,8 @@
                 </div>
                 <div>
                   <p class="eyebrow">Agent 101</p>
-                  <h3>Depo</h3>
-                  <p>Depository operator for research, memory capture, workflow drafting, and approval packaging.</p>
+                  <h3>Agent 101</h3>
+                  <p>Draft-only operator for research, memory capture, workflow drafting, and approval packaging.</p>
                 </div>
               </div>
               <dl class="manifest-grid">
@@ -513,7 +513,7 @@
               <div class="panel-heading">
                 <div>
                   <p class="eyebrow">Function builder</p>
-                  <h3>Capabilities Depo can propose</h3>
+                  <h3>Capabilities Agent 101 can propose</h3>
                 </div>
               </div>
               <div class="capability-list" id="capabilityList"></div>
@@ -524,12 +524,12 @@
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Task inbox</p>
-                <h3>Assign Depo work</h3>
+                <h3>Assign Agent 101 work</h3>
               </div>
               <span class="metric-chip" id="taskCount">1 task</span>
             </div>
             <form class="task-form" id="taskForm">
-              <textarea id="taskInput" name="task" rows="3" placeholder="Ask Depo for a POD niche brief, a stock algo watch note, or a new agent function proposal."></textarea>
+              <textarea id="taskInput" name="task" rows="3" placeholder="Ask Agent 101 for a POD niche brief, a stock algo watch note, or a new agent function proposal."></textarea>
               <div class="task-form-row">
                 <select id="taskWorkflow" name="workflow" aria-label="Workflow">
                   <option value="">Auto route</option>
@@ -550,7 +550,7 @@
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Function library</p>
-                <h3>Reusable work Depo has learned</h3>
+                <h3>Reusable work Agent 101 has learned</h3>
               </div>
               <span class="metric-chip" id="functionCount">1 function</span>
             </div>
@@ -587,7 +587,7 @@
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Business outputs</p>
-                <h3>Artifacts Depo has produced</h3>
+                <h3>Artifacts Agent 101 has produced</h3>
               </div>
               <span class="metric-chip" id="artifactCount">0 artifacts</span>
             </div>
@@ -601,7 +601,7 @@
               <div class="panel-heading">
                 <div>
                   <p class="eyebrow">Structured memory</p>
-                  <h3>Depo memory layers</h3>
+                  <h3>Agent 101 memory layers</h3>
                 </div>
               </div>
               <div class="tabs" role="tablist" aria-label="Memory layers">
@@ -874,7 +874,7 @@
                     </form>
                     <aside class="settings-side-note">
                       <strong>Before adding access</strong>
-                      <p>Create logins only for operators who can review Human Gate approvals and understand Depo's draft-only boundaries.</p>
+                      <p>Create logins only for operators who can review Human Gate approvals and understand the draft-only boundaries.</p>
                       <div class="settings-flow">
                         <span>Verify owner</span>
                         <span>Create login</span>
@@ -931,7 +931,7 @@
                   </div>
                   <div class="settings-flow-card">
                     <strong>Key policy</strong>
-                    <p>Credentials belong in server environment variables only. Depo can document connector plans, but cannot rotate keys, grant permissions, or call external APIs without approval.</p>
+                    <p>Credentials belong in server environment variables only. Agent 101 can document connector plans, but cannot rotate keys, grant permissions, or call external APIs without approval.</p>
                     <div class="settings-flow">
                       <span>Server-side</span>
                       <span>Not committed</span>
@@ -966,7 +966,7 @@
                   <div class="settings-card-heading">
                     <div>
                       <h4>AI Brain Status</h4>
-                      <p>Manage the server-side provider Depo can use for future LLM calls.</p>
+                      <p>Manage the server-side provider Agent 101 can use for future LLM calls.</p>
                     </div>
                     <span class="status-chip" id="aiProviderModeChip">Local Demo</span>
                   </div>
@@ -986,7 +986,7 @@
                   <div class="settings-card-heading">
                     <div>
                       <h4>Provider Selection</h4>
-                      <p>Choose Local Demo Mode or OpenAI Live API for Depo.</p>
+                      <p>Choose Local Demo Mode or OpenAI Live API for Agent 101.</p>
                     </div>
                   </div>
                   <div class="settings-control-grid">
@@ -1027,7 +1027,7 @@
                     </form>
                     <aside class="settings-side-note">
                       <strong>Recommended while building</strong>
-                      <p>Stay in Local Demo Mode until OpenAI billing is active. The app remains usable, and Depo keeps the same approval rules.</p>
+                      <p>Stay in Local Demo Mode until OpenAI billing is active. The app remains usable, and Agent 101 keeps the same approval rules.</p>
                       <div class="settings-flow">
                         <span>Local Demo</span>
                         <span>Backend test</span>
@@ -1076,7 +1076,7 @@
                 <section class="settings-card ai-provider-card" id="settings-ai-provider-safety">
                   <div class="settings-card-heading">
                     <div>
-                      <h4>Depo Safety Rules</h4>
+                      <h4>Agent 101 Safety Rules</h4>
                       <p>Live model output is still supervised by Human Gate.</p>
                     </div>
                     <span class="status-chip">Approval gated</span>
@@ -1357,7 +1357,7 @@
           </button>
           <button class="nav-item" data-view="depo" type="button">
             <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
-            Depo
+            Agent 101
           </button>
           <button class="nav-item" data-view="approval" type="button">
             <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
@@ -1393,6 +1393,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=habitat-os-23"></script>
+    <script src="./script.js?v=habitat-os-24"></script>
   </body>
 </html>

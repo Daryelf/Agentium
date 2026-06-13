@@ -47,9 +47,9 @@ const AI_RISKY_ACTION_TYPES = new Set([
   "external_api_action",
 ]);
 const DEPO_SYSTEM_RULES = [
-  "Depo is the supervised Master Agent inside Argentum OS.",
-  "Depo can research, organize evidence, draft outputs, create task plans, create workflow plans, prepare prompts, prepare reports, save internal notes, package work for approval, and create future agent blueprints.",
-  "Depo cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.",
+  "Agent 101 is the supervised draft-only agent inside Argentum OS.",
+  "Agent 101 can research, organize evidence, draft outputs, create task plans, create workflow plans, prepare prompts, prepare reports, save internal notes, package work for approval, and create future agent blueprints.",
+  "Agent 101 cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.",
   "Any risky action must be returned as pending approval, not executed.",
 ].join(" ");
 
@@ -667,8 +667,8 @@ function defaultState() {
     },
     agent: {
       id: "agent-001-depo",
-      name: "Depo",
-      role: "Depository Operator",
+      name: "Agent 101",
+      role: "Draft-only Operator",
       state: "active_supervised",
       spendLimit: "$5/day sandbox",
       externalActions: "Draft only",
@@ -705,7 +705,7 @@ function defaultState() {
           progress: 28,
           confidence: 72,
           title: "Build Etsy print-on-demand research lane",
-          copy: "Depo is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
+          copy: "Agent 101 is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
           risk: "Low",
         },
         {
@@ -715,7 +715,7 @@ function defaultState() {
           progress: 51,
           confidence: 82,
           title: "Check contradictions and policy risk",
-          copy: "Depo is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
+          copy: "Agent 101 is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
           risk: "Medium",
         },
         {
@@ -725,7 +725,7 @@ function defaultState() {
           progress: 74,
           confidence: 88,
           title: "Draft the first workflow",
-          copy: "Depo is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
+          copy: "Agent 101 is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
           risk: "Low",
         },
         {
@@ -735,7 +735,7 @@ function defaultState() {
           progress: 92,
           confidence: 91,
           title: "Package decision for the operator",
-          copy: "Depo is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
+          copy: "Agent 101 is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
           risk: "Approval required",
         }
       ],
@@ -807,7 +807,7 @@ function defaultState() {
         status: "proposal_only",
         risk: "medium",
         description: "Draft new agent manifests, tests, budgets, and permissions as proposals.",
-        nextFunction: "Propose a second agent only after Depo's first workflow is approved.",
+        nextFunction: "Propose a second agent only after Agent 101's first workflow is approved.",
       }
     ],
     taskTemplates: [
@@ -867,7 +867,7 @@ function defaultState() {
         title: "Approve POD research lane v0",
         risk: "low",
         evidence: "3 source notes, 1 contradiction check, 1 spend estimate",
-        action: "Allow Depo to save this workflow as a reusable playbook.",
+        action: "Allow Agent 101 to save this workflow as a reusable playbook.",
         status: "pending",
         createdAt: now(),
       },
@@ -886,7 +886,7 @@ function defaultState() {
         {
           id: "mem-working-current-task",
           title: "Current task",
-          body: "Design a visible first-agent system for Argentum with Depo as the supervised starting worker.",
+          body: "Design a visible first-agent system for Argentum with Agent 101 as the supervised starting worker.",
           provenance: "operator_goal",
           updatedAt: now(),
         },
@@ -917,15 +917,15 @@ function defaultState() {
       agent: [
         {
           id: "mem-agent-depo-identity",
-          title: "Depo identity",
-          body: "Depo is the depository operator: gather, verify, draft, and package work for approval.",
+          title: "Agent 101 identity",
+          body: "Agent 101 is the draft-only operator: gather, verify, draft, and package work for approval.",
           provenance: "agent_manifest",
           updatedAt: now(),
         },
         {
           id: "mem-agent-failure-habit",
           title: "Failure habit",
-          body: "When evidence is stale, contradictory, or missing, Depo must ask for review instead of inventing certainty.",
+          body: "When evidence is stale, contradictory, or missing, Agent 101 must ask for review instead of inventing certainty.",
           provenance: "safety_policy",
           updatedAt: now(),
         }
@@ -935,7 +935,7 @@ function defaultState() {
       {
         id: "audit-system-created",
         title: "Argentum local state created",
-        body: "Depo was initialized as the first supervised agent with approval-gated business workflows.",
+        body: "Agent 101 was initialized as the first supervised agent with approval-gated business workflows.",
         createdAt: now(),
       }
     ],
@@ -953,6 +953,10 @@ function normalizeState(state) {
   const fresh = defaultState();
   state.meta = { ...fresh.meta, ...state.meta };
   state.agent = { ...fresh.agent, ...state.agent };
+  if (state.agent?.id === "agent-001-depo") {
+    state.agent.name = "Agent 101";
+    state.agent.role = "Draft-only Operator";
+  }
   state.governance = { ...fresh.governance, ...state.governance };
   state.mission = { ...fresh.mission, ...state.mission };
   state.capabilities = Array.isArray(state.capabilities) ? state.capabilities : fresh.capabilities;
@@ -1248,7 +1252,7 @@ function currentSystemStatus() {
 
   return {
     health,
-    agentId: "Agent 101",
+    agentId: "Agent 101 active",
     agentMode: state.agent?.externalActions || "Draft only",
     metrics: [
       { label: "State", value: "Ready", percent: 100 },
@@ -1438,7 +1442,7 @@ function localDepoDemoResponse(message) {
     return "A safe workflow is: Task Intake -> Research Lab -> Verify Station -> Draft Studio -> Human Gate -> Output Bench -> System Log.";
   }
   if (text.includes("agent") || text.includes("grow")) {
-    return "There is only one live agent: Depo, Agent 101. I can draft future-agent blueprints, but activation stays behind Human Gate.";
+    return "There is only one live agent: Agent 101. I can draft future-agent blueprints, but activation stays behind Human Gate.";
   }
   return "I can work on this locally in draft-only mode. Give me one bounded task, and I will structure it into research, verification, draft, approval, output, and log steps.";
 }
@@ -1455,7 +1459,7 @@ function normalizeDepoAiPayload(payload, fallbackMessage) {
   const parsed = typeof payload === "string" ? safeJsonParse(payload, null) : payload;
   if (!parsed || typeof parsed !== "object") {
     return {
-      message: String(fallbackMessage || payload || "").trim() || "Depo returned an empty response.",
+      message: String(fallbackMessage || payload || "").trim() || "Agent 101 returned an empty response.",
       suggestedActions: [],
       requiresApproval: false,
       riskLevel: "low",
@@ -1463,7 +1467,7 @@ function normalizeDepoAiPayload(payload, fallbackMessage) {
     };
   }
   return {
-    message: String(parsed.message || fallbackMessage || "Depo response ready.").trim(),
+    message: String(parsed.message || fallbackMessage || "Agent 101 response ready.").trim(),
     suggestedActions: Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions : [],
     requiresApproval: Boolean(parsed.requiresApproval),
     riskLevel: ["low", "medium", "high"].includes(parsed.riskLevel) ? parsed.riskLevel : "low",
@@ -1494,7 +1498,7 @@ async function callOpenAiProvider(config, message, context) {
       input: [
         {
           role: "user",
-          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Depo Habitat"}\nMessage: ${message}`,
+          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
         },
       ],
       temperature: settings.temperature,
@@ -1533,7 +1537,7 @@ async function callAnthropicProvider(config, message, context) {
       messages: [
         {
           role: "user",
-          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Depo Habitat"}\nMessage: ${message}`,
+          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
         },
       ],
     }),
@@ -1576,7 +1580,7 @@ async function testAiProvider(payload = {}) {
         monthlyLimitUsd: testConfig.monthlyLimitUsd,
       };
     } else if (provider === "openai") {
-      const response = await callOpenAiProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
+      const response = await callOpenAiProvider(testConfig, "Reply with a short JSON health check for Agent 101.", { roomId: "settings" });
       result = {
         success: true,
         provider,
@@ -1585,7 +1589,7 @@ async function testAiProvider(payload = {}) {
         monthlyLimitUsd: testConfig.monthlyLimitUsd,
       };
     } else if (provider === "anthropic") {
-      const response = await callAnthropicProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
+      const response = await callAnthropicProvider(testConfig, "Reply with a short JSON health check for Agent 101.", { roomId: "settings" });
       result = { success: true, provider, model: testConfig.providers.anthropic.model, message: response.message };
     } else {
       throw guardedError("Unknown AI provider.", 400);
@@ -1647,7 +1651,7 @@ async function handleDepoChat(payload = {}) {
     }
   } catch (error) {
     logAiProviderError("chat", error);
-    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live AI provider failed. Depo used Local Demo Mode fallback.";
+    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live AI provider failed. Agent 101 used Local Demo Mode fallback.";
     config.lastTest = {
       success: false,
       provider,
@@ -1683,11 +1687,11 @@ function guardedError(message, status = 409) {
 
 function enforceAutomationGuards(state, action) {
   if (state.governance.killSwitch) {
-    throw guardedError("Kill switch is enabled. Resume Argentum before running Depo.", 423);
+    throw guardedError("Kill switch is enabled. Resume Argentum before running Agent 101.", 423);
   }
   if (action === "cycle" && state.governance.cycleCount >= state.governance.cycleLimit) {
     state.mission.paused = true;
-    audit(state, "Loop guard paused Depo", `Cycle limit reached at ${state.governance.cycleCount}/${state.governance.cycleLimit}.`);
+    audit(state, "Loop guard paused Agent 101", `Cycle limit reached at ${state.governance.cycleCount}/${state.governance.cycleLimit}.`);
     writeState(state);
     throw guardedError("Cycle limit reached. Reset the loop guard before continuing.", 429);
   }
@@ -1796,7 +1800,7 @@ function taskPlan(task) {
         "Output is limited to paper notes and signal summaries.",
         "Any broker connection, trade, or money movement must be approved separately.",
       ],
-      output: "Depo prepared a read-only stock algorithm watch note: define the watchlist, record signal assumptions, log confidence, and keep every trade-related action in paper mode until a human approves a separate connector.",
+      output: "Agent 101 prepared a read-only stock algorithm watch note: define the watchlist, record signal assumptions, log confidence, and keep every trade-related action in paper mode until a human approves a separate connector.",
       approvalTitle: "Review read-only market monitor task",
       approvalAction: "Confirm this task may be saved as paper-trading guidance only.",
     };
@@ -1808,7 +1812,7 @@ function taskPlan(task) {
         "Manifest, budget, tests, and permissions must be reviewed together.",
         "Deployment is blocked until explicit approval.",
       ],
-      output: "Depo drafted a future-agent proposal path: define the job, list blocked capabilities, set a spend limit, write eval cases, and send the manifest to the approval queue without deployment.",
+      output: "Agent 101 drafted a future-agent proposal path: define the job, list blocked capabilities, set a spend limit, write eval cases, and send the manifest to the approval queue without deployment.",
       approvalTitle: "Review future agent proposal task",
       approvalAction: "Decide whether this proposed function can become a draft manifest.",
     };
@@ -1819,7 +1823,7 @@ function taskPlan(task) {
       "Listing research must separate verified evidence from assumptions.",
       "Reusable POD playbooks need human approval before promotion to shared memory.",
     ],
-    output: "Depo drafted a POD research brief: choose one niche hypothesis, gather demand and competitor evidence, label assumptions, create a listing outline, estimate costs, and stop before publishing or account actions.",
+    output: "Agent 101 drafted a POD research brief: choose one niche hypothesis, gather demand and competitor evidence, label assumptions, create a listing outline, estimate costs, and stop before publishing or account actions.",
     approvalTitle: "Review POD task output",
     approvalAction: "Approve whether this POD task output can be promoted into shared memory as a reusable playbook.",
   };
@@ -1936,7 +1940,7 @@ function createTask(payload) {
     updatedAt: now(),
   };
   state.tasks.unshift(task);
-  audit(state, "Operator assigned Depo a task", task.title);
+  audit(state, "Operator assigned Agent 101 a task", task.title);
   writeState(state);
   return state;
 }
@@ -1965,7 +1969,7 @@ function createTaskFromTemplate(templateId) {
   state.tasks.unshift(task);
   state.mission.activeWorkflowId = task.workflowId;
   state.mission.currentStep = 0;
-  audit(state, "Template queued for Depo", `${template.name}: ${template.outcome}`);
+  audit(state, "Template queued for Agent 101", `${template.name}: ${template.outcome}`);
   addMemory(state, "working", `Template queued: ${template.name}`, template.prompt, "task_template");
   writeState(state);
   return state;
@@ -2035,7 +2039,7 @@ function runFunction(functionId, payload = {}) {
   state.mission.currentStep = 0;
   recordAutomationCost(state, "function");
   addMemory(state, "working", `Function run queued: ${fn.name}`, operatorText, "function_execution");
-  audit(state, "Depo queued a function run", `${fn.name} created a new supervised task.`);
+  audit(state, "Agent 101 queued a function run", `${fn.name} created a new supervised task.`);
   writeState(state);
   return state;
 }
@@ -2067,7 +2071,7 @@ function runTask(taskId) {
   recordAutomationCost(state, "task");
 
   addMemory(state, "working", `Task draft: ${task.title}`, task.output, "depo_task");
-  audit(state, "Depo completed a task draft", `${task.title}: ${task.output}`);
+  audit(state, "Agent 101 completed a task draft", `${task.title}: ${task.output}`);
 
   const approvalId = `approval-${task.id}`;
   const existingApproval = state.approvals.find((approval) => approval.id === approvalId && approval.status === "pending");
@@ -2093,7 +2097,7 @@ function runNextTask() {
   const state = readState();
   const task = state.tasks.find((item) => item.status === "queued" || item.status === "needs_revision");
   if (!task) {
-    throw guardedError("No queued task is available for Depo.", 404);
+    throw guardedError("No queued task is available for Agent 101.", 404);
   }
   return runTask(task.id);
 }
@@ -2112,7 +2116,7 @@ function runWorkday(payload = {}) {
   }
 
   state = readState();
-  audit(state, "Supervised workday completed", `Depo processed ${runIds.length} queued task${runIds.length === 1 ? "" : "s"}.`);
+  audit(state, "Supervised workday completed", `Agent 101 processed ${runIds.length} queued task${runIds.length === 1 ? "" : "s"}.`);
   state.governance.lastWorkday = {
     runIds,
     limit,
@@ -2356,14 +2360,14 @@ function advanceCycle() {
   const step = steps[state.mission.currentStep];
   recordAutomationCost(state, "cycle");
 
-  audit(state, `Depo moved to ${step.station}`, step.copy);
+  audit(state, `Agent 101 moved to ${step.station}`, step.copy);
 
   if (step.station === "Draft") {
     addMemory(
       state,
       "working",
       "Draft artifact prepared",
-      "Depo prepared the POD research lane as a reusable draft workflow. Publishing remains blocked.",
+      "Agent 101 prepared the POD research lane as a reusable draft workflow. Publishing remains blocked.",
       "depo_cycle",
     );
   }
@@ -2373,10 +2377,10 @@ function advanceCycle() {
     if (!exists) {
       state.approvals.unshift({
         id: "approval-depo-cycle-package",
-        title: "Review Depo cycle package",
+        title: "Review Agent 101 cycle package",
         risk: "medium",
         evidence: "Latest cycle includes research, verification, draft, and policy classification.",
-        action: "Review whether Depo can promote the POD workflow into shared memory.",
+        action: "Review whether Agent 101 can promote the POD workflow into shared memory.",
         status: "pending",
         createdAt: now(),
       });
@@ -2599,7 +2603,7 @@ async function handleApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/pause") {
     const state = readState();
     state.mission.paused = !state.mission.paused;
-    audit(state, state.mission.paused ? "Operator paused Depo" : "Operator resumed Depo", "The supervised task cycle was toggled by the operator.");
+    audit(state, state.mission.paused ? "Operator paused Agent 101" : "Operator resumed Agent 101", "The supervised task cycle was toggled by the operator.");
     writeState(state);
     sendJson(res, 200, state);
     return;
@@ -2716,7 +2720,7 @@ async function handleApi(req, res, url) {
           const fn = promoteTaskToFunction(state, task);
           addMemory(state, "shared", `Approved task: ${task.title}`, task.output, "human_approval");
           addMemory(state, "agent", `Function learned: ${fn.name}`, fn.description, "function_library");
-          audit(state, "Depo promoted a function", `${fn.name} is now available as an approved reusable function.`);
+          audit(state, "Agent 101 promoted a function", `${fn.name} is now available as an approved reusable function.`);
         }
       }
     }
@@ -2725,7 +2729,7 @@ async function handleApi(req, res, url) {
         state,
         "shared",
         "POD research lane approved",
-        "The operator approved Depo's print-on-demand research workflow as a reusable playbook.",
+        "The operator approved Agent 101's print-on-demand research workflow as a reusable playbook.",
         "human_approval",
       );
       const workflow = state.workflows.find((item) => item.id === "workflow-pod-lab");

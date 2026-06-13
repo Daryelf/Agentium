@@ -1358,6 +1358,7 @@ let selectedAgentKey = null;
 const mapHomeScale = 1;
 const mapMinScale = 0.86;
 const mapMaxScale = 2.8;
+const mapViewLocked = true;
 const mapPanEpsilon = 0.001;
 let mapView = { x: 0, y: 0, scale: mapHomeScale };
 let isPanning = false;
@@ -2861,6 +2862,11 @@ function applyMapView(animated = true) {
 }
 
 function setMapView(nextView, animated = true) {
+  if (mapViewLocked) {
+    mapView = { x: 0, y: 0, scale: mapHomeScale };
+    applyMapView(animated);
+    return;
+  }
   mapView = normalizedMapView({
     x: Number.isFinite(nextView.x) ? nextView.x : mapView.x,
     y: Number.isFinite(nextView.y) ? nextView.y : mapView.y,
@@ -2887,6 +2893,10 @@ function setMapFullscreen(open) {
 }
 
 function zoomMap(delta, point) {
+  if (mapViewLocked) {
+    setMapView({ x: 0, y: 0, scale: mapHomeScale });
+    return;
+  }
   if (!stationMap) return;
   const rect = stationMap.getBoundingClientRect();
   const anchor = point || { x: rect.width / 2, y: rect.height / 2 };
@@ -2921,6 +2931,11 @@ function focusRoom(roomKey, options = {}) {
   if (options.agentKey) selectedAgentKey = options.agentKey;
 
   applySelectionClasses();
+  if (mapViewLocked) {
+    setMapView({ x: 0, y: 0, scale: mapHomeScale }, false);
+    renderInspector();
+    return;
+  }
   setMapView({
     x: mapRect.width / 2 - centerX * scale,
     y: mapRect.height / 2 - centerY * scale,
@@ -3985,12 +4000,20 @@ document.querySelectorAll(".user-profile-card, .admin-menu-item[data-agent]").fo
 
 stationMap.addEventListener("wheel", (event) => {
   event.preventDefault();
+  if (mapViewLocked) return;
   const rect = stationMap.getBoundingClientRect();
   const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
   zoomMap(event.deltaY > 0 ? -0.12 : 0.12, point);
 }, { passive: false });
 
 stationMap.addEventListener("pointerdown", (event) => {
+  if (mapViewLocked) {
+    pointerCache.clear();
+    isPanning = false;
+    pinchStart = null;
+    setMapView({ x: 0, y: 0, scale: mapHomeScale }, false);
+    return;
+  }
   if (event.target.closest(".map-controls") || event.target.closest(".module-info-card") || event.target.closest(".station") || event.target.closest(".map-core")) return;
   if (mapView.scale <= 1 + mapPanEpsilon) {
     pointerCache.clear();
@@ -4018,6 +4041,7 @@ stationMap.addEventListener("pointerdown", (event) => {
 });
 
 stationMap.addEventListener("pointermove", (event) => {
+  if (mapViewLocked) return;
   if (!pointerCache.has(event.pointerId)) return;
   pointerCache.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pointerCache.size === 2 && pinchStart) {

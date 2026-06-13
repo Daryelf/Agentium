@@ -3371,6 +3371,8 @@ main {
   aspect-ratio: auto;
   border-radius: 16px;
   background:
+    linear-gradient(135deg, transparent 0 8%, rgba(30, 41, 59, 0.16) 8.2% 9%, transparent 9.2% 91%, rgba(30, 41, 59, 0.16) 91.2% 92%, transparent 92.2%),
+    linear-gradient(45deg, transparent 0 8%, rgba(15, 23, 42, 0.42) 8.2% 9%, transparent 9.2% 91%, rgba(15, 23, 42, 0.42) 91.2% 92%, transparent 92.2%),
     radial-gradient(circle at 50% 52%, rgba(56, 189, 248, 0.15), transparent 24%),
     radial-gradient(circle at 72% 56%, rgba(139, 92, 246, 0.12), transparent 26%),
     radial-gradient(circle at 76% 83%, rgba(244, 63, 94, 0.1), transparent 18%),
@@ -3388,6 +3390,7 @@ main {
 .station-map::before {
   opacity: 0.9;
   background:
+    linear-gradient(90deg, transparent 0 7%, rgba(15, 23, 42, 0.7) 7.2% 8.2%, transparent 8.4% 91.6%, rgba(15, 23, 42, 0.7) 91.8% 92.8%, transparent 93%),
     linear-gradient(90deg, rgba(3, 7, 18, 0.88), rgba(15, 23, 42, 0.3) 7%, transparent 18%, transparent 82%, rgba(15, 23, 42, 0.28) 93%, rgba(3, 7, 18, 0.88)),
     linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.26) 13%, transparent 28%, transparent 78%, rgba(2, 6, 23, 0.6)),
     linear-gradient(rgba(148, 163, 184, 0.052) 1px, transparent 1px),
@@ -3696,6 +3699,13 @@ main {
   transform: translate(-50%, -50%);
 }
 
+.habitat-room.station.room-approval {
+  width: min(var(--room-w), 260px);
+  height: min(var(--room-h), 102px);
+  min-height: 92px;
+  z-index: 14;
+}
+
 .floor-corridors {
   position: absolute;
   inset: 0;
@@ -3704,10 +3714,50 @@ main {
   pointer-events: none;
 }
 
+.floor-corridors::before {
+  content: "";
+  position: absolute;
+  left: 5.2%;
+  right: 5.2%;
+  top: 7%;
+  bottom: 4.8%;
+  z-index: 0;
+  border-radius: 14px;
+  clip-path: polygon(3.5% 0, 96.5% 0, 100% 7%, 100% 93%, 96.5% 100%, 3.5% 100%, 0 93%, 0 7%);
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(34, 211, 238, 0.12), transparent 24%),
+    radial-gradient(ellipse at 50% 82%, rgba(248, 113, 113, 0.09), transparent 18%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.5), rgba(2, 6, 23, 0.28)),
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.045) 0 1px, transparent 1px 42px),
+    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.038) 0 1px, transparent 1px 42px);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow:
+    inset 0 0 0 9px rgba(15, 23, 42, 0.5),
+    inset 0 0 80px rgba(0, 0, 0, 0.72),
+    0 18px 46px rgba(0, 0, 0, 0.34);
+}
+
+.floor-corridors::after {
+  content: "";
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  top: 50%;
+  z-index: 1;
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(30, 41, 59, 0.5) 15%, rgba(51, 65, 85, 0.38) 50%, rgba(30, 41, 59, 0.5) 85%, transparent);
+  box-shadow:
+    0 -96px 0 rgba(30, 41, 59, 0.12),
+    0 96px 0 rgba(30, 41, 59, 0.12),
+    0 0 26px rgba(0, 0, 0, 0.34);
+}
+
 .floor-corridor {
   position: absolute;
   left: var(--cx);
   top: var(--cy);
+  z-index: 3;
   width: var(--corridor-length);
   height: 28px;
   border-radius: 999px;

@@ -37,7 +37,7 @@ body {
 }
 
 body {
-  overflow: auto;
+  overflow: hidden;
   color: var(--text);
   background: var(--bg-0);
   font-family: var(--font);
@@ -188,10 +188,11 @@ svg {
   z-index: 1;
   display: grid;
   grid-template-columns: var(--side-width) minmax(0, 1fr);
-  gap: 14px;
+  gap: 12px;
   min-height: 100dvh;
-  height: auto;
-  padding: 0 16px 88px 0;
+  height: 100dvh;
+  overflow: hidden;
+  padding: 0 14px 0 0;
 }
 
 .sidebar,
@@ -218,11 +219,12 @@ svg {
   height: 100dvh;
   overflow: hidden;
   border-left: 0;
-  border-radius: 0 24px 24px 0;
-  padding: 18px 16px;
+  border-radius: 0 20px 20px 0;
+  padding: 14px 14px;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 14px;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
   background:
     linear-gradient(90deg, rgba(3, 7, 18, 0.98), rgba(15, 23, 42, 0.94)),
     radial-gradient(circle at 100% 18%, rgba(96, 165, 250, 0.16), transparent 35%);
@@ -276,7 +278,7 @@ svg {
 
 .brand-block {
   gap: 12px;
-  min-height: 58px;
+  min-height: 50px;
 }
 
 .brand-mark,
@@ -293,8 +295,8 @@ svg {
 }
 
 .brand-mark {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   border-radius: 14px;
   color: #c7d2fe;
   background:
@@ -415,25 +417,26 @@ svg {
   overflow: visible;
   display: grid;
   grid-template-rows: auto auto;
-  gap: 10px;
+  gap: 7px;
 }
 
 .roster-list {
   min-height: 0;
-  overflow: visible;
+  max-height: 172px;
+  overflow: hidden auto;
   display: grid;
-  gap: 10px;
-  padding-right: 3px;
+  gap: 8px;
+  padding-right: 2px;
 }
 
 .roster-agent {
   width: 100%;
-  min-height: 68px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 10px;
+  padding: 9px;
   border-radius: 14px;
   text-align: left;
   background:
@@ -563,17 +566,17 @@ svg {
 .system-time-card,
 .user-profile-card {
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 16px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.016)),
     rgba(12, 18, 31, 0.76);
-  padding: 14px;
+  padding: 11px;
 }
 
 .command-health {
   display: grid;
-  gap: 12px;
-  align-self: end;
+  gap: 8px;
+  align-self: start;
   background:
     radial-gradient(circle at 16% 0%, rgba(34, 211, 238, 0.18), transparent 38%),
     linear-gradient(160deg, rgba(15, 23, 42, 0.86), rgba(5, 10, 24, 0.72));
@@ -581,7 +584,7 @@ svg {
 
 .resource-bars {
   display: grid;
-  gap: 10px;
+  gap: 7px;
 }
 
 .resource-bars div {
@@ -589,7 +592,7 @@ svg {
   grid-template-columns: 62px minmax(0, 1fr) minmax(36px, auto);
   align-items: center;
   gap: 8px;
-  min-height: 24px;
+  min-height: 21px;
   color: var(--text-soft);
   font-size: 0.75rem;
 }
@@ -617,7 +620,7 @@ svg {
 }
 
 .mini-line-chart {
-  height: 48px;
+  height: 38px;
   display: flex;
   align-items: end;
   gap: 5px;
@@ -753,15 +756,18 @@ svg {
 main {
   min-width: 0;
   min-height: 0;
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 14px;
+  gap: 4px;
+  padding-top: 10px;
 }
 
 .topbar {
-  min-height: 58px;
-  border-radius: 22px;
+  flex: 0 0 56px;
+  min-height: 56px;
+  border-radius: 18px;
   justify-content: space-between;
   padding: 10px 14px 10px 18px;
   gap: 12px;
@@ -938,16 +944,19 @@ main {
 }
 
 .view.active {
+  flex: 1 1 auto;
   min-height: 0;
   display: block;
+  overflow: auto;
 }
 
 #view-floor.active {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
 }
 
 .command-grid {
@@ -970,12 +979,13 @@ main {
 .operations-floor {
   min-width: 0;
   min-height: 0;
-  border-radius: 22px;
-  padding: 9px;
+  height: 100%;
+  border-radius: 18px;
+  padding: 7px 7px 2px;
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   align-content: start;
-  gap: 7px;
+  gap: 2px;
   overflow: hidden;
 }
 
@@ -3356,7 +3366,7 @@ main {
 
 /* HabitatFloorMap: top-down command floor replacement */
 .station-map {
-  height: clamp(410px, 51dvh, 540px);
+  height: 100%;
   min-height: 0;
   aspect-ratio: auto;
   border-radius: 16px;
@@ -4801,11 +4811,11 @@ main {
 }
 
 .agent-control-bar {
-  min-height: 52px;
+  min-height: 46px;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 16px;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 13px;
   border: 1px solid var(--line);
   background: rgba(12, 18, 31, 0.76);
 }
@@ -4837,7 +4847,7 @@ main {
 
 .agent-control-actions span {
   color: var(--text-soft);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 780;
 }
 
@@ -5060,11 +5070,12 @@ main {
 }
 
 .analytics-strip {
-  height: 160px;
+  flex: 0 0 132px;
+  height: 132px;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(230px, 1.45fr) minmax(112px, 0.74fr) minmax(208px, 1.22fr) minmax(108px, 0.72fr) minmax(104px, 0.66fr) minmax(104px, 0.66fr);
-  gap: 12px;
+  gap: 8px;
 }
 
 .analytics-card {
@@ -5072,10 +5083,10 @@ main {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  border-radius: 18px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 10px;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .health-card,
@@ -5085,7 +5096,7 @@ main {
 }
 
 .agent-101-card {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 68px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   background:
@@ -5097,8 +5108,8 @@ main {
 .donut-meter,
 .security-ring,
 .agent-efficiency-ring {
-  width: 76px;
-  height: 76px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -5529,22 +5540,26 @@ main {
 }
 
 .bottom-nav {
-  position: fixed;
-  left: calc(var(--side-width) + 30px);
-  right: 16px;
-  bottom: 12px;
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  flex: 0 0 var(--dock-height);
+  width: 100%;
   z-index: 40;
   height: var(--dock-height);
-  border-radius: 20px;
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   padding: 8px;
+  margin-top: 0;
 }
 
 .bottom-nav .nav-item {
   min-width: 0;
-  border-radius: 15px;
+  border-radius: 13px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5614,8 +5629,8 @@ main {
 }
 
 .notification-list article {
-  padding: 10px;
-  border-radius: 14px;
+  padding: 8px;
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(15, 23, 42, 0.52);
 }

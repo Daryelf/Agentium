@@ -444,23 +444,21 @@ const sidebarStatusRows = [
 
 const depoWorkflowStages = [
   "depo-habitat",
-  "task-intake",
-  "research-lab",
-  "verify-station",
-  "draft-studio",
-  "human-gate",
-  "output-bench",
-  "system-log",
+  "clips-office",
+  "stock-office",
+  "etsy-office",
+  "essentrx-office",
 ];
 
 const depoWorkflowStageLabels = {
-  "depo-habitat": "Agent Habitat",
-  "task-intake": "Task Intake",
-  "research-lab": "Research Lab",
-  "verify-station": "Verify Station",
-  "draft-studio": "Draft Studio",
+  "depo-habitat": "Agent Office",
+  "clips-office": "Clips Office",
+  "stock-office": "Stock Office",
+  "etsy-office": "Etsy Store Office",
+  "essentrx-office": "Essentrx Office",
   "human-gate": "Human Gate",
-  "output-bench": "Output Bench",
+  "memory-vault": "Memory Office",
+  "output-bench": "Output Desk",
   "system-log": "System Log",
 };
 
@@ -551,108 +549,130 @@ const habitatFloorRooms = [
     position: { x: 50, y: 50 },
     size: { w: 19, h: 22 },
     purpose: "Home base for the first supervised Argentum agent.",
-    depoRole: "Agent 101 coordinates the safe local workflow from here.",
-    connections: ["task-intake", "research-lab", "verify-station", "draft-studio", "memory-vault", "human-gate", "output-bench", "system-log"],
+    depoRole: "Agent 101 is the master agent. Every office reports here before any risky action moves forward.",
+    connections: ["clips-office", "stock-office", "etsy-office", "essentrx-office"],
     riskNote: "External actions remain locked.",
-    recentActivity: ["Agent 101 initialized.", "Draft-only mode loaded.", "Human Gate is active."],
+    recentActivity: ["Agent 101 initialized.", "Business offices report here.", "Draft-only mode loaded."],
   },
   {
-    id: "task-intake",
-    title: "Task Intake",
-    name: "Task Intake",
-    subtitle: "New requests",
-    metric: "3 pending",
-    status: "Intake",
+    id: "clips-office",
+    title: "Clips Office",
+    name: "Clips Office",
+    subtitle: "Short-form video",
+    metric: "Ready",
+    status: "Drafting",
     type: "intake",
     visual: "clipboard",
     icon: "clipboard",
     color: "#38BDF8",
-    position: { x: 20.8, y: 17.5 },
-    size: { w: 27, h: 28 },
-    purpose: "Captures new requests and turns them into structured work.",
-    depoRole: "Agent 101 reads the request and breaks it into safe steps.",
-    connections: ["depo-habitat", "research-lab", "system-log"],
-    riskNote: "Intake creates drafts only.",
-    recentActivity: ["Three requests waiting.", "Task pad warmed.", "No external action opened."],
+    position: { x: 23, y: 24 },
+    size: { w: 30, h: 30 },
+    purpose: "Plans clips, short videos, hooks, scripts, edits, and posting packages for review.",
+    depoRole: "Clips work reports to Agent 101 before anything can be posted.",
+    connections: ["depo-habitat", "stock-office", "etsy-office", "essentrx-office"],
+    riskNote: "Posting and platform access require approval.",
+    recentActivity: ["Clip planning office ready.", "No video posted.", "Agent 101 owns final review."],
   },
   {
-    id: "research-lab",
-    title: "Research Lab",
-    name: "Research Lab",
-    subtitle: "Gathering info",
-    metric: "12 items",
-    status: "Researching",
+    id: "stock-office",
+    title: "Stock Office",
+    name: "Stock Office",
+    subtitle: "Market notes",
+    metric: "Guarded",
+    status: "Research",
     type: "research",
     visual: "lab",
     icon: "research",
     color: "#22D3EE",
-    position: { x: 50, y: 17.5 },
-    size: { w: 27, h: 28 },
-    purpose: "Gathers context, notes, and supporting information.",
-    depoRole: "Agent 101 collects research and saves useful evidence.",
-    connections: ["task-intake", "memory-vault", "verify-station", "depo-habitat"],
-    riskNote: "No spending, publishing, or external contact.",
-    recentActivity: ["Twelve evidence items staged.", "Source notes grouped.", "Research screens online."],
+    position: { x: 77, y: 24 },
+    size: { w: 30, h: 30 },
+    purpose: "Tracks stock research, watch notes, risk labels, and draft-only market briefs.",
+    depoRole: "Stock work reports to Agent 101. Agent 101 cannot place trades or move money.",
+    connections: ["depo-habitat", "clips-office", "etsy-office", "essentrx-office"],
+    riskNote: "Trades and money movement are locked.",
+    recentActivity: ["Stock office ready.", "No trade permission active.", "Risk notes stay draft-only."],
   },
   {
-    id: "verify-station",
-    title: "Verify Station",
-    name: "Verify Station",
-    subtitle: "Checking details",
-    metric: "5 checks",
-    status: "Verifying",
+    id: "etsy-office",
+    title: "Etsy Store Office",
+    name: "Etsy Store Office",
+    subtitle: "Store drafts",
+    metric: "Draft only",
+    status: "Planning",
     type: "verify",
     visual: "verify",
     icon: "shield",
-    color: "#7DD3FC",
-    position: { x: 79.2, y: 17.5 },
-    size: { w: 27, h: 28 },
-    purpose: "Checks claims, assumptions, and missing details.",
-    depoRole: "Agent 101 validates whether the work is safe and complete.",
-    connections: ["research-lab", "draft-studio", "human-gate"],
-    riskNote: "Uncertain claims require human review.",
-    recentActivity: ["Five checks open.", "Claim review in progress.", "Unsafe assumptions flagged."],
+    color: "#A78BFA",
+    position: { x: 23, y: 78 },
+    size: { w: 30, h: 30 },
+    purpose: "Builds Etsy product ideas, POD briefs, listing drafts, SEO notes, and approval packages.",
+    depoRole: "Etsy work reports to Agent 101. Listing publishing and checkout changes are locked.",
+    connections: ["depo-habitat", "clips-office", "stock-office", "essentrx-office"],
+    riskNote: "Publishing, pricing, and customer-facing edits require approval.",
+    recentActivity: ["Etsy store office ready.", "No listing published.", "Draft packages only."],
+  },
+  {
+    id: "essentrx-office",
+    title: "Essentrx Office",
+    name: "Essentrx Office",
+    subtitle: "Brand ops",
+    metric: "Connected",
+    status: "Drafting",
+    type: "draft",
+    visual: "studio",
+    icon: "pen",
+    color: "#60A5FA",
+    position: { x: 77, y: 78 },
+    size: { w: 30, h: 30 },
+    purpose: "Prepares Essentrx business work: product notes, admin ideas, customer-safe drafts, and packaging plans.",
+    depoRole: "Essentrx work reports to Agent 101 before customer contact, store edits, or campaign actions.",
+    connections: ["depo-habitat", "clips-office", "stock-office", "etsy-office"],
+    riskNote: "Customer contact, publishing, checkout, and account changes require approval.",
+    recentActivity: ["Essentrx office ready.", "Customer contact locked.", "Draft packages only."],
   },
   {
     id: "memory-vault",
-    title: "Memory Vault",
-    name: "Memory Vault",
+    visible: false,
+    title: "Memory Office",
+    name: "Memory Office",
     subtitle: "Stored knowledge",
-    metric: "12,455 items",
+    metric: "0 notes",
     status: "Stored",
     type: "memory",
     visual: "vault",
     icon: "database",
     color: "#38BDF8",
-    position: { x: 20.8, y: 50 },
-    size: { w: 27, h: 28 },
+    position: { x: 50, y: 18 },
+    size: { w: 24, h: 22 },
     purpose: "Stores reusable notes, context, research, and internal knowledge.",
-    depoRole: "Agent 101 saves and retrieves project memory.",
-    connections: ["research-lab", "draft-studio", "depo-habitat"],
+    depoRole: "All office memory reports back to Agent 101.",
+    connections: ["depo-habitat"],
     riskNote: "Sensitive data should be logged.",
-    recentActivity: ["Memory drawers indexed.", "Evidence note saved.", "Private context kept local."],
+    recentActivity: ["Memory office virtual.", "Private context kept local."],
   },
   {
-    id: "draft-studio",
-    title: "Draft Studio",
-    name: "Draft Studio",
-    subtitle: "Creating drafts",
-    metric: "2 in progress",
-    status: "Drafting",
-    type: "draft",
-    visual: "studio",
-    icon: "pen",
-    color: "#A78BFA",
-    position: { x: 79.2, y: 50 },
-    size: { w: 27, h: 28 },
-    purpose: "Creates internal outputs, prompts, content, listings, and proposals.",
-    depoRole: "Agent 101 drafts work but does not publish it.",
-    connections: ["verify-station", "memory-vault", "human-gate", "output-bench"],
-    riskNote: "Publishing is locked.",
-    recentActivity: ["Two drafts in progress.", "Listing notes remain internal.", "Creative desk active."],
+    id: "output-bench",
+    visible: false,
+    title: "Output Desk",
+    name: "Output Desk",
+    subtitle: "Prepared outputs",
+    metric: "0 artifacts",
+    status: "Prepared",
+    type: "output",
+    visual: "bench",
+    icon: "download",
+    color: "#60A5FA",
+    position: { x: 50, y: 84 },
+    size: { w: 24, h: 22 },
+    purpose: "Holds completed drafts and prepared deliverables.",
+    depoRole: "Agent 101 places reviewed work here for final handling.",
+    connections: ["depo-habitat"],
+    riskNote: "Outputs remain internal until approved.",
+    recentActivity: ["Output desk virtual.", "No publish action sent."],
   },
   {
     id: "system-log",
+    visible: false,
     title: "System Log",
     name: "System Log",
     subtitle: "Event stream",
@@ -666,31 +686,13 @@ const habitatFloorRooms = [
     size: { w: 27, h: 28 },
     purpose: "Tracks events, stage changes, and audit history.",
     depoRole: "Agent 101 writes cycle updates here.",
-    connections: ["depo-habitat", "task-intake", "research-lab", "verify-station", "draft-studio", "human-gate", "output-bench", "memory-vault"],
+    connections: ["depo-habitat", "clips-office", "stock-office", "etsy-office", "essentrx-office"],
     riskNote: "Logs should be append-only where possible.",
     recentActivity: ["Event stream live.", "Stage update written.", "Approval status recorded."],
   },
   {
-    id: "output-bench",
-    title: "Output Bench",
-    name: "Output Bench",
-    subtitle: "Prepared outputs",
-    metric: "4 items",
-    status: "Prepared",
-    type: "output",
-    visual: "bench",
-    icon: "download",
-    color: "#60A5FA",
-    position: { x: 50, y: 84 },
-    size: { w: 27, h: 28 },
-    purpose: "Holds completed drafts and prepared deliverables.",
-    depoRole: "Agent 101 places reviewed work here for final handling.",
-    connections: ["human-gate", "system-log", "depo-habitat"],
-    riskNote: "Outputs remain internal until approved.",
-    recentActivity: ["Four output items staged.", "Delivery bench organized.", "No publish action sent."],
-  },
-  {
     id: "human-gate",
+    visible: false,
     title: "Human Gate",
     name: "Human Gate",
     subtitle: "Approval required",
@@ -704,7 +706,7 @@ const habitatFloorRooms = [
     size: { w: 27, h: 28 },
     purpose: "Blocks risky actions until the operator approves.",
     depoRole: "Agent 101 packages work for human review.",
-    connections: ["draft-studio", "output-bench", "system-log"],
+    connections: ["depo-habitat", "clips-office", "stock-office", "etsy-office", "essentrx-office"],
     riskNote: "Required for publishing, money movement, customer contact, account changes, and new agents.",
     recentActivity: ["Approval lock engaged.", "Risk package waiting.", "External action blocked."],
   },
@@ -715,21 +717,21 @@ const roomActionModel = {
     allowedActions: ["coordinate workflow", "review current stage", "prepare approval package", "propose future agent blueprint"],
     blockedActions: ["create live agents", "grant permissions", "publish externally", "change API keys"],
   },
-  "task-intake": {
-    allowedActions: ["capture request", "create internal task", "split work into safe steps", "send task to research"],
-    blockedActions: ["contact customers", "publish intake", "open external account"],
+  "clips-office": {
+    allowedActions: ["draft clip plan", "write hooks", "prepare edit notes", "package posting plan"],
+    blockedActions: ["post videos", "access social accounts", "spend ad money"],
   },
-  "research-lab": {
-    allowedActions: ["gather research", "organize evidence", "label assumptions", "save source notes"],
-    blockedActions: ["pay for research", "scrape behind logins", "contact external parties"],
+  "stock-office": {
+    allowedActions: ["draft watch notes", "organize market research", "label risk", "prepare review notes"],
+    blockedActions: ["place trades", "move money", "make financial guarantees"],
   },
-  "verify-station": {
-    allowedActions: ["check claims", "flag missing evidence", "score risk", "route uncertainty to Human Gate"],
-    blockedActions: ["approve risky claims", "make legal or financial guarantees", "skip review"],
+  "etsy-office": {
+    allowedActions: ["draft product ideas", "prepare listing copy", "organize POD evidence", "package store changes"],
+    blockedActions: ["publish listings", "change pricing", "contact customers"],
   },
-  "draft-studio": {
-    allowedActions: ["draft plans", "draft content", "prepare prompts", "prepare agent blueprints"],
-    blockedActions: ["publish drafts", "deploy campaigns", "create live agents"],
+  "essentrx-office": {
+    allowedActions: ["draft brand operations", "prepare product notes", "organize admin ideas", "package customer-safe drafts"],
+    blockedActions: ["change checkout", "contact customers", "deploy campaigns"],
   },
   "memory-vault": {
     allowedActions: ["store internal notes", "retrieve project memory", "organize context", "label sensitive data"],
@@ -753,10 +755,10 @@ const defaultRoomAllowedActions = ["view status", "run local check", "write inte
 const defaultRoomBlockedActions = ["external execution", "publishing", "money movement", "permission changes"];
 const roomQuickActions = {
   "depo-habitat": ["Create task plan", "Draft workflow", "Propose a new agent"],
-  "task-intake": ["Create task plan", "Send to Research"],
-  "research-lab": ["Save note", "Send to Verify"],
-  "verify-station": ["Run check", "Send to Draft"],
-  "draft-studio": ["Draft output", "Package for approval"],
+  "clips-office": ["Create task plan", "Draft workflow", "Package for approval"],
+  "stock-office": ["Save note", "Run check", "Package for approval"],
+  "etsy-office": ["Draft workflow", "Package for approval", "Save note"],
+  "essentrx-office": ["Draft workflow", "Package for approval", "Save note"],
   "human-gate": ["View pending approvals", "Approve local test", "Reject"],
   "output-bench": ["View output", "Send to Log"],
   "memory-vault": ["Save note", "View memory"],
@@ -1319,26 +1321,20 @@ habitatFloorRooms.forEach((room) => {
 });
 
 const habitatMapModules = habitatFloorRooms
-  .filter((room) => room.id !== "depo-habitat")
+  .filter((room) => room.id !== "depo-habitat" && room.visible !== false)
   .map((room) => roomProfiles[room.id]);
 
 const moduleRoutes = [
-  { from: "depo-habitat", to: "task-intake", kind: "spoke" },
-  { from: "depo-habitat", to: "research-lab", kind: "spoke" },
-  { from: "depo-habitat", to: "verify-station", kind: "spoke" },
-  { from: "depo-habitat", to: "draft-studio", kind: "spoke" },
-  { from: "depo-habitat", to: "memory-vault", kind: "spoke" },
-  { from: "depo-habitat", to: "output-bench", kind: "spoke" },
-  { from: "depo-habitat", to: "system-log", kind: "spoke" },
-  { from: "depo-habitat", to: "human-gate", kind: "approval" },
-  { from: "task-intake", to: "research-lab", kind: "flow" },
-  { from: "research-lab", to: "verify-station", kind: "flow" },
-  { from: "verify-station", to: "draft-studio", kind: "flow" },
-  { from: "draft-studio", to: "human-gate", kind: "approval" },
-  { from: "human-gate", to: "output-bench", kind: "approval" },
-  { from: "output-bench", to: "system-log", kind: "flow" },
-  { from: "memory-vault", to: "research-lab", kind: "memory" },
-  { from: "memory-vault", to: "draft-studio", kind: "memory" },
+  { from: "depo-habitat", to: "clips-office", kind: "spoke" },
+  { from: "depo-habitat", to: "stock-office", kind: "spoke" },
+  { from: "depo-habitat", to: "etsy-office", kind: "spoke" },
+  { from: "depo-habitat", to: "essentrx-office", kind: "spoke" },
+  { from: "clips-office", to: "stock-office", kind: "flow" },
+  { from: "stock-office", to: "essentrx-office", kind: "flow" },
+  { from: "essentrx-office", to: "etsy-office", kind: "flow" },
+  { from: "etsy-office", to: "clips-office", kind: "flow" },
+  { from: "clips-office", to: "essentrx-office", kind: "memory" },
+  { from: "stock-office", to: "etsy-office", kind: "memory" },
 ];
 
 const depoWorkflowState = {
@@ -1536,45 +1532,65 @@ function updateHabitatRoomRuntimeFromState() {
   const memoryCount = memoryEntries().length;
   const evidenceCount = taskEvidenceCount(tasks) + artifactEvidenceCount(artifacts);
   const verificationCount = pendingApprovals.length + tasks.filter((task) => ["medium", "high"].includes(String(task.risk || "").toLowerCase())).length;
+  const keywordCount = (items, keywords) =>
+    items.filter((item) => {
+      const text = `${item.title || ""} ${item.summary || ""} ${item.operatorText || ""} ${item.intent || ""} ${item.type || ""} ${item.workflowId || ""}`.toLowerCase();
+      return keywords.some((keyword) => text.includes(keyword));
+    }).length;
+  const businessItems = [...tasks, ...artifacts, ...localWorkflowDrafts, ...localBlueprints];
+  const clipsCount = keywordCount(businessItems, ["clip", "video", "reel", "tiktok", "short"]);
+  const stockCount = keywordCount(businessItems, ["stock", "market", "watch", "trade", "ticker"]);
+  const etsyCount = keywordCount(businessItems, ["etsy", "pod", "print-on-demand", "listing", "store"]);
+  const essentrxCount = keywordCount(businessItems, ["essentrx", "scent", "fragrance", "quiz", "admin"]);
 
   syncRoomRuntime("depo-habitat", {
     subtitle: "Master agent",
-    metric: depoAgent.number,
+    metric: `Agent ${depoAgent.number}`,
     status: depoAgent.status,
     runtimeActivity: [
       "Only Agent 101 is active.",
-      `${depoAgent.mode} mode loaded.`,
+      "All business offices report to Agent 101.",
       `${depoStageLabel(depoAgent.currentStage)} is the current stage.`,
     ],
   });
-  syncRoomRuntime("task-intake", {
-    subtitle: queuedTasks.length ? "Queued requests" : "No queue",
-    metric: countPhrase(queuedTasks.length, "queued"),
-    status: queuedTasks.length ? "Intake ready" : "Clear",
+  syncRoomRuntime("clips-office", {
+    subtitle: clipsCount ? "Clip work active" : "Video planning",
+    metric: clipsCount ? pluralize(clipsCount, "item") : "Ready",
+    status: clipsCount ? "Drafting" : "Ready",
     runtimeActivity: [
-      `${pluralize(queuedTasks.length, "queued task")} in intake.`,
-      activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} across Agent 101.` : "No active task backlog.",
-      "New work stays internal.",
+      `${pluralize(clipsCount, "clip-related item")} in local state.`,
+      activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} can feed clip work.` : "No active clip backlog.",
+      "Posting remains approval-gated.",
     ],
   });
-  syncRoomRuntime("research-lab", {
-    subtitle: evidenceCount ? "Evidence notes" : "No active research",
-    metric: evidenceCount ? pluralize(evidenceCount, "note") : "0 notes",
-    status: evidenceCount ? "Evidence ready" : "Waiting",
+  syncRoomRuntime("stock-office", {
+    subtitle: stockCount ? "Market notes" : "Watch desk",
+    metric: stockCount ? pluralize(stockCount, "item") : "Guarded",
+    status: stockCount ? "Research" : "Ready",
     runtimeActivity: [
-      `${pluralize(evidenceCount, "evidence note")} available.`,
-      memoryCount ? `${pluralize(memoryCount, "memory note")} available for context.` : "Memory is empty.",
-      "No external research action is open.",
+      `${pluralize(stockCount, "stock-related item")} in local state.`,
+      `${pluralize(verificationCount, "risk check")} available before decisions.`,
+      "Trades and money movement are locked.",
     ],
   });
-  syncRoomRuntime("verify-station", {
-    subtitle: verificationCount ? "Review needed" : "No checks",
-    metric: verificationCount ? pluralize(verificationCount, "check") : "0 checks",
-    status: verificationCount ? "Reviewing" : "Clear",
+  syncRoomRuntime("etsy-office", {
+    subtitle: etsyCount ? "Store drafts" : "POD planning",
+    metric: etsyCount ? pluralize(etsyCount, "item") : "Draft only",
+    status: etsyCount ? "Planning" : "Ready",
     runtimeActivity: [
-      `${pluralize(verificationCount, "risk check")} derived from tasks and approvals.`,
-      pendingApprovals.length ? `${pluralize(pendingApprovals.length, "approval")} waiting.` : "No pending approval review.",
-      "Uncertain claims stay blocked.",
+      `${pluralize(etsyCount, "Etsy/POD item")} in local state.`,
+      pendingApprovals.length ? `${pluralize(pendingApprovals.length, "approval")} waiting before store action.` : "No store approval waiting.",
+      "Publishing and pricing stay locked.",
+    ],
+  });
+  syncRoomRuntime("essentrx-office", {
+    subtitle: essentrxCount ? "Brand work active" : "Brand ops",
+    metric: essentrxCount ? pluralize(essentrxCount, "item") : "Connected",
+    status: essentrxCount ? "Drafting" : "Ready",
+    runtimeActivity: [
+      `${pluralize(essentrxCount, "Essentrx item")} in local state.`,
+      "Customer-facing changes require approval.",
+      "Agent 101 owns final review.",
     ],
   });
   syncRoomRuntime("memory-vault", {
@@ -1632,17 +1648,21 @@ function updateHabitatRoomRuntimeFromState() {
 // OrbitScene state
 const legacyRoomAliases = {
   Overview: "depo-habitat",
-  Research: "depo-habitat",
-  Verify: "depo-habitat",
-  Draft: "depo-habitat",
-  Approval: "depo-habitat",
-  Commerce: "depo-habitat",
-  Finance: "depo-habitat",
-  Inventory: "depo-habitat",
-  Logistics: "depo-habitat",
-  Marketing: "depo-habitat",
-  Support: "depo-habitat",
-  Logs: "depo-habitat",
+  Research: "stock-office",
+  Verify: "etsy-office",
+  Draft: "essentrx-office",
+  Approval: "human-gate",
+  Commerce: "etsy-office",
+  Finance: "stock-office",
+  Inventory: "etsy-office",
+  Logistics: "essentrx-office",
+  Marketing: "clips-office",
+  Support: "essentrx-office",
+  Logs: "system-log",
+  "task-intake": "clips-office",
+  "research-lab": "stock-office",
+  "verify-station": "etsy-office",
+  "draft-studio": "essentrx-office",
 };
 
 const workspaceProfiles = {
@@ -2017,6 +2037,10 @@ function floorSpokeGeometry(source, target) {
 
 function moduleIconMarkup(id) {
   const icons = {
+    "clips-office": '<svg viewBox="0 0 24 24"><path d="M4 7h10v10H4z"/><path d="m14 10 6-3v10l-6-3"/><path d="M8 11h2"/><path d="M8 14h4"/></svg>',
+    "stock-office": '<svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M6 16l4-5 3 3 5-8"/><path d="M17 6h2v2"/></svg>',
+    "etsy-office": '<svg viewBox="0 0 24 24"><path d="M6 4h12l1 5H5l1-5Z"/><path d="M6 9v11h12V9"/><path d="M9 13h6"/><path d="M9 16h4"/></svg>',
+    "essentrx-office": '<svg viewBox="0 0 24 24"><path d="M10 3h4v4l3 4a6 6 0 1 1-10 0l3-4V3Z"/><path d="M9 14h6"/><path d="M10 18h4"/></svg>',
     "task-intake": '<svg viewBox="0 0 24 24"><path d="M9 3h6l1 3H8l1-3Z"/><path d="M6 6h12v15H6z"/><path d="M9 11h6"/><path d="M9 15h4"/></svg>',
     "research-lab": '<svg viewBox="0 0 24 24"><path d="M10 3v5l-5 9a3 3 0 0 0 2.6 4.5h8.8A3 3 0 0 0 19 17l-5-9V3"/><path d="M8 3h8"/><path d="M8 15h8"/></svg>',
     "verify-station": '<svg viewBox="0 0 24 24"><path d="M12 3 20 7v5c0 4.8-3.1 7.6-8 9-4.9-1.4-8-4.2-8-9V7l8-4Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>',
@@ -2843,12 +2867,7 @@ function renderHabitatRoutes() {
     </defs>
   `;
 
-  const visibleFloorRoutes = moduleRoutes.filter((route) => {
-    const { from, to } = routeEndpoints(route);
-    return from === "depo-habitat" || to === "depo-habitat";
-  });
-
-  const moduleBridgeRoutes = visibleFloorRoutes
+  const moduleBridgeRoutes = moduleRoutes
     .map((route, index) => {
       const { from, to, kind } = routeEndpoints(route);
       const source = moduleProfile(from);
@@ -2913,32 +2932,35 @@ function miniAgentRobotMarkup(room) {
 }
 
 function floorCorridorMarkup() {
-  const core = habitatFloorRoomById["depo-habitat"];
-  const center = core.position;
   const wideMapAspect = 0.36;
 
-  return habitatMapModules
-    .map((room, index) => {
-      const dx = room.position.x - center.x;
-      const dy = room.position.y - center.y;
+  return moduleRoutes
+    .map((route, index) => {
+      const { from, to, kind } = routeEndpoints(route);
+      const source = moduleProfile(from);
+      const target = moduleProfile(to);
+      if (!source?.position || !target?.position) return "";
+      const dx = target.position.x - source.position.x;
+      const dy = target.position.y - source.position.y;
       const distance = Math.hypot(dx, dy) || 1;
       const unitX = dx / distance;
       const unitY = dy / distance;
-      const verticalRoute = room.id === "output-bench" || room.id === "research-lab";
-      const startOffset = verticalRoute ? 11.6 : 10.8;
-      const endOffset = room.id === "human-gate" ? 13.2 : verticalRoute ? 11.8 : 12.8;
-      const startX = center.x + unitX * startOffset;
-      const startY = center.y + unitY * startOffset;
-      const endX = room.position.x - unitX * endOffset;
-      const endY = room.position.y - unitY * endOffset;
+      const sourceIsCore = source.id === "depo-habitat";
+      const targetIsCore = target.id === "depo-habitat";
+      const startOffset = sourceIsCore ? 11.8 : 15.6;
+      const endOffset = targetIsCore ? 11.8 : 15.6;
+      const startX = source.position.x + unitX * startOffset;
+      const startY = source.position.y + unitY * startOffset;
+      const endX = target.position.x - unitX * endOffset;
+      const endY = target.position.y - unitY * endOffset;
       const corridorDx = endX - startX;
       const corridorDy = endY - startY;
       const corridorLength = Math.hypot(corridorDx, corridorDy * wideMapAspect);
       const angle = Math.atan2(corridorDy * wideMapAspect, corridorDx) * (180 / Math.PI);
-      const approval = room.id === "human-gate";
+      const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
 
       return `
-        <span class="floor-corridor ${approval ? "approval" : ""}" style="--cx: ${startX.toFixed(2)}%; --cy: ${startY.toFixed(2)}%; --corridor-length: ${corridorLength.toFixed(2)}%; --corridor-angle: ${angle.toFixed(2)}deg; --corridor-delay: ${(index * 0.2).toFixed(2)}s" aria-hidden="true">
+        <span class="floor-corridor ${approval ? "approval" : ""} ${sourceIsCore || targetIsCore ? "hub-route" : "office-route"}" style="--cx: ${startX.toFixed(2)}%; --cy: ${startY.toFixed(2)}%; --corridor-length: ${corridorLength.toFixed(2)}%; --corridor-angle: ${angle.toFixed(2)}deg; --corridor-delay: ${(index * 0.2).toFixed(2)}s" aria-hidden="true">
           <span class="corridor-rail"></span>
           <span class="corridor-chevron chevron-a"></span>
           <span class="corridor-chevron chevron-b"></span>
@@ -3194,7 +3216,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("workflow")) {
-    return "A safe workflow is: Task Intake -> Research Lab -> Verify Station -> Draft Studio -> Human Gate -> Output Bench -> System Log. I can draft that flow locally and keep external execution locked.";
+    return "A safe workflow is: Agent 101 office -> Clips, Stock, Etsy, or Essentrx office -> evidence check -> draft package -> Human Gate if risky -> output/log. I can draft that flow locally and keep external execution locked.";
   }
 
   if (text.includes("task")) {
@@ -3214,11 +3236,11 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("next") || text.includes("start") || text.includes("step")) {
-    return `The next clean step is to give me one bounded task in Task Intake. I can research it, verify it, draft the output, then package anything risky for Human Gate instead of executing it.`;
+    return `The next clean step is to give Agent 101 one bounded task and choose the business office: Clips, Stock, Etsy, or Essentrx. I can research it, verify it, draft the output, then package anything risky for Human Gate instead of executing it.`;
   }
 
   if (text.includes("agent") || text.includes("agents")) {
-    return "There is only one active agent: Agent 101. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
+    return "There is only one active head agent: Agent 101. The business offices are work areas that report to Agent 101. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
   }
 
   return `For ${card.title}: ${card.purpose || card.summary} I can help from local state only. Ask me "what can you do?", "create a task plan", "draft a workflow", "propose a new agent", "what is blocked?", or "view Human Gate rules."`;
@@ -3402,14 +3424,74 @@ function businessOfficeProfile(roomKey) {
       officeType: "Supervised Operator",
       status: "Draft-only",
       priority: "High",
-      goal: "Coordinate the first safe business workflow, draft useful work, and send risky actions to Human Gate.",
-      willDo: ["Plan bounded work", "Research and organize evidence", "Draft outputs", "Prepare approval packages", "Record internal notes"],
-      needsAccess: ["Local app state", "Memory vault", "Task queue", "Human Gate"],
+      goal: "Act as the head office. Agent 101 receives reports from every business office and packages risky actions for Human Gate.",
+      willDo: ["Review every office", "Plan bounded work", "Research and organize evidence", "Draft outputs", "Prepare approval packages"],
+      needsAccess: ["Local app state", "Business offices", "Memory vault", "Task queue", "Human Gate"],
       blocked: commonBlocked,
-      steps: ["Receive bounded task", "Gather context", "Verify assumptions", "Draft output", "Package risk", "Await human decision"],
+      steps: ["Receive office report", "Gather context", "Verify assumptions", "Draft output", "Package risk", "Await human decision"],
       tools: ["Local Demo AI", "OpenAI provider status", "Local memory", "Human Gate"],
       primaryAction: "Create task plan",
       secondaryAction: "Draft workflow",
+    },
+    "clips-office": {
+      title: "Business Office: Clips & Video",
+      badge: "Business",
+      officeType: "Content Creation",
+      status: "Drafting",
+      priority: "High",
+      goal: "Create short-form clips and video packages that Agent 101 can review before anything is posted.",
+      willDo: ["Plan hooks", "Draft scripts", "Prepare edit notes", "Package captions", "Create posting checklists"],
+      needsAccess: ["Raw footage notes", "Brand notes", "Caption drafts", "Approval queue"],
+      blocked: ["Posting without approval", "Opening social accounts", "Spending ad money", "Contacting customers"],
+      steps: ["Plan clip idea", "Gather assets", "Draft script", "Prepare edit notes", "Package for approval", "Report to Agent 101"],
+      tools: ["Script planner", "Caption drafts", "Asset notes", "Human Gate"],
+      primaryAction: "Create task plan",
+      secondaryAction: "Draft workflow",
+    },
+    "stock-office": {
+      title: "Business Office: Stock",
+      badge: "Business",
+      officeType: "Market Research",
+      status: "Guarded",
+      priority: "High",
+      goal: "Prepare stock watch notes and risk-labeled research without trading, moving money, or making claims.",
+      willDo: ["Gather ticker notes", "Track watch ideas", "Label risk", "Draft summaries", "Prepare review packets"],
+      needsAccess: ["Market notes", "Operator watchlist", "Risk rules", "Memory"],
+      blocked: ["Place trades", "Move money", "Promise returns", "Change brokerage settings"],
+      steps: ["Set watch topic", "Gather notes", "Check risk", "Draft watch note", "Package for review", "Report to Agent 101"],
+      tools: ["Watch note draft", "Risk labels", "Memory notes", "Human Gate"],
+      primaryAction: "Save note",
+      secondaryAction: "Run check",
+    },
+    "etsy-office": {
+      title: "Business Office: Etsy Store",
+      badge: "Business",
+      officeType: "Store Planning",
+      status: "Draft only",
+      priority: "High",
+      goal: "Prepare Etsy/POD product ideas, listings, SEO, and store packages for Agent 101 review.",
+      willDo: ["Draft product ideas", "Prepare listing copy", "Organize POD evidence", "Create SEO notes", "Package store changes"],
+      needsAccess: ["Product ideas", "POD research", "Listing drafts", "Approval queue"],
+      blocked: ["Publish listings", "Change prices", "Spend money", "Message customers"],
+      steps: ["Choose product idea", "Gather evidence", "Draft listing", "Check risk", "Package approval", "Report to Agent 101"],
+      tools: ["Listing drafts", "POD brief", "SEO notes", "Human Gate"],
+      primaryAction: "Draft workflow",
+      secondaryAction: "Package for approval",
+    },
+    "essentrx-office": {
+      title: "Business Office: Essentrx",
+      badge: "Business",
+      officeType: "Brand Operations",
+      status: "Connected",
+      priority: "High",
+      goal: "Prepare Essentrx brand, product, admin, and customer-safe work while Agent 101 keeps external actions gated.",
+      willDo: ["Draft product notes", "Prepare admin ideas", "Organize scent/business context", "Package customer-safe copy", "Create review bundles"],
+      needsAccess: ["Essentrx context", "Product notes", "Admin notes", "Approval queue"],
+      blocked: ["Contact customers", "Change checkout", "Publish campaigns", "Modify accounts"],
+      steps: ["Define business need", "Gather brand context", "Draft internal plan", "Check customer risk", "Package approval", "Report to Agent 101"],
+      tools: ["Brand notes", "Admin drafts", "Customer-safe copy", "Human Gate"],
+      primaryAction: "Draft workflow",
+      secondaryAction: "Package for approval",
     },
     "task-intake": {
       title: "Business Office: Idea Intake",
@@ -5392,7 +5474,7 @@ function draftDepoWorkflow(roomKey = "draft-studio") {
   const workflow = {
     id: `workflow-draft-${Date.now()}`,
     name: "Agent 101 supervised workflow",
-    stages: ["Task Intake", "Research Lab", "Verify Station", "Draft Studio", "Human Gate", "Output Bench", "System Log"],
+    stages: ["Agent Office", "Business Office", "Evidence Check", "Draft Package", "Human Gate", "Output Desk", "System Log"],
     status: "draft",
     createdBy: "depo",
     createdAt: new Date().toISOString(),
@@ -5407,7 +5489,7 @@ function draftDepoWorkflow(roomKey = "draft-studio") {
   depoChatMessages.push({
     roomId: resolveRoomKey(roomKey),
     speaker: "depo",
-    text: "Workflow draft created: Task Intake -> Research Lab -> Verify Station -> Draft Studio -> Human Gate -> Output Bench -> System Log.",
+    text: "Workflow draft created: Agent Office -> selected business office -> evidence check -> draft package -> Human Gate -> Output Desk -> System Log.",
   });
   render();
   openModuleInfoCard(roomKey);
@@ -5685,11 +5767,11 @@ function handleModuleAction(action, stationId) {
   } else if (action === "Save note") {
     saveDepoNote(stationId);
   } else if (action === "Send to Research") {
-    setDepoWorkflowStage("research-lab", `${moduleDisplayName(stationId)} sent work to Research Lab`);
+    setDepoWorkflowStage("stock-office", `${moduleDisplayName(stationId)} sent work to Stock Office`);
   } else if (action === "Send to Verify") {
-    setDepoWorkflowStage("verify-station", `${moduleDisplayName(stationId)} sent work to Verify Station`);
+    setDepoWorkflowStage("etsy-office", `${moduleDisplayName(stationId)} sent work to Etsy Store Office`);
   } else if (action === "Send to Draft") {
-    setDepoWorkflowStage("draft-studio", `${moduleDisplayName(stationId)} sent work to Draft Studio`);
+    setDepoWorkflowStage("essentrx-office", `${moduleDisplayName(stationId)} sent work to Essentrx Office`);
   } else if (action === "Send to Log") {
     setDepoWorkflowStage("system-log", `${moduleDisplayName(stationId)} sent work to System Log`);
   } else if (action === "View output") {

@@ -3714,6 +3714,35 @@ main {
   opacity: 0.98;
 }
 
+.floor-corridor.office-route {
+  height: 18px;
+  opacity: 0.72;
+  filter: saturate(0.82);
+}
+
+.floor-corridor.office-route::before {
+  left: -6px;
+  width: 13px;
+  height: 13px;
+}
+
+.floor-corridor.office-route::after {
+  right: -5px;
+  width: 12px;
+  height: 12px;
+}
+
+.floor-corridor.office-route .corridor-rail {
+  height: 4px;
+  box-shadow:
+    0 0 9px rgba(125, 211, 252, 0.68),
+    0 0 20px rgba(59, 130, 246, 0.32);
+}
+
+.floor-corridor.office-route .corridor-chevron {
+  opacity: 0.55;
+}
+
 .floor-corridor::before,
 .floor-corridor::after {
   content: "";
@@ -4681,7 +4710,7 @@ main {
   left: 50%;
   top: 8px;
   z-index: 8;
-  width: min(70%, 172px);
+  width: min(78%, 198px);
   min-height: 42px;
   transform: translateX(-50%);
   border-radius: 11px;
@@ -4695,9 +4724,13 @@ main {
 }
 
 .station-label .module-copy strong {
-  font-size: 0.62rem;
+  font-size: 0.6rem;
   letter-spacing: 0.01em;
   text-transform: uppercase;
+}
+
+.station.long-title .station-label .module-copy strong {
+  font-size: 0.54rem;
 }
 
 .station-label .module-copy small {

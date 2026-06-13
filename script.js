@@ -3352,10 +3352,470 @@ function humanGateMarkup(card) {
   `;
 }
 
+function safeList(items, fallback = ["No local items recorded yet."], limit = 6) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  return (list.length ? list : fallback).slice(0, limit);
+}
+
+function officeRuntimeSnapshot() {
+  const tasks = stateList("tasks");
+  const localTasks = depoTasks();
+  const artifacts = stateList("artifacts");
+  const approvals = stateList("approvals");
+  const pending = approvals.filter((approval) => approval.status === "pending");
+  const memoryCount = memoryEntries().length;
+  const evidenceCount = taskEvidenceCount(tasks) + artifactEvidenceCount(artifacts);
+  const auditEntries = [...systemLogEntries(), ...stateList("audit")];
+  const queuedWork = [
+    ...tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)),
+    ...localTasks.filter((task) => task.status !== "done"),
+  ];
+  return {
+    tasks,
+    localTasks,
+    artifacts,
+    approvals,
+    pending,
+    memoryCount,
+    evidenceCount,
+    auditEntries,
+    queuedWork,
+    workflowDrafts: workflowDrafts(),
+    agentBlueprints: agentBlueprints(),
+  };
+}
+
+function businessOfficeProfile(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  const runtime = officeRuntimeSnapshot();
+  const commonBlocked = [
+    "Publish externally without approval",
+    "Spend or move money",
+    "Contact customers directly",
+    "Change accounts or credentials",
+    "Create live agents without approval",
+  ];
+  const profiles = {
+    "depo-habitat": {
+      title: "Agent Office: Agent 101",
+      badge: "Master agent",
+      officeType: "Supervised Operator",
+      status: "Draft-only",
+      priority: "High",
+      goal: "Coordinate the first safe business workflow, draft useful work, and send risky actions to Human Gate.",
+      willDo: ["Plan bounded work", "Research and organize evidence", "Draft outputs", "Prepare approval packages", "Record internal notes"],
+      needsAccess: ["Local app state", "Memory vault", "Task queue", "Human Gate"],
+      blocked: commonBlocked,
+      steps: ["Receive bounded task", "Gather context", "Verify assumptions", "Draft output", "Package risk", "Await human decision"],
+      tools: ["Local Demo AI", "OpenAI provider status", "Local memory", "Human Gate"],
+      primaryAction: "Create task plan",
+      secondaryAction: "Draft workflow",
+    },
+    "task-intake": {
+      title: "Business Office: Idea Intake",
+      badge: "Business",
+      officeType: "Request Planning",
+      status: runtime.queuedWork.length ? "Work waiting" : "Ready",
+      priority: runtime.queuedWork.length ? "High" : "Normal",
+      goal: "Turn business ideas into clean, bounded jobs Agent 101 can safely work on.",
+      willDo: ["Capture one clear goal", "Break it into safe steps", "Label risk", "Route work to Agent 101"],
+      needsAccess: ["Operator instructions", "Task templates", "Workflow definitions"],
+      blocked: ["Starting vague unbounded work", ...commonBlocked.slice(0, 3)],
+      steps: ["Define request", "Set outcome", "Attach context", "Queue for Agent 101", "Log intake"],
+      tools: ["Task templates", "Local queue", "Workflow router"],
+      primaryAction: "Create task plan",
+      secondaryAction: "Send to Research",
+    },
+    "research-lab": {
+      title: "Business Office: Research",
+      badge: "Business",
+      officeType: "Evidence Gathering",
+      status: runtime.evidenceCount ? "Evidence saved" : "Needs source material",
+      priority: "Normal",
+      goal: "Collect and organize evidence before anything becomes a draft or business recommendation.",
+      willDo: ["Gather notes", "Separate facts from guesses", "Store source context", "Send uncertain claims to review"],
+      needsAccess: ["Operator-provided sources", "Browser research when approved", "Memory vault"],
+      blocked: ["Paid research tools without approval", "Scraping private/login data", ...commonBlocked.slice(1, 3)],
+      steps: ["Collect sources", "Summarize evidence", "Label assumptions", "Save notes", "Send to verification"],
+      tools: ["Memory notes", "Evidence counter", "Local research log"],
+      primaryAction: "Save note",
+      secondaryAction: "Send to Verify",
+    },
+    "verify-station": {
+      title: "Business Office: Review",
+      badge: "Business",
+      officeType: "Risk Check",
+      status: runtime.pending.length ? "Review needed" : "Clear",
+      priority: runtime.pending.length ? "High" : "Normal",
+      goal: "Check claims, permissions, and risks before a draft turns into an approval package.",
+      willDo: ["Check missing evidence", "Flag risky claims", "Score approval need", "Route blocked items"],
+      needsAccess: ["Research notes", "Draft output", "Human Gate rules"],
+      blocked: ["Approving its own risky action", "Making legal or financial guarantees", ...commonBlocked.slice(0, 2)],
+      steps: ["Check evidence", "Find gaps", "Mark risk", "Request revision", "Clear for draft"],
+      tools: ["Risk labels", "Approval rules", "Audit log"],
+      primaryAction: "Run check",
+      secondaryAction: "Send to Draft",
+    },
+    "memory-vault": {
+      title: "Business Office: Knowledge Base",
+      badge: "Business",
+      officeType: "Memory",
+      status: runtime.memoryCount ? "Memory active" : "Empty",
+      priority: "Normal",
+      goal: "Keep reusable knowledge, notes, evidence, and decisions organized for Agent 101.",
+      willDo: ["Save internal notes", "Retrieve local context", "Label sensitive info", "Keep evidence attached"],
+      needsAccess: ["Working memory", "Shared memory", "Agent notes"],
+      blocked: ["Saving API keys or secrets", "Exposing private memory", "Overwriting audit history"],
+      steps: ["Receive note", "Classify layer", "Attach source", "Store locally", "Make reusable"],
+      tools: ["Working memory", "Shared memory", "Agent memory"],
+      primaryAction: "Save note",
+      secondaryAction: "View memory",
+    },
+    "draft-studio": {
+      title: "Business Office: Draft Studio",
+      badge: "Business",
+      officeType: "Output Creation",
+      status: runtime.workflowDrafts.length ? "Drafting" : "Ready",
+      priority: "High",
+      goal: "Create internal business outputs, workflows, plans, prompts, and proposals without publishing them.",
+      willDo: ["Draft content", "Draft workflows", "Prepare reports", "Build future-agent blueprints"],
+      needsAccess: ["Research notes", "Memory vault", "Output bench"],
+      blocked: ["Publishing drafts", "Deploying campaigns", "Creating live agents"],
+      steps: ["Read verified notes", "Draft structure", "Write output", "Package risks", "Stage output"],
+      tools: ["Draft builder", "Workflow drafts", "Blueprint drafts"],
+      primaryAction: "Draft workflow",
+      secondaryAction: "Package for approval",
+    },
+    "output-bench": {
+      title: "Business Office: Output Bench",
+      badge: "Business",
+      officeType: "Deliverables",
+      status: runtime.artifacts.length ? "Outputs staged" : "No outputs yet",
+      priority: runtime.artifacts.length ? "Normal" : "Low",
+      goal: "Hold completed internal artifacts until the operator decides what happens next.",
+      willDo: ["Stage deliverables", "Bundle evidence", "Prepare review package", "Keep outputs internal"],
+      needsAccess: ["Artifacts", "Approval records", "System log"],
+      blocked: ["Sending files externally", "Publishing outputs", "Claiming revenue"],
+      steps: ["Receive artifact", "Attach evidence", "Confirm approval status", "Prepare handoff", "Log result"],
+      tools: ["Artifact list", "Approval package", "Local system log"],
+      primaryAction: "View output",
+      secondaryAction: "Package for approval",
+    },
+    "human-gate": {
+      title: "Business Office: Human Gate",
+      badge: "Approval",
+      officeType: "Operator Decisions",
+      status: runtime.pending.length ? `${runtime.pending.length} pending` : "Locked and ready",
+      priority: runtime.pending.length ? "High" : "Normal",
+      goal: "Approve, send back, or decline risky business actions before anything external happens.",
+      willDo: ["Hold approval packages", "Record decisions", "Block risky actions", "Send work back for revision"],
+      needsAccess: ["Approval queue", "Risk evidence", "Operator decision"],
+      blocked: ["Auto-approval", "Auto-spend", "Auto-publish", "Auto-create agents"],
+      steps: ["Receive package", "Read evidence", "Approve or revise", "Record decision", "Release only approved next step"],
+      tools: ["Approval queue", "Decision log", "Risk labels"],
+      primaryAction: "View pending approvals",
+      secondaryAction: "Approve local test",
+    },
+    "system-log": {
+      title: "Business Office: Ops Log",
+      badge: "Business",
+      officeType: "Audit Trail",
+      status: runtime.auditEntries.length ? "Events recorded" : "No events",
+      priority: "Normal",
+      goal: "Show what Agent 101 and the operator did locally so the business stays traceable.",
+      willDo: ["Append events", "Show stage changes", "Record approval outcomes", "Summarize local work"],
+      needsAccess: ["Audit stream", "System log", "Workflow state"],
+      blocked: ["Deleting audit history", "Hiding blocked actions", "Rewriting approvals"],
+      steps: ["Capture event", "Label actor", "Label risk", "Save timestamp", "Show feed"],
+      tools: ["System feed", "Audit log", "Local state"],
+      primaryAction: "View logs",
+      secondaryAction: "Run check",
+    },
+  };
+  return profiles[resolved] || profiles["depo-habitat"];
+}
+
+function officeMetricCards(profile, runtime) {
+  return [
+    ["Office type", profile.officeType],
+    ["Status", profile.status],
+    ["Priority", profile.priority],
+    ["Approval", depoAgent.riskMode],
+    ["Memory", pluralize(runtime.memoryCount, "note")],
+    ["Queued work", pluralize(runtime.queuedWork.length, "task")],
+  ];
+}
+
+function officeStepStatus(index, roomKey, runtime) {
+  const resolved = resolveRoomKey(roomKey);
+  const currentRoomIndex = depoWorkflowStages.indexOf(resolveRoomKey(roomKey));
+  if (resolved === "human-gate" && runtime.pending.length) return index === 1 ? "In review" : index < 1 ? "Ready" : "Waiting";
+  if (resolved === depoAgent.currentStage || resolved === "depo-habitat") return index === 0 ? "In progress" : "Pending";
+  if (index < Math.max(1, currentRoomIndex)) return "Ready";
+  if (index === Math.max(0, currentRoomIndex)) return "In progress";
+  return "Pending";
+}
+
+function officeStepClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized.includes("progress") || normalized.includes("review")) return "active";
+  if (normalized.includes("ready") || normalized.includes("done") || normalized.includes("complete")) return "done";
+  if (normalized.includes("waiting")) return "waiting";
+  return "";
+}
+
+function officePreviewMarkup(roomKey, runtime) {
+  const resolved = resolveRoomKey(roomKey);
+  const latestArtifact = runtime.artifacts[0];
+  const latestTask = runtime.tasks[0] || runtime.localTasks[0];
+  const title = latestArtifact?.title || latestTask?.title || "No business output staged yet";
+  const summary = latestArtifact?.summary || latestTask?.operatorText || latestTask?.stage || "Give Agent 101 one bounded task and this preview will show the real draft, package, or output created locally.";
+  const details = [
+    ["Artifacts", String(runtime.artifacts.length)],
+    ["Approvals", String(runtime.pending.length)],
+    ["Evidence", String(runtime.evidenceCount)],
+    ["Current room", businessOfficeProfile(resolved).officeType],
+  ];
+  return `
+    <section class="office-preview">
+      <div class="office-preview-screen">
+        <span>${escapeHtml(resolved === "depo-habitat" ? "Agent 101" : "Business output")}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(summary)}</p>
+      </div>
+      <div class="office-preview-details">
+        ${details.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function officeToolsMarkup(profile, roomKey) {
+  const providerLive = aiProviderSettings.provider === "openai" && aiProviderSettings.connectionStatus !== "Error";
+  const tools = safeList(profile.tools, ["Local state"]);
+  return `
+    <section class="office-tools">
+      <div class="office-section-head">
+        <h4>Apps & Tools</h4>
+        <span>${providerLive ? "Live" : "Local"}</span>
+      </div>
+      ${tools
+        .map(
+          (tool, index) => `
+            <article>
+              <strong>${escapeHtml(tool)}</strong>
+              <small>${index === 0 ? escapeHtml(aiProviderChatLabel()) : "Available locally"}</small>
+            </article>
+          `,
+        )
+        .join("")}
+      <button type="button" data-module-action="${escapeHtml(profile.secondaryAction)}">${escapeHtml(profile.secondaryAction)}</button>
+      <button type="button" data-module-action="${resolveRoomKey(roomKey) === "human-gate" ? "View pending approvals" : "Package for approval"}">${resolveRoomKey(roomKey) === "human-gate" ? "View approvals" : "Request approval"}</button>
+    </section>
+  `;
+}
+
+function officeNotesMarkup(runtime) {
+  const memory = memoryEntries();
+  const notes = safeList(
+    memory.map((entry) => entry.title || entry.body),
+    ["No memory notes saved yet.", "Use Save note to add local business knowledge.", "Secrets and keys stay out of memory."],
+    4,
+  );
+  const resources = safeList(
+    [
+      ...runtime.artifacts.map((artifact) => artifact.title),
+      ...runtime.tasks.map((task) => task.title),
+      ...runtime.workflowDrafts.map((workflow) => workflow.name),
+    ],
+    ["No artifacts or draft files staged yet."],
+    4,
+  );
+  return `
+    <section class="office-notes">
+      <div>
+        <h4>Agent Notes</h4>
+        <ul>${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>
+      </div>
+      <div>
+        <h4>Resources & Files</h4>
+        <ul>${resources.map((resource) => `<li>${escapeHtml(resource)}</li>`).join("")}</ul>
+      </div>
+    </section>
+  `;
+}
+
+function officeChatMarkup(card) {
+  const messages = depoChatMessagesFor(card.id);
+  return `
+    <section class="office-chat">
+      <div class="office-section-head">
+        <h4>Ask Agent 101</h4>
+        <span>Draft-only</span>
+      </div>
+      <div class="office-chat-log" aria-live="polite">
+        ${messages
+          .map(
+            (message) => `
+              <article class="${message.speaker === "operator" ? "operator" : ""}">
+                <strong>${message.speaker === "operator" ? "You" : "Agent 101"}</strong>
+                <p>${escapeHtml(message.text)}</p>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+      <form class="agent-chat-form office-chat-form" data-depo-chat-form>
+        <input name="message" type="text" autocomplete="off" placeholder="Ask about this office..." />
+        <button type="submit">Ask</button>
+      </form>
+    </section>
+  `;
+}
+
+function businessOfficeMarkup(card) {
+  const runtime = officeRuntimeSnapshot();
+  const profile = businessOfficeProfile(card.id);
+  const metrics = officeMetricCards(profile, runtime);
+  const steps = safeList(profile.steps, [], 6);
+  const providerStatus = aiProviderChatLabel();
+  return `
+    <div class="office-detail-panel">
+      <div class="office-detail-header">
+        <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+        <div>
+          <h3>${escapeHtml(profile.title)}</h3>
+          <p>Agent 101 · ${escapeHtml(profile.officeType)} · Supervised · Draft-only</p>
+        </div>
+        <span class="office-badge">${escapeHtml(profile.badge)}</span>
+        <span class="office-provider ${providerStatus === "Provider Error" ? "error" : ""}">${escapeHtml(providerStatus)}</span>
+        <button class="module-info-close" type="button" aria-label="Close office">×</button>
+      </div>
+      ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
+      <div class="office-metrics">
+        ${metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+      <div class="office-detail-layout">
+        <div class="office-main">
+          <section class="office-goal">
+            <span>${moduleIconMarkup("verify-station")}</span>
+            <div>
+              <h4>Office Goal</h4>
+              <p>${escapeHtml(profile.goal)}</p>
+            </div>
+          </section>
+          <section class="office-capabilities">
+            <div>
+              <h4>What This Office Will Do</h4>
+              <ul>${safeList(profile.willDo).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div>
+              <h4>What It Needs Access To</h4>
+              <ul>${safeList(profile.needsAccess).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div>
+              <h4>What Is Blocked</h4>
+              <ul class="blocked">${safeList(profile.blocked).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+          </section>
+          <section class="office-pipeline">
+            <div class="office-section-head">
+              <h4>Task Pipeline Overview</h4>
+              <span>${escapeHtml(depoStageLabel(depoAgent.currentStage))}</span>
+            </div>
+            <div class="office-pipeline-steps">
+              ${steps
+                .map((step, index) => {
+                  const stepStatus = officeStepStatus(index, card.id, runtime);
+                  return `
+                    <article class="${escapeHtml(officeStepClass(stepStatus))}">
+                      <strong>${index + 1}</strong>
+                      <span>${escapeHtml(step)}</span>
+                      <small>${escapeHtml(stepStatus)}</small>
+                    </article>
+                  `;
+                })
+                .join("")}
+            </div>
+          </section>
+          <div class="office-lower-grid">
+            ${officePreviewMarkup(card.id, runtime)}
+            ${officeToolsMarkup(profile, card.id)}
+          </div>
+          ${officeNotesMarkup(runtime)}
+        </div>
+        <aside class="office-side">
+          <section class="office-timeline">
+            <div class="office-section-head">
+              <h4>Workflow Steps</h4>
+              <span>Local timeline</span>
+            </div>
+            ${steps
+              .map((step, index) => {
+                const stepStatus = officeStepStatus(index, card.id, runtime);
+                return `
+                  <article class="${officeStepClass(stepStatus) === "active" ? "current" : ""}">
+                    <b>${index + 1}</b>
+                    <div>
+                      <strong>${escapeHtml(step)}</strong>
+                      <p>${escapeHtml(stepStatus)}</p>
+                    </div>
+                    <em>${index === 0 ? "Now" : `Step ${index + 1}`}</em>
+                  </article>
+                `;
+              })
+              .join("")}
+          </section>
+          ${card.id === "human-gate" ? humanGateOfficeQueueMarkup(runtime) : officeChatMarkup(card)}
+          <section class="office-quick-actions">
+            <h4>Quick Actions</h4>
+            <div>
+              <button type="button" data-module-action="${escapeHtml(profile.primaryAction)}">${escapeHtml(profile.primaryAction)}</button>
+              <button type="button" data-module-action="${escapeHtml(profile.secondaryAction)}">${escapeHtml(profile.secondaryAction)}</button>
+              <button type="button" data-module-action="Run check">Run local check</button>
+              <button type="button" data-module-action="View logs">View full feed</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+function humanGateOfficeQueueMarkup(runtime) {
+  const approvals = runtime.pending.slice(0, 4);
+  return `
+    <section class="office-approval-queue">
+      <div class="office-section-head">
+        <h4>Approval Queue</h4>
+        <span>${escapeHtml(pluralize(runtime.pending.length, "pending"))}</span>
+      </div>
+      ${
+        approvals.length
+          ? approvals
+              .map(
+                (approval) => `
+                  <article>
+                    <strong>${escapeHtml(approval.title || "Approval package")}</strong>
+                    <p>${escapeHtml(approval.action || "Operator review required.")}</p>
+                    <div>
+                      <button type="button" data-card-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve</button>
+                      <button type="button" data-card-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
+                      <button type="button" data-card-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+                    </div>
+                  </article>
+                `,
+              )
+              .join("")
+          : `<article class="empty"><strong>No pending approvals</strong><p>Risky work will appear here before anything external can happen.</p></article>`
+      }
+    </section>
+  `;
+}
+
 function moduleInfoMarkup(roomKey) {
   const card = moduleCardData(roomKey);
-  if (card.id === "human-gate") return humanGateMarkup(card);
-  return agentChatMarkup(card);
+  return businessOfficeMarkup(card);
 }
 
 function lockModuleInfoPageScroll() {
@@ -3383,12 +3843,17 @@ function closeModuleInfoCard() {
   if (!moduleInfoCard) return;
   unlockModuleInfoPageScroll();
   moduleInfoCard.hidden = true;
-  moduleInfoCard.classList.remove("open");
+  moduleInfoCard.classList.remove("open", "office-detail-card");
   moduleInfoCard.innerHTML = "";
 }
 
 function positionModuleInfoCard(roomKey) {
   if (!stationMap || !moduleInfoCard || moduleInfoCard.hidden) return;
+  if (moduleInfoCard.classList.contains("office-detail-card")) {
+    moduleInfoCard.style.removeProperty("--card-left");
+    moduleInfoCard.style.removeProperty("--card-top");
+    return;
+  }
   const mapRect = stationMap.getBoundingClientRect();
   const cardRect = moduleInfoCard.getBoundingClientRect();
   const room = moduleProfile(roomKey);
@@ -3415,7 +3880,7 @@ function positionModuleInfoCard(roomKey) {
 }
 
 function scrollAgentChatToLatest() {
-  const chatLog = moduleInfoCard?.querySelector(".agent-chat-log");
+  const chatLog = moduleInfoCard?.querySelector(".agent-chat-log, .office-chat-log");
   if (!chatLog) return;
   chatLog.scrollTop = chatLog.scrollHeight;
 }
@@ -3435,6 +3900,7 @@ function openModuleInfoCard(roomKey, options = {}) {
   moduleInfoCard.innerHTML = moduleInfoMarkup(resolved);
   moduleInfoCard.dataset.station = resolved;
   moduleInfoCard.hidden = false;
+  moduleInfoCard.classList.add("office-detail-card");
   moduleInfoCard.classList.remove("open");
   if (canPreservePosition) {
     moduleInfoCard.style.setProperty("--card-left", previousLeft);

@@ -2162,7 +2162,7 @@ main {
   left: var(--card-left, 18px);
   top: var(--card-top, 18px);
   z-index: 18;
-  width: min(430px, calc(100% - 24px));
+  width: min(500px, calc(100% - 24px));
   max-height: none;
   overflow: visible;
   border-radius: 14px;
@@ -2414,15 +2414,15 @@ main {
 
 .agent-chat-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  padding: 8px 10px 0;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
+  padding: 7px 9px 0;
 }
 
 .agent-chat-summary span {
   min-width: 0;
-  padding: 6px 7px;
-  border-radius: 9px;
+  padding: 5px 6px;
+  border-radius: 8px;
   border: 1px solid rgba(125, 211, 252, 0.13);
   background: rgba(2, 6, 23, 0.38);
 }
@@ -2437,7 +2437,7 @@ main {
 
 .agent-chat-summary small {
   color: var(--muted);
-  font-size: 0.5rem;
+  font-size: 0.45rem;
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -2445,21 +2445,111 @@ main {
 .agent-chat-summary strong {
   margin-top: 2px;
   color: #dbeafe;
-  font-size: 0.6rem;
+  font-size: 0.52rem;
   font-weight: 880;
+}
+
+.agent-room-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  padding: 7px 9px 0;
+}
+
+.agent-room-context section {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.11);
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.agent-room-context h4 {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.88);
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-room-context p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.56rem;
+  line-height: 1.16;
+}
+
+.agent-room-context .module-info-permissions span {
+  min-height: 17px;
+  padding: 0 5px;
+  font-size: 0.48rem;
+}
+
+.agent-unlock-status {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  padding: 7px 9px 0;
+}
+
+.agent-unlock-status span {
+  min-width: 0;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 5px;
+  border-radius: 8px;
+  color: #c7d2fe;
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  background: rgba(15, 23, 42, 0.44);
+  font-size: 0.48rem;
+  font-weight: 830;
+  line-height: 1.08;
+}
+
+.agent-unlock-status strong {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #020617;
+  background: #67e8f9;
+  font-size: 0.48rem;
+}
+
+.agent-unlock-status .draft {
+  color: #ddd6fe;
+  border-color: rgba(167, 139, 250, 0.2);
+}
+
+.agent-unlock-status .locked {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.agent-unlock-status .locked strong {
+  background: #fca5a5;
 }
 
 .agent-chat-log {
   display: grid;
-  gap: 6px;
-  padding: 9px 10px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 7px 9px;
 }
 
 .chat-message {
   display: grid;
   gap: 3px;
-  padding: 7px 8px;
-  border-radius: 10px;
+  padding: 5px 6px;
+  border-radius: 9px;
   border: 1px solid rgba(125, 211, 252, 0.13);
   background: rgba(2, 6, 23, 0.42);
 }
@@ -2471,7 +2561,7 @@ main {
 
 .chat-message span {
   color: #93c5fd;
-  font-size: 0.54rem;
+  font-size: 0.47rem;
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -2480,27 +2570,27 @@ main {
 .chat-message p {
   margin: 0;
   color: var(--text-soft);
-  font-size: 0.65rem;
-  line-height: 1.28;
+  font-size: 0.57rem;
+  line-height: 1.16;
 }
 
 .agent-chat-prompts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
-  padding: 0 10px 8px;
+  padding: 0 9px 7px;
 }
 
 .agent-chat-prompts button,
 .agent-chat-form button,
 .gate-actions button {
   min-width: 0;
-  min-height: 27px;
+  min-height: 25px;
   border-radius: 8px;
   border: 1px solid rgba(125, 211, 252, 0.18);
   color: #dbeafe;
   background: rgba(15, 23, 42, 0.68);
-  font-size: 0.55rem;
+  font-size: 0.5rem;
   font-weight: 850;
   cursor: pointer;
 }
@@ -2509,14 +2599,14 @@ main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 64px;
   gap: 6px;
-  padding: 0 10px 10px;
+  padding: 0 9px 9px;
 }
 
 .agent-chat-form input {
-  min-height: 28px;
+  min-height: 27px;
   border-radius: 8px;
   padding: 0 9px;
-  font-size: 0.64rem;
+  font-size: 0.6rem;
 }
 
 .human-gate-card {

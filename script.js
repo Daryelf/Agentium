@@ -361,6 +361,8 @@ const aiProviderConnectionStatus = document.querySelector("#aiProviderConnection
 const aiProviderActiveModel = document.querySelector("#aiProviderActiveModel");
 const aiProviderMode = document.querySelector("#aiProviderMode");
 const aiProviderLastTest = document.querySelector("#aiProviderLastTest");
+const aiProviderMonthlyLimit = document.querySelector("#aiProviderMonthlyLimit");
+const aiProviderLastError = document.querySelector("#aiProviderLastError");
 const aiProviderModeChip = document.querySelector("#aiProviderModeChip");
 const aiProviderForm = document.querySelector("#aiProviderForm");
 const aiProviderSelect = document.querySelector("#aiProviderSelect");
@@ -390,6 +392,32 @@ const systemSearch = document.querySelector("#systemSearch");
 const coreLabelTitle = document.querySelector("#coreLabelTitle");
 const coreLabelStage = document.querySelector("#coreLabelStage");
 const coreLabelAgent = document.querySelector("#coreLabelAgent");
+const sidebarSystemHealth = document.querySelector("#sidebarSystemHealth");
+const sidebarAgentId = document.querySelector("#sidebarAgentId");
+const sidebarAgentMode = document.querySelector("#sidebarAgentMode");
+const sidebarMiniChart = document.querySelector("#sidebarMiniChart");
+const sidebarStatusRows = [
+  {
+    label: document.querySelector("#sidebarStatusLabelA"),
+    bar: document.querySelector("#sidebarStatusBarA"),
+    value: document.querySelector("#sidebarStatusValueA"),
+  },
+  {
+    label: document.querySelector("#sidebarStatusLabelB"),
+    bar: document.querySelector("#sidebarStatusBarB"),
+    value: document.querySelector("#sidebarStatusValueB"),
+  },
+  {
+    label: document.querySelector("#sidebarStatusLabelC"),
+    bar: document.querySelector("#sidebarStatusBarC"),
+    value: document.querySelector("#sidebarStatusValueC"),
+  },
+  {
+    label: document.querySelector("#sidebarStatusLabelD"),
+    bar: document.querySelector("#sidebarStatusBarD"),
+    value: document.querySelector("#sidebarStatusValueD"),
+  },
+];
 
 const depoWorkflowStages = [
   "depo-habitat",
@@ -471,7 +499,7 @@ const depoAgent = {
   canSpendMoney: false,
   canContactCustomers: false,
   canModifyAccounts: false,
-  number: "001",
+  number: "Agent 101",
   icon: "D",
   color: "#7DD3FC",
   room: "depo-habitat",
@@ -503,7 +531,7 @@ const habitatFloorRooms = [
     depoRole: "Depo coordinates the safe local workflow from here.",
     connections: ["task-intake", "research-lab", "verify-station", "draft-studio", "memory-vault", "human-gate", "output-bench", "system-log"],
     riskNote: "External actions remain locked.",
-    recentActivity: ["Depo initialized as Agent 001.", "Draft-only mode loaded.", "Human Gate is active."],
+    recentActivity: ["Depo initialized as Agent 101.", "Draft-only mode loaded.", "Human Gate is active."],
   },
   {
     id: "task-intake",
@@ -1693,20 +1721,23 @@ let pinchStart = null;
 let accessState = null;
 let activeSettingsTarget = "settings-access";
 let aiProviderSettings = {
-  provider: "local",
+  provider: "local_demo",
   providerLabel: "Local Demo",
   mode: "demo",
   modeLabel: "Local Demo",
-  connectionStatus: "Not configured",
-  activeModel: "Not selected",
+  connectionStatus: "Connected",
+  activeModel: "local-demo",
+  lastError: "",
+  monthlyLimitUsd: 10,
+  usage: { estimatedMonthlyUsd: 0, requestCount: 0, blockedByLimit: false },
   lastTest: null,
   providers: {
-    local: { keyConfigured: false, keyStatus: "No key required", model: "local-demo" },
-    openai: { keyConfigured: false, keyStatus: "Not configured", model: "gpt-4.1-mini", temperature: 0.4, maxOutputTokens: 700 },
-    anthropic: { keyConfigured: false, keyStatus: "Not configured", model: "claude-3-5-sonnet-latest", temperature: 0.4, maxOutputTokens: 700 },
+    local_demo: { keyConfigured: false, keyStatus: "No key required", model: "local-demo" },
+    openai: { keyConfigured: false, keyStatus: "Not configured", model: "gpt-5.4-nano", temperature: 0.4, maxOutputTokens: 700 },
   },
 };
 let aiProviderNotice = "";
+let sidebarSystemStatus = null;
 
 const settingsSectionGroups = {
   "settings-access": ["settings-access", "settings-overview"],
@@ -1774,6 +1805,7 @@ async function loadState() {
     apiAvailable = false;
   }
   await loadAiProviderSettings();
+  await loadSidebarSystemStatus();
   render();
   applyMapView(false);
 }
@@ -1783,6 +1815,7 @@ async function mutate(path) {
     return false;
   }
   state = await api(path, { method: "POST" });
+  sidebarSystemStatus = fallbackSidebarStatus();
   render();
   return true;
 }
@@ -2867,8 +2900,9 @@ function floorCorridorMarkup() {
       const distance = Math.hypot(dx, dy) || 1;
       const unitX = dx / distance;
       const unitY = dy / distance;
-      const startOffset = room.id === "output-bench" || room.id === "research-lab" ? 11 : 9;
-      const endOffset = room.id === "output-bench" || room.id === "research-lab" ? 11 : 12;
+      const verticalRoute = room.id === "output-bench" || room.id === "research-lab";
+      const startOffset = verticalRoute ? 11.6 : 10.8;
+      const endOffset = room.id === "human-gate" ? 13.2 : verticalRoute ? 11.8 : 12.8;
       const startX = center.x + unitX * startOffset;
       const startY = center.y + unitY * startOffset;
       const endX = room.position.x - unitX * endOffset;
@@ -2881,6 +2915,12 @@ function floorCorridorMarkup() {
 
       return `
         <span class="floor-corridor ${approval ? "approval" : ""}" style="--cx: ${startX.toFixed(2)}%; --cy: ${startY.toFixed(2)}%; --corridor-length: ${corridorLength.toFixed(2)}%; --corridor-angle: ${angle.toFixed(2)}deg; --corridor-delay: ${(index * 0.2).toFixed(2)}s" aria-hidden="true">
+          <span class="corridor-rail"></span>
+          <span class="corridor-chevron chevron-a"></span>
+          <span class="corridor-chevron chevron-b"></span>
+          <span class="corridor-chevron chevron-c"></span>
+          <span class="corridor-spark spark-a"></span>
+          <span class="corridor-spark spark-b"></span>
           <i></i>
         </span>
       `;
@@ -3126,7 +3166,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("grow") || text.includes("new agent") || text.includes("future agent") || text.includes("agent blueprint")) {
-    return `There is only one live agent: Depo 001. I can draft future-agent blueprints, like a Research Agent, but those stay inactive proposals. Live agent creation is locked behind Human Gate. Current blueprints: ${pluralize(snapshot.agentBlueprints.length, "draft")}.`;
+    return `There is only one live agent: Depo, Agent 101. I can draft future-agent blueprints, like a Research Agent, but those stay inactive proposals. Live agent creation is locked behind Human Gate. Current blueprints: ${pluralize(snapshot.agentBlueprints.length, "draft")}.`;
   }
 
   if (text.includes("workflow")) {
@@ -3154,7 +3194,7 @@ function depoChatResponse(question, roomKey) {
   }
 
   if (text.includes("agent") || text.includes("agents")) {
-    return "There is only one active agent: Depo, Agent 001. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
+    return "There is only one active agent: Depo, Agent 101. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
   }
 
   return `For ${card.title}: ${card.purpose || card.summary} I can help from local state only. Ask me "what can you do?", "create a task plan", "draft a workflow", "propose a new agent", "what is blocked?", or "view Human Gate rules."`;
@@ -3193,7 +3233,7 @@ function agentChatMarkup(card) {
     </div>
     ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
     <div class="agent-chat-summary">
-      <span><small>Agent</small><strong>Depo 001</strong></span>
+      <span><small>Agent</small><strong>Depo Agent 101</strong></span>
       <span><small>Mode</small><strong>Draft-only</strong></span>
       <span><small>Stage</small><strong>${escapeHtml(stageLabel)}</strong></span>
       <span><small>Approval</small><strong>Required</strong></span>
@@ -3773,27 +3813,47 @@ function formatAiProviderTime(value) {
 }
 
 function activeAiProviderDetail() {
-  const provider = aiProviderSettings.provider || "local";
-  return aiProviderSettings.providers?.[provider] || aiProviderSettings.providers?.local || {};
+  const provider = normalizeUiProvider(aiProviderSettings.provider);
+  return aiProviderSettings.providers?.[provider] || aiProviderSettings.providers?.local_demo || {};
+}
+
+function normalizeUiProvider(provider) {
+  const value = String(provider || "").trim().toLowerCase();
+  if (value === "local" || value === "local-demo" || value === "demo") return "local_demo";
+  return value || "local_demo";
+}
+
+function isLocalUiProvider(provider) {
+  return normalizeUiProvider(provider) === "local_demo";
+}
+
+function formatAiMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "$0";
+  return `$${amount.toFixed(amount % 1 === 0 ? 0 : 2)}`;
 }
 
 function aiProviderChatLabel() {
   if (aiProviderNotice) return "Provider Error";
-  const provider = aiProviderSettings.provider || "local";
+  const provider = normalizeUiProvider(aiProviderSettings.provider);
   if (provider === "openai" && aiProviderSettings.mode === "live") return "OpenAI Live";
-  if (provider === "anthropic" && aiProviderSettings.mode === "live") return "Anthropic Live";
   return "Local Demo";
 }
 
 function renderAiProviderSettings() {
   const detail = activeAiProviderDetail();
-  const provider = aiProviderSettings.provider || "local";
-  const keyProvider = aiKeyProviderSelect?.value || (provider === "anthropic" ? "anthropic" : "openai");
+  const provider = normalizeUiProvider(aiProviderSettings.provider);
+  const keyProvider = aiKeyProviderSelect?.value || "openai";
   const keyDetail = aiProviderSettings.providers?.[keyProvider] || {};
   if (aiProviderCurrentProvider) aiProviderCurrentProvider.textContent = aiProviderSettings.providerLabel || "Local Demo";
   if (aiProviderConnectionStatus) aiProviderConnectionStatus.textContent = aiProviderSettings.connectionStatus || "Not configured";
   if (aiProviderActiveModel) aiProviderActiveModel.textContent = aiProviderSettings.activeModel || detail.model || "Not selected";
   if (aiProviderMode) aiProviderMode.textContent = aiProviderSettings.modeLabel || "Local Demo";
+  if (aiProviderMonthlyLimit) {
+    const used = aiProviderSettings.usage?.estimatedMonthlyUsd;
+    aiProviderMonthlyLimit.textContent = `${formatAiMoney(aiProviderSettings.monthlyLimitUsd)} limit / ${formatAiMoney(used)} est. used`;
+  }
+  if (aiProviderLastError) aiProviderLastError.textContent = aiProviderSettings.lastError || "None";
   if (aiProviderModeChip) {
     aiProviderModeChip.textContent = aiProviderChatLabel();
     aiProviderModeChip.classList.toggle("danger-status", aiProviderChatLabel() === "Provider Error");
@@ -3805,27 +3865,27 @@ function renderAiProviderSettings() {
   if (aiProviderSelect) aiProviderSelect.value = provider;
   if (aiModeSelect) {
     aiModeSelect.value = aiProviderSettings.mode || "demo";
-    aiModeSelect.disabled = provider === "local";
+    aiModeSelect.disabled = isLocalUiProvider(provider);
   }
   if (aiModelInput) {
-    aiModelInput.value = provider === "local" ? "" : detail.model || "";
-    aiModelInput.disabled = provider === "local";
-    aiModelInput.placeholder = provider === "local" ? "Local demo uses scripted responses" : "Model name";
+    aiModelInput.value = isLocalUiProvider(provider) ? "" : detail.model || "";
+    aiModelInput.disabled = isLocalUiProvider(provider);
+    aiModelInput.placeholder = isLocalUiProvider(provider) ? "Local demo uses scripted responses" : "Model name";
   }
   if (aiInlineKeyStatus) {
-    aiInlineKeyStatus.textContent = provider === "local" ? "No key required" : detail.keyConfigured ? "•••••••• configured" : "Not configured";
+    aiInlineKeyStatus.textContent = isLocalUiProvider(provider) ? "No key required" : detail.keyConfigured ? "Configured in backend" : "Not configured";
   }
   if (aiTemperatureInput) {
     aiTemperatureInput.value = Number.isFinite(Number(detail.temperature)) ? detail.temperature : 0.4;
-    aiTemperatureInput.disabled = provider === "local";
+    aiTemperatureInput.disabled = isLocalUiProvider(provider);
   }
   if (aiMaxTokensInput) {
     aiMaxTokensInput.value = Number.isFinite(Number(detail.maxOutputTokens)) ? detail.maxOutputTokens : 700;
-    aiMaxTokensInput.disabled = provider === "local";
+    aiMaxTokensInput.disabled = isLocalUiProvider(provider);
   }
   if (aiKeyStatus) {
     aiKeyStatus.textContent = keyDetail.keyConfigured ? "•••••••• configured" : keyDetail.keyStatus || "Not configured";
-    aiKeyStatus.classList.toggle("danger-status", !keyDetail.keyConfigured && keyProvider !== "local");
+    aiKeyStatus.classList.toggle("danger-status", !keyDetail.keyConfigured && keyProvider !== "local_demo");
   }
 }
 
@@ -3836,11 +3896,78 @@ async function loadAiProviderSettings() {
   }
   try {
     aiProviderSettings = await api("/api/settings/ai-provider");
+    const status = await api("/api/ai/status");
+    aiProviderSettings = { ...aiProviderSettings, ...status };
     aiProviderNotice = "";
   } catch (error) {
     aiProviderNotice = error.message;
   }
   renderAiProviderSettings();
+}
+
+function fallbackSidebarStatus() {
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const approvals = Array.isArray(state.approvals) ? state.approvals : [];
+  const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+  const memoryLayers = state.memory && typeof state.memory === "object" ? state.memory : {};
+  const memoryCount = Object.values(memoryLayers).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+  const queued = tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
+  const pending = approvals.filter((approval) => approval.status === "pending").length;
+  const queue = queued + pending;
+  return {
+    health: "Local systems operational",
+    agentId: "Agent 101",
+    agentMode: depoAgent.mode,
+    metrics: [
+      { label: "State", value: "Ready", percent: 100 },
+      { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
+      { label: "Queue", value: String(queue), percent: Math.min(100, queue * 18) },
+      { label: "Security", value: "On", percent: 100 },
+    ],
+    chart: [
+      Math.min(100, 24 + queued * 12),
+      Math.min(100, 30 + pending * 10),
+      Math.min(100, 28 + artifacts.length * 7),
+      Math.min(100, 38 + memoryCount * 3),
+      72,
+      82,
+      76,
+      88,
+    ],
+  };
+}
+
+async function loadSidebarSystemStatus() {
+  if (!apiAvailable) {
+    sidebarSystemStatus = fallbackSidebarStatus();
+    return;
+  }
+  try {
+    sidebarSystemStatus = await api("/api/system/status");
+  } catch {
+    sidebarSystemStatus = fallbackSidebarStatus();
+  }
+}
+
+function renderSidebarSystemStatus() {
+  const status = sidebarSystemStatus || fallbackSidebarStatus();
+  if (sidebarSystemHealth) {
+    sidebarSystemHealth.innerHTML = `<span class="status-dot"></span>${escapeHtml(status.health || "Local systems operational")}`;
+    sidebarSystemHealth.classList.toggle("attention", String(status.health || "").toLowerCase().includes("attention"));
+  }
+  if (sidebarAgentId) sidebarAgentId.textContent = status.agentId || "Agent 101";
+  if (sidebarAgentMode) sidebarAgentMode.textContent = status.agentMode || depoAgent.mode;
+  const metrics = Array.isArray(status.metrics) ? status.metrics : [];
+  sidebarStatusRows.forEach((row, index) => {
+    const metric = metrics[index] || fallbackSidebarStatus().metrics[index];
+    if (row.label) row.label.textContent = metric.label;
+    if (row.value) row.value.textContent = metric.value;
+    if (row.bar) row.bar.style.setProperty("--bar", `${Math.max(0, Math.min(100, Number(metric.percent) || 0))}%`);
+  });
+  if (sidebarMiniChart) {
+    const chart = Array.isArray(status.chart) && status.chart.length ? status.chart : fallbackSidebarStatus().chart;
+    sidebarMiniChart.innerHTML = chart.slice(-10).map((height) => `<i style="height: ${Math.max(8, Math.min(100, Number(height) || 8))}%"></i>`).join("");
+  }
 }
 
 function renderAiProviderTestResult(result, type = "info") {
@@ -4185,7 +4312,7 @@ function systemFeedEntries() {
   const seededEntries = [
     {
       title: "Depo born into habitat",
-      body: "Agent 001 is active in draft-only mode with no revenue claimed.",
+      body: "Agent 101 is active in draft-only mode with no revenue claimed.",
     },
     {
       title: "First workflow waiting",
@@ -4471,6 +4598,7 @@ function renderKpis() {
 
 function render() {
   renderShellData();
+  renderSidebarSystemStatus();
   setStep();
   renderStatus();
   renderNotifications();
@@ -5013,26 +5141,26 @@ securityScanBtn?.addEventListener("click", () => {
 });
 
 aiProviderSelect?.addEventListener("change", () => {
-  const provider = aiProviderSelect.value;
+  const provider = normalizeUiProvider(aiProviderSelect.value);
   const detail = aiProviderSettings.providers?.[provider] || {};
   if (aiModeSelect) {
-    aiModeSelect.value = provider === "local" ? "demo" : aiProviderSettings.mode || "demo";
-    aiModeSelect.disabled = provider === "local";
+    aiModeSelect.value = isLocalUiProvider(provider) ? "demo" : aiProviderSettings.mode || "live";
+    aiModeSelect.disabled = isLocalUiProvider(provider);
   }
   if (aiModelInput) {
-    aiModelInput.value = provider === "local" ? "" : detail.model || "";
-    aiModelInput.disabled = provider === "local";
+    aiModelInput.value = isLocalUiProvider(provider) ? "" : detail.model || "gpt-5.4-nano";
+    aiModelInput.disabled = isLocalUiProvider(provider);
   }
   if (aiInlineKeyStatus) {
-    aiInlineKeyStatus.textContent = provider === "local" ? "No key required" : detail.keyConfigured ? "•••••••• configured" : "Not configured";
+    aiInlineKeyStatus.textContent = isLocalUiProvider(provider) ? "No key required" : detail.keyConfigured ? "Configured in backend" : "Not configured";
   }
   if (aiTemperatureInput) {
     aiTemperatureInput.value = Number.isFinite(Number(detail.temperature)) ? detail.temperature : 0.4;
-    aiTemperatureInput.disabled = provider === "local";
+    aiTemperatureInput.disabled = isLocalUiProvider(provider);
   }
   if (aiMaxTokensInput) {
     aiMaxTokensInput.value = Number.isFinite(Number(detail.maxOutputTokens)) ? detail.maxOutputTokens : 700;
-    aiMaxTokensInput.disabled = provider === "local";
+    aiMaxTokensInput.disabled = isLocalUiProvider(provider);
   }
 });
 
@@ -5097,7 +5225,7 @@ aiProviderRemoveKeyBtn?.addEventListener("click", async () => {
 aiProviderTestBtn?.addEventListener("click", async () => {
   clearAccessMessage();
   try {
-    const result = await postJson("/api/settings/ai-provider/test", {
+    const result = await postJson("/api/ai/test", {
       provider: aiProviderSelect?.value || aiProviderSettings.provider,
       mode: aiModeSelect?.value || aiProviderSettings.mode,
     });
@@ -5113,7 +5241,7 @@ aiProviderTestBtn?.addEventListener("click", async () => {
 scanBtn?.addEventListener("click", () => {
   selectedAgentKey = null;
   focusRoom("depo-habitat", { scale: 1.72 });
-  addLocalAudit("Focus scan", "Depo habitat scan confirmed Agent 001 is draft-only and ready for bounded work.");
+  addLocalAudit("Focus scan", "Depo habitat scan confirmed Agent 101 is draft-only and ready for bounded work.");
   renderAudit();
 });
 

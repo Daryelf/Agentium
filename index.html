@@ -48,14 +48,18 @@
               <svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg>
             </button>
           </div>
-          <strong><span class="status-dot"></span>All systems operational</strong>
-          <div class="resource-bars">
-            <div><span>CPU</span><em style="--bar: 18%"></em><strong>18%</strong></div>
-            <div><span>Memory</span><em style="--bar: 42%"></em><strong>42%</strong></div>
-            <div><span>Automation</span><em style="--bar: 94%"></em><strong>94%</strong></div>
-            <div><span>Security</span><em style="--bar: 100%"></em><strong>100%</strong></div>
+          <strong id="sidebarSystemHealth"><span class="status-dot"></span>All systems operational</strong>
+          <div class="health-summary-grid" aria-label="Live system summary">
+            <div><small>Agent</small><b id="sidebarAgentId">Agent 101</b></div>
+            <div><small>Mode</small><b id="sidebarAgentMode">Draft</b></div>
           </div>
-          <div class="mini-line-chart" aria-hidden="true">
+          <div class="resource-bars">
+            <div><span id="sidebarStatusLabelA">State</span><em id="sidebarStatusBarA" style="--bar: 100%"></em><strong id="sidebarStatusValueA">Ready</strong></div>
+            <div><span id="sidebarStatusLabelB">Memory</span><em id="sidebarStatusBarB" style="--bar: 0%"></em><strong id="sidebarStatusValueB">0%</strong></div>
+            <div><span id="sidebarStatusLabelC">Queue</span><em id="sidebarStatusBarC" style="--bar: 0%"></em><strong id="sidebarStatusValueC">0</strong></div>
+            <div><span id="sidebarStatusLabelD">Security</span><em id="sidebarStatusBarD" style="--bar: 100%"></em><strong id="sidebarStatusValueD">On</strong></div>
+          </div>
+          <div class="mini-line-chart" id="sidebarMiniChart" aria-hidden="true">
             <i style="height: 28%"></i>
             <i style="height: 38%"></i>
             <i style="height: 34%"></i>
@@ -67,15 +71,6 @@
             <i style="height: 66%"></i>
             <i style="height: 84%"></i>
           </div>
-        </section>
-
-        <section class="operator-card">
-          <span class="secure-orb" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
-          </span>
-          <p class="eyebrow">Human Gate</p>
-          <strong>External actions locked</strong>
-          <span>Publishing, money movement, account changes, trades, and new agents require operator approval.</span>
         </section>
 
         <section class="system-time-card">
@@ -90,7 +85,7 @@
             <strong>Depo</strong>
             <small>Depository Operator</small>
           </span>
-          <em>Draft only</em>
+          <em>Agent 101</em>
         </button>
       </aside>
 
@@ -190,7 +185,7 @@
                     <div class="core-label">
                       <span id="coreLabelTitle">Depo Habitat</span>
                       <small id="coreLabelStage">Active agent</small>
-                      <em id="coreLabelAgent">001</em>
+                      <em id="coreLabelAgent">Agent 101</em>
                     </div>
                   </div>
                   <div class="habitat-modules" id="habitatModules"></div>
@@ -489,7 +484,7 @@
                   </div>
                 </div>
                 <div>
-                  <p class="eyebrow">Agent 001</p>
+                  <p class="eyebrow">Agent 101</p>
                   <h3>Depo</h3>
                   <p>Depository operator for research, memory capture, workflow drafting, and approval packaging.</p>
                 </div>
@@ -772,6 +767,23 @@
                     </div>
                     <em>Active now</em>
                   </article>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat">
+                      <small>Auth model</small>
+                      <strong>Owner</strong>
+                      <span>First-run admin only</span>
+                    </div>
+                    <div class="settings-stat">
+                      <small>Session</small>
+                      <strong>Signed</strong>
+                      <span>HttpOnly cookie</span>
+                    </div>
+                    <div class="settings-stat">
+                      <small>External risk</small>
+                      <strong>Gated</strong>
+                      <span>Human approval</span>
+                    </div>
+                  </div>
                   <div class="settings-action-row">
                     <span>No other active browser sessions detected</span>
                     <a href="/logout">End session</a>
@@ -785,23 +797,34 @@
                       <p>Update the current account password.</p>
                     </div>
                   </div>
-                  <form class="access-form settings-password-form" id="passwordForm">
-                    <label>
-                      Current password
-                      <input name="currentPassword" type="password" autocomplete="current-password" required />
-                    </label>
-                    <div class="settings-form-grid">
+                  <div class="settings-control-grid">
+                    <form class="access-form settings-password-form" id="passwordForm">
                       <label>
-                        New password
-                        <input name="newPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        Current password
+                        <input name="currentPassword" type="password" autocomplete="current-password" required />
                       </label>
-                      <label>
-                        Confirm new password
-                        <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
-                      </label>
-                    </div>
-                    <button class="primary-button" type="submit">Update password</button>
-                  </form>
+                      <div class="settings-form-grid">
+                        <label>
+                          New password
+                          <input name="newPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        </label>
+                        <label>
+                          Confirm new password
+                          <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        </label>
+                      </div>
+                      <button class="primary-button" type="submit">Update password</button>
+                    </form>
+                    <aside class="settings-side-note">
+                      <strong>Password standard</strong>
+                      <p>Use at least 12 characters. Argentum stores only salted hashes and keeps remembered devices behind signed sessions.</p>
+                      <div class="settings-flow">
+                        <span>Salted hash</span>
+                        <span>No plaintext</span>
+                        <span>Owner controlled</span>
+                      </div>
+                    </aside>
+                  </div>
                 </section>
 
                 <section class="settings-card" id="settings-users">
@@ -811,6 +834,11 @@
                       <p>Approved logins with owner-controlled access.</p>
                     </div>
                     <span class="metric-chip" id="accessUserCount">0 users</span>
+                  </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Role model</small><strong>Admin</strong><span>Owner approved</span></div>
+                    <div class="settings-stat"><small>Provisioning</small><strong>Manual</strong><span>Password verified</span></div>
+                    <div class="settings-stat"><small>Risk</small><strong>Local</strong><span>No public signup</span></div>
                   </div>
                   <div class="access-user-list" id="accessUserList"></div>
                 </section>
@@ -822,27 +850,38 @@
                       <p>Add another approved admin login.</p>
                     </div>
                   </div>
-                  <form class="access-form" id="createUserForm">
-                    <label>
-                      New username
-                      <input name="username" autocomplete="username" placeholder="your-name" required />
-                    </label>
-                    <div class="settings-form-grid">
+                  <div class="settings-control-grid">
+                    <form class="access-form" id="createUserForm">
                       <label>
-                        New password
-                        <input name="password" type="password" autocomplete="new-password" minlength="12" required />
+                        New username
+                        <input name="username" autocomplete="username" placeholder="your-name" required />
                       </label>
+                      <div class="settings-form-grid">
+                        <label>
+                          New password
+                          <input name="password" type="password" autocomplete="new-password" minlength="12" required />
+                        </label>
+                        <label>
+                          Confirm new password
+                          <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        </label>
+                      </div>
                       <label>
-                        Confirm new password
-                        <input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" required />
+                        Your current password
+                        <input name="currentPassword" type="password" autocomplete="current-password" required />
                       </label>
-                    </div>
-                    <label>
-                      Your current password
-                      <input name="currentPassword" type="password" autocomplete="current-password" required />
-                    </label>
-                    <button class="primary-button" type="submit">Create login</button>
-                  </form>
+                      <button class="primary-button" type="submit">Create login</button>
+                    </form>
+                    <aside class="settings-side-note">
+                      <strong>Before adding access</strong>
+                      <p>Create logins only for operators who can review Human Gate approvals and understand Depo's draft-only boundaries.</p>
+                      <div class="settings-flow">
+                        <span>Verify owner</span>
+                        <span>Create login</span>
+                        <span>Audit event</span>
+                      </div>
+                    </aside>
+                  </div>
                 </section>
 
                 <section class="settings-card" id="settings-sessions">
@@ -852,6 +891,11 @@
                       <p>Remembered access uses signed HttpOnly cookies.</p>
                     </div>
                     <span class="status-chip">30 day cap</span>
+                  </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Cookie</small><strong>HttpOnly</strong><span>Not readable by JS</span></div>
+                    <div class="settings-stat"><small>Remembered</small><strong>30 days</strong><span>Maximum duration</span></div>
+                    <div class="settings-stat"><small>Rotation</small><strong>Secret</strong><span>Railway env backed</span></div>
                   </div>
                   <div class="settings-list">
                     <div>
@@ -884,6 +928,15 @@
                       <p>External connectors stay locked until the operator approves them.</p>
                     </div>
                     <span class="status-chip">Approval required</span>
+                  </div>
+                  <div class="settings-flow-card">
+                    <strong>Key policy</strong>
+                    <p>Credentials belong in server environment variables only. Depo can document connector plans, but cannot rotate keys, grant permissions, or call external APIs without approval.</p>
+                    <div class="settings-flow">
+                      <span>Server-side</span>
+                      <span>Not committed</span>
+                      <span>Human Gate</span>
+                    </div>
                   </div>
                   <div class="settings-list">
                     <div>
@@ -923,6 +976,8 @@
                     <div><small>Active Model</small><strong id="aiProviderActiveModel">Not selected</strong></div>
                     <div><small>Mode</small><strong id="aiProviderMode">Local Demo</strong></div>
                     <div><small>Last Test</small><strong id="aiProviderLastTest">Never</strong></div>
+                    <div><small>Monthly Limit</small><strong id="aiProviderMonthlyLimit">$10</strong></div>
+                    <div class="ai-provider-wide-status"><small>Last Error</small><strong id="aiProviderLastError">None</strong></div>
                   </div>
                   <p class="ai-provider-note">Frontend JavaScript never receives raw API keys. Live calls go through the authenticated backend only.</p>
                 </section>
@@ -931,45 +986,55 @@
                   <div class="settings-card-heading">
                     <div>
                       <h4>Provider Selection</h4>
-                      <p>Choose Local Demo Mode, OpenAI, or Anthropic for Depo.</p>
+                      <p>Choose Local Demo Mode or OpenAI Live API for Depo.</p>
                     </div>
                   </div>
-                  <form class="access-form ai-provider-form" id="aiProviderForm">
-                    <label>
-                      Provider
-                      <select name="provider" id="aiProviderSelect">
-                        <option value="local">Local Demo Mode</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                      </select>
-                    </label>
-                    <label>
-                      Mode
-                      <select name="mode" id="aiModeSelect">
-                        <option value="demo">Local Demo</option>
-                        <option value="live">Live API</option>
-                      </select>
-                    </label>
-                    <label>
-                      Model name
-                      <input name="model" id="aiModelInput" autocomplete="off" placeholder="Not selected" />
-                    </label>
-                    <div class="ai-provider-inline-status">
-                      <span>API key status</span>
-                      <strong id="aiInlineKeyStatus">No key required</strong>
-                    </div>
-                    <div class="settings-form-grid">
+                  <div class="settings-control-grid">
+                    <form class="access-form ai-provider-form" id="aiProviderForm">
                       <label>
-                        Temperature
-                        <input name="temperature" id="aiTemperatureInput" type="number" min="0" max="2" step="0.1" value="0.4" />
+                        Provider
+                        <select name="provider" id="aiProviderSelect">
+                          <option value="local_demo">Local Demo Mode</option>
+                          <option value="openai">OpenAI Live API</option>
+                        </select>
                       </label>
                       <label>
-                        Max output tokens
-                        <input name="maxOutputTokens" id="aiMaxTokensInput" type="number" min="64" max="4096" step="1" value="700" />
+                        Mode
+                        <select name="mode" id="aiModeSelect">
+                          <option value="demo">Local Demo</option>
+                          <option value="live">Live API</option>
+                        </select>
                       </label>
-                    </div>
-                    <button class="primary-button" type="submit">Save provider settings</button>
-                  </form>
+                      <label>
+                        Model name
+                        <input name="model" id="aiModelInput" autocomplete="off" placeholder="Not selected" />
+                      </label>
+                      <div class="ai-provider-inline-status">
+                        <span>API key status</span>
+                        <strong id="aiInlineKeyStatus">No key required</strong>
+                      </div>
+                      <div class="settings-form-grid">
+                        <label>
+                          Temperature
+                          <input name="temperature" id="aiTemperatureInput" type="number" min="0" max="2" step="0.1" value="0.4" />
+                        </label>
+                        <label>
+                          Max output tokens
+                          <input name="maxOutputTokens" id="aiMaxTokensInput" type="number" min="64" max="4096" step="1" value="700" />
+                        </label>
+                      </div>
+                      <button class="primary-button" type="submit">Save provider settings</button>
+                    </form>
+                    <aside class="settings-side-note">
+                      <strong>Recommended while building</strong>
+                      <p>Stay in Local Demo Mode until OpenAI billing is active. The app remains usable, and Depo keeps the same approval rules.</p>
+                      <div class="settings-flow">
+                        <span>Local Demo</span>
+                        <span>Backend test</span>
+                        <span>OpenAI later</span>
+                      </div>
+                    </aside>
+                  </div>
                 </section>
 
                 <section class="settings-card ai-provider-card" id="settings-ai-provider-env">
@@ -987,7 +1052,7 @@
                       </span>
                       <div>
                         <strong>OpenAI live mode</strong>
-                        <p><code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code>, <code>AI_PROVIDER=openai</code>, <code>AI_MODE=live</code></p>
+                        <p><code>OPENAI_API_KEY</code>, <code>AI_MODEL=gpt-5.4-nano</code>, <code>AI_PROVIDER=openai</code>, <code>AI_MONTHLY_LIMIT_USD=10</code></p>
                       </div>
                       <em>Railway</em>
                     </div>
@@ -996,8 +1061,8 @@
                         <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3a7 7 0 0 0 14 0v-3a7 7 0 0 0-7-7Z"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>
                       </span>
                       <div>
-                        <strong>Anthropic live mode</strong>
-                        <p><code>ANTHROPIC_API_KEY</code>, <code>ANTHROPIC_MODEL</code>, <code>AI_PROVIDER=anthropic</code>, <code>AI_MODE=live</code></p>
+                        <strong>Development mode</strong>
+                        <p><code>AI_PROVIDER=local_demo</code>, empty <code>OPENAI_API_KEY</code>, and optional <code>AI_MODEL=gpt-5.4-nano</code></p>
                       </div>
                       <em>Railway</em>
                     </div>
@@ -1054,6 +1119,10 @@
                       <p>Recent account access activity.</p>
                     </div>
                   </div>
+                  <div class="settings-flow-card">
+                    <strong>Access trail</strong>
+                    <p>Recent successful sign-ins and account security events stay visible here for the operator.</p>
+                  </div>
                   <div class="login-history" id="settingsLoginHistory"></div>
                 </section>
 
@@ -1076,6 +1145,12 @@
                       <div><span>OK</span><p>Approval gates</p><strong>Active</strong></div>
                     </div>
                   </div>
+                  <div class="settings-flow">
+                    <span>Local auth</span>
+                    <span>Signed session</span>
+                    <span>Human Gate</span>
+                    <span>No default password</span>
+                  </div>
                 </section>
 
                 <section class="settings-card" id="settings-preferences">
@@ -1084,6 +1159,11 @@
                       <h4>System Preferences</h4>
                       <p>Command-floor appearance, time, and operating defaults.</p>
                     </div>
+                  </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Interface</small><strong>Command</strong><span>Dense premium OS</span></div>
+                    <div class="settings-stat"><small>Theme</small><strong>Dark</strong><span>Orbital glass</span></div>
+                    <div class="settings-stat"><small>Clock</small><strong>UTC</strong><span>System-wide</span></div>
                   </div>
                   <div class="settings-list">
                     <div>
@@ -1117,6 +1197,16 @@
                     </div>
                     <span class="risk-tag medium">Locked</span>
                   </div>
+                  <div class="settings-flow-card">
+                    <strong>Connector lifecycle</strong>
+                    <p>Every connector starts as a draft plan, moves through Human Gate, and only then becomes eligible for live activation.</p>
+                    <div class="settings-flow">
+                      <span>Draft connector</span>
+                      <span>Review risk</span>
+                      <span>Approve</span>
+                      <span>Activate</span>
+                    </div>
+                  </div>
                   <div class="settings-list">
                     <div>
                       <span class="settings-list-icon" aria-hidden="true">
@@ -1149,6 +1239,11 @@
                     </div>
                     <span class="status-chip">Local first</span>
                   </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Runtime</small><strong>JSON</strong><span>Ignored by Git</span></div>
+                    <div class="settings-stat"><small>Memory</small><strong>Private</strong><span>Operator controlled</span></div>
+                    <div class="settings-stat"><small>Export</small><strong>Gated</strong><span>Approval required</span></div>
+                  </div>
                   <div class="settings-list">
                     <div>
                       <span class="settings-list-icon" aria-hidden="true">
@@ -1178,6 +1273,16 @@
                     <div>
                       <h4>Backup &amp; Restore</h4>
                       <p>Disaster recovery controls for the local command floor.</p>
+                    </div>
+                  </div>
+                  <div class="settings-flow-card">
+                    <strong>Restore rule</strong>
+                    <p>No silent state replacement. Backups and restores should be explicit operator actions with review before overwriting live memory.</p>
+                    <div class="settings-flow">
+                      <span>Export</span>
+                      <span>Verify file</span>
+                      <span>Confirm</span>
+                      <span>Restore</span>
                     </div>
                   </div>
                   <div class="settings-list">
@@ -1211,6 +1316,11 @@
                       <p>Usage limits, spend visibility, and finance guardrails.</p>
                     </div>
                     <span class="risk-tag low">No spend authority</span>
+                  </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Money movement</small><strong>Blocked</strong><span>No autonomous spend</span></div>
+                    <div class="settings-stat"><small>AI limit</small><strong>$10</strong><span>Env controlled</span></div>
+                    <div class="settings-stat"><small>Revenue</small><strong>None</strong><span>No claims yet</span></div>
                   </div>
                   <div class="settings-list">
                     <div>

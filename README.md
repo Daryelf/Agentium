@@ -47,6 +47,30 @@ Railway path:
 
 Runtime state is stored in `data/argentum-state.json`. That file is ignored by Git so local state does not get committed. On a fresh deploy, Argentum creates a new default state automatically.
 
+## AI provider mode
+
+Argentum defaults to server-side Local Demo Mode so the app stays usable while building without OpenAI billing or credits.
+
+Development/default Railway variables:
+
+```bash
+AI_PROVIDER=local_demo
+OPENAI_API_KEY=
+AI_MODEL=gpt-5.4-nano
+AI_MONTHLY_LIMIT_USD=10
+```
+
+Later, when OpenAI Platform billing is active:
+
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=your_server_side_key
+AI_MODEL=gpt-5.4-nano
+AI_MONTHLY_LIMIT_USD=10
+```
+
+Frontend JavaScript never receives API keys. Use Settings -> AI Providers to check `/api/ai/status` and run a safe backend connection test.
+
 ## Current prototype
 
 - Visual control floor with Depo moving through research, verification, drafting, and approval.

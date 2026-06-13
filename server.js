@@ -15,11 +15,13 @@ const AI_PROVIDER_FILE = path.join(DATA_DIR, "argentum-ai-provider.json");
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ENV_OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const ENV_AI_MODEL = process.env.AI_MODEL || "";
 const ENV_OPENAI_MODEL = process.env.OPENAI_MODEL || "";
 const ENV_ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const ENV_ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "";
 const ENV_AI_PROVIDER = process.env.AI_PROVIDER || "";
 const ENV_AI_MODE = process.env.AI_MODE || "";
+const ENV_AI_MONTHLY_LIMIT_USD = process.env.AI_MONTHLY_LIMIT_USD || "";
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
@@ -30,7 +32,7 @@ const PASSWORD_ITERATIONS = 210_000;
 const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
-const AI_PROVIDER_OPTIONS = new Set(["local", "openai", "anthropic"]);
+const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
   "publish",
@@ -1004,14 +1006,38 @@ function addMemory(state, layer, title, body, provenance) {
   state.memory[layer] = entries.slice(0, 20);
 }
 
+function parseMonthlyLimit(value, fallback = 10) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.round(parsed * 100) / 100;
+}
+
+function aiUsagePeriod() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function defaultAiUsage() {
+  return {
+    period: aiUsagePeriod(),
+    estimatedMonthlyUsd: 0,
+    requestCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    blockedByLimit: false,
+  };
+}
+
 function defaultAiProviderConfig() {
+  const provider = sanitizeProvider(ENV_AI_PROVIDER || "local_demo");
   return {
     version: 1,
-    provider: sanitizeProvider(ENV_AI_PROVIDER || "local"),
-    mode: sanitizeAiMode(ENV_AI_MODE || "demo"),
+    provider,
+    mode: provider === "openai" ? sanitizeAiMode(ENV_AI_MODE || "live") : "demo",
+    monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD, 10),
+    usage: defaultAiUsage(),
     providers: {
       openai: {
-        model: ENV_OPENAI_MODEL || "gpt-4.1-mini",
+        model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano",
         temperature: 0.4,
         maxOutputTokens: 700,
       },
@@ -1030,12 +1056,32 @@ function defaultAiProviderConfig() {
 
 function sanitizeProvider(provider) {
   const normalized = String(provider || "").trim().toLowerCase();
-  return AI_PROVIDER_OPTIONS.has(normalized) ? normalized : "local";
+  if (["local", "local-demo", "local_demo", "demo"].includes(normalized)) return "local_demo";
+  return AI_PROVIDER_OPTIONS.has(normalized) ? normalized : "local_demo";
 }
 
 function sanitizeAiMode(mode) {
   const normalized = String(mode || "").trim().toLowerCase();
   return AI_MODE_OPTIONS.has(normalized) ? normalized : "demo";
+}
+
+function isLocalProvider(provider) {
+  return sanitizeProvider(provider) === "local_demo";
+}
+
+function normalizeAiUsage(usage) {
+  const currentPeriod = aiUsagePeriod();
+  if (!usage || usage.period !== currentPeriod) return defaultAiUsage();
+  return {
+    ...defaultAiUsage(),
+    ...usage,
+    period: currentPeriod,
+    estimatedMonthlyUsd: Number.isFinite(Number(usage.estimatedMonthlyUsd)) ? Number(usage.estimatedMonthlyUsd) : 0,
+    requestCount: Number.isFinite(Number(usage.requestCount)) ? Number(usage.requestCount) : 0,
+    inputTokens: Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : 0,
+    outputTokens: Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : 0,
+    blockedByLimit: Boolean(usage.blockedByLimit),
+  };
 }
 
 function readAiProviderConfig() {
@@ -1049,8 +1095,14 @@ function readAiProviderConfig() {
       ...stored,
       provider: sanitizeProvider(stored.provider || fresh.provider),
       mode: sanitizeAiMode(stored.mode || fresh.mode),
+      monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD || stored.monthlyLimitUsd, fresh.monthlyLimitUsd),
+      usage: normalizeAiUsage(stored.usage || fresh.usage),
       providers: {
-        openai: { ...fresh.providers.openai, ...(stored.providers?.openai || {}) },
+        openai: {
+          ...fresh.providers.openai,
+          ...(stored.providers?.openai || {}),
+          model: ENV_AI_MODEL || ENV_OPENAI_MODEL || stored.providers?.openai?.model || fresh.providers.openai.model,
+        },
         anthropic: { ...fresh.providers.anthropic, ...(stored.providers?.anthropic || {}) },
       },
       keys: stored.keys && typeof stored.keys === "object" ? stored.keys : {},
@@ -1066,6 +1118,8 @@ function writeAiProviderConfig(config) {
     ...config,
     provider: sanitizeProvider(config.provider),
     mode: sanitizeAiMode(config.mode),
+    monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD || config.monthlyLimitUsd, 10),
+    usage: normalizeAiUsage(config.usage),
     updatedAt: now(),
   };
   fs.writeFileSync(AI_PROVIDER_FILE, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: 0o600 });
@@ -1099,28 +1153,158 @@ function activeProviderSettings(config) {
   return { model: "local-demo", temperature: 0, maxOutputTokens: 700 };
 }
 
-function publicAiProviderSettings(config = readAiProviderConfig()) {
+function aiProviderLabel(provider) {
+  const normalized = sanitizeProvider(provider);
+  if (normalized === "openai") return "OpenAI";
+  if (normalized === "anthropic") return "Anthropic";
+  return "Local Demo";
+}
+
+function aiModeLabel(provider, mode) {
+  return isLocalProvider(provider) || mode !== "live" ? "Local Demo" : "Live API";
+}
+
+function safeAiErrorMessage(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  const raw = String(error?.message || error || "").toLowerCase();
+  if (status === 401 || status === 403 || raw.includes("incorrect api key") || raw.includes("invalid api key")) {
+    return "OpenAI API is configured but the API key was rejected. Check the Railway key and OpenAI project.";
+  }
+  if (
+    status === 429
+    || raw.includes("quota")
+    || raw.includes("billing")
+    || raw.includes("credit")
+    || raw.includes("insufficient_quota")
+    || raw.includes("rate limit")
+  ) {
+    return "OpenAI API is configured but not active. Check billing, credits, usage limits, or rate limits.";
+  }
+  if (raw.includes("model") && (raw.includes("not found") || raw.includes("does not exist") || raw.includes("invalid"))) {
+    return "OpenAI API is reachable, but the selected model is not available for this project.";
+  }
+  if (raw.includes("fetch failed") || raw.includes("network") || raw.includes("timeout")) {
+    return "OpenAI API could not be reached. Check network access and try again.";
+  }
+  return "OpenAI API is configured but not active. Check billing, credits, or API key.";
+}
+
+function logAiProviderError(scope, error) {
+  const status = error?.status || error?.statusCode || "unknown";
+  console.error(`[ai-provider:${scope}] status=${status} message=${error?.message || error}`);
+}
+
+function currentAiProviderStatus(config = readAiProviderConfig()) {
   const provider = sanitizeProvider(config.provider);
-  const mode = provider === "local" ? "demo" : sanitizeAiMode(config.mode);
+  const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
+  const usage = normalizeAiUsage(config.usage);
   const activeSettings = activeProviderSettings({ ...config, provider });
-  const keyConfigured = provider === "local" ? false : Boolean(keyFromConfig(config, provider));
-  const connectionStatus = provider === "local"
-    ? "Not configured"
-    : keyConfigured
-      ? "Connected"
-      : "Not configured";
+  const keyConfigured = provider === "openai" ? Boolean(keyFromConfig(config, "openai")) : false;
+  const lastTest = config.lastTest || null;
+  const lastError = lastTest?.success === false ? lastTest.message || lastTest.error || "Provider test failed." : "";
+  let connectionStatus = "Not configured";
+  if (isLocalProvider(provider) || mode !== "live") {
+    connectionStatus = "Connected";
+  } else if (lastError) {
+    connectionStatus = "Error";
+  } else if (keyConfigured) {
+    connectionStatus = "Connected";
+  }
   return {
     provider,
-    providerLabel: provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Anthropic" : "Local Demo",
+    providerLabel: aiProviderLabel(provider),
     mode,
-    modeLabel: mode === "live" ? "Live API" : "Local Demo",
+    modeLabel: aiModeLabel(provider, mode),
+    configured: isLocalProvider(provider) || keyConfigured,
+    connected: connectionStatus === "Connected",
     connectionStatus,
-    activeModel: provider === "local" ? "Not selected" : activeSettings.model || "Not selected",
+    model: isLocalProvider(provider) ? "local-demo" : activeSettings.model || "Not selected",
+    activeModel: isLocalProvider(provider) ? "local-demo" : activeSettings.model || "Not selected",
+    lastTest,
+    lastError,
+    monthlyLimitUsd: config.monthlyLimitUsd,
+    usage,
+  };
+}
+
+function currentSystemStatus() {
+  const state = readState();
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const approvals = Array.isArray(state.approvals) ? state.approvals : [];
+  const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+  const audit = Array.isArray(state.audit) ? state.audit : [];
+  const memoryLayers = state.memory && typeof state.memory === "object" ? state.memory : {};
+  const memoryCount = Object.values(memoryLayers).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+  const queuedTasks = tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
+  const aiStatus = currentAiProviderStatus();
+  const heap = process.memoryUsage();
+  const heapPercent = heap.heapTotal > 0 ? Math.round((heap.heapUsed / heap.heapTotal) * 100) : 0;
+  const users = activeUserCount(readAuthStore());
+  const queueTotal = queuedTasks + pendingApprovals;
+  const health = aiStatus.connectionStatus === "Error"
+    ? "OpenAI needs attention"
+    : "Local systems operational";
+
+  return {
+    health,
+    agentId: "Agent 101",
+    agentMode: state.agent?.externalActions || "Draft only",
+    metrics: [
+      { label: "State", value: "Ready", percent: 100 },
+      { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
+      { label: "Queue", value: String(queueTotal), percent: Math.min(100, queueTotal * 18) },
+      { label: "Security", value: users > 0 ? "On" : "Setup", percent: users > 0 ? 100 : 35 },
+    ],
+    chart: [
+      Math.min(100, 22 + queuedTasks * 12),
+      Math.min(100, 30 + pendingApprovals * 10),
+      Math.min(100, 26 + artifacts.length * 7),
+      Math.min(100, 34 + audit.length * 4),
+      Math.min(100, Math.max(12, heapPercent)),
+      Math.min(100, 42 + memoryCount * 3),
+      aiStatus.connectionStatus === "Error" ? 34 : 76,
+      users > 0 ? 88 : 42,
+    ],
+    counts: {
+      queuedTasks,
+      pendingApprovals,
+      memoryCount,
+      artifacts: artifacts.length,
+      audit: audit.length,
+      heapPercent,
+    },
+    ai: {
+      provider: aiStatus.providerLabel,
+      mode: aiStatus.modeLabel,
+      connectionStatus: aiStatus.connectionStatus,
+    },
+    updatedAt: now(),
+  };
+}
+
+function publicAiProviderSettings(config = readAiProviderConfig()) {
+  const provider = sanitizeProvider(config.provider);
+  const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
+  const activeSettings = activeProviderSettings({ ...config, provider });
+  const status = currentAiProviderStatus(config);
+  return {
+    provider,
+    providerLabel: status.providerLabel,
+    mode,
+    modeLabel: status.modeLabel,
+    configured: status.configured,
+    connected: status.connected,
+    connectionStatus: status.connectionStatus,
+    activeModel: status.activeModel,
+    lastError: status.lastError,
+    monthlyLimitUsd: status.monthlyLimitUsd,
+    usage: status.usage,
     temperature: activeSettings.temperature,
     maxOutputTokens: activeSettings.maxOutputTokens,
     lastTest: config.lastTest || null,
     providers: {
-      local: {
+      local_demo: {
         keyConfigured: false,
         keyStatus: "No key required",
         model: "local-demo",
@@ -1133,14 +1317,6 @@ function publicAiProviderSettings(config = readAiProviderConfig()) {
         temperature: config.providers.openai.temperature,
         maxOutputTokens: config.providers.openai.maxOutputTokens,
       },
-      anthropic: {
-        keyConfigured: Boolean(keyFromConfig(config, "anthropic")),
-        keyStatus: keyFromConfig(config, "anthropic") ? "Key saved securely" : "Not configured",
-        keySource: keySource(config, "anthropic"),
-        model: config.providers.anthropic.model,
-        temperature: config.providers.anthropic.temperature,
-        maxOutputTokens: config.providers.anthropic.maxOutputTokens,
-      },
     },
     storageNote: "API keys are held server-side only. Prefer environment variables on Railway; local saved keys live in ignored backend config.",
   };
@@ -1149,7 +1325,7 @@ function publicAiProviderSettings(config = readAiProviderConfig()) {
 function updateAiProviderSettings(payload) {
   const config = readAiProviderConfig();
   const provider = sanitizeProvider(payload.provider || config.provider);
-  const mode = provider === "local" ? "demo" : sanitizeAiMode(payload.mode || config.mode);
+  const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(payload.mode || config.mode || "live");
   config.provider = provider;
   config.mode = mode;
   if (provider === "openai" || provider === "anthropic") {
@@ -1164,6 +1340,41 @@ function updateAiProviderSettings(payload) {
     };
   }
   return publicAiProviderSettings(writeAiProviderConfig(config));
+}
+
+function estimatedAiCostUsd(usage = {}) {
+  const inputTokens = Number(usage.input_tokens || usage.inputTokens || 0);
+  const outputTokens = Number(usage.output_tokens || usage.outputTokens || 0);
+  const totalTokens = inputTokens + outputTokens;
+  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
+  return Math.round((totalTokens / 1000) * 0.001 * 10000) / 10000;
+}
+
+function aiUsageLimitReached(config) {
+  const usage = normalizeAiUsage(config.usage);
+  const limit = parseMonthlyLimit(config.monthlyLimitUsd, 10);
+  return limit > 0 && usage.estimatedMonthlyUsd >= limit;
+}
+
+function assertAiUsageBudget(config) {
+  if (!aiUsageLimitReached(config)) return;
+  throw guardedError("AI monthly spending limit reached. Switch to Local Demo Mode or raise AI_MONTHLY_LIMIT_USD.", 402);
+}
+
+function recordAiUsage(config, usage = {}) {
+  const current = normalizeAiUsage(config.usage);
+  const inputTokens = Number(usage.input_tokens || usage.inputTokens || 0);
+  const outputTokens = Number(usage.output_tokens || usage.outputTokens || 0);
+  config.usage = {
+    ...current,
+    requestCount: current.requestCount + 1,
+    inputTokens: current.inputTokens + (Number.isFinite(inputTokens) ? inputTokens : 0),
+    outputTokens: current.outputTokens + (Number.isFinite(outputTokens) ? outputTokens : 0),
+    estimatedMonthlyUsd: Math.round((current.estimatedMonthlyUsd + estimatedAiCostUsd(usage)) * 10000) / 10000,
+  };
+  config.usage.blockedByLimit = aiUsageLimitReached(config);
+  writeAiProviderConfig(config);
+  return config.usage;
 }
 
 function saveAiProviderKey(payload) {
@@ -1227,7 +1438,7 @@ function localDepoDemoResponse(message) {
     return "A safe workflow is: Task Intake -> Research Lab -> Verify Station -> Draft Studio -> Human Gate -> Output Bench -> System Log.";
   }
   if (text.includes("agent") || text.includes("grow")) {
-    return "There is only one live agent: Depo 001. I can draft future-agent blueprints, but activation stays behind Human Gate.";
+    return "There is only one live agent: Depo, Agent 101. I can draft future-agent blueprints, but activation stays behind Human Gate.";
   }
   return "I can work on this locally in draft-only mode. Give me one bounded task, and I will structure it into research, verification, draft, approval, output, and log steps.";
 }
@@ -1269,6 +1480,7 @@ async function callOpenAiProvider(config, message, context) {
   const provider = "openai";
   const key = keyFromConfig(config, provider);
   if (!key) throw guardedError("OpenAI API key is not configured.", 400);
+  assertAiUsageBudget(config);
   const settings = config.providers.openai;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -1291,8 +1503,12 @@ async function callOpenAiProvider(config, message, context) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+    const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+    error.openAiCode = payload.error?.code || "";
+    error.openAiType = payload.error?.type || "";
+    throw error;
   }
+  recordAiUsage(config, payload.usage || {});
   const outputText = payload.output_text || payload.output?.flatMap((item) => item.content || []).map((part) => part.text || "").join("\n");
   return normalizeDepoAiPayload(outputText, outputText);
 }
@@ -1347,20 +1563,27 @@ async function testAiProvider(payload = {}) {
   const testConfig = {
     ...config,
     provider,
-    mode: provider === "local" ? "demo" : sanitizeAiMode(payload.mode || config.mode),
+    mode: isLocalProvider(provider) ? "demo" : sanitizeAiMode(payload.mode || config.mode || "live"),
   };
   try {
     let result;
-    if (provider === "local" || testConfig.mode !== "live") {
+    if (isLocalProvider(provider) || testConfig.mode !== "live") {
       result = {
         success: true,
         provider,
         model: "local-demo",
         message: "Local Demo Mode is ready. No external API call was made.",
+        monthlyLimitUsd: testConfig.monthlyLimitUsd,
       };
     } else if (provider === "openai") {
       const response = await callOpenAiProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
-      result = { success: true, provider, model: testConfig.providers.openai.model, message: response.message };
+      result = {
+        success: true,
+        provider,
+        model: testConfig.providers.openai.model,
+        message: response.message || "OpenAI API connection is active.",
+        monthlyLimitUsd: testConfig.monthlyLimitUsd,
+      };
     } else if (provider === "anthropic") {
       const response = await callAnthropicProvider(testConfig, "Reply with a short JSON health check for Depo.", { roomId: "settings" });
       result = { success: true, provider, model: testConfig.providers.anthropic.model, message: response.message };
@@ -1371,11 +1594,15 @@ async function testAiProvider(payload = {}) {
     writeAiProviderConfig(config);
     return result;
   } catch (error) {
+    logAiProviderError("test", error);
+    const friendly = provider === "openai" ? safeAiErrorMessage(error) : error.message;
     const result = {
       success: false,
       provider,
-      model: provider === "local" ? "local-demo" : activeProviderSettings({ ...config, provider }).model,
-      error: error.message,
+      model: isLocalProvider(provider) ? "local-demo" : activeProviderSettings({ ...config, provider }).model,
+      message: friendly,
+      error: friendly,
+      monthlyLimitUsd: config.monthlyLimitUsd,
     };
     config.lastTest = { ...result, testedAt: now() };
     writeAiProviderConfig(config);
@@ -1390,31 +1617,53 @@ async function handleDepoChat(payload = {}) {
   if (riskyRequest && requiresHumanGate(riskyRequest)) return blockedDepoResponse(riskyRequest);
   const config = readAiProviderConfig();
   const provider = sanitizeProvider(config.provider);
-  const mode = provider === "local" ? "demo" : sanitizeAiMode(config.mode);
-  if (mode !== "live" || provider === "local") {
+  const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
+  if (mode !== "live" || isLocalProvider(provider)) {
     return {
       message: localDepoDemoResponse(message),
       suggestedActions: [],
       requiresApproval: false,
       riskLevel: "low",
       logs: ["Local Demo Mode response. No external API call was made."],
-      provider: "local",
+      provider: "local_demo",
       mode: "demo",
     };
   }
 
   let response;
-  if (provider === "openai") {
-    response = await callOpenAiProvider(config, message, payload);
-  } else if (provider === "anthropic") {
-    response = await callAnthropicProvider(config, message, payload);
-  } else {
+  try {
+    if (provider === "openai") {
+      response = await callOpenAiProvider(config, message, payload);
+    } else if (provider === "anthropic") {
+      response = await callAnthropicProvider(config, message, payload);
+    } else {
+      response = {
+        message: localDepoDemoResponse(message),
+        suggestedActions: [],
+        requiresApproval: false,
+        riskLevel: "low",
+        logs: ["Unknown provider; used Local Demo Mode."],
+      };
+    }
+  } catch (error) {
+    logAiProviderError("chat", error);
+    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live AI provider failed. Depo used Local Demo Mode fallback.";
+    config.lastTest = {
+      success: false,
+      provider,
+      model: activeProviderSettings({ ...config, provider }).model,
+      message: friendly,
+      error: friendly,
+      testedAt: now(),
+    };
+    writeAiProviderConfig(config);
     response = {
       message: localDepoDemoResponse(message),
       suggestedActions: [],
       requiresApproval: false,
       riskLevel: "low",
-      logs: ["Unknown provider; used Local Demo Mode."],
+      logs: [friendly, "Local Demo fallback used. No external action was executed."],
+      fallback: true,
     };
   }
   const riskyResponse = detectRiskyAction(`${response.message} ${(response.suggestedActions || []).join(" ")}`);
@@ -2221,6 +2470,22 @@ function deleteAccessUser(req, userIdToDelete, payload) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/system/status") {
+    sendJson(res, 200, currentSystemStatus());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ai/status") {
+    sendJson(res, 200, currentAiProviderStatus());
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ai/test") {
+    const payload = await readBody(req);
+    sendJson(res, 200, await testAiProvider(payload));
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/settings/ai-provider") {
     sendJson(res, 200, publicAiProviderSettings());
     return;

@@ -1594,6 +1594,7 @@ const workspaceProfiles = {
 
 let selectedRoomKey = null;
 let selectedAgentKey = null;
+let depoChatMessages = [];
 const mapHomeScale = 1;
 const mapMinScale = 0.86;
 const mapMaxScale = 2.8;
@@ -2720,7 +2721,7 @@ function floorPropsMarkup(room) {
 }
 
 function miniAgentRobotMarkup(room) {
-  if (room.id === "human-gate") return "";
+  if (room.id !== "depo-habitat") return "";
   const posture = room.id === "draft-studio" ? "typing" : room.id === "memory-vault" ? "archiving" : "working";
   return `
     <span class="mini-agent-robot ${posture} robot-${escapeHtml(room.visual)}" aria-hidden="true">
@@ -2940,61 +2941,174 @@ function cardListMarkup(items, className = "", limit = 3) {
   return `<div class="${className}">${visible.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${moreChip}</div>`;
 }
 
-function moduleInfoMarkup(roomKey) {
+function depoKnowledgeSnapshot() {
+  const tasks = stateList("tasks");
+  const artifacts = stateList("artifacts");
+  const approvals = stateList("approvals");
+  const pending = approvals.filter((approval) => approval.status === "pending");
+  const memoryCount = memoryEntries().length;
+  const evidenceCount = taskEvidenceCount(tasks) + artifactEvidenceCount(artifacts);
+  return {
+    tasks,
+    queuedTasks: tasks.filter((task) => task.status === "queued"),
+    artifacts,
+    approvals,
+    pending,
+    memoryCount,
+    evidenceCount,
+  };
+}
+
+function depoChatSeed(card) {
+  const snapshot = depoKnowledgeSnapshot();
+  return `I am Depo, the only active agent here. I can answer from local Argentum state: ${pluralize(snapshot.queuedTasks.length, "queued task")}, ${pluralize(snapshot.memoryCount, "memory note")}, ${pluralize(snapshot.artifacts.length, "artifact")}, and ${pluralize(snapshot.pending.length, "pending approval")}. I can draft and package work, but Human Gate controls anything risky.`;
+}
+
+function depoChatResponse(question, roomKey) {
   const card = moduleCardData(roomKey);
-  const connectedNames = (card.connections || card.connectedModules || []).map(moduleDisplayName);
-  const recent = (Array.isArray(card.recentActivity) ? card.recentActivity : [card.recentActivity].filter(Boolean)).slice(0, 2);
-  const actions = card.quickActions || [];
-  const isCurrentStage = card.id === depoAgent.currentStage;
+  const snapshot = depoKnowledgeSnapshot();
+  const text = String(question || "").trim().toLowerCase();
+  if (!text) return "Ask me about what I know, what I can do, what is blocked, or what should happen next.";
+
+  if (text.includes("know") || text.includes("memory") || text.includes("remember")) {
+    return `I know what is stored locally: ${pluralize(snapshot.memoryCount, "memory note")}, ${pluralize(snapshot.evidenceCount, "evidence note")}, ${pluralize(snapshot.artifacts.length, "artifact")}, and ${pluralize(snapshot.approvals.length, "approval record")}. I do not know anything outside this app unless it has been added as a task, memory, artifact, approval, or audit event.`;
+  }
+
+  if (text.includes("can") || text.includes("do") || text.includes("allowed")) {
+    return `Right now I can ${depoAgent.can.slice(0, 5).join(", ")}, and package risky work for Human Gate. In ${card.title}, the safe actions are: ${(card.allowedActions || []).slice(0, 4).join(", ")}.`;
+  }
+
+  if (text.includes("can't") || text.includes("cannot") || text.includes("blocked") || text.includes("risk")) {
+    return `I cannot ${depoAgent.cannot.slice(0, 6).join(", ")} without Human Gate. For ${card.title}, blocked actions include: ${(card.blockedActions || []).slice(0, 4).join(", ")}.`;
+  }
+
+  if (text.includes("next") || text.includes("start") || text.includes("step")) {
+    return `The next clean step is to give me one bounded task in Task Intake. I can research it, verify it, draft the output, then package anything risky for Human Gate instead of executing it.`;
+  }
+
+  if (text.includes("agent") || text.includes("agents")) {
+    return "There is only one active agent: Depo, Agent 001. The side rooms are work areas, not separate agents. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
+  }
+
+  if (text.includes("approve") || text.includes("human gate")) {
+    return `Human Gate currently has ${pluralize(snapshot.pending.length, "pending approval")}. You can open Human Gate to approve, send back, or block each package. Approval changes the local review state only; it does not publish, spend, contact, or deploy anything.`;
+  }
+
+  return `For ${card.title}: ${card.purpose || card.summary} I can help from local state only. Ask me "what do you know?", "what can you do?", "what is blocked?", or "what is next?"`;
+}
+
+function depoChatMessagesFor(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-4);
+  if (messages.length) return messages;
+  return [{ speaker: "depo", text: depoChatSeed(moduleCardData(resolved)) }];
+}
+
+function agentChatMarkup(card) {
+  const messages = depoChatMessagesFor(card.id);
+  const snapshot = depoKnowledgeSnapshot();
   return `
-    <div class="module-info-head">
+    <div class="module-info-head agent-chat-head">
       <span class="module-info-icon" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
       <div>
-        <strong>${escapeHtml(card.title)}</strong>
-        <small>${escapeHtml(card.metric)}</small>
+        <strong>Talk to Depo</strong>
+        <small>${escapeHtml(card.title)} · ${escapeHtml(card.metric)}</small>
       </div>
-      <em>${escapeHtml(card.status)}</em>
+      <em>${escapeHtml(card.id === depoAgent.currentStage ? "Now active" : depoAgent.status)}</em>
       <button class="module-info-close" type="button" aria-label="Close module details">×</button>
     </div>
-    <div class="module-info-body">
-      <section>
-        <h4>Purpose</h4>
-        <p>${escapeHtml(card.purpose || card.summary)}</p>
-      </section>
-      <div class="module-info-metrics">
-        <span><small>Active agent</small><strong>${escapeHtml(depoWorkflowState.activeAgent)}</strong></span>
-        <span><small>Current stage</small><strong>${escapeHtml(isCurrentStage ? "Now active" : depoStageLabel(depoAgent.currentStage))}</strong></span>
-        <span><small>Human gate</small><strong>${escapeHtml(depoWorkflowState.humanGate)}</strong></span>
-      </div>
-      <section>
-        <h4>Depo role</h4>
-        <p>${escapeHtml(card.depoRole)}</p>
-      </section>
-      <section>
-        <h4>Connected rooms</h4>
-        ${cardListMarkup(connectedNames, "module-info-tags", 4)}
-      </section>
-      <section>
-        <h4>Allowed actions</h4>
-        ${cardListMarkup(card.allowedActions, "module-info-permissions can-do", 3)}
-      </section>
-      <section>
-        <h4>Blocked actions</h4>
-        ${cardListMarkup(card.blockedActions, "module-info-permissions cannot-do", 3)}
-      </section>
-      <section>
-        <h4>Recent activity</h4>
-        <ul>${recent.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-      </section>
-      <section class="module-info-risk">
-        <h4>Approval / risk</h4>
-        <p>${escapeHtml(card.riskNote)}</p>
-      </section>
+    <div class="agent-chat-summary">
+      <span><small>Agent</small><strong>Depo 001</strong></span>
+      <span><small>Memory</small><strong>${escapeHtml(pluralize(snapshot.memoryCount, "note"))}</strong></span>
+      <span><small>Approvals</small><strong>${escapeHtml(countPhrase(snapshot.pending.length, "pending"))}</strong></span>
     </div>
-    <div class="module-info-actions">
-      ${actions.map((action) => `<button type="button" data-module-action="${escapeHtml(action)}">${escapeHtml(action)}</button>`).join("")}
+    <div class="agent-chat-log" aria-live="polite">
+      ${messages
+        .map(
+          (message) => `
+            <article class="chat-message ${message.speaker === "operator" ? "operator" : "depo"}">
+              <span>${message.speaker === "operator" ? "You" : "Depo"}</span>
+              <p>${escapeHtml(message.text)}</p>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+    <div class="agent-chat-prompts">
+      <button type="button" data-chat-prompt="What do you know?">What do you know?</button>
+      <button type="button" data-chat-prompt="What can you do?">What can you do?</button>
+      <button type="button" data-chat-prompt="What is blocked?">What is blocked?</button>
+    </div>
+    <form class="agent-chat-form" data-depo-chat-form>
+      <input name="message" type="text" autocomplete="off" placeholder="Ask Depo about this room..." />
+      <button type="submit">Ask</button>
+    </form>
+  `;
+}
+
+function approvalSourceLabel(approval) {
+  const title = `${approval.title || ""} ${approval.action || ""}`.toLowerCase();
+  if (title.includes("pod") || title.includes("draft") || title.includes("artifact")) return "Output Bench";
+  if (title.includes("stock") || title.includes("risk") || title.includes("monitor")) return "Verify Station";
+  if (approval.taskId) return "Task Intake";
+  return "Human Gate";
+}
+
+function humanGateMarkup(card) {
+  const allApprovals = pendingApprovals();
+  const approvals = allApprovals.slice(0, 3);
+  return `
+    <div class="module-info-head human-gate-head">
+      <span class="module-info-icon" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+      <div>
+        <strong>Human Gate</strong>
+        <small>${escapeHtml(card.metric)} · approval control</small>
+      </div>
+      <em>Locked</em>
+      <button class="module-info-close" type="button" aria-label="Close module details">×</button>
+    </div>
+    <div class="human-gate-card">
+      ${allApprovals.length > approvals.length ? `<p class="gate-overflow-note">${escapeHtml(`${allApprovals.length - approvals.length} more package${allApprovals.length - approvals.length === 1 ? "" : "s"} waiting on the Human Gate page.`)}</p>` : ""}
+      ${
+        approvals.length
+          ? approvals
+              .map(
+                (approval) => `
+                  <article class="gate-approval-row">
+                    <div>
+                      <span>${escapeHtml(approvalSourceLabel(approval))}</span>
+                      <strong>${escapeHtml(approval.title || "Approval package")}</strong>
+                      <p>${escapeHtml(approval.action || "Operator review required.")}</p>
+                      <small>${escapeHtml(approval.evidence || "No evidence attached yet.")}</small>
+                    </div>
+                    <em class="risk-tag ${escapeHtml(approval.risk || "medium")}">${escapeHtml(approval.risk || "medium")}</em>
+                    <div class="gate-actions">
+                      <button type="button" data-card-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve</button>
+                      <button type="button" data-card-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
+                      <button type="button" data-card-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+                    </div>
+                  </article>
+                `,
+              )
+              .join("")
+          : `
+              <article class="gate-approval-row empty">
+                <div>
+                  <span>Human Gate</span>
+                  <strong>No pending approvals</strong>
+                  <p>Depo will place packages here when work needs operator review.</p>
+                </div>
+              </article>
+            `
+      }
     </div>
   `;
+}
+
+function moduleInfoMarkup(roomKey) {
+  const card = moduleCardData(roomKey);
+  if (card.id === "human-gate") return humanGateMarkup(card);
+  return agentChatMarkup(card);
 }
 
 function closeModuleInfoCard() {
@@ -4162,6 +4276,66 @@ function recordSafeRoomAction(action, roomKey) {
   openModuleInfoCard(resolved);
 }
 
+function approvalActionStatus(action) {
+  if (action === "approve") return "approved";
+  if (action === "block") return "blocked";
+  if (action === "revise") return "revision_requested";
+  return action;
+}
+
+function approvalActionTitle(action) {
+  if (action === "approve") return "Approved";
+  if (action === "block") return "Declined";
+  if (action === "revise") return "Sent back";
+  return statusLabel(action);
+}
+
+function changeApprovalStatusLocally(id, action, source = "Human Gate") {
+  const approvals = stateList("approvals");
+  const approval = approvals.find((item) => item.id === id);
+  if (!approval) return false;
+  const nextStatus = approvalActionStatus(action);
+  approval.status = nextStatus;
+  approval.resolvedAt = new Date().toISOString();
+  approval.resolutionSource = source;
+  const label = approvalActionTitle(action);
+  addLocalAudit(`${label}: ${approval.title}`, `${source} changed the approval to ${statusLabel(nextStatus)}. No external action was executed.`);
+  pushRoomActivity("human-gate", `${label}: ${approval.title}`);
+  pushRoomActivity("system-log", `${label} approval recorded.`);
+  render();
+  openModuleInfoCard("human-gate");
+  return true;
+}
+
+function changeApprovalStatus(id, action, source = "Human Gate") {
+  mutate(`/api/approvals/${encodeURIComponent(id)}/${action}`).then((changed) => {
+    if (changed) {
+      selectedAgentKey = null;
+      selectedRoomKey = "human-gate";
+      openModuleInfoCard("human-gate");
+      return;
+    }
+    changeApprovalStatusLocally(id, action, source);
+  }).catch((error) => {
+    if (!changeApprovalStatusLocally(id, action, source)) {
+      addLocalAudit("Approval unavailable", error.message);
+      render();
+    }
+  });
+}
+
+function submitDepoChat(roomKey, message) {
+  const resolved = resolveRoomKey(roomKey);
+  const trimmed = String(message || "").trim();
+  if (!trimmed) return;
+  depoChatMessages.push({ roomId: resolved, speaker: "operator", text: trimmed });
+  depoChatMessages.push({ roomId: resolved, speaker: "depo", text: depoChatResponse(trimmed, resolved) });
+  depoChatMessages = depoChatMessages.slice(-18);
+  addLocalAudit("Depo chat", `Asked Depo about ${moduleDisplayName(resolved)}.`);
+  renderSystemFeed();
+  openModuleInfoCard(resolved);
+}
+
 function packageRoomForApproval(roomKey) {
   const resolved = resolveRoomKey(roomKey);
   const room = moduleProfile(resolved);
@@ -4423,6 +4597,17 @@ moduleInfoCard?.addEventListener("click", (event) => {
     resetHabitatView();
     return;
   }
+  const chatPrompt = event.target.closest("[data-chat-prompt]");
+  if (chatPrompt) {
+    const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
+    submitDepoChat(stationId, chatPrompt.dataset.chatPrompt);
+    return;
+  }
+  const approvalButton = event.target.closest("[data-card-approval-action]");
+  if (approvalButton) {
+    changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.cardApprovalAction, "Human Gate card");
+    return;
+  }
   const actionButton = event.target.closest("[data-module-action]");
   if (!actionButton) return;
   const action = actionButton.dataset.moduleAction;
@@ -4444,6 +4629,15 @@ moduleInfoCard?.addEventListener("click", (event) => {
   } else {
     recordSafeRoomAction(action, stationId);
   }
+});
+
+moduleInfoCard?.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-depo-chat-form]");
+  if (!form) return;
+  event.preventDefault();
+  const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
+  const input = form.querySelector('input[name="message"]');
+  submitDepoChat(stationId, input?.value || "");
 });
 
 document.addEventListener("keydown", (event) => {
@@ -4705,14 +4899,7 @@ approvalList.addEventListener("click", (event) => {
   if (!button) return;
   const action = button.dataset.approvalAction;
   const id = button.dataset.approvalId;
-  mutate(`/api/approvals/${encodeURIComponent(id)}/${action}`).then((changed) => {
-    if (changed) return;
-    addLocalAudit("Approval changed locally", "Start the app with npm start to persist this action.");
-    render();
-  }).catch((error) => {
-    addLocalAudit("Approval unavailable", error.message);
-    render();
-  });
+  changeApprovalStatus(id, action, "Human Gate page");
 });
 
 taskForm.addEventListener("submit", (event) => {

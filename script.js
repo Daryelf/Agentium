@@ -4292,7 +4292,7 @@ function updateSystemClock() {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hour12: true,
     timeZone: "America/New_York",
   }).format(nowDate);
   const dateText = new Intl.DateTimeFormat("en-US", {
@@ -5202,7 +5202,7 @@ function renderOverviewTelemetry() {
     ? Math.round(((activeTasks.length * 0.35 + reviewCount * 0.62 + outputReadyCount) / Math.max(1, pipelineLoad)) * 100)
     : 0;
   const pipelineStatus = reviewCount
-    ? "Review bottleneck"
+    ? "Needs review"
     : activeTasks.length
       ? "Work in motion"
       : queuedTasks.length
@@ -5268,8 +5268,8 @@ function renderOverviewTelemetry() {
     automationProgress.classList.toggle("is-blocked", reviewCount > 0);
   }
   automationProgress?.closest(".automation-card")?.classList.toggle("is-moving", automationMoving);
-  setText(revenueGuardMetric, "Not active");
-  setText(revenueGuardCopy, "No revenue workflow has run yet.");
+  setText(revenueGuardMetric, "$0");
+  setText(revenueGuardCopy, "Revenue has not started yet.");
   setText(highRiskMetric, String(approvals.filter((approval) => approval.status === "pending" && approval.risk === "high").length));
   setText(artifactThroughputMetric, String(artifacts.length));
 }

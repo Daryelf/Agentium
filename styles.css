@@ -5124,7 +5124,7 @@ main {
   height: 132px;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(230px, 1.45fr) minmax(112px, 0.74fr) minmax(208px, 1.22fr) minmax(108px, 0.72fr) minmax(104px, 0.66fr) minmax(104px, 0.66fr);
+  grid-template-columns: minmax(224px, 1.34fr) minmax(150px, 0.9fr) minmax(196px, 1.16fr) minmax(104px, 0.66fr) minmax(100px, 0.62fr) minmax(116px, 0.7fr);
   gap: 8px;
 }
 
@@ -5143,6 +5143,28 @@ main {
 .tasks-card {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+}
+
+.tasks-card {
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 6px;
+}
+
+.tasks-card > div {
+  min-width: 0;
+}
+
+.tasks-card ul {
+  margin-top: 4px;
+}
+
+.tasks-card > div > span {
+  display: block;
+  max-width: 78px;
+  color: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.06;
 }
 
 .agent-101-card {
@@ -5273,9 +5295,15 @@ main {
 }
 
 .donut-meter {
+  justify-self: end;
+  width: 58px;
+  height: 58px;
   background:
-    radial-gradient(circle at center, rgba(2, 4, 10, 0.96) 0 56%, transparent 58%),
+    radial-gradient(circle at center, rgba(2, 4, 10, 0.96) 0 55%, transparent 57%),
     conic-gradient(var(--blue) 0 22%, var(--purple) 22% 64%, rgba(100, 116, 139, 0.38) 64% 100%);
+  box-shadow:
+    0 0 0 1px rgba(125, 211, 252, 0.1),
+    0 0 20px rgba(139, 92, 246, 0.26);
 }
 
 .big-metric {
@@ -5528,11 +5556,18 @@ main {
 .revenue-card {
   position: relative;
   align-content: start;
-  gap: 5px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 4px;
   padding: 10px;
 }
 
-.revenue-card > span {
+.revenue-card-top {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.revenue-card-top span {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-soft);
@@ -5543,12 +5578,44 @@ main {
 }
 
 .revenue-card .big-metric {
-  font-size: 0.94rem;
+  font-size: 1.1rem;
+}
+
+.revenue-sparkline {
+  position: relative;
+  min-height: 42px;
+  overflow: hidden;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(96, 165, 250, 0.08), transparent 42%),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    rgba(2, 6, 23, 0.28);
+  background-size: auto, 26px 100%, 100% 14px, auto;
+}
+
+.revenue-sparkline::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.42), transparent);
+}
+
+.revenue-sparkline i {
+  position: absolute;
+  inset: 9px 7px 8px;
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.34), rgba(34, 211, 238, 0.54));
+  clip-path: polygon(0 72%, 12% 70%, 24% 74%, 36% 70%, 49% 72%, 63% 69%, 78% 73%, 90% 70%, 100% 71%, 100% 100%, 0 100%);
+  filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.26));
 }
 
 .revenue-empty {
   display: grid;
-  margin-top: auto;
 }
 
 .revenue-empty small {
@@ -6691,7 +6758,7 @@ label {
   }
 
   .analytics-strip {
-    grid-template-columns: minmax(230px, 1.45fr) minmax(112px, 0.74fr) minmax(208px, 1.22fr) minmax(108px, 0.72fr) minmax(104px, 0.66fr) minmax(104px, 0.66fr);
+    grid-template-columns: minmax(224px, 1.34fr) minmax(150px, 0.9fr) minmax(196px, 1.16fr) minmax(104px, 0.66fr) minmax(100px, 0.62fr) minmax(116px, 0.7fr);
     overflow: hidden;
   }
 

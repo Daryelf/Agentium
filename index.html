@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=facility-floor-1" />
+    <link rel="stylesheet" href="./styles.css?v=bottom-metrics-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -287,9 +287,14 @@
             </article>
             <article class="analytics-card revenue-card">
               <p class="eyebrow">Revenue Guard</p>
-              <strong class="big-metric" id="revenueGuardMetric">Not active</strong>
-              <span id="revenueGuardCopy">No revenue workflow has run yet.</span>
-              <div class="revenue-empty" aria-hidden="true">
+              <div class="revenue-card-top">
+                <strong class="big-metric" id="revenueGuardMetric">$0</strong>
+                <span id="revenueGuardCopy">No revenue yet</span>
+              </div>
+              <div class="revenue-sparkline" aria-hidden="true">
+                <i></i>
+              </div>
+              <div class="revenue-empty">
                 <small>$0 earned / $0 claimed</small>
               </div>
             </article>
@@ -1360,6 +1365,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=facility-floor-1"></script>
+    <script src="./script.js?v=bottom-metrics-1"></script>
   </body>
 </html>

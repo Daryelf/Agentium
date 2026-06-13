@@ -303,6 +303,13 @@ const spendMetric = document.querySelector("#spendMetric");
 const budgetUsedMetric = document.querySelector("#budgetUsedMetric");
 const agentCountMetric = document.querySelector("#agentCountMetric");
 const agentStatusMetric = document.querySelector("#agentStatusMetric");
+const agentEfficiencyRing = document.querySelector("#agentEfficiencyRing");
+const agentEfficiencyMetric = document.querySelector("#agentEfficiencyMetric");
+const agentBusinessStatus = document.querySelector("#agentBusinessStatus");
+const agentBusinessReadout = document.querySelector("#agentBusinessReadout");
+const agentRequiresMetric = document.querySelector("#agentRequiresMetric");
+const agentAcceptedMetric = document.querySelector("#agentAcceptedMetric");
+const agentDeclinedMetric = document.querySelector("#agentDeclinedMetric");
 const liveRevenueMetric = document.querySelector("#liveRevenueMetric");
 const overviewQueuedTaskMetric = document.querySelector("#overviewQueuedTaskMetric");
 const overviewHighRiskTaskMetric = document.querySelector("#overviewHighRiskTaskMetric");
@@ -4587,6 +4594,21 @@ function renderOverviewTelemetry() {
   const highRiskQueued = queuedTasks.filter((task) => String(task.risk || "").toLowerCase() === "high").length;
   const mediumQueued = queuedTasks.filter((task) => String(task.risk || "").toLowerCase() === "medium").length;
   const lowQueued = queuedTasks.length - highRiskQueued - mediumQueued;
+  const acceptedApprovals = approvals.filter((approval) => approval.status === "approved").length;
+  const declinedApprovals = approvals.filter((approval) => ["blocked", "declined", "rejected"].includes(approval.status)).length;
+  const revisionApprovals = approvals.filter((approval) => approval.status === "needs_revision").length;
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
+  const requiredReviews = pendingApprovals + revisionApprovals + highRiskQueued;
+  const completedWork = artifacts.filter((artifact) => ["approved", "ready", "draft"].includes(artifact.status)).length + acceptedApprovals;
+  const riskDrag = declinedApprovals * 18 + requiredReviews * 8;
+  const activityBase = completedWork * 14 + queuedTasks.length * 5 + 54;
+  const businessEfficiency = clamp(Math.round(activityBase - riskDrag), 18, 96);
+  const businessStatus = businessEfficiency >= 78 ? "Business moving well" : businessEfficiency >= 55 ? "Business warming up" : "Needs operator review";
+  const businessReadout = businessEfficiency >= 78
+    ? "Agent 101 is converting work into approved output without heavy risk buildup."
+    : businessEfficiency >= 55
+      ? "Agent 101 is useful, but the business still needs approvals to start compounding."
+      : "Too much work is waiting on review. Clear the Human Gate before adding more load.";
   const currentStage = currentStep()?.station || "Research";
   const stageCounts = {
     Research: currentStage === "Research" ? 1 : 0,
@@ -4597,6 +4619,13 @@ function renderOverviewTelemetry() {
 
   setText(agentCountMetric, "1");
   setText(agentStatusMetric, agentStateLabel);
+  if (agentEfficiencyRing) agentEfficiencyRing.style.setProperty("--value", String(businessEfficiency));
+  setText(agentEfficiencyMetric, `${businessEfficiency}%`);
+  setText(agentBusinessStatus, businessStatus);
+  setText(agentBusinessReadout, businessReadout);
+  setText(agentRequiresMetric, requiredReviews ? `${requiredReviews} review${requiredReviews === 1 ? "" : "s"}` : "Clear");
+  setText(agentAcceptedMetric, String(acceptedApprovals));
+  setText(agentDeclinedMetric, String(declinedApprovals));
   setText(liveRevenueMetric, "Not started");
   setText(budgetUsedMetric, money(safeSpend));
   setText(overviewQueuedTaskMetric, String(queuedTasks.length));

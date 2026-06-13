@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=clean-control-top-1" />
+    <link rel="stylesheet" href="./styles.css?v=agent-101-card-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -218,16 +218,22 @@
           </div>
 
           <section class="analytics-strip" aria-label="Live analytics">
-            <article class="analytics-card health-card">
-              <div class="ring-meter" style="--value: 1"><strong>1</strong><span>Agent</span></div>
-              <div>
-                <p class="eyebrow">First Agent</p>
-                <ul>
-                  <li><span>Name</span><strong>Agent 101</strong></li>
-                  <li><span>Mode</span><strong>Draft only</strong></li>
-                  <li><span>Home</span><strong>Habitat</strong></li>
-                  <li><span>External actions</span><strong>Locked</strong></li>
-                </ul>
+            <article class="analytics-card agent-101-card">
+              <div class="agent-efficiency-ring" id="agentEfficiencyRing" style="--value: 72">
+                <strong id="agentEfficiencyMetric">72%</strong>
+                <span>Efficiency</span>
+              </div>
+              <div class="agent-101-summary">
+                <div>
+                  <p class="eyebrow">Agent 101</p>
+                  <strong id="agentBusinessStatus">Business warming up</strong>
+                </div>
+                <p id="agentBusinessReadout">Needs one approved workflow before the business is truly moving.</p>
+                <div class="agent-101-stats" aria-label="Agent 101 operating stats">
+                  <span><small>Requires</small><b id="agentRequiresMetric">1 review</b></span>
+                  <span><small>Accepted</small><b id="agentAcceptedMetric">0</b></span>
+                  <span><small>Declined</small><b id="agentDeclinedMetric">0</b></span>
+                </div>
               </div>
             </article>
             <article class="analytics-card tasks-card">
@@ -1332,6 +1338,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=clean-control-top-1"></script>
+    <script src="./script.js?v=agent-101-card-1"></script>
   </body>
 </html>

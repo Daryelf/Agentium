@@ -1246,29 +1246,33 @@ function currentSystemStatus() {
   const heapPercent = heap.heapTotal > 0 ? Math.round((heap.heapUsed / heap.heapTotal) * 100) : 0;
   const users = activeUserCount(readAuthStore());
   const queueTotal = queuedTasks + pendingApprovals;
+  const workloadPercent = Math.min(100, queueTotal * 18 + artifacts.length * 4);
+  const healthPercent = Math.max(35, 100 - workloadPercent);
+  const agentHealth = workloadPercent >= 78 ? "Overloaded" : workloadPercent >= 48 ? "Busy" : "Stable";
+  const workloadLabel = workloadPercent >= 78 ? "Heavy" : workloadPercent >= 48 ? "Medium" : "Light";
   const health = aiStatus.connectionStatus === "Error"
     ? "OpenAI needs attention"
     : "Local systems operational";
 
   return {
     health,
-    agentId: "Agent 101 active",
-    agentMode: state.agent?.externalActions || "Draft only",
+    agentHealth,
+    agentMode: state.agent?.mode || "Draft only",
     metrics: [
-      { label: "State", value: "Ready", percent: 100 },
+      { label: "Agent Health", value: agentHealth, percent: healthPercent },
+      { label: "Workload", value: workloadLabel, percent: workloadPercent },
       { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
-      { label: "Queue", value: String(queueTotal), percent: Math.min(100, queueTotal * 18) },
-      { label: "Security", value: users > 0 ? "On" : "Setup", percent: users > 0 ? 100 : 35 },
+      { label: "Safety Gate", value: users > 0 ? pendingApprovals ? `${pendingApprovals} pending` : "On" : "Setup", percent: users > 0 ? pendingApprovals ? Math.min(100, 50 + pendingApprovals * 12) : 100 : 35 },
     ],
     chart: [
-      Math.min(100, 22 + queuedTasks * 12),
+      healthPercent,
+      Math.min(100, 28 + queuedTasks * 12),
       Math.min(100, 30 + pendingApprovals * 10),
       Math.min(100, 26 + artifacts.length * 7),
       Math.min(100, 34 + audit.length * 4),
       Math.min(100, Math.max(12, heapPercent)),
-      Math.min(100, 42 + memoryCount * 3),
+      workloadPercent,
       aiStatus.connectionStatus === "Error" ? 34 : 76,
-      users > 0 ? 88 : 42,
     ],
     counts: {
       queuedTasks,

@@ -3731,12 +3731,13 @@ function updateSystemClock() {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
-    timeZone: "UTC",
+    timeZone: "America/New_York",
   }).format(nowDate);
   const dateText = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: "America/New_York",
   }).format(nowDate);
   systemClockNodes.forEach((node) => {
     node.textContent = clockText;
@@ -3969,24 +3970,27 @@ function fallbackSidebarStatus() {
   const queued = tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
   const pending = approvals.filter((approval) => approval.status === "pending").length;
   const queue = queued + pending;
+  const workloadPercent = Math.min(100, queue * 18 + artifacts.length * 4);
+  const healthPercent = Math.max(35, 100 - workloadPercent);
+  const agentHealth = workloadPercent >= 78 ? "Overloaded" : workloadPercent >= 48 ? "Busy" : "Stable";
   return {
     health: "Local systems operational",
-    agentId: "Agent 101 active",
+    agentHealth,
     agentMode: depoAgent.mode,
     metrics: [
-      { label: "State", value: "Ready", percent: 100 },
+      { label: "Agent Health", value: agentHealth, percent: healthPercent },
+      { label: "Workload", value: workloadPercent >= 78 ? "Heavy" : workloadPercent >= 48 ? "Medium" : "Light", percent: workloadPercent },
       { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
-      { label: "Queue", value: String(queue), percent: Math.min(100, queue * 18) },
-      { label: "Security", value: "On", percent: 100 },
+      { label: "Safety Gate", value: pending ? `${pending} pending` : "On", percent: pending ? Math.min(100, 50 + pending * 12) : 100 },
     ],
     chart: [
-      Math.min(100, 24 + queued * 12),
+      healthPercent,
+      Math.min(100, 28 + queued * 12),
       Math.min(100, 30 + pending * 10),
-      Math.min(100, 28 + artifacts.length * 7),
-      Math.min(100, 38 + memoryCount * 3),
-      72,
-      82,
-      76,
+      Math.min(100, 26 + artifacts.length * 7),
+      Math.min(100, 34 + memoryCount * 3),
+      workloadPercent,
+      pending ? 68 : 90,
       88,
     ],
   };
@@ -4010,7 +4014,7 @@ function renderSidebarSystemStatus() {
     sidebarSystemHealth.innerHTML = `<span class="status-dot"></span>${escapeHtml(status.health || "Local systems operational")}`;
     sidebarSystemHealth.classList.toggle("attention", String(status.health || "").toLowerCase().includes("attention"));
   }
-  if (sidebarAgentId) sidebarAgentId.textContent = status.agentId || "Agent 101 active";
+  if (sidebarAgentId) sidebarAgentId.textContent = status.agentHealth || status.agentId || "Stable";
   if (sidebarAgentMode) sidebarAgentMode.textContent = status.agentMode || depoAgent.mode;
   const metrics = Array.isArray(status.metrics) ? status.metrics : [];
   sidebarStatusRows.forEach((row, index) => {

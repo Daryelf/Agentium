@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=agent-101-labels-1" />
+    <link rel="stylesheet" href="./styles.css?v=sidebar-health-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -26,17 +26,17 @@
             <p class="eyebrow">Argentum OS</p>
             <h1>Control Floor</h1>
           </div>
-          <button class="collapse-button" type="button" aria-label="Collapse sidebar">
-            <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="m21 18-6-6 6-6"/></svg>
-          </button>
         </div>
+
+        <section class="system-time-card">
+          <p class="eyebrow">Eastern Time</p>
+          <strong><span>ET</span> <time data-system-clock>13:42:18</time></strong>
+          <small data-system-date>May 12, 2025</small>
+        </section>
 
         <section class="agent-roster" aria-label="Agent command">
           <div class="section-head">
             <p class="eyebrow">Agent Command</p>
-            <button class="icon-button tiny" type="button" aria-label="Propose agent">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-            </button>
           </div>
           <div class="roster-list" id="agentRosterList"></div>
         </section>
@@ -51,13 +51,13 @@
           <strong id="sidebarSystemHealth"><span class="status-dot"></span>All systems operational</strong>
           <div class="health-summary-grid" aria-label="Live system summary">
             <div><small>Mode</small><b id="sidebarAgentMode">Draft only</b></div>
-            <div><small>Activity</small><b id="sidebarAgentId">Agent 101 active</b></div>
+            <div><small>Agent health</small><b id="sidebarAgentId">Stable</b></div>
           </div>
           <div class="resource-bars">
-            <div><span id="sidebarStatusLabelA">State</span><em id="sidebarStatusBarA" style="--bar: 100%"></em><strong id="sidebarStatusValueA">Ready</strong></div>
-            <div><span id="sidebarStatusLabelB">Memory</span><em id="sidebarStatusBarB" style="--bar: 0%"></em><strong id="sidebarStatusValueB">0%</strong></div>
-            <div><span id="sidebarStatusLabelC">Queue</span><em id="sidebarStatusBarC" style="--bar: 0%"></em><strong id="sidebarStatusValueC">0</strong></div>
-            <div><span id="sidebarStatusLabelD">Security</span><em id="sidebarStatusBarD" style="--bar: 100%"></em><strong id="sidebarStatusValueD">On</strong></div>
+            <div><span id="sidebarStatusLabelA">Agent Health</span><em id="sidebarStatusBarA" style="--bar: 92%"></em><strong id="sidebarStatusValueA">Stable</strong></div>
+            <div><span id="sidebarStatusLabelB">Workload</span><em id="sidebarStatusBarB" style="--bar: 18%"></em><strong id="sidebarStatusValueB">Light</strong></div>
+            <div><span id="sidebarStatusLabelC">Memory</span><em id="sidebarStatusBarC" style="--bar: 0%"></em><strong id="sidebarStatusValueC">0</strong></div>
+            <div><span id="sidebarStatusLabelD">Safety Gate</span><em id="sidebarStatusBarD" style="--bar: 100%"></em><strong id="sidebarStatusValueD">On</strong></div>
           </div>
           <div class="mini-line-chart" id="sidebarMiniChart" aria-hidden="true">
             <i style="height: 28%"></i>
@@ -72,21 +72,6 @@
             <i style="height: 84%"></i>
           </div>
         </section>
-
-        <section class="system-time-card">
-          <p class="eyebrow">System Time</p>
-          <strong><span>UTC</span> <time data-system-clock>13:42:18</time></strong>
-          <small data-system-date>May 12, 2025</small>
-        </section>
-
-        <button class="user-profile-card" type="button" data-agent="depo" aria-label="Open Agent 101">
-          <span class="profile-photo" aria-hidden="true">A</span>
-          <span>
-            <strong>Agent 101</strong>
-            <small>Draft-only operator</small>
-          </span>
-          <em>Active</em>
-        </button>
       </aside>
 
       <main>
@@ -160,6 +145,11 @@
                     <option value="workflow">Workflow Map</option>
                   </select>
                   <span class="status-pill" id="cycleStatus">At Agent Habitat</span>
+                  <div class="live-flow-chip" aria-hidden="true">
+                    <span>Local Task Flow</span>
+                    <i></i>
+                    <strong>READY</strong>
+                  </div>
                 </div>
               </div>
 
@@ -206,12 +196,6 @@
                   <button class="map-control" id="fullscreenMapBtn" type="button" aria-label="Toggle fullscreen map">
                     <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                   </button>
-                </div>
-                <!-- LocalTaskFlowChip -->
-                <div class="live-flow-chip" aria-hidden="true">
-                  <span>Local Task Flow</span>
-                  <i></i>
-                  <strong>READY</strong>
                 </div>
               </div>
               <aside class="module-info-card" id="moduleInfoCard" aria-live="polite" hidden></aside>
@@ -1163,7 +1147,7 @@
                   <div class="settings-stat-grid">
                     <div class="settings-stat"><small>Interface</small><strong>Command</strong><span>Dense premium OS</span></div>
                     <div class="settings-stat"><small>Theme</small><strong>Dark</strong><span>Orbital glass</span></div>
-                    <div class="settings-stat"><small>Clock</small><strong>UTC</strong><span>System-wide</span></div>
+                    <div class="settings-stat"><small>Clock</small><strong>ET</strong><span>Eastern time</span></div>
                   </div>
                   <div class="settings-list">
                     <div>
@@ -1182,9 +1166,9 @@
                       </span>
                       <div>
                         <strong>System time</strong>
-                        <p>UTC mission time mirrored across the shell.</p>
+                        <p>Eastern mission time mirrored across the shell.</p>
                       </div>
-                      <em>UTC</em>
+                      <em>ET</em>
                     </div>
                   </div>
                 </section>
@@ -1393,6 +1377,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=habitat-os-24"></script>
+    <script src="./script.js?v=sidebar-health-1"></script>
   </body>
 </html>

@@ -372,29 +372,45 @@ const coreLabelStage = document.querySelector("#coreLabelStage");
 const coreLabelAgent = document.querySelector("#coreLabelAgent");
 
 const depoWorkflowStages = [
-  "Depo Habitat",
-  "Task Intake",
-  "Research",
-  "Verify",
-  "Draft",
-  "Package",
-  "Human Gate",
-  "Output Bench",
-  "Memory",
-  "System Log",
+  "depo-habitat",
+  "task-intake",
+  "research-lab",
+  "verify-station",
+  "draft-studio",
+  "human-gate",
+  "output-bench",
+  "system-log",
 ];
+
+const depoWorkflowStageLabels = {
+  "depo-habitat": "Depo Habitat",
+  "task-intake": "Task Intake",
+  "research-lab": "Research Lab",
+  "verify-station": "Verify Station",
+  "draft-studio": "Draft Studio",
+  "human-gate": "Human Gate",
+  "output-bench": "Output Bench",
+  "system-log": "System Log",
+};
 
 const depoAgent = {
   id: "depo",
   name: "Depo",
+  title: "Master Agent",
   role: "Depository Operator",
   status: "Active supervised",
   mode: "Draft only",
-  currentStage: "Depo Habitat",
-  currentTask: "Prepare supervised business action package for review",
+  authorityLevel: "Head Agent",
+  currentStage: "depo-habitat",
+  currentTask: "Prepare supervised business action package for review.",
   riskMode: "Approval required",
   externalActions: "Locked",
   humanGate: "Enabled",
+  canCreateAgents: false,
+  canPublish: false,
+  canSpendMoney: false,
+  canContactCustomers: false,
+  canModifyAccounts: false,
   number: "001",
   icon: "D",
   color: "#7DD3FC",
@@ -409,16 +425,21 @@ const depoAgent = {
     "create internal notes",
     "prepare reports",
     "package actions for approval",
+    "propose new agents",
+    "propose permissions for future agents",
+    "prepare agent blueprints",
   ],
   cannot: [
-    "publish listings",
+    "publish",
     "spend money",
     "move money",
-    "change accounts",
-    "contact customers",
+    "contact customers externally",
+    "modify accounts",
     "deploy campaigns",
-    "create new agents",
-    "perform risky external actions",
+    "create live agents",
+    "change API keys",
+    "grant permissions",
+    "run risky external actions",
   ],
   workflowStages: depoWorkflowStages,
   queue: ["Receive first bounded workflow"],
@@ -601,6 +622,54 @@ const habitatFloorRooms = [
   },
 ];
 
+const roomActionModel = {
+  "depo-habitat": {
+    allowedActions: ["coordinate workflow", "review current stage", "prepare approval package", "propose future agent blueprint"],
+    blockedActions: ["create live agents", "grant permissions", "publish externally", "change API keys"],
+  },
+  "task-intake": {
+    allowedActions: ["capture request", "create internal task", "split work into safe steps", "send task to research"],
+    blockedActions: ["contact customers", "publish intake", "open external account"],
+  },
+  "research-lab": {
+    allowedActions: ["gather research", "organize evidence", "label assumptions", "save source notes"],
+    blockedActions: ["pay for research", "scrape behind logins", "contact external parties"],
+  },
+  "verify-station": {
+    allowedActions: ["check claims", "flag missing evidence", "score risk", "route uncertainty to Human Gate"],
+    blockedActions: ["approve risky claims", "make legal or financial guarantees", "skip review"],
+  },
+  "draft-studio": {
+    allowedActions: ["draft plans", "draft content", "prepare prompts", "prepare agent blueprints"],
+    blockedActions: ["publish drafts", "deploy campaigns", "create live agents"],
+  },
+  "memory-vault": {
+    allowedActions: ["store internal notes", "retrieve project memory", "organize context", "label sensitive data"],
+    blockedActions: ["store secrets", "expose private memory", "overwrite audit history"],
+  },
+  "output-bench": {
+    allowedActions: ["stage deliverables", "package internal outputs", "prepare review bundles", "mark ready for operator"],
+    blockedActions: ["send outputs externally", "publish files", "claim earnings"],
+  },
+  "human-gate": {
+    allowedActions: ["hold approvals", "record blocked actions", "request operator decision", "package risky work"],
+    blockedActions: ["auto-approve publishing", "auto-spend money", "auto-create agents", "change permissions without operator"],
+  },
+  "system-log": {
+    allowedActions: ["append stage update", "record action note", "show approval status", "summarize local events"],
+    blockedActions: ["delete audit history", "hide blocked actions", "rewrite approvals"],
+  },
+};
+
+const defaultRoomAllowedActions = ["view status", "run local check", "write internal note", "package for approval"];
+const defaultRoomBlockedActions = ["external execution", "publishing", "money movement", "permission changes"];
+
+habitatFloorRooms.forEach((room) => {
+  const actionModel = roomActionModel[room.id] || {};
+  room.allowedActions = actionModel.allowedActions || defaultRoomAllowedActions;
+  room.blockedActions = actionModel.blockedActions || defaultRoomBlockedActions;
+});
+
 const agentProfiles = {
   atlas: {
     id: "atlas",
@@ -771,7 +840,7 @@ const roomProfiles = {
     connected: ["Argentum Core"],
     tasks: ["Accept one bounded workflow", ...depoAgent.can.slice(0, 2)],
     activity: [`Agent ${depoAgent.number} initialized.`, `${depoAgent.mode} permission set loaded.`, "No revenue has been claimed."],
-    metrics: [["Agent", depoAgent.name], ["Current stage", depoAgent.currentStage], ["External actions", depoAgent.externalActions]],
+    metrics: [["Agent", depoAgent.name], ["Current stage", depoStageLabel(depoAgent.currentStage)], ["External actions", depoAgent.externalActions]],
     workspaceType: "depo",
   },
   "agent-habitat": {
@@ -1051,6 +1120,11 @@ habitatFloorRooms.forEach((room) => {
     connected: room.connections.map((connectionId) => habitatFloorRoomById[connectionId]?.title || moduleDisplayName(connectionId)),
     tasks: room.id === "depo-habitat" ? [depoAgent.currentTask] : [room.subtitle, room.metric, room.riskNote],
     activity: room.recentActivity,
+    purpose: room.purpose,
+    depoRole: room.depoRole,
+    riskNote: room.riskNote,
+    allowedActions: room.allowedActions,
+    blockedActions: room.blockedActions,
     metrics: [
       ["Status", room.status],
       ["Metric", room.metric],
@@ -1248,7 +1322,9 @@ habitatFloorRooms.forEach((room) => {
     connections: room.connections,
     recentActivity: room.recentActivity,
     riskNote: room.riskNote,
-    quickActions: ["View tasks", "View logs", "Run check"],
+    quickActions: ["View tasks", "View logs", "Run check", "Package for approval"],
+    allowedActions: room.allowedActions,
+    blockedActions: room.blockedActions,
     canDepoDo: depoAgent.can,
     cannotDepoDo: depoAgent.cannot,
   };
@@ -1346,7 +1422,7 @@ const workspaceProfiles = {
     eyebrow: depoAgent.role,
     sections: [
       ["Mode", `${depoAgent.mode}. ${depoAgent.name} can ${depoAgent.can.slice(0, 4).join(", ")}.`],
-      ["Current stage", depoAgent.currentStage],
+      ["Current stage", depoStageLabel(depoAgent.currentStage)],
       ["Security", `${depoAgent.externalActions}. ${depoAgent.name} cannot ${depoAgent.cannot.slice(0, 4).join(", ")}.`],
     ],
     feed: depoAgent.actions,
@@ -1428,6 +1504,10 @@ function currentStep() {
   return state.mission.steps[state.mission.currentStep % state.mission.steps.length];
 }
 
+function depoStageLabel(stageId) {
+  return depoWorkflowStageLabels[stageId] || moduleDisplayName(stageId);
+}
+
 function depoStageProgress(agent = depoAgent) {
   const index = agent.workflowStages.indexOf(agent.currentStage);
   if (index < 0) return 0;
@@ -1441,13 +1521,14 @@ function renderDepoOrbitState(agent = depoAgent) {
     avatar.style.setProperty("--agent-y", `${homeRoom.position.y}%`);
   }
   if (progress) progress.style.width = `${depoStageProgress(agent)}%`;
-  if (cycleStatus) cycleStatus.textContent = state.mission.paused ? `Paused at ${agent.currentStage}` : `At ${agent.currentStage}`;
+  const stageLabel = depoStageLabel(agent.currentStage);
+  if (cycleStatus) cycleStatus.textContent = state.mission.paused ? `Paused at ${stageLabel}` : `At ${stageLabel}`;
   if (missionTitle) missionTitle.textContent = `${agent.name} is ${agent.status.toLowerCase()}`;
   if (missionCopy) missionCopy.textContent = agent.currentTask;
   if (confidenceChip) confidenceChip.textContent = agent.mode;
-  if (taskStage) taskStage.textContent = `Stage: ${agent.currentStage}`;
+  if (taskStage) taskStage.textContent = `Stage: ${stageLabel}`;
   if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
-  if (coreLabelTitle) coreLabelTitle.textContent = agent.currentStage;
+  if (coreLabelTitle) coreLabelTitle.textContent = "Depo Habitat";
   if (coreLabelStage) coreLabelStage.textContent = "Active agent";
   if (coreLabelAgent) coreLabelAgent.textContent = agent.number;
 }
@@ -1514,7 +1595,11 @@ function routeEndpoints(route) {
 
 function routeIsActive(routeOrFrom, maybeTo) {
   const { from, to } = maybeTo ? { from: routeOrFrom, to: maybeTo } : routeEndpoints(routeOrFrom);
-  if (!selectedRoomKey && !selectedAgentKey) return true;
+  if (!selectedRoomKey && !selectedAgentKey) {
+    if (!depoAgent.currentStage || depoAgent.currentStage === "depo-habitat") return true;
+    const currentRelated = connectedModuleSet(depoAgent.currentStage);
+    return from === depoAgent.currentStage || to === depoAgent.currentStage || (currentRelated.has(from) && currentRelated.has(to));
+  }
   const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
   const related = connectedModuleSet(selected);
   return from === selected || to === selected || (related.has(from) && related.has(to));
@@ -2524,8 +2609,9 @@ function renderHabitatModules() {
   const roomLayer = habitatMapModules
     .map((room) => {
       const isSelected = selectedRoomKey && resolveRoomKey(selectedRoomKey) === room.id;
+      const isCurrentStage = depoAgent.currentStage === room.id;
       const isRelated = related.has(room.id);
-      const className = ["station", "habitat-room", `room-${room.type}`, room.title.length > 15 ? "long-title" : "", isSelected ? "selected" : "", isRelated ? "related" : ""]
+      const className = ["station", "habitat-room", `room-${room.type}`, room.title.length > 15 ? "long-title" : "", isSelected ? "selected" : "", isCurrentStage ? "current-stage" : "", isRelated ? "related" : ""]
         .filter(Boolean)
         .join(" ");
       return `
@@ -2676,6 +2762,8 @@ function moduleCardData(roomKey) {
     status: detail.status || room.status,
     metric: detail.metric || room.metric,
     quickActions: detail.quickActions || ["Open workspace", "View logs", "Run check"],
+    allowedActions: detail.allowedActions || room.allowedActions || defaultRoomAllowedActions,
+    blockedActions: detail.blockedActions || room.blockedActions || defaultRoomBlockedActions,
     canDepoDo: detail.canDepoDo || depoWorkflowState.canDepoDo,
     cannotDepoDo: detail.cannotDepoDo || depoWorkflowState.cannotDepoDo,
   };
@@ -2690,6 +2778,7 @@ function moduleInfoMarkup(roomKey) {
   const connectedNames = (card.connections || card.connectedModules || []).map(moduleDisplayName);
   const recent = Array.isArray(card.recentActivity) ? card.recentActivity : [card.recentActivity].filter(Boolean);
   const actions = card.quickActions || [];
+  const isCurrentStage = card.id === depoAgent.currentStage;
   return `
     <div class="module-info-head">
       <span class="module-info-icon" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
@@ -2707,7 +2796,7 @@ function moduleInfoMarkup(roomKey) {
       </section>
       <div class="module-info-metrics">
         <span><small>Active agent</small><strong>${escapeHtml(depoWorkflowState.activeAgent)}</strong></span>
-        <span><small>Mode</small><strong>${escapeHtml(card.id === "argentum-core" ? "Supervised local OS" : depoWorkflowState.mode)}</strong></span>
+        <span><small>Current stage</small><strong>${escapeHtml(isCurrentStage ? "Now active" : depoStageLabel(depoAgent.currentStage))}</strong></span>
         <span><small>Human gate</small><strong>${escapeHtml(depoWorkflowState.humanGate)}</strong></span>
       </div>
       <section>
@@ -2719,14 +2808,20 @@ function moduleInfoMarkup(roomKey) {
         ${cardListMarkup(connectedNames, "module-info-tags")}
       </section>
       <section>
+        <h4>Allowed actions</h4>
+        ${cardListMarkup(card.allowedActions, "module-info-permissions can-do")}
+      </section>
+      <section>
+        <h4>Blocked actions</h4>
+        ${cardListMarkup(card.blockedActions, "module-info-permissions cannot-do")}
+      </section>
+      <section>
         <h4>Recent activity</h4>
         <ul>${recent.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </section>
       <section class="module-info-risk">
         <h4>Approval / risk</h4>
         <p>${escapeHtml(card.riskNote)}</p>
-        ${cardListMarkup(card.canDepoDo, "module-info-permissions can-do")}
-        ${cardListMarkup(card.cannotDepoDo, "module-info-permissions cannot-do")}
       </section>
     </div>
     <div class="module-info-actions">
@@ -2807,11 +2902,13 @@ function applySelectionClasses() {
     const stationId = item.dataset.station;
     item.classList.toggle("selected", hasSelection && stationId === activeRoomId);
     item.classList.toggle("related", hasSelection && related.has(stationId));
+    item.classList.toggle("current-stage", stationId === depoAgent.currentStage);
   });
   document.querySelectorAll(".map-core").forEach((item) => {
     const stationId = item.dataset.station || "depo-habitat";
     item.classList.toggle("selected", hasSelection && stationId === activeRoomId);
     item.classList.toggle("related", hasSelection && related.has(stationId));
+    item.classList.toggle("current-stage", stationId === depoAgent.currentStage);
   });
   document.querySelectorAll(".roster-agent, .user-profile-card, .admin-menu-item[data-agent]").forEach((item) => {
     item.classList.toggle("selected", item.dataset.agent === selectedAgentKey);
@@ -3841,8 +3938,82 @@ function addLocalAudit(title, body) {
   state.audit.unshift({
     title,
     body,
+    createdAt: new Date().toISOString(),
   });
   state.audit = state.audit.slice(0, 12);
+}
+
+function pushRoomActivity(roomKey, message) {
+  const resolved = resolveRoomKey(roomKey);
+  const room = habitatFloorRoomById[resolved];
+  if (!room || !message) return;
+  room.recentActivity = [message, ...(room.recentActivity || [])].slice(0, 4);
+  if (roomProfiles[resolved]) {
+    roomProfiles[resolved].activity = room.recentActivity;
+    roomProfiles[resolved].recentActivity = room.recentActivity;
+  }
+  if (habitatModuleCards[resolved]) {
+    habitatModuleCards[resolved].recentActivity = room.recentActivity;
+  }
+}
+
+function setDepoWorkflowStage(stageId, context = "Run cycle") {
+  const resolved = depoWorkflowStages.includes(stageId) ? stageId : "depo-habitat";
+  const stageLabel = depoStageLabel(resolved);
+  depoAgent.currentStage = resolved;
+  depoAgent.room = resolved;
+  depoWorkflowState.currentStage = resolved;
+  depoWorkflowState.currentTask = depoAgent.currentTask;
+  selectedAgentKey = null;
+  selectedRoomKey = resolved;
+  pushRoomActivity(resolved, `${context}: Depo moved to ${stageLabel}.`);
+  if (resolved !== "system-log") pushRoomActivity("system-log", `Stage update: Depo moved to ${stageLabel}.`);
+  depoAgent.actions = [`Moved to ${stageLabel}`, ...depoAgent.actions].slice(0, 8);
+  addLocalAudit(`Depo moved to ${stageLabel}`, `${context}. Human Gate remains required for external or risky actions.`);
+  render();
+  openModuleInfoCard(resolved);
+}
+
+function advanceDepoWorkflowStage(context = "Run cycle") {
+  const currentIndex = depoWorkflowStages.indexOf(depoAgent.currentStage);
+  const nextStage = depoWorkflowStages[(currentIndex + 1) % depoWorkflowStages.length] || "depo-habitat";
+  setDepoWorkflowStage(nextStage, context);
+  return nextStage;
+}
+
+function recordSafeRoomAction(action, roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  const room = moduleProfile(resolved);
+  const title = `${action}: ${room.title}`;
+  const body = "Safe placeholder only. No external action was executed and Human Gate remains locked.";
+  pushRoomActivity(resolved, `${action} recorded locally.`);
+  pushRoomActivity("system-log", `${action} logged for ${room.title}.`);
+  addLocalAudit(title, body);
+  render();
+  openModuleInfoCard(resolved);
+}
+
+function packageRoomForApproval(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  const room = moduleProfile(resolved);
+  const packageId = `approval-${resolved}-${Date.now()}`;
+  state.approvals = Array.isArray(state.approvals) ? state.approvals : [];
+  state.approvals.unshift({
+    id: packageId,
+    title: `Review ${room.title} package`,
+    risk: resolved === "human-gate" ? "high" : "medium",
+    evidence: `${room.title} purpose, Depo role, allowed actions, blocked actions, and recent activity.`,
+    action: "Operator review only. No external execution has been approved.",
+    status: "pending",
+  });
+  state.approvals = state.approvals.slice(0, 16);
+  pushRoomActivity(resolved, "Approval package prepared locally.");
+  pushRoomActivity("human-gate", `${room.title} package waiting for operator review.`);
+  pushRoomActivity("system-log", `${room.title} package routed to Human Gate.`);
+  addLocalAudit(`Packaged ${room.title} for approval`, "Local package added to Human Gate queue. External execution remains locked.");
+  selectedRoomKey = "human-gate";
+  render();
+  openModuleInfoCard("human-gate");
 }
 
 function startCycle() {
@@ -4089,15 +4260,20 @@ moduleInfoCard?.addEventListener("click", (event) => {
   const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "argentum-core";
   if (action === "Open workspace") {
     openWorkspace(stationId);
+  } else if (action === "View tasks") {
+    activateView("tasks");
   } else if (action === "View logs") {
     openSystemFeed();
   } else if (action === "Run cycle") {
     runCycleBtn?.click();
+  } else if (action === "Run check") {
+    recordSafeRoomAction("Run check", stationId);
+  } else if (action === "Package for approval") {
+    packageRoomForApproval(stationId);
   } else if (action === "View approvals") {
     activateView("approvals");
   } else {
-    addLocalAudit(`${action}: ${moduleDisplayName(stationId)}`, "Placeholder action recorded. External execution remains locked behind approval.");
-    renderAudit();
+    recordSafeRoomAction(action, stationId);
   }
 });
 
@@ -4246,16 +4422,17 @@ pauseBtn.addEventListener("click", () => {
   });
 });
 
-runCycleBtn.addEventListener("click", () => {
+runCycleBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const nextStage = advanceDepoWorkflowStage("Run cycle");
   mutate("/api/cycle").then((changed) => {
     if (changed) return;
     state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", "Start the app with npm start to persist this action.");
+    addLocalAudit("Cycle changed locally", `Depo advanced to ${depoStageLabel(nextStage)}. Start the app with npm start to persist backend mission state.`);
     render();
   }).catch((error) => {
     state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", error.message);
-    loadState();
+    addLocalAudit("Cycle changed locally", `${error.message}. Depo command-floor stage remains ${depoStageLabel(nextStage)} locally.`);
     render();
   });
 });

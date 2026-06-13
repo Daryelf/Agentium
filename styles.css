@@ -2379,7 +2379,7 @@ main {
 
 .module-info-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   padding: 0 12px 12px;
 }
@@ -3638,13 +3638,19 @@ main {
 }
 
 .station:hover .room-shell,
-.station.selected .room-shell {
+.station.selected .room-shell,
+.station.current-stage .room-shell {
   border-color: color-mix(in srgb, var(--module-color) 56%, rgba(255, 255, 255, 0.18));
   box-shadow:
     0 20px 42px rgba(0, 0, 0, 0.58),
     0 0 0 1px color-mix(in srgb, var(--module-color) 40%, transparent),
     0 0 38px color-mix(in srgb, var(--module-color) 26%, transparent),
     inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.station.current-stage .station-status-dot {
+  transform: scale(1.16);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--module-color) 78%, transparent);
 }
 
 .station-map.has-selection .station:not(.selected):not(.related) {

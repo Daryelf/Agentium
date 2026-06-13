@@ -2162,10 +2162,10 @@ main {
   left: var(--card-left, 18px);
   top: var(--card-top, 18px);
   z-index: 18;
-  width: min(320px, calc(100% - 24px));
-  max-height: min(260px, calc(100% - 170px));
-  overflow: auto;
-  border-radius: 18px;
+  width: min(430px, calc(100% - 24px));
+  max-height: none;
+  overflow: visible;
+  border-radius: 14px;
   border: 1px solid rgba(125, 211, 252, 0.3);
   background:
     radial-gradient(circle at 16% 0%, rgba(34, 211, 238, 0.18), transparent 34%),
@@ -2189,16 +2189,16 @@ main {
 
 .module-info-head {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto 28px;
+  grid-template-columns: 32px minmax(0, 1fr) auto 26px;
   align-items: center;
-  gap: 10px;
-  padding: 12px 12px 10px;
+  gap: 8px;
+  padding: 9px 10px 8px;
   border-bottom: 1px solid rgba(125, 211, 252, 0.14);
 }
 
 .module-info-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   border-radius: 12px;
@@ -2219,7 +2219,7 @@ main {
   display: block;
   overflow: hidden;
   color: #f8fafc;
-  font-size: 0.92rem;
+  font-size: 0.82rem;
   font-weight: 860;
   line-height: 1.08;
   text-overflow: ellipsis;
@@ -2231,20 +2231,20 @@ main {
   margin-top: 3px;
   overflow: hidden;
   color: var(--text-soft);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 760;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .module-info-head em {
-  min-height: 24px;
+  min-height: 22px;
   display: inline-grid;
   place-items: center;
   padding: 0 9px;
   border-radius: 999px;
   color: var(--success);
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-style: normal;
   font-weight: 880;
   background: rgba(6, 78, 59, 0.2);
@@ -2252,8 +2252,8 @@ main {
 }
 
 .module-info-close {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   border-radius: 9px;
@@ -2270,19 +2270,25 @@ main {
 
 .module-info-body {
   display: grid;
-  gap: 10px;
-  padding: 11px 12px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 9px;
+  padding: 8px 10px 9px;
 }
 
 .module-info-body section {
   display: grid;
-  gap: 5px;
+  gap: 4px;
+}
+
+.module-info-body section:first-child,
+.module-info-body .module-info-metrics {
+  grid-column: 1 / -1;
 }
 
 .module-info-body h4 {
   margin: 0;
   color: rgba(226, 232, 240, 0.86);
-  font-size: 0.62rem;
+  font-size: 0.54rem;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2292,8 +2298,8 @@ main {
 .module-info-body li {
   margin: 0;
   color: var(--text-soft);
-  font-size: 0.72rem;
-  line-height: 1.36;
+  font-size: 0.63rem;
+  line-height: 1.25;
 }
 
 .module-info-body ul {
@@ -2304,13 +2310,13 @@ main {
 .module-info-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
+  gap: 6px;
 }
 
 .module-info-metrics span {
   min-width: 0;
-  padding: 8px;
-  border-radius: 12px;
+  padding: 6px 7px;
+  border-radius: 9px;
   border: 1px solid rgba(125, 211, 252, 0.13);
   background: rgba(2, 6, 23, 0.36);
 }
@@ -2325,15 +2331,15 @@ main {
 
 .module-info-metrics small {
   color: var(--muted);
-  font-size: 0.55rem;
+  font-size: 0.5rem;
   font-weight: 820;
   text-transform: uppercase;
 }
 
 .module-info-metrics strong {
-  margin-top: 3px;
+  margin-top: 2px;
   color: #dbeafe;
-  font-size: 0.66rem;
+  font-size: 0.58rem;
   font-weight: 880;
 }
 
@@ -2341,17 +2347,17 @@ main {
 .module-info-permissions {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
 .module-info-tags span,
 .module-info-permissions span {
-  min-height: 22px;
+  min-height: 19px;
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 0 8px;
-  font-size: 0.6rem;
+  padding: 0 6px;
+  font-size: 0.54rem;
   font-weight: 820;
   border: 1px solid rgba(125, 211, 252, 0.16);
   background: rgba(15, 23, 42, 0.54);
@@ -2379,19 +2385,19 @@ main {
 
 .module-info-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 0 12px 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  padding: 0 10px 10px;
 }
 
 .module-info-actions button {
   min-width: 0;
-  min-height: 32px;
-  border-radius: 10px;
+  min-height: 28px;
+  border-radius: 8px;
   border: 1px solid rgba(125, 211, 252, 0.18);
   color: #dbeafe;
   background: rgba(15, 23, 42, 0.68);
-  font-size: 0.63rem;
+  font-size: 0.56rem;
   font-weight: 850;
   cursor: pointer;
 }

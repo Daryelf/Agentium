@@ -668,7 +668,65 @@ habitatFloorRooms.forEach((room) => {
   const actionModel = roomActionModel[room.id] || {};
   room.allowedActions = actionModel.allowedActions || defaultRoomAllowedActions;
   room.blockedActions = actionModel.blockedActions || defaultRoomBlockedActions;
+  room.operatorActivity = [];
 });
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function countPhrase(count, noun) {
+  return `${count} ${noun}`;
+}
+
+function stateList(name) {
+  return Array.isArray(state?.[name]) ? state[name] : [];
+}
+
+function memoryEntries() {
+  const memory = state?.memory || {};
+  return ["working", "shared", "agent"].flatMap((layer) => (Array.isArray(memory[layer]) ? memory[layer] : []));
+}
+
+function taskEvidenceCount(tasks) {
+  return tasks.reduce((total, task) => total + (Array.isArray(task.evidence) ? task.evidence.length : 0), 0);
+}
+
+function artifactEvidenceCount(artifacts) {
+  return artifacts.reduce((total, artifact) => total + (Array.isArray(artifact.evidence) ? artifact.evidence.length : 0), 0);
+}
+
+function syncRoomRuntime(roomId, updates) {
+  const room = habitatFloorRoomById?.[roomId];
+  if (!room) return;
+  Object.assign(room, updates);
+  const activity = [...(room.operatorActivity || []), ...(updates.runtimeActivity || [])].slice(0, 4);
+  if (activity.length) room.recentActivity = activity;
+
+  const profile = roomProfiles?.[roomId];
+  if (profile) {
+    profile.subtitle = room.subtitle;
+    profile.status = room.status;
+    profile.metric = room.metric;
+    profile.summary = room.purpose;
+    profile.description = room.purpose;
+    profile.activity = room.recentActivity;
+    profile.recentActivity = room.recentActivity;
+    profile.metrics = [
+      ["Status", room.status],
+      ["Metric", room.metric],
+      ["Human Gate", depoAgent.humanGate],
+    ];
+  }
+
+  const card = habitatModuleCards?.[roomId];
+  if (card) {
+    card.subtitle = room.subtitle;
+    card.status = room.status;
+    card.metric = room.metric;
+    card.recentActivity = room.recentActivity;
+  }
+}
 
 const agentProfiles = {
   atlas: {
@@ -1329,6 +1387,111 @@ habitatFloorRooms.forEach((room) => {
     cannotDepoDo: depoAgent.cannot,
   };
 });
+
+function updateHabitatRoomRuntimeFromState() {
+  const tasks = stateList("tasks");
+  const queuedTasks = tasks.filter((task) => task.status === "queued");
+  const activeTasks = tasks.filter((task) => ["queued", "processing", "drafting"].includes(task.status));
+  const artifacts = stateList("artifacts");
+  const draftArtifacts = artifacts.filter((artifact) => !["approved", "blocked"].includes(artifact.status));
+  const approvals = stateList("approvals");
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const auditEntries = stateList("audit");
+  const memoryCount = memoryEntries().length;
+  const evidenceCount = taskEvidenceCount(tasks) + artifactEvidenceCount(artifacts);
+  const verificationCount = pendingApprovals.length + tasks.filter((task) => ["medium", "high"].includes(String(task.risk || "").toLowerCase())).length;
+
+  syncRoomRuntime("depo-habitat", {
+    subtitle: "Master agent",
+    metric: depoAgent.number,
+    status: depoAgent.status,
+    runtimeActivity: [
+      "Only Depo is active.",
+      `${depoAgent.mode} mode loaded.`,
+      `${depoStageLabel(depoAgent.currentStage)} is the current stage.`,
+    ],
+  });
+  syncRoomRuntime("task-intake", {
+    subtitle: queuedTasks.length ? "Queued requests" : "No queue",
+    metric: countPhrase(queuedTasks.length, "queued"),
+    status: queuedTasks.length ? "Intake ready" : "Clear",
+    runtimeActivity: [
+      `${pluralize(queuedTasks.length, "queued task")} in intake.`,
+      activeTasks.length ? `${pluralize(activeTasks.length, "active task")} across Depo.` : "No active task backlog.",
+      "New work stays internal.",
+    ],
+  });
+  syncRoomRuntime("research-lab", {
+    subtitle: evidenceCount ? "Evidence notes" : "No active research",
+    metric: evidenceCount ? pluralize(evidenceCount, "note") : "0 notes",
+    status: evidenceCount ? "Evidence ready" : "Waiting",
+    runtimeActivity: [
+      `${pluralize(evidenceCount, "evidence note")} available.`,
+      memoryCount ? `${pluralize(memoryCount, "memory note")} available for context.` : "Memory is empty.",
+      "No external research action is open.",
+    ],
+  });
+  syncRoomRuntime("verify-station", {
+    subtitle: verificationCount ? "Review needed" : "No checks",
+    metric: verificationCount ? pluralize(verificationCount, "check") : "0 checks",
+    status: verificationCount ? "Reviewing" : "Clear",
+    runtimeActivity: [
+      `${pluralize(verificationCount, "risk check")} derived from tasks and approvals.`,
+      pendingApprovals.length ? `${pluralize(pendingApprovals.length, "approval")} waiting.` : "No pending approval review.",
+      "Uncertain claims stay blocked.",
+    ],
+  });
+  syncRoomRuntime("memory-vault", {
+    subtitle: memoryCount ? "Stored memory" : "No memory",
+    metric: memoryCount ? pluralize(memoryCount, "note") : "0 notes",
+    status: memoryCount ? "Stored" : "Empty",
+    runtimeActivity: [
+      `${pluralize(memoryCount, "memory note")} stored across working, shared, and agent memory.`,
+      "No secrets are displayed here.",
+      "Depo can read and organize memory.",
+    ],
+  });
+  syncRoomRuntime("draft-studio", {
+    subtitle: draftArtifacts.length ? "Drafts active" : "No drafts",
+    metric: draftArtifacts.length ? pluralize(draftArtifacts.length, "draft") : "0 drafts",
+    status: draftArtifacts.length ? "Drafting" : "Ready",
+    runtimeActivity: [
+      `${pluralize(draftArtifacts.length, "draft artifact")} not approved yet.`,
+      queuedTasks.length ? `${pluralize(queuedTasks.length, "queued task")} can become drafts.` : "No queued draft work.",
+      "Publishing remains locked.",
+    ],
+  });
+  syncRoomRuntime("output-bench", {
+    subtitle: artifacts.length ? "Prepared outputs" : "No outputs",
+    metric: artifacts.length ? pluralize(artifacts.length, "artifact") : "0 artifacts",
+    status: artifacts.length ? "Prepared" : "Empty",
+    runtimeActivity: [
+      `${pluralize(artifacts.length, "artifact")} on the output bench.`,
+      "Outputs stay internal until approved.",
+      "No customer delivery action is enabled.",
+    ],
+  });
+  syncRoomRuntime("human-gate", {
+    subtitle: pendingApprovals.length ? "Approval queue" : "Locked",
+    metric: countPhrase(pendingApprovals.length, "pending"),
+    status: "Locked",
+    runtimeActivity: [
+      `${pluralize(pendingApprovals.length, "pending approval")} in Human Gate.`,
+      "External actions are locked.",
+      "Operator review is required.",
+    ],
+  });
+  syncRoomRuntime("system-log", {
+    subtitle: auditEntries.length ? "Event stream" : "No events",
+    metric: auditEntries.length ? pluralize(auditEntries.length, "event") : "0 events",
+    status: "Live",
+    runtimeActivity: [
+      `${pluralize(auditEntries.length, "audit event")} recorded.`,
+      auditEntries[0]?.title || "No recent event yet.",
+      "Logs remain local.",
+    ],
+  });
+}
 
 // OrbitScene state
 const legacyRoomAliases = {
@@ -2769,14 +2932,18 @@ function moduleCardData(roomKey) {
   };
 }
 
-function cardListMarkup(items, className = "") {
-  return `<div class="${className}">${items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`;
+function cardListMarkup(items, className = "", limit = 3) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  const visible = list.slice(0, limit);
+  const more = list.length - visible.length;
+  const moreChip = more > 0 ? `<span>+${more}</span>` : "";
+  return `<div class="${className}">${visible.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}${moreChip}</div>`;
 }
 
 function moduleInfoMarkup(roomKey) {
   const card = moduleCardData(roomKey);
   const connectedNames = (card.connections || card.connectedModules || []).map(moduleDisplayName);
-  const recent = Array.isArray(card.recentActivity) ? card.recentActivity : [card.recentActivity].filter(Boolean);
+  const recent = (Array.isArray(card.recentActivity) ? card.recentActivity : [card.recentActivity].filter(Boolean)).slice(0, 2);
   const actions = card.quickActions || [];
   const isCurrentStage = card.id === depoAgent.currentStage;
   return `
@@ -2805,15 +2972,15 @@ function moduleInfoMarkup(roomKey) {
       </section>
       <section>
         <h4>Connected rooms</h4>
-        ${cardListMarkup(connectedNames, "module-info-tags")}
+        ${cardListMarkup(connectedNames, "module-info-tags", 4)}
       </section>
       <section>
         <h4>Allowed actions</h4>
-        ${cardListMarkup(card.allowedActions, "module-info-permissions can-do")}
+        ${cardListMarkup(card.allowedActions, "module-info-permissions can-do", 3)}
       </section>
       <section>
         <h4>Blocked actions</h4>
-        ${cardListMarkup(card.blockedActions, "module-info-permissions cannot-do")}
+        ${cardListMarkup(card.blockedActions, "module-info-permissions cannot-do", 3)}
       </section>
       <section>
         <h4>Recent activity</h4>
@@ -2844,7 +3011,7 @@ function positionModuleInfoCard(roomKey) {
   const room = moduleProfile(roomKey);
   const anchorX = (Number(room.position?.x || 50) / 100) * mapRect.width * mapView.scale + mapView.x;
   const anchorY = (Number(room.position?.y || 50) / 100) * mapRect.height * mapView.scale + mapView.y;
-  const bottomReserve = 96;
+  const bottomReserve = 18;
   const preferLeft = Number(room.position?.x || 50) >= 75;
   const gap = preferLeft ? 34 : 30;
   let left = preferLeft ? anchorX - cardRect.width - gap : anchorX + gap;
@@ -2858,7 +3025,7 @@ function positionModuleInfoCard(roomKey) {
     left = anchorX - cardRect.width - gap;
   }
   left = clamp(left, 12, Math.max(12, mapRect.width - cardRect.width - 12));
-  const minTop = mapRect.height > 380 ? 46 : 12;
+  const minTop = 12;
   top = clamp(top, minTop, Math.max(minTop, mapRect.height - cardRect.height - bottomReserve));
   moduleInfoCard.style.setProperty("--card-left", `${left}px`);
   moduleInfoCard.style.setProperty("--card-top", `${top}px`);
@@ -2885,6 +3052,7 @@ function renderOrbitScene() {
 }
 
 function renderShellData() {
+  updateHabitatRoomRuntimeFromState();
   renderAgentRoster();
   renderOrbitScene();
   if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
@@ -3947,7 +4115,8 @@ function pushRoomActivity(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const room = habitatFloorRoomById[resolved];
   if (!room || !message) return;
-  room.recentActivity = [message, ...(room.recentActivity || [])].slice(0, 4);
+  room.operatorActivity = [message, ...(room.operatorActivity || [])].slice(0, 2);
+  room.recentActivity = [...room.operatorActivity, ...(room.recentActivity || [])].slice(0, 4);
   if (roomProfiles[resolved]) {
     roomProfiles[resolved].activity = room.recentActivity;
     roomProfiles[resolved].recentActivity = room.recentActivity;

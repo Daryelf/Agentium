@@ -4890,6 +4890,14 @@ label {
   gap: 14px;
 }
 
+.settings-content .settings-card {
+  display: none;
+}
+
+.settings-content .settings-card.settings-panel-active {
+  display: block;
+}
+
 .settings-span-2,
 #settings-users,
 #settings-create-user {

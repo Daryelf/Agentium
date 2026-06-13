@@ -1691,6 +1691,7 @@ let panStart = { x: 0, y: 0, viewX: 0, viewY: 0 };
 let pointerCache = new Map();
 let pinchStart = null;
 let accessState = null;
+let activeSettingsTarget = "settings-access";
 let aiProviderSettings = {
   provider: "local",
   providerLabel: "Local Demo",
@@ -1706,6 +1707,27 @@ let aiProviderSettings = {
   },
 };
 let aiProviderNotice = "";
+
+const settingsSectionGroups = {
+  "settings-access": ["settings-access", "settings-overview"],
+  "settings-users": ["settings-users", "settings-create-user"],
+  "settings-password": ["settings-password"],
+  "settings-api-keys": ["settings-api-keys"],
+  "settings-ai-providers": [
+    "settings-ai-providers",
+    "settings-ai-provider-select",
+    "settings-ai-provider-env",
+    "settings-ai-provider-safety",
+    "settings-ai-provider-results",
+  ],
+  "settings-sessions": ["settings-sessions"],
+  "settings-audit": ["settings-audit"],
+  "settings-preferences": ["settings-preferences"],
+  "settings-integrations": ["settings-integrations"],
+  "settings-storage": ["settings-storage"],
+  "settings-backup": ["settings-backup"],
+  "settings-billing": ["settings-billing"],
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -4938,6 +4960,7 @@ function activateView(viewName) {
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   target.classList.add("active");
   if (viewName === "settings") {
+    setActiveSettingsSection(activeSettingsTarget);
     loadAccessState();
     loadAiProviderSettings();
   }
@@ -4960,17 +4983,26 @@ systemFeedCard?.addEventListener("keydown", (event) => {
 });
 feedBackBtn?.addEventListener("click", () => activateView("floor"));
 
+function setActiveSettingsSection(targetId = "settings-access") {
+  const group = settingsSectionGroups[targetId] || settingsSectionGroups["settings-access"];
+  activeSettingsTarget = settingsSectionGroups[targetId] ? targetId : "settings-access";
+  settingsNavButtons.forEach((item) => item.classList.toggle("active", item.dataset.settingsTarget === activeSettingsTarget));
+  document.querySelectorAll("#settingsContent .settings-card").forEach((card) => {
+    card.classList.toggle("settings-panel-active", group.includes(card.id));
+  });
+  const activeButton = [...settingsNavButtons].find((item) => item.dataset.settingsTarget === activeSettingsTarget);
+  const primaryTarget = document.querySelector(`#${CSS.escape(group[0])}`);
+  const title = activeButton?.textContent.trim().replace(/\s+/g, " ") || "Access & Security";
+  if (settingsTitleHeading) settingsTitleHeading.textContent = title;
+  if (settingsBreadcrumbCurrent) settingsBreadcrumbCurrent.textContent = title;
+  if (settingsTitleCopy && primaryTarget) {
+    settingsTitleCopy.textContent = primaryTarget.querySelector(".settings-card-heading p")?.textContent || "Manage Argentum command-floor settings.";
+  }
+}
+
 settingsNavButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    settingsNavButtons.forEach((item) => item.classList.toggle("active", item === button));
-    const target = document.querySelector(`#${CSS.escape(button.dataset.settingsTarget)}`);
-    const title = button.textContent.trim().replace(/\s+/g, " ");
-    if (settingsTitleHeading) settingsTitleHeading.textContent = title;
-    if (settingsBreadcrumbCurrent) settingsBreadcrumbCurrent.textContent = title;
-    if (settingsTitleCopy && target) {
-      settingsTitleCopy.textContent = target.querySelector(".settings-card-heading p")?.textContent || "Manage Argentum command-floor settings.";
-    }
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveSettingsSection(button.dataset.settingsTarget);
   });
 });
 

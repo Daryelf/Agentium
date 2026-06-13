@@ -927,7 +927,7 @@
                   <p class="ai-provider-note">Frontend JavaScript never receives raw API keys. Live calls go through the authenticated backend only.</p>
                 </section>
 
-                <section class="settings-card ai-provider-card">
+                <section class="settings-card ai-provider-card" id="settings-ai-provider-select">
                   <div class="settings-card-heading">
                     <div>
                       <h4>Provider Selection</h4>
@@ -972,36 +972,43 @@
                   </form>
                 </section>
 
-                <section class="settings-card ai-provider-card">
+                <section class="settings-card ai-provider-card" id="settings-ai-provider-env">
                   <div class="settings-card-heading">
                     <div>
-                      <h4>API Key Management</h4>
-                      <p>Save, remove, and test provider keys without exposing them in the browser.</p>
+                      <h4>Railway Environment Variables</h4>
+                      <p>Add provider keys in Railway Variables, not in the browser.</p>
                     </div>
-                    <span class="status-chip" id="aiKeyStatus">No key required</span>
+                    <span class="status-chip">Server-side only</span>
                   </div>
-                  <form class="access-form ai-key-form" id="aiProviderKeyForm">
-                    <label>
-                      Provider
-                      <select name="provider" id="aiKeyProviderSelect">
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                      </select>
-                    </label>
-                    <label>
-                      API key
-                      <input name="apiKey" id="aiKeyInput" type="password" autocomplete="off" placeholder="Paste key to save; never displayed after saving" />
-                    </label>
-                    <div class="settings-action-row ai-key-actions">
-                      <button class="primary-button" type="submit">Save key</button>
-                      <button class="ghost-button" id="aiProviderTestBtn" type="button">Test connection</button>
-                      <button class="danger-button" id="aiProviderRemoveKeyBtn" type="button">Remove key</button>
+                  <div class="settings-list ai-env-list">
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M15 7a4 4 0 1 0-4 4"/><path d="m14 10 7-7"/></svg>
+                      </span>
+                      <div>
+                        <strong>OpenAI live mode</strong>
+                        <p><code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code>, <code>AI_PROVIDER=openai</code>, <code>AI_MODE=live</code></p>
+                      </div>
+                      <em>Railway</em>
                     </div>
-                    <p class="ai-provider-note">If a key exists, Argentum only shows “Key saved securely” or “•••••••• configured”.</p>
-                  </form>
+                    <div>
+                      <span class="settings-list-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3a7 7 0 0 0 14 0v-3a7 7 0 0 0-7-7Z"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>
+                      </span>
+                      <div>
+                        <strong>Anthropic live mode</strong>
+                        <p><code>ANTHROPIC_API_KEY</code>, <code>ANTHROPIC_MODEL</code>, <code>AI_PROVIDER=anthropic</code>, <code>AI_MODE=live</code></p>
+                      </div>
+                      <em>Railway</em>
+                    </div>
+                  </div>
+                  <div class="settings-action-row ai-key-actions">
+                    <span>Keys stay server-side and are never shown in frontend JavaScript.</span>
+                    <button class="ghost-button" id="aiProviderTestBtn" type="button">Test connection</button>
+                  </div>
                 </section>
 
-                <section class="settings-card ai-provider-card">
+                <section class="settings-card ai-provider-card" id="settings-ai-provider-safety">
                   <div class="settings-card-heading">
                     <div>
                       <h4>Depo Safety Rules</h4>
@@ -1027,7 +1034,7 @@
                   </div>
                 </section>
 
-                <section class="settings-card ai-provider-card">
+                <section class="settings-card ai-provider-card" id="settings-ai-provider-results">
                   <div class="settings-card-heading">
                     <div>
                       <h4>Test Results / Logs</h4>

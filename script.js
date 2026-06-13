@@ -241,6 +241,8 @@ let state = fallbackState;
 let activeMemoryLayer = "working";
 let cycleTimer = null;
 let apiAvailable = false;
+let automationTelemetryMessages = ["Agent 101 is waiting for bounded work."];
+let automationTelemetryIndex = 0;
 
 const avatar = document.querySelector("#depoAvatar");
 const progress = document.querySelector("#missionProgress");
@@ -279,6 +281,9 @@ const auditLog = document.querySelector("#auditLog");
 const systemFeedCard = document.querySelector("#systemFeedCard");
 const systemFeedMini = document.querySelector("#systemFeedMini");
 const systemFeedPageList = document.querySelector("#systemFeedPageList");
+const systemFeedModal = document.querySelector("#systemFeedModal");
+const systemFeedModalList = document.querySelector("#systemFeedModalList");
+const closeSystemFeedModalBtn = document.querySelector("#closeSystemFeedModalBtn");
 const feedBackBtn = document.querySelector("#feedBackBtn");
 const workflowList = document.querySelector("#workflowList");
 const templateList = document.querySelector("#templateList");
@@ -322,7 +327,12 @@ const workflowResearchMetric = document.querySelector("#workflowResearchMetric")
 const workflowVerifyMetric = document.querySelector("#workflowVerifyMetric");
 const workflowDraftMetric = document.querySelector("#workflowDraftMetric");
 const workflowApprovalMetric = document.querySelector("#workflowApprovalMetric");
+const automationQueueMetric = document.querySelector("#automationQueueMetric");
+const automationQueueLabel = document.querySelector("#automationQueueLabel");
+const automationTelemetry = document.querySelector("#automationTelemetry");
+const automationProgress = document.querySelector("#automationProgress");
 const revenueGuardMetric = document.querySelector("#revenueGuardMetric");
+const revenueGuardCopy = document.querySelector("#revenueGuardCopy");
 const taskRunMetric = document.querySelector("#taskRunMetric");
 const functionRunMetric = document.querySelector("#functionRunMetric");
 const lastWorkdayMetric = document.querySelector("#lastWorkdayMetric");
@@ -4436,6 +4446,10 @@ function compactFeedTitle(title) {
   return `${normalizedTitle.slice(0, 21)}...`;
 }
 
+function miniFeedTitle(title) {
+  return `Agent 101: ${compactFeedTitle(title)}`;
+}
+
 function renderSystemFeed() {
   const entries = systemFeedEntries();
 
@@ -4445,7 +4459,7 @@ function renderSystemFeed() {
       .map(
         (entry) => `
           <span>
-            <strong>${escapeHtml(compactFeedTitle(entry.title))}</strong>
+            <strong>${escapeHtml(miniFeedTitle(entry.title))}</strong>
             <em>${escapeHtml(formatFeedTime(entry))}</em>
           </span>
         `,
@@ -4461,6 +4475,22 @@ function renderSystemFeed() {
             <span aria-hidden="true"></span>
             <div>
               <strong>${escapeHtml(entry.title)}</strong>
+              <p>${escapeHtml(entry.body)}</p>
+            </div>
+            <em>${escapeHtml(formatFeedTime(entry))}</em>
+          </article>
+        `,
+      )
+      .join("");
+  }
+
+  if (systemFeedModalList) {
+    systemFeedModalList.innerHTML = entries
+      .map(
+        (entry) => `
+          <article class="system-feed-modal-row">
+            <div>
+              <strong>${escapeHtml(miniFeedTitle(entry.title))}</strong>
               <p>${escapeHtml(entry.body)}</p>
             </div>
             <em>${escapeHtml(formatFeedTime(entry))}</em>
@@ -4586,6 +4616,16 @@ function setText(element, value) {
   if (element) element.textContent = value;
 }
 
+function rotateAutomationTelemetry() {
+  if (!automationTelemetry || !automationTelemetryMessages.length) return;
+  automationTelemetryIndex = (automationTelemetryIndex + 1) % automationTelemetryMessages.length;
+  automationTelemetry.classList.remove("is-switching");
+  window.requestAnimationFrame(() => {
+    automationTelemetry.textContent = automationTelemetryMessages[automationTelemetryIndex];
+    automationTelemetry.classList.add("is-switching");
+  });
+}
+
 function renderOverviewTelemetry() {
   const governance = state.governance || fallbackState.governance;
   const agentStateLabel = statusLabel(state.agent?.state || "active_supervised");
@@ -4637,6 +4677,23 @@ function renderOverviewTelemetry() {
         : outputReadyCount
           ? `${outputReadyCount} output${outputReadyCount === 1 ? "" : "s"} staged for use or approval.`
           : "No active workflow pressure right now.";
+  const automationQueue = queuedTasks.length + activeTasks.length;
+  const automationBlocked = reviewCount > 0 || Boolean(state.mission?.paused);
+  const automationMoving = automationQueue > 0 && !automationBlocked;
+  const automationProgressValue = automationMoving ? 82 : reviewCount ? 44 : outputReadyCount ? 62 : 18;
+  const automationLabel = automationMoving ? "Moving now" : reviewCount ? "Waiting on review" : outputReadyCount ? "Output staged" : "Idle";
+  automationTelemetryMessages = [
+    reviewCount
+      ? `${reviewCount} Human Gate review${reviewCount === 1 ? "" : "s"} must clear first.`
+      : automationMoving
+        ? "Agent 101 can process the next bounded job now."
+        : outputReadyCount
+          ? `${outputReadyCount} output${outputReadyCount === 1 ? "" : "s"} staged before more automation.`
+          : "Agent 101 is waiting for bounded work.",
+    state.mission?.paused ? "Automation is paused by operator control." : "Draft-only guardrails remain active.",
+    queuedTasks.length ? `${queuedTasks.length} queued task${queuedTasks.length === 1 ? "" : "s"} in the backend state.` : "No queued backend task pressure.",
+  ];
+  automationTelemetryIndex %= automationTelemetryMessages.length;
 
   setText(agentCountMetric, "1");
   setText(agentStatusMetric, agentStateLabel);
@@ -4660,7 +4717,17 @@ function renderOverviewTelemetry() {
   setText(workflowVerifyMetric, String(activeTasks.length));
   setText(workflowDraftMetric, String(reviewCount));
   setText(workflowApprovalMetric, String(outputReadyCount));
-  setText(revenueGuardMetric, "None yet");
+  setText(automationQueueMetric, String(automationQueue));
+  setText(automationQueueLabel, automationLabel);
+  setText(automationTelemetry, automationTelemetryMessages[automationTelemetryIndex] || automationTelemetryMessages[0]);
+  if (automationProgress) {
+    automationProgress.style.setProperty("--bar", `${automationProgressValue}%`);
+    automationProgress.classList.toggle("is-moving", automationMoving);
+    automationProgress.classList.toggle("is-blocked", reviewCount > 0);
+  }
+  automationProgress?.closest(".automation-card")?.classList.toggle("is-moving", automationMoving);
+  setText(revenueGuardMetric, "Not active");
+  setText(revenueGuardCopy, "No revenue workflow has run yet.");
   setText(highRiskMetric, String(approvals.filter((approval) => approval.status === "pending" && approval.risk === "high").length));
   setText(artifactThroughputMetric, String(artifacts.length));
 }
@@ -5212,7 +5279,17 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 
 function openSystemFeed() {
   renderSystemFeed();
-  activateView("feed");
+  if (!systemFeedModal) {
+    activateView("feed");
+    return;
+  }
+  systemFeedModal.classList.add("open");
+  systemFeedModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSystemFeedModal() {
+  systemFeedModal?.classList.remove("open");
+  systemFeedModal?.setAttribute("aria-hidden", "true");
 }
 
 systemFeedCard?.addEventListener("click", openSystemFeed);
@@ -5222,6 +5299,10 @@ systemFeedCard?.addEventListener("keydown", (event) => {
   openSystemFeed();
 });
 feedBackBtn?.addEventListener("click", () => activateView("floor"));
+closeSystemFeedModalBtn?.addEventListener("click", closeSystemFeedModal);
+systemFeedModal?.addEventListener("click", (event) => {
+  if (event.target === systemFeedModal) closeSystemFeedModal();
+});
 
 function setActiveSettingsSection(targetId = "settings-access") {
   const group = settingsSectionGroups[targetId] || settingsSectionGroups["settings-access"];
@@ -5957,3 +6038,4 @@ loadState().then(() => {
 startCycle();
 updateSystemClock();
 setInterval(updateSystemClock, 1000);
+setInterval(rotateAutomationTelemetry, 3200);

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=agent-101-card-1" />
+    <link rel="stylesheet" href="./styles.css?v=pipeline-card-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -250,16 +250,20 @@
               <div class="donut-meter" aria-hidden="true"></div>
             </article>
             <article class="analytics-card pipeline-flow-card">
-              <p class="eyebrow">Workflow Pipeline</p>
-              <div class="wave-visual" aria-hidden="true">
-                <span></span><span></span><span></span>
+              <div class="pipeline-card-head">
+                <p class="eyebrow">Workflow Pipeline</p>
+                <strong id="workflowPipelineStatus">Review needed</strong>
               </div>
-              <ul>
+              <div class="pipeline-rail" id="workflowPipelineRail" style="--value: 42%" aria-hidden="true">
+                <span></span>
+              </div>
+              <ul class="pipeline-metrics">
                 <li><span>Intake</span><strong id="workflowResearchMetric">1</strong></li>
-                <li><span>Processing</span><strong id="workflowVerifyMetric">0</strong></li>
+                <li><span>Work</span><strong id="workflowVerifyMetric">0</strong></li>
                 <li><span>Review</span><strong id="workflowDraftMetric">0</strong></li>
                 <li><span>Output</span><strong id="workflowApprovalMetric">0</strong></li>
               </ul>
+              <p class="pipeline-readout" id="workflowPipelineReadout">Pipeline is waiting for the next bounded workflow.</p>
             </article>
             <article class="analytics-card automation-card">
               <p class="eyebrow">Automation Queue</p>
@@ -1338,6 +1342,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=agent-101-card-1"></script>
+    <script src="./script.js?v=pipeline-card-1"></script>
   </body>
 </html>

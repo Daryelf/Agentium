@@ -315,6 +315,9 @@ const overviewQueuedTaskMetric = document.querySelector("#overviewQueuedTaskMetr
 const overviewHighRiskTaskMetric = document.querySelector("#overviewHighRiskTaskMetric");
 const overviewDraftReadyMetric = document.querySelector("#overviewDraftReadyMetric");
 const overviewTotalTaskMetric = document.querySelector("#overviewTotalTaskMetric");
+const workflowPipelineStatus = document.querySelector("#workflowPipelineStatus");
+const workflowPipelineRail = document.querySelector("#workflowPipelineRail");
+const workflowPipelineReadout = document.querySelector("#workflowPipelineReadout");
 const workflowResearchMetric = document.querySelector("#workflowResearchMetric");
 const workflowVerifyMetric = document.querySelector("#workflowVerifyMetric");
 const workflowDraftMetric = document.querySelector("#workflowDraftMetric");
@@ -4609,13 +4612,31 @@ function renderOverviewTelemetry() {
     : businessEfficiency >= 55
       ? "Agent 101 is useful, but the business still needs approvals to start compounding."
       : "Too much work is waiting on review. Clear the Human Gate before adding more load.";
-  const currentStage = currentStep()?.station || "Research";
-  const stageCounts = {
-    Research: currentStage === "Research" ? 1 : 0,
-    Verify: currentStage === "Verify" ? 1 : 0,
-    Draft: currentStage === "Draft" ? 1 : 0,
-    Approval: currentStage === "Approval" ? 1 : 0,
-  };
+  const activeTasks = tasks.filter((task) => ["running", "processing", "in_progress", "needs_revision"].includes(task.status));
+  const reviewCount = pendingApprovals + revisionApprovals;
+  const outputReadyCount = artifacts.filter((artifact) => !["blocked", "archived"].includes(artifact.status)).length;
+  const pipelineLoad = queuedTasks.length + activeTasks.length + reviewCount + outputReadyCount;
+  const pipelineCompletion = pipelineLoad
+    ? Math.round(((activeTasks.length * 0.35 + reviewCount * 0.62 + outputReadyCount) / Math.max(1, pipelineLoad)) * 100)
+    : 0;
+  const pipelineStatus = reviewCount
+    ? "Review bottleneck"
+    : activeTasks.length
+      ? "Work in motion"
+      : queuedTasks.length
+        ? "Ready to process"
+        : outputReadyCount
+          ? "Output staged"
+          : "Waiting for work";
+  const pipelineReadout = reviewCount
+    ? `${reviewCount} item${reviewCount === 1 ? "" : "s"} need operator review before the pipeline can clear.`
+    : activeTasks.length
+      ? `${activeTasks.length} task${activeTasks.length === 1 ? "" : "s"} actively moving through Agent 101.`
+      : queuedTasks.length
+        ? `${queuedTasks.length} queued task${queuedTasks.length === 1 ? "" : "s"} ready for Agent 101.`
+        : outputReadyCount
+          ? `${outputReadyCount} output${outputReadyCount === 1 ? "" : "s"} staged for use or approval.`
+          : "No active workflow pressure right now.";
 
   setText(agentCountMetric, "1");
   setText(agentStatusMetric, agentStateLabel);
@@ -4632,10 +4653,13 @@ function renderOverviewTelemetry() {
   setText(overviewHighRiskTaskMetric, String(highRiskQueued));
   setText(overviewDraftReadyMetric, String(mediumQueued));
   setText(overviewTotalTaskMetric, String(lowQueued));
-  setText(workflowResearchMetric, String(stageCounts.Research));
-  setText(workflowVerifyMetric, String(stageCounts.Verify));
-  setText(workflowDraftMetric, String(stageCounts.Draft));
-  setText(workflowApprovalMetric, String(stageCounts.Approval));
+  setText(workflowPipelineStatus, pipelineStatus);
+  if (workflowPipelineRail) workflowPipelineRail.style.setProperty("--value", `${Math.max(4, Math.min(100, pipelineCompletion))}%`);
+  setText(workflowPipelineReadout, pipelineReadout);
+  setText(workflowResearchMetric, String(queuedTasks.length));
+  setText(workflowVerifyMetric, String(activeTasks.length));
+  setText(workflowDraftMetric, String(reviewCount));
+  setText(workflowApprovalMetric, String(outputReadyCount));
   setText(revenueGuardMetric, "None yet");
   setText(highRiskMetric, String(approvals.filter((approval) => approval.status === "pending" && approval.risk === "high").length));
   setText(artifactThroughputMetric, String(artifacts.length));

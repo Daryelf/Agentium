@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=sidebar-health-1" />
+    <link rel="stylesheet" href="./styles.css?v=clean-control-top-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -23,7 +23,6 @@
             <svg viewBox="0 0 32 32"><path d="M16 3 29 26H19L16 20l-3 6H3L16 3Z"/><path d="M16 8v8"/><path d="M9 26l7-12 7 12"/></svg>
           </div>
           <div>
-            <p class="eyebrow">Argentum OS</p>
             <h1>Control Floor</h1>
           </div>
         </div>
@@ -77,30 +76,9 @@
       <main>
         <header class="topbar">
           <div class="topbar-title">
-            <p class="status-line"><span></span>Persistent Local OS</p>
-            <h2>Argentum Habitat Overview</h2>
-            <small>First agent habitat, supervised and local.</small>
+            <h2>Argentum</h2>
           </div>
           <div class="topbar-actions">
-            <div class="header-time-card">
-              <strong><time id="systemClock" data-system-clock>13:42:18</time></strong>
-              <span id="systemDate" data-system-date>May 12, 2025</span>
-            </div>
-            <label class="search-shell" aria-label="Search system">
-              <svg viewBox="0 0 24 24"><path d="m21 21-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
-              <input id="systemSearch" type="search" placeholder="Search system or agent..." autocomplete="off" />
-            </label>
-            <button class="icon-button command-icon" id="scanBtn" type="button" aria-label="Focus scan" title="Focus scan">
-              <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-            <button class="icon-button command-icon" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
-              <span class="notification-dot" id="notificationDot" aria-hidden="true"></span>
-            </button>
-            <button class="primary-button run-button" id="runCycleBtn" type="button">
-              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-              Run cycle
-            </button>
             <div class="admin-menu-wrap">
               <button class="profile-button" id="adminMenuBtn" type="button" aria-label="Admin menu" aria-expanded="false" title="Admin menu">
                 <span id="profileInitials">--</span>
@@ -120,39 +98,12 @@
                 </a>
               </div>
             </div>
-            <div class="notification-popover" id="notificationPanel" hidden>
-              <div class="notification-head">
-                <p class="eyebrow">Notifications</p>
-                <strong>System Queue</strong>
-              </div>
-              <div class="notification-list" id="notificationList"></div>
-            </div>
           </div>
         </header>
 
         <section class="view active" id="view-floor" aria-label="Argentum habitat overview">
           <div class="command-grid">
-            <section class="operations-floor" aria-label="First-agent command floor map">
-              <div class="floor-header">
-                <div>
-                  <p class="eyebrow">Habitat Overview</p>
-                  <h3>First-agent command floor</h3>
-                </div>
-                <div class="map-view-tools">
-                  <select id="mapViewMode" aria-label="Habitat map view">
-                    <option value="system">System Map</option>
-                    <option value="agent">Agent Map</option>
-                    <option value="workflow">Workflow Map</option>
-                  </select>
-                  <span class="status-pill" id="cycleStatus">At Agent Habitat</span>
-                  <div class="live-flow-chip" aria-hidden="true">
-                    <span>Local Task Flow</span>
-                    <i></i>
-                    <strong>READY</strong>
-                  </div>
-                </div>
-              </div>
-
+            <section class="operations-floor" aria-label="Command floor map">
               <div class="station-map" id="stationMap">
                 <!-- HabitatFloorMap -->
                 <div class="habitat-canvas" id="habitatCanvas">
@@ -210,6 +161,10 @@
                 </div>
                 <div class="agent-control-actions">
                   <span id="riskLevel">Risk: Approval required</span>
+                  <button class="primary-button run-button" id="runCycleBtn" type="button">
+                    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Run cycle
+                  </button>
                   <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause habitat" title="Pause habitat">
                     <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
                   </button>
@@ -1377,6 +1332,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=sidebar-health-1"></script>
+    <script src="./script.js?v=clean-control-top-1"></script>
   </body>
 </html>

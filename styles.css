@@ -44,6 +44,15 @@ body {
   letter-spacing: 0;
 }
 
+body.module-card-open {
+  position: fixed;
+  top: calc(var(--module-card-scroll-y, 0px) * -1);
+  left: calc(var(--module-card-scroll-x, 0px) * -1);
+  right: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
 body::after {
   content: "";
   position: fixed;
@@ -2228,13 +2237,15 @@ main {
 }
 
 .module-info-card {
-  position: absolute;
+  position: fixed;
   left: var(--card-left, 18px);
   top: var(--card-top, 18px);
   z-index: 18;
   width: min(500px, calc(100% - 24px));
-  max-height: none;
-  overflow: visible;
+  max-height: min(400px, calc(100% - 28px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-radius: 14px;
   border: 1px solid rgba(125, 211, 252, 0.3);
   background:
@@ -2247,14 +2258,15 @@ main {
   color: var(--text);
   opacity: 0;
   pointer-events: auto;
-  transform: translate3d(0, 12px, 0) scale(0.97);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transform: none;
+  transition: opacity 140ms ease;
   backdrop-filter: blur(22px);
+  contain: layout paint;
 }
 
 .module-info-card.open {
   opacity: 1;
-  transform: translate3d(0, 0, 0) scale(1);
+  transform: none;
 }
 
 .module-info-head {
@@ -2479,10 +2491,12 @@ main {
 
 .agent-chat-head,
 .human-gate-head {
+  flex: 0 0 auto;
   border-bottom-color: rgba(125, 211, 252, 0.18);
 }
 
 .agent-chat-summary {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
@@ -2560,6 +2574,7 @@ main {
 }
 
 .agent-unlock-status {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 5px;
@@ -2609,10 +2624,26 @@ main {
 }
 
 .agent-chat-log {
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: 128px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
+  align-content: start;
   gap: 5px;
-  padding: 7px 9px;
+  padding: 7px 9px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.agent-chat-log::-webkit-scrollbar {
+  width: 7px;
+}
+
+.agent-chat-log::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(125, 211, 252, 0.22);
 }
 
 .chat-message {
@@ -2645,6 +2676,7 @@ main {
 }
 
 .agent-chat-prompts {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
@@ -2666,17 +2698,34 @@ main {
 }
 
 .agent-chat-form {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 64px;
+  align-items: center;
   gap: 6px;
-  padding: 0 9px 9px;
+  padding: 8px 9px 9px;
+  border-top: 1px solid rgba(125, 211, 252, 0.12);
+  background:
+    linear-gradient(180deg, rgba(8, 13, 26, 0.74), rgba(3, 7, 18, 0.98)),
+    radial-gradient(circle at 16% 0%, rgba(34, 211, 238, 0.12), transparent 46%);
 }
 
 .agent-chat-form input {
-  min-height: 27px;
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  min-height: 31px;
   border-radius: 8px;
   padding: 0 9px;
   font-size: 0.6rem;
+}
+
+.agent-chat-form input:focus {
+  border-color: rgba(125, 211, 252, 0.48);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08), 0 0 18px rgba(34, 211, 238, 0.14);
 }
 
 .human-gate-card {

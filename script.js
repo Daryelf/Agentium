@@ -384,6 +384,9 @@ const habitatRoutes = document.querySelector("#habitatRoutes");
 const stationArtwork = document.querySelector("#stationArtwork");
 const miniMapNodes = document.querySelector("#miniMapNodes");
 const moduleInfoCard = document.querySelector("#moduleInfoCard");
+if (moduleInfoCard && moduleInfoCard.parentElement !== document.body) {
+  document.body.appendChild(moduleInfoCard);
+}
 const mapViewMode = document.querySelector("#mapViewMode");
 const scanBtn = document.querySelector("#scanBtn");
 const systemClockNodes = document.querySelectorAll("[data-system-clock]");
@@ -1720,6 +1723,7 @@ let pointerCache = new Map();
 let pinchStart = null;
 let accessState = null;
 let activeSettingsTarget = "settings-access";
+let moduleInfoLockedScroll = { x: 0, y: 0 };
 let aiProviderSettings = {
   provider: "local_demo",
   providerLabel: "Local Demo",
@@ -3334,8 +3338,30 @@ function moduleInfoMarkup(roomKey) {
   return agentChatMarkup(card);
 }
 
+function lockModuleInfoPageScroll() {
+  if (!document.body.classList.contains("module-card-open")) {
+    moduleInfoLockedScroll = { x: window.scrollX || 0, y: window.scrollY || 0 };
+    document.body.style.setProperty("--module-card-scroll-x", `${moduleInfoLockedScroll.x}px`);
+    document.body.style.setProperty("--module-card-scroll-y", `${moduleInfoLockedScroll.y}px`);
+  }
+  document.body.classList.add("module-card-open");
+}
+
+function unlockModuleInfoPageScroll() {
+  document.body.classList.remove("module-card-open");
+  document.body.style.removeProperty("--module-card-scroll-x");
+  document.body.style.removeProperty("--module-card-scroll-y");
+  window.scrollTo(moduleInfoLockedScroll.x, moduleInfoLockedScroll.y);
+}
+
+function restoreModuleInfoPageScroll() {
+  if (!document.body.classList.contains("module-card-open")) return;
+  window.scrollTo(moduleInfoLockedScroll.x, moduleInfoLockedScroll.y);
+}
+
 function closeModuleInfoCard() {
   if (!moduleInfoCard) return;
+  unlockModuleInfoPageScroll();
   moduleInfoCard.hidden = true;
   moduleInfoCard.classList.remove("open");
   moduleInfoCard.innerHTML = "";
@@ -3364,22 +3390,42 @@ function positionModuleInfoCard(roomKey) {
   left = clamp(left, 12, Math.max(12, mapRect.width - cardRect.width - 12));
   const minTop = 12;
   top = clamp(top, minTop, Math.max(minTop, mapRect.height - cardRect.height - bottomReserve));
-  moduleInfoCard.style.setProperty("--card-left", `${left}px`);
-  moduleInfoCard.style.setProperty("--card-top", `${top}px`);
+  moduleInfoCard.style.setProperty("--card-left", `${mapRect.left + left}px`);
+  moduleInfoCard.style.setProperty("--card-top", `${mapRect.top + top}px`);
 }
 
-function openModuleInfoCard(roomKey) {
+function scrollAgentChatToLatest() {
+  const chatLog = moduleInfoCard?.querySelector(".agent-chat-log");
+  if (!chatLog) return;
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function focusAgentChatInput() {
+  const input = moduleInfoCard?.querySelector('.agent-chat-form input[name="message"]');
+  input?.focus({ preventScroll: true });
+}
+
+function openModuleInfoCard(roomKey, options = {}) {
   if (!moduleInfoCard) return;
   const resolved = resolveRoomKey(roomKey);
+  lockModuleInfoPageScroll();
+  const previousLeft = moduleInfoCard.style.getPropertyValue("--card-left");
+  const previousTop = moduleInfoCard.style.getPropertyValue("--card-top");
+  const canPreservePosition = Boolean(options.preservePosition && !moduleInfoCard.hidden && previousLeft && previousTop);
   moduleInfoCard.innerHTML = moduleInfoMarkup(resolved);
   moduleInfoCard.dataset.station = resolved;
   moduleInfoCard.hidden = false;
   moduleInfoCard.classList.remove("open");
+  if (canPreservePosition) {
+    moduleInfoCard.style.setProperty("--card-left", previousLeft);
+    moduleInfoCard.style.setProperty("--card-top", previousTop);
+  }
   requestAnimationFrame(() => {
-    positionModuleInfoCard(resolved);
+    if (!canPreservePosition) positionModuleInfoCard(resolved);
     moduleInfoCard.classList.add("open");
+    if (options.scrollChat) scrollAgentChatToLatest();
+    if (options.focusInput) focusAgentChatInput();
   });
-  window.setTimeout(() => positionModuleInfoCard(resolved), 430);
 }
 
 function renderOrbitScene() {
@@ -3393,8 +3439,17 @@ function renderShellData() {
   renderAgentRoster();
   renderOrbitScene();
   if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
+    const activeInput = moduleInfoCard.contains(document.activeElement) ? moduleInfoCard.querySelector('.agent-chat-form input[name="message"]') : null;
+    const activeInputValue = activeInput?.value || "";
     moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
     positionModuleInfoCard(selectedRoomKey);
+    if (activeInput) {
+      const nextInput = moduleInfoCard.querySelector('.agent-chat-form input[name="message"]');
+      if (nextInput) {
+        nextInput.value = activeInputValue;
+        nextInput.focus({ preventScroll: true });
+      }
+    }
   }
 }
 
@@ -4949,7 +5004,7 @@ async function submitDepoChat(roomKey, message) {
     return;
   }
   renderSystemFeed();
-  openModuleInfoCard(resolved);
+  openModuleInfoCard(resolved, { preservePosition: true, focusInput: true, scrollChat: true });
 }
 
 function packageRoomForApproval(roomKey) {
@@ -5432,7 +5487,20 @@ moduleInfoCard?.addEventListener("submit", (event) => {
   event.preventDefault();
   const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
   const input = form.querySelector('input[name="message"]');
-  submitDepoChat(stationId, input?.value || "");
+  const message = input?.value || "";
+  if (input) input.value = "";
+  submitDepoChat(stationId, message);
+});
+
+moduleInfoCard?.addEventListener("focusin", () => {
+  restoreModuleInfoPageScroll();
+  window.requestAnimationFrame(restoreModuleInfoPageScroll);
+  window.setTimeout(restoreModuleInfoPageScroll, 80);
+});
+
+moduleInfoCard?.addEventListener("input", () => {
+  restoreModuleInfoPageScroll();
+  window.requestAnimationFrame(restoreModuleInfoPageScroll);
 });
 
 document.addEventListener("keydown", (event) => {
@@ -5443,7 +5511,7 @@ document.addEventListener("keydown", (event) => {
 
 document.addEventListener("click", (event) => {
   if (!moduleInfoCard || moduleInfoCard.hidden) return;
-  if (event.target.closest("#stationMap")) return;
+  if (event.target.closest("#stationMap") || event.target.closest("#moduleInfoCard")) return;
   resetHabitatView();
 });
 

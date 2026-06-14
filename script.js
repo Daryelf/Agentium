@@ -2983,15 +2983,6 @@ function renderHabitatModules() {
         .join(" ");
       return `
         <button class="${className}" data-station="${escapeHtml(room.id)}" type="button" style="--x: ${room.position.x}%; --y: ${room.position.y}%; --room-w: ${room.size.w}%; --room-h: ${room.size.h}%; --module-color: ${escapeHtml(room.color)}" aria-label="${escapeHtml(room.title)}" title="${escapeHtml(room.title)}">
-          <span class="room-shell" aria-hidden="true">
-            <span class="room-floor"></span>
-            <span class="room-wall room-wall-top"></span>
-            <span class="room-wall room-wall-right"></span>
-            <span class="room-wall room-wall-bottom"></span>
-            <span class="room-wall room-wall-left"></span>
-            <span class="floor-props floor-props-${escapeHtml(room.visual)}">${floorPropsMarkup(room)}</span>
-            ${miniAgentRobotMarkup(room)}
-          </span>
           <span class="station-label">
             <span class="module-icon" aria-hidden="true">${moduleIconMarkup(room.id)}</span>
             <span class="module-copy">
@@ -3000,6 +2991,15 @@ function renderHabitatModules() {
               <em>${escapeHtml(room.metric)}</em>
             </span>
             <span class="station-status-dot" aria-hidden="true"></span>
+          </span>
+          <span class="room-shell" aria-hidden="true">
+            <span class="room-floor"></span>
+            <span class="room-wall room-wall-top"></span>
+            <span class="room-wall room-wall-right"></span>
+            <span class="room-wall room-wall-bottom"></span>
+            <span class="room-wall room-wall-left"></span>
+            <span class="floor-props floor-props-${escapeHtml(room.visual)}">${floorPropsMarkup(room)}</span>
+            ${miniAgentRobotMarkup(room)}
           </span>
         </button>
       `;

@@ -4007,6 +4007,7 @@ main {
 .room-shell {
   position: absolute;
   inset: 0;
+  z-index: 1;
   overflow: hidden;
   border-radius: 14px;
   background:
@@ -4754,19 +4755,45 @@ main {
 .station-label {
   position: absolute;
   left: 50%;
-  top: 8px;
-  z-index: 8;
-  width: min(78%, 198px);
-  min-height: 42px;
-  transform: translateX(-50%);
-  border-radius: 11px;
+  top: -54px;
+  z-index: 9;
+  width: min(84%, 214px);
+  min-height: 40px;
+  transform: translate(-50%, 0);
+  border-radius: 12px;
   clip-path: none;
-  padding: 6px 8px;
+  padding: 6px 9px;
   background:
     radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--module-color) 23%, transparent), transparent 42%),
     linear-gradient(180deg, rgba(6, 13, 27, 0.96), rgba(2, 6, 23, 0.92));
   border: 1px solid rgba(125, 211, 252, 0.28);
-  box-shadow: 0 15px 28px rgba(0, 0, 0, 0.54), 0 0 19px color-mix(in srgb, var(--module-color) 18%, transparent);
+  box-shadow:
+    0 14px 24px rgba(0, 0, 0, 0.52),
+    0 0 18px color-mix(in srgb, var(--module-color) 18%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.station-label::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 54%;
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--module-color) 72%, rgba(125, 211, 252, 0.45)), transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--module-color) 35%, transparent);
+}
+
+.station:hover .station-label,
+.station.selected .station-label,
+.station.search-match .station-label {
+  transform: translate(-50%, -2px);
+  border-color: color-mix(in srgb, var(--module-color) 52%, rgba(255, 255, 255, 0.18));
+  box-shadow:
+    0 16px 28px rgba(0, 0, 0, 0.56),
+    0 0 24px color-mix(in srgb, var(--module-color) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.11);
 }
 
 .station-label .module-copy strong {
@@ -4811,6 +4838,10 @@ main {
 .room-approval .station-status-dot {
   background: #fb7185;
   box-shadow: 0 0 14px rgba(248, 113, 113, 0.95);
+}
+
+.room-approval .station-label {
+  top: -56px;
 }
 
 .station:hover .room-shell,

@@ -2317,7 +2317,7 @@ main {
 
 .office-detail-header {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) auto auto 32px;
+  grid-template-columns: 54px minmax(0, 1fr) 32px;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
@@ -2358,8 +2358,6 @@ main {
   font-weight: 760;
 }
 
-.office-badge,
-.office-provider,
 .office-section-head span {
   min-height: 26px;
   display: inline-flex;
@@ -2372,18 +2370,6 @@ main {
   font-weight: 880;
   border: 1px solid rgba(125, 211, 252, 0.18);
   background: rgba(15, 23, 42, 0.62);
-}
-
-.office-provider {
-  color: var(--success);
-  border-color: rgba(52, 211, 153, 0.22);
-  background: rgba(6, 78, 59, 0.18);
-}
-
-.office-provider.error {
-  color: #fecaca;
-  border-color: rgba(248, 113, 113, 0.28);
-  background: rgba(127, 29, 29, 0.18);
 }
 
 .office-metrics {
@@ -2448,8 +2434,9 @@ main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.28fr);
   gap: 12px;
-  padding: 0 16px 16px;
+  padding: 0 16px 28px;
   overflow: auto;
+  scroll-padding-bottom: 28px;
 }
 
 .office-main,
@@ -2488,7 +2475,6 @@ main {
 
 .office-goal p,
 .office-preview-screen p,
-.office-chat p,
 .office-approval-queue p,
 .office-timeline p {
   margin: 5px 0 0;
@@ -2615,8 +2601,7 @@ main {
 .office-timeline strong,
 .office-preview-screen strong,
 .office-tools strong,
-.office-approval-queue strong,
-.office-chat strong {
+.office-approval-queue strong {
   color: #f8fafc;
   font-size: 0.75rem;
   font-weight: 900;
@@ -2766,15 +2751,16 @@ main {
 }
 
 .office-chat-log {
-  min-height: 178px;
-  max-height: 236px;
-  display: grid;
-  gap: 8px;
+  min-height: 214px;
+  max-height: 286px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   overflow: auto;
-  padding-right: 4px;
+  padding: 4px 7px 4px 2px;
+  overscroll-behavior: contain;
 }
 
-.office-chat article,
 .office-approval-queue article {
   padding: 10px;
   border-radius: 10px;
@@ -2782,35 +2768,44 @@ main {
   border: 1px solid rgba(125, 211, 252, 0.09);
 }
 
-.office-chat article.operator {
-  margin-left: 36px;
-  border-color: rgba(139, 92, 246, 0.24);
-  background: rgba(59, 7, 100, 0.18);
+.office-chat article {
+  position: relative;
+  width: fit-content;
+  max-width: min(78%, 520px);
+  padding: 10px 12px;
+  border-radius: 16px 16px 16px 5px;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.84));
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
 }
 
-.office-chat-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 10px;
-}
-
-.office-chat-prompts button {
-  min-height: 30px;
-  border: 1px solid rgba(125, 211, 252, 0.14);
-  border-radius: 999px;
-  padding: 0 11px;
+.office-chat article p {
+  margin: 4px 0 0;
   color: #dbeafe;
-  background: rgba(15, 23, 42, 0.68);
-  font-size: 0.65rem;
-  font-weight: 850;
-  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1.38;
 }
 
-.office-chat-prompts button:first-child {
-  color: #67e8f9;
+.office-chat article strong {
+  color: rgba(226, 232, 240, 0.88);
+  font-size: 0.66rem;
+}
+
+.office-chat article.operator {
+  align-self: flex-end;
+  border-radius: 16px 16px 5px 16px;
   border-color: rgba(34, 211, 238, 0.28);
-  background: rgba(14, 116, 144, 0.18);
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.86), rgba(124, 58, 237, 0.78));
+  box-shadow:
+    0 12px 28px rgba(37, 99, 235, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.office-chat article.operator p,
+.office-chat article.operator strong {
+  color: #ffffff;
 }
 
 .office-chat-form {

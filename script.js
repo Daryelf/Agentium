@@ -3254,7 +3254,7 @@ function depoChatResponse(question, roomKey) {
     return "There is only one active head agent: Agent 101. The business offices are work areas that report to Agent 101. I can propose future agents, but creating a live agent is blocked until Human Gate approval.";
   }
 
-  return `For ${card.title}: ${card.purpose || card.summary} I can help from local state only. Ask me "what can you do?", "create a task plan", "draft a workflow", "propose a new agent", "what is blocked?", or "view Human Gate rules."`;
+  return `For ${card.title}: ${card.purpose || card.summary} I can work from local state, keep the request draft-only, and route anything risky to Human Gate before it leaves Argentum.`;
 }
 
 function depoChatMessagesFor(roomKey) {
@@ -3739,13 +3739,12 @@ function officeNotesMarkup(runtime) {
 }
 
 function officeChatMarkup(card) {
-  const messages = depoChatMessagesFor(card.id);
-  const promptButtons = ["Run office check", "Create task plan", "Package for approval"];
+  const resolved = resolveRoomKey(card.id);
+  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-12);
   return `
     <section class="office-chat">
       <div class="office-section-head">
         <h4>Agent 101 Command Chat</h4>
-        <span>Talk + assign</span>
       </div>
       <div class="office-chat-log" aria-live="polite">
         ${messages
@@ -3758,9 +3757,6 @@ function officeChatMarkup(card) {
             `,
           )
           .join("")}
-      </div>
-      <div class="office-chat-prompts" aria-label="Agent 101 quick prompts">
-        ${promptButtons.map((prompt) => `<button type="button" data-chat-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`).join("")}
       </div>
       <form class="agent-chat-form office-chat-form" data-depo-chat-form>
         <input name="message" type="text" autocomplete="off" placeholder="Tell Agent 101 what to check, plan, or package in this office..." />
@@ -3775,7 +3771,6 @@ function businessOfficeMarkup(card) {
   const profile = businessOfficeProfile(card.id);
   const metrics = officeMetricCards(profile, runtime);
   const steps = safeList(profile.steps, [], 6);
-  const providerStatus = aiProviderChatLabel();
   return `
     <div class="office-detail-panel">
       <div class="office-detail-header">
@@ -3784,8 +3779,6 @@ function businessOfficeMarkup(card) {
           <h3>${escapeHtml(profile.title)}</h3>
           <p>Agent 101 · ${escapeHtml(profile.officeType)} · Supervised · Draft-only</p>
         </div>
-        <span class="office-badge">${escapeHtml(profile.badge)}</span>
-        <span class="office-provider ${providerStatus === "Provider Error" ? "error" : ""}">${escapeHtml(providerStatus)}</span>
         <button class="module-info-close" type="button" aria-label="Close office">×</button>
       </div>
       ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
@@ -3982,6 +3975,18 @@ function scrollAgentChatToLatest() {
   const chatLog = moduleInfoCard?.querySelector(".agent-chat-log, .office-chat-log");
   if (!chatLog) return;
   chatLog.scrollTop = chatLog.scrollHeight;
+  chatLog.dataset.userScrolledUp = "false";
+}
+
+function isChatNearBottom(chatLog) {
+  if (!chatLog) return true;
+  return chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 28;
+}
+
+function shouldAutoScrollChat() {
+  const chatLog = moduleInfoCard?.querySelector(".agent-chat-log, .office-chat-log");
+  if (!chatLog) return true;
+  return chatLog.dataset.userScrolledUp !== "true" || isChatNearBottom(chatLog);
 }
 
 function focusAgentChatInput() {
@@ -4026,6 +4031,7 @@ function renderShellData() {
   if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
     const activeInput = moduleInfoCard.contains(document.activeElement) ? moduleInfoCard.querySelector('.agent-chat-form input[name="message"]') : null;
     const activeInputValue = activeInput?.value || "";
+    const autoScrollChat = shouldAutoScrollChat();
     moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
     positionModuleInfoCard(selectedRoomKey);
     if (activeInput) {
@@ -4035,6 +4041,7 @@ function renderShellData() {
         nextInput.focus({ preventScroll: true });
       }
     }
+    if (autoScrollChat) requestAnimationFrame(scrollAgentChatToLatest);
   }
 }
 
@@ -7146,6 +7153,16 @@ moduleInfoCard?.addEventListener("input", () => {
   restoreModuleInfoPageScroll();
   window.requestAnimationFrame(restoreModuleInfoPageScroll);
 });
+
+moduleInfoCard?.addEventListener(
+  "scroll",
+  (event) => {
+    const chatLog = event.target?.closest?.(".agent-chat-log, .office-chat-log");
+    if (!chatLog) return;
+    chatLog.dataset.userScrolledUp = isChatNearBottom(chatLog) ? "false" : "true";
+  },
+  true,
+);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && moduleInfoCard && !moduleInfoCard.hidden) {

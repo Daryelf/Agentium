@@ -3084,10 +3084,6 @@ function renderMiniMap() {
           <stop offset="46%" stop-color="rgba(125, 211, 252, 0.85)" />
           <stop offset="100%" stop-color="rgba(167, 139, 250, 0.74)" />
         </linearGradient>
-        <linearGradient id="miniSweepGradient" x1="50%" y1="50%" x2="100%" y2="16%">
-          <stop offset="0%" stop-color="rgba(34, 211, 238, 0.36)" />
-          <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
-        </linearGradient>
       </defs>
       <g class="mini-starfield">
         <circle cx="13" cy="16" r="0.45"></circle>
@@ -3110,7 +3106,6 @@ function renderMiniMap() {
       <circle class="mini-core-node ${selectedCore ? "selected" : ""}" cx="${core.position.x}" cy="${core.position.y}" r="3.4"></circle>
       <g class="mini-platforms">${platforms}</g>
       <g class="mini-nodes">${dots}</g>
-      <path class="mini-sweep" d="M 50 47 L 93 16 A 48 32 0 0 1 96 47 Z"></path>
     </svg>
   `;
 }

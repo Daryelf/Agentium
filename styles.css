@@ -2446,7 +2446,7 @@ main {
 .office-detail-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.34fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.28fr);
   gap: 12px;
   padding: 0 16px 16px;
   overflow: auto;
@@ -2497,10 +2497,25 @@ main {
   line-height: 1.38;
 }
 
+.office-command-grid {
+  display: grid;
+  grid-template-columns: minmax(380px, 1.08fr) minmax(280px, 0.72fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
 .office-capabilities {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.office-command-grid .office-capabilities {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.office-command-grid .office-capabilities > div {
+  padding: 10px;
 }
 
 .office-capabilities > div,
@@ -2751,7 +2766,8 @@ main {
 }
 
 .office-chat-log {
-  max-height: 150px;
+  min-height: 178px;
+  max-height: 236px;
   display: grid;
   gap: 8px;
   overflow: auto;
@@ -2760,32 +2776,59 @@ main {
 
 .office-chat article,
 .office-approval-queue article {
-  padding: 9px;
+  padding: 10px;
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.36);
   border: 1px solid rgba(125, 211, 252, 0.09);
 }
 
 .office-chat article.operator {
+  margin-left: 36px;
   border-color: rgba(139, 92, 246, 0.24);
   background: rgba(59, 7, 100, 0.18);
 }
 
-.office-chat-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
+.office-chat-prompts {
+  display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 10px;
 }
 
+.office-chat-prompts button {
+  min-height: 30px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 999px;
+  padding: 0 11px;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.68);
+  font-size: 0.65rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.office-chat-prompts button:first-child {
+  color: #67e8f9;
+  border-color: rgba(34, 211, 238, 0.28);
+  background: rgba(14, 116, 144, 0.18);
+}
+
+.office-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 78px;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .office-chat-form input {
   min-width: 0;
-  height: 34px;
-  border: 1px solid rgba(125, 211, 252, 0.14);
-  border-radius: 10px;
-  padding: 0 10px;
+  height: 40px;
+  border: 1px solid rgba(34, 211, 238, 0.26);
+  border-radius: 12px;
+  padding: 0 12px;
   color: var(--text);
-  background: rgba(2, 6, 23, 0.64);
+  background: rgba(2, 6, 23, 0.78);
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.08);
   outline: none;
 }
 

@@ -3235,7 +3235,7 @@ function depoChatResponse(question, roomKey) {
 
 function depoChatMessagesFor(roomKey) {
   const resolved = resolveRoomKey(roomKey);
-  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-3);
+  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-6);
   if (messages.length) return messages;
   return depoStarterMessages(moduleCardData(resolved));
 }
@@ -3716,11 +3716,12 @@ function officeNotesMarkup(runtime) {
 
 function officeChatMarkup(card) {
   const messages = depoChatMessagesFor(card.id);
+  const promptButtons = ["Run office check", "Create task plan", "Package for approval"];
   return `
     <section class="office-chat">
       <div class="office-section-head">
-        <h4>Ask Agent 101</h4>
-        <span>Draft-only</span>
+        <h4>Agent 101 Command Chat</h4>
+        <span>Talk + assign</span>
       </div>
       <div class="office-chat-log" aria-live="polite">
         ${messages
@@ -3734,9 +3735,12 @@ function officeChatMarkup(card) {
           )
           .join("")}
       </div>
+      <div class="office-chat-prompts" aria-label="Agent 101 quick prompts">
+        ${promptButtons.map((prompt) => `<button type="button" data-chat-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`).join("")}
+      </div>
       <form class="agent-chat-form office-chat-form" data-depo-chat-form>
-        <input name="message" type="text" autocomplete="off" placeholder="Ask about this office..." />
-        <button type="submit">Ask</button>
+        <input name="message" type="text" autocomplete="off" placeholder="Tell Agent 101 what to check, plan, or package in this office..." />
+        <button type="submit">Send</button>
       </form>
     </section>
   `;
@@ -3773,20 +3777,23 @@ function businessOfficeMarkup(card) {
               <p>${escapeHtml(profile.goal)}</p>
             </div>
           </section>
-          <section class="office-capabilities">
-            <div>
-              <h4>What This Office Will Do</h4>
-              <ul>${safeList(profile.willDo).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-            </div>
-            <div>
-              <h4>What It Needs Access To</h4>
-              <ul>${safeList(profile.needsAccess).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-            </div>
-            <div>
-              <h4>What Is Blocked</h4>
-              <ul class="blocked">${safeList(profile.blocked).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-            </div>
-          </section>
+          <div class="office-command-grid">
+            ${card.id === "human-gate" ? humanGateOfficeQueueMarkup(runtime) : officeChatMarkup(card)}
+            <section class="office-capabilities">
+              <div>
+                <h4>What This Office Will Do</h4>
+                <ul>${safeList(profile.willDo).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+              </div>
+              <div>
+                <h4>What It Needs Access To</h4>
+                <ul>${safeList(profile.needsAccess).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+              </div>
+              <div>
+                <h4>What Is Blocked</h4>
+                <ul class="blocked">${safeList(profile.blocked).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+              </div>
+            </section>
+          </div>
           <section class="office-pipeline">
             <div class="office-section-head">
               <h4>Task Pipeline Overview</h4>
@@ -3835,7 +3842,6 @@ function businessOfficeMarkup(card) {
               })
               .join("")}
           </section>
-          ${card.id === "human-gate" ? humanGateOfficeQueueMarkup(runtime) : officeChatMarkup(card)}
           <section class="office-quick-actions">
             <h4>Quick Actions</h4>
             <div>
@@ -6124,6 +6130,214 @@ function addBlockedActionApproval(actionType, roomKey, source = "Agent 101 chat"
   state.approvals = state.approvals.slice(0, 16);
 }
 
+function includesAny(text, phrases) {
+  return phrases.some((phrase) => text.includes(phrase));
+}
+
+function officeRoomFromChatText(text, fallbackRoom = "depo-habitat") {
+  const normalized = String(text || "").toLowerCase();
+  const officeMap = [
+    ["clips-office", ["clips", "clip", "video", "content"]],
+    ["stock-office", ["stock", "market", "ticker", "watchlist"]],
+    ["etsy-office", ["etsy", "pod", "print on demand", "listing", "store"]],
+    ["essentrx-office", ["essentrx", "scent", "fragrance", "brand"]],
+    ["human-gate", ["human gate", "approval gate"]],
+    ["memory-vault", ["memory", "knowledge", "vault", "remember"]],
+    ["output-bench", ["output", "artifact", "deliverable"]],
+    ["system-log", ["system log", "audit", "logs", "feed"]],
+    ["depo-habitat", ["agent office", "agent 101", "main agent", "head office"]],
+  ];
+  const match = officeMap.find(([, terms]) => terms.some((term) => normalized.includes(term)));
+  return match ? match[0] : resolveRoomKey(fallbackRoom);
+}
+
+function workflowForOffice(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  if (resolved === "stock-office") return "workflow-stock-watch";
+  if (resolved === "depo-habitat" || resolved === "human-gate") return "workflow-agent-factory";
+  return "workflow-pod-lab";
+}
+
+function intentForOffice(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  if (resolved === "stock-office") return "market_monitoring";
+  if (resolved === "clips-office") return "content_creation";
+  if (resolved === "etsy-office") return "print_on_demand";
+  if (resolved === "essentrx-office") return "brand_operations";
+  if (resolved === "human-gate") return "approval_review";
+  if (resolved === "depo-habitat") return "agent_operations";
+  return "business_operations";
+}
+
+function riskForOffice(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  if (resolved === "stock-office" || resolved === "human-gate") return "high";
+  if (resolved === "depo-habitat" || resolved === "essentrx-office") return "medium";
+  return "low";
+}
+
+function blockedActionFromChatText(text) {
+  const normalized = String(text || "").toLowerCase();
+  const blockedMap = [
+    ["publish externally", ["publish", "post", "launch listing", "make live", "go live"]],
+    ["spend money", ["spend", "buy", "purchase", "pay for", "ad spend", "run ads"]],
+    ["move money", ["move money", "transfer", "withdraw", "deposit", "send money"]],
+    ["place trades", ["trade", "buy stock", "sell stock", "broker", "robinhood order"]],
+    ["contact customers", ["contact customer", "email customer", "message customer", "dm customer", "call customer"]],
+    ["change accounts", ["change account", "change password", "change api key", "update credentials", "grant permission"]],
+    ["create live agents", ["create live agent", "activate new agent", "deploy agent", "give permission"]],
+    ["deploy campaigns", ["deploy campaign", "start campaign", "send campaign"]],
+  ];
+  const match = blockedMap.find(([, terms]) => terms.some((term) => normalized.includes(term)));
+  return match ? match[0] : "";
+}
+
+function createOfficeChatTask(roomKey, prompt) {
+  const resolved = resolveRoomKey(roomKey);
+  const profile = businessOfficeProfile(resolved);
+  const workflowId = workflowForOffice(resolved);
+  const task = {
+    id: `office-chat-task-${Date.now()}`,
+    title: `${profile.title.replace(/^Business Office: |^Agent Office: /, "")}: ${String(prompt).slice(0, 56)}`,
+    operatorText: String(prompt),
+    workflowId,
+    intent: intentForOffice(resolved),
+    risk: riskForOffice(resolved),
+    status: "queued",
+    evidence: [`Requested from Agent 101 chat for ${profile.title}.`, "Draft-only local task; no external action executed."],
+    output: "",
+    roomId: resolved,
+  };
+  state.tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  state.tasks.unshift(task);
+  state.tasks = state.tasks.slice(0, 30);
+  if (state.mission) state.mission.activeWorkflowId = workflowId;
+  if (depoWorkflowStages.includes(resolved)) depoAgent.currentStage = resolved;
+  addSystemLogEntry({
+    type: "office_task_queued",
+    message: `Agent 101 queued local work for ${profile.title}.`,
+    riskLevel: task.risk,
+    roomId: resolved,
+  });
+  return task;
+}
+
+function runOfficeChatCheck(roomKey, prompt) {
+  const resolved = resolveRoomKey(roomKey);
+  const profile = businessOfficeProfile(resolved);
+  if (depoWorkflowStages.includes(resolved)) depoAgent.currentStage = resolved;
+  addSystemLogEntry({
+    type: "office_check",
+    message: `Agent 101 checked ${profile.title}: access, blockers, queue, memory, and Human Gate risk.`,
+    riskLevel: riskForOffice(resolved),
+    roomId: resolved,
+  });
+  return {
+    profile,
+    response: `I checked ${profile.title} locally. Status: ${profile.status}. Priority: ${profile.priority}. I reviewed access, blockers, queued work, memory, and Human Gate risk. Nothing external was touched. Next safe move: give me one bounded job here, or ask me to package the risky part for approval.`,
+  };
+}
+
+function queueOfficeApprovalPackage(roomKey, prompt) {
+  const resolved = resolveRoomKey(roomKey);
+  const profile = businessOfficeProfile(resolved);
+  state.approvals = Array.isArray(state.approvals) ? state.approvals : [];
+  state.approvals.unshift({
+    id: `approval-office-chat-${resolved}-${Date.now()}`,
+    title: `Review ${profile.title} request`,
+    risk: riskForOffice(resolved),
+    evidence: `${profile.title} request from Agent 101 chat: ${String(prompt).slice(0, 220)}`,
+    action: "Operator review required before any external execution. Agent 101 only prepared a local package.",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    roomId: resolved,
+  });
+  state.approvals = state.approvals.slice(0, 16);
+  addSystemLogEntry({
+    type: "approval_package_queued",
+    message: `Agent 101 prepared ${profile.title} for Human Gate review.`,
+    riskLevel: riskForOffice(resolved),
+    roomId: "human-gate",
+  });
+  pushRoomActivity(resolved, "Approval package prepared for Human Gate.");
+  return {
+    profile,
+    response: `I prepared a Human Gate package for ${profile.title}. It is waiting for your approve, send back, or decline decision. I did not execute anything outside Argentum.`,
+  };
+}
+
+function handleOfficeChatCommand(roomKey, message) {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const targetRoom = officeRoomFromChatText(normalized, roomKey);
+  const targetProfile = businessOfficeProfile(targetRoom);
+  const blockedAction = blockedActionFromChatText(normalized);
+  if (blockedAction) {
+    return {
+      targetRoom,
+      changedState: true,
+      meta: { provider: "local", mode: "demo", requiresApproval: true, blockedAction, riskLevel: "high", logs: [`Blocked ${blockedAction} from ${targetProfile.title}.`] },
+      text: `That crosses the Human Gate boundary: ${blockedAction}. I can prepare the package and evidence, but I cannot execute it. I am routing this as an approval request instead of doing it live.`,
+    };
+  }
+
+  if (includesAny(normalized, ["package", "request approval", "send for approval", "send to human gate", "prepare approval", "route to human gate", "submit for review", "send for review"])) {
+    const result = queueOfficeApprovalPackage(targetRoom, message);
+    return {
+      targetRoom,
+      changedState: true,
+      meta: { provider: "local", mode: "demo", requiresApproval: false, riskLevel: riskForOffice(targetRoom), logs: [`Prepared Human Gate package for ${targetProfile.title}.`] },
+      text: result.response,
+    };
+  }
+
+  if (includesAny(normalized, ["run office check", "run check", "local check", "check this", "check for", "check the", "go check", "inspect", "scan"])) {
+    const result = runOfficeChatCheck(targetRoom, message);
+    return {
+      targetRoom,
+      changedState: true,
+      meta: { provider: "local", mode: "demo", requiresApproval: false, riskLevel: riskForOffice(targetRoom), logs: [`Ran local check for ${targetProfile.title}.`] },
+      text: result.response,
+    };
+  }
+
+  if (includesAny(normalized, ["create task", "task plan", "make a plan", "go do", "do this", "start work", "bounded job", "assign"])) {
+    const task = createOfficeChatTask(targetRoom, message);
+    return {
+      targetRoom,
+      changedState: true,
+      meta: { provider: "local", mode: "demo", requiresApproval: false, riskLevel: task.risk, logs: [`Queued ${task.title}.`] },
+      text: `I queued that as a bounded local job for ${targetProfile.title}. I will work it in draft-only mode, collect evidence, verify assumptions, prepare the output, and route anything risky to Human Gate. Task: ${task.title}.`,
+    };
+  }
+
+  if (includesAny(normalized, ["save note", "remember this", "add memory"])) {
+    if (!state.memory) state.memory = { working: [], shared: [], agent: [] };
+    if (!Array.isArray(state.memory.working)) state.memory.working = [];
+    state.memory.working.unshift({
+      id: `mem-chat-${Date.now()}`,
+      title: `${targetProfile.title} note`,
+      body: String(message),
+      provenance: "agent_101_chat",
+      updatedAt: new Date().toISOString(),
+    });
+    addSystemLogEntry({
+      type: "chat_memory_saved",
+      message: `Agent 101 saved a local memory note for ${targetProfile.title}.`,
+      riskLevel: "low",
+      roomId: targetRoom,
+    });
+    return {
+      targetRoom,
+      changedState: true,
+      meta: { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [`Saved memory for ${targetProfile.title}.`] },
+      text: `Saved that as a local working-memory note for ${targetProfile.title}. I did not store any secrets or external credentials.`,
+    };
+  }
+
+  return null;
+}
+
 async function submitDepoChat(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const trimmed = String(message || "").trim();
@@ -6131,7 +6345,11 @@ async function submitDepoChat(roomKey, message) {
   depoChatMessages.push({ roomId: resolved, speaker: "operator", text: trimmed });
   let responseText = depoChatResponse(trimmed, resolved);
   let responseMeta = { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [] };
-  if (apiAvailable) {
+  const command = handleOfficeChatCommand(resolved, trimmed);
+  if (command) {
+    responseText = command.text;
+    responseMeta = command.meta || responseMeta;
+  } else if (apiAvailable) {
     try {
       const payload = await postJson("/api/depo/chat", {
         message: trimmed,
@@ -6171,7 +6389,7 @@ async function submitDepoChat(roomKey, message) {
   });
   if (responseMeta.requiresApproval || responseMeta.blockedAction) {
     const actionType = responseMeta.blockedAction || "external_api_action";
-    addBlockedActionApproval(actionType, resolved, "Agent 101 brain");
+    addBlockedActionApproval(actionType, command?.targetRoom || resolved, "Agent 101 brain");
     addSystemLogEntry({
       type: "human_gate_block",
       message: `Human Gate approval required for ${actionType}.`,
@@ -6183,7 +6401,8 @@ async function submitDepoChat(roomKey, message) {
     openModuleInfoCard("human-gate");
     return;
   }
-  renderSystemFeed();
+  if (command?.changedState) render();
+  else renderSystemFeed();
   openModuleInfoCard(resolved, { preservePosition: true, focusInput: true, scrollChat: true });
 }
 
@@ -6241,7 +6460,9 @@ function handleDepoPromptAction(prompt, stationId) {
   } else if (normalized === "propose a new agent") {
     draftAgentBlueprint(stationId);
   } else if (normalized === "package for approval") {
-    packageRoomForApproval(stationId);
+    submitDepoChat(stationId, "Package this current office for approval");
+  } else if (normalized === "run office check") {
+    submitDepoChat(stationId, "Run office check");
   } else if (normalized === "view current stage") {
     submitDepoChat(stationId, "View current stage");
   } else if (normalized === "view human gate rules") {

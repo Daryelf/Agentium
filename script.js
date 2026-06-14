@@ -4723,17 +4723,148 @@ function renderTemplates() {
 }
 
 function pendingApprovals() {
-  return state.approvals.filter((approval) => approval.status === "pending");
+  return (state.approvals || []).filter((approval) => approval.status === "pending");
+}
+
+function approvalCreatedAt(approval, fallbackIndex = 0) {
+  return approval.createdAt || approval.submittedAt || approval.updatedAt || approval.resolvedAt || new Date(Date.now() - fallbackIndex * 7 * 60 * 1000).toISOString();
+}
+
+function isTodayIso(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return date.toDateString() === now.toDateString();
+}
+
+function minutesBetween(start, end) {
+  const startDate = new Date(start || "");
+  const endDate = new Date(end || "");
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+  return Math.max(0, Math.round((endDate.getTime() - startDate.getTime()) / 60000));
+}
+
+function formatReviewDuration(minutes) {
+  if (minutes === null || minutes === undefined) return "--";
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
+function approvalDecisionGroups() {
+  const approvals = state.approvals || [];
+  const approved = approvals.filter((approval) => approval.status === "approved");
+  const revised = approvals.filter((approval) => ["needs_revision", "revision_requested", "revised", "sent_back"].includes(approval.status));
+  const blocked = approvals.filter((approval) => ["blocked", "declined", "rejected"].includes(approval.status));
+  return { approvals, approved, revised, blocked };
+}
+
+function gateDraftCount() {
+  const tasks = state.tasks || [];
+  const artifacts = state.artifacts || [];
+  const taskDrafts = tasks.filter((task) => ["queued", "running", "processing", "in_progress", "draft_ready", "needs_revision"].includes(task.status)).length;
+  const artifactDrafts = artifacts.filter((artifact) => ["draft", "ready", "pending"].includes(artifact.status)).length;
+  return taskDrafts + artifactDrafts;
+}
+
+function riskBars(risk = "medium") {
+  const normalized = String(risk || "medium").toLowerCase();
+  const level = normalized === "high" ? 5 : normalized === "medium" ? 3 : 2;
+  return Array.from({ length: 5 }, (_, index) => `<i class="${index < level ? "on" : ""}"></i>`).join("");
+}
+
+function gateRecentEntries(limit = 4) {
+  const approvalEntries = (state.approvals || []).map((approval, index) => ({
+    title: approval.status === "pending" ? `${approval.title} submitted` : `${statusLabel(approval.status)}: ${approval.title}`,
+    body: approval.action || approval.evidence || "Approval package recorded.",
+    createdAt: approval.resolvedAt || approvalCreatedAt(approval, index),
+    source: approval.status === "pending" ? "Approval Queue" : "Decision",
+  }));
+  const auditEntries = (state.audit || []).map((entry) => ({
+    title: entry.title || "System event",
+    body: entry.body || "Event recorded.",
+    createdAt: entry.createdAt || entry.timestamp || "",
+    source: "System Log",
+  }));
+  return [...approvalEntries, ...auditEntries]
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    .slice(0, limit);
+}
+
+function updateHumanGateMetrics(approvals) {
+  const { approved, revised, blocked } = approvalDecisionGroups();
+  const pending = approvals.length;
+  const drafts = gateDraftCount();
+  const escalated = approvals.filter((approval) => String(approval.risk || "").toLowerCase() === "high").length;
+  const approvedToday = approved.filter((approval) => isTodayIso(approval.resolvedAt || approval.updatedAt)).length;
+  const decisions = approved.length + revised.length + blocked.length;
+  const accuracy = decisions ? Math.round((approved.length / decisions) * 100) : 0;
+  const reviewMinutes = [...approved, ...revised, ...blocked]
+    .map((approval, index) => minutesBetween(approvalCreatedAt(approval, index), approval.resolvedAt || approval.updatedAt))
+    .filter((value) => value !== null);
+  const avgReview = reviewMinutes.length
+    ? Math.round(reviewMinutes.reduce((sum, value) => sum + value, 0) / reviewMinutes.length)
+    : null;
+
+  setText(queueCount, String(pending));
+  setText(document.querySelector("#gateDraftCount"), String(drafts));
+  setText(document.querySelector("#gateEscalatedCount"), String(escalated));
+  setText(document.querySelector("#gateApprovedTodayCount"), String(approvedToday));
+  setText(document.querySelector("#gatePendingTabCount"), String(pending));
+  setText(document.querySelector("#gateDraftTabCount"), String(drafts));
+  setText(document.querySelector("#gateApprovedTabCount"), String(approved.length));
+  setText(document.querySelector("#gateBlockedTabCount"), String(blocked.length));
+  setText(document.querySelector("#approvalShowingText"), pending ? `Showing ${pending} pending approval${pending === 1 ? "" : "s"}` : "No pending approvals");
+  setText(document.querySelector("#gateTimelineSubmitted"), pending ? `${pending} queued` : "Clear");
+  setText(document.querySelector("#gateTimelineReview"), pending ? "Needs decision" : "Clear");
+  setText(document.querySelector("#gateAccuracyMetric"), `${accuracy}%`);
+  setText(document.querySelector("#gateAvgReviewMetric"), formatReviewDuration(avgReview));
+  setText(document.querySelector("#gateApprovedInsight"), String(approved.length));
+  setText(document.querySelector("#gateRevisedInsight"), String(revised.length));
+  setText(document.querySelector("#gateBlockedInsight"), String(blocked.length));
+  const insightRing = document.querySelector("#gateInsightRing");
+  if (insightRing) insightRing.style.setProperty("--value", String(accuracy));
+
+  const activityList = document.querySelector("#gateRecentActivity");
+  if (activityList) {
+    const entries = gateRecentEntries(5);
+    activityList.innerHTML = entries.length
+      ? entries.map((entry) => `
+          <article>
+            <span>${escapeHtml(formatFeedTime(entry))}</span>
+            <div>
+              <strong>${escapeHtml(entry.title)}</strong>
+              <p>${escapeHtml(entry.body)}</p>
+            </div>
+            <em>${escapeHtml(entry.source)}</em>
+          </article>
+        `).join("")
+      : `
+          <article>
+            <span>Now</span>
+            <div>
+              <strong>No approval activity yet</strong>
+              <p>Agent 101 will log every review package and decision here.</p>
+            </div>
+            <em>Human Gate</em>
+          </article>
+        `;
+  }
 }
 
 function renderApprovals() {
   const approvals = pendingApprovals();
-  queueCount.textContent = `${approvals.length} pending`;
+  updateHumanGateMetrics(approvals);
   if (approvals.length === 0) {
     approvalList.innerHTML = `
-      <article class="approval-item empty-state">
+      <article class="approval-item gate-approval-card empty-state">
+        <span class="gate-approval-icon" aria-hidden="true">✓</span>
+        <div class="gate-approval-body">
         <strong>No pending approvals</strong>
         <p>Agent 101 will create new approval packages when a workflow reaches the human gate.</p>
+        </div>
       </article>
     `;
     return;
@@ -4741,18 +4872,28 @@ function renderApprovals() {
   approvalList.innerHTML = approvals
     .map(
       (approval) => `
-        <article class="approval-item">
-          <div class="approval-top">
-            <div>
-              <strong>${escapeHtml(approval.title)}</strong>
-              <p>${escapeHtml(approval.action)}</p>
+        <article class="approval-item gate-approval-card ${escapeHtml(approval.risk || "medium")}">
+          <span class="gate-approval-icon" aria-hidden="true">${String(approval.risk || "").toLowerCase() === "high" ? "!" : "□"}</span>
+          <div class="gate-approval-body">
+            <div class="gate-approval-title">
+              <div>
+                <strong>${escapeHtml(approval.title || "Approval package")}</strong>
+                <span>${escapeHtml(approval.workflowId ? workflowName(approval.workflowId) : approvalSourceLabel(approval))}</span>
+              </div>
+              <em>${escapeHtml(formatFeedTime({ createdAt: approvalCreatedAt(approval) }))}</em>
             </div>
-            <span class="risk-tag ${escapeHtml(approval.risk)}">${escapeHtml(approval.risk)} risk</span>
+            <p>${escapeHtml(approval.action || "Operator review required before any external action.")}</p>
+            <p><strong>Evidence:</strong> ${escapeHtml(approval.evidence || "No evidence attached yet.")}</p>
+            <small>Submitted by Agent 101 · ${escapeHtml(formatFeedTime({ createdAt: approvalCreatedAt(approval) }))}</small>
           </div>
-          <p><strong>Evidence:</strong> ${escapeHtml(approval.evidence)}</p>
-          <div class="approval-actions">
-            <button class="ghost-button" type="button" data-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
+          <div class="gate-risk-block">
+            <span>Risk level</span>
+            <strong>${escapeHtml(statusLabel(approval.risk || "medium"))}</strong>
+            <div class="gate-risk-meter ${escapeHtml(approval.risk || "medium")}" aria-hidden="true">${riskBars(approval.risk)}</div>
+          </div>
+          <div class="approval-actions gate-card-actions">
             <button class="small-button" type="button" data-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve draft</button>
+            <button class="ghost-button" type="button" data-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
             <button class="danger-button" type="button" data-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Block</button>
           </div>
         </article>
@@ -6551,6 +6692,30 @@ approvalList.addEventListener("click", (event) => {
   const action = button.dataset.approvalAction;
   const id = button.dataset.approvalId;
   changeApprovalStatus(id, action, "Human Gate page");
+});
+
+document.querySelectorAll("[data-gate-quick-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.gateQuickAction;
+    if (action === "review-all") {
+      approvalList?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      addLocalAudit("Human Gate opened", "Operator reviewed the current approval queue.");
+      render();
+      return;
+    }
+    if (action === "rule") {
+      addLocalAudit("Approval rule drafted", "Agent 101 can draft a new local approval rule, but rule changes remain operator-controlled.");
+      render();
+      return;
+    }
+    if (action === "history") {
+      activateView("feed");
+      return;
+    }
+    if (action === "settings") {
+      activateView("settings");
+    }
+  });
 });
 
 taskForm.addEventListener("submit", (event) => {

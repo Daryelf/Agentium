@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=agent-control-1" />
+    <link rel="stylesheet" href="./styles.css?v=human-gate-center-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -656,40 +656,160 @@
             </div>
           </div>
         </section>
-              <div class="panel-heading">
-                <div>
-                  <p class="eyebrow">Reusable Playbooks</p>
-                  <h3>Approved functions</h3>
-                </div>
-                <span class="metric-chip" id="functionCount">1 function</span>
-              </div>
-              <div class="function-list" id="functionList"></div>
-            </section>
 
-            <section class="panel function-library-panel">
-              <div class="panel-heading">
-                <div>
-                  <p class="eyebrow">Run History</p>
-                  <h3>Recent function runs</h3>
+        <section class="view" id="view-approval" aria-label="Human Gate approval center">
+          <div class="human-gate-center">
+            <div class="human-gate-main">
+              <section class="panel human-gate-hero">
+                <div class="gate-hero-copy">
+                  <span class="gate-hero-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M12 3 3.8 18h16.4L12 3Z" />
+                      <path d="M12 8v5" />
+                      <path d="M12 16h.01" />
+                    </svg>
+                  </span>
+                  <div>
+                    <p class="eyebrow">Human Gate › Approval Center</p>
+                    <h3>Review and approve Agent 101 packages</h3>
+                    <p>All critical actions stay locked until you review the evidence and choose the next move.</p>
+                  </div>
                 </div>
-                <span class="metric-chip" id="executionCount">0 runs</span>
-              </div>
-              <div class="execution-list" id="executionList"></div>
-            </section>
-          </div>
-        </section>
+                <div class="gate-stats" aria-label="Approval center status">
+                  <span><strong id="queueCount">0</strong><small>Pending</small></span>
+                  <span><strong id="gateDraftCount">0</strong><small>Drafts</small></span>
+                  <span><strong id="gateEscalatedCount">0</strong><small>Escalated</small></span>
+                  <span><strong id="gateApprovedTodayCount">0</strong><small>Approved Today</small></span>
+                </div>
+              </section>
 
-        <section class="view" id="view-approval" aria-label="Approval queue">
-          <section class="panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Human gate</p>
-                <h3>Approval queue</h3>
-              </div>
-              <span class="metric-chip" id="queueCount">2 pending</span>
+              <section class="panel gate-tabs-panel">
+                <div class="gate-tab-row" aria-label="Approval filters">
+                  <button class="gate-tab active" type="button">
+                    <span>Pending approvals</span>
+                    <strong id="gatePendingTabCount">0</strong>
+                  </button>
+                  <button class="gate-tab" type="button">
+                    <span>Drafts</span>
+                    <strong id="gateDraftTabCount">0</strong>
+                  </button>
+                  <button class="gate-tab" type="button">
+                    <span>Approved</span>
+                    <strong id="gateApprovedTabCount">0</strong>
+                  </button>
+                  <button class="gate-tab" type="button">
+                    <span>Blocked</span>
+                    <strong id="gateBlockedTabCount">0</strong>
+                  </button>
+                  <button class="gate-filter-button" type="button" data-gate-quick-action="review-all">Review queue</button>
+                </div>
+              </section>
+
+              <section class="panel gate-queue-panel">
+                <div class="approval-list gate-approval-list" id="approvalList"></div>
+                <div class="gate-queue-footer">
+                  <span id="approvalShowingText">Showing 0 pending approvals</span>
+                  <div aria-hidden="true"><i></i><i></i><i></i></div>
+                </div>
+              </section>
+
+              <section class="panel gate-timeline-panel">
+                <div class="panel-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Approval timeline</p>
+                    <h3>How a package clears</h3>
+                  </div>
+                </div>
+                <div class="gate-timeline" aria-label="Approval timeline">
+                  <span class="done"><strong>1</strong><small>Agent creates work</small><em id="gateTimelineCreated">Ready</em></span>
+                  <span class="done"><strong>2</strong><small>Submitted</small><em id="gateTimelineSubmitted">Queued</em></span>
+                  <span class="active"><strong>3</strong><small>Awaiting review</small><em id="gateTimelineReview">Now</em></span>
+                  <span><strong>4</strong><small>Decision</small><em>Approve / send back / block</em></span>
+                  <span><strong>5</strong><small>Routed</small><em>After approval</em></span>
+                  <span><strong>6</strong><small>Logged</small><em>Audit saved</em></span>
+                </div>
+              </section>
+
+              <section class="panel gate-activity-panel">
+                <div class="panel-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Recent activity</p>
+                    <h3>Human Gate log</h3>
+                  </div>
+                  <button class="ghost-button compact-action" type="button" data-gate-quick-action="history">View all logs</button>
+                </div>
+                <div class="gate-activity-list" id="gateRecentActivity"></div>
+              </section>
             </div>
-            <div class="approval-list" id="approvalList"></div>
-          </section>
+
+            <aside class="human-gate-side" aria-label="Human Gate side panel">
+              <section class="panel gate-side-panel gate-rules-panel">
+                <p class="eyebrow">Operating rules</p>
+                <h3>Clean limits</h3>
+                <div class="gate-rule-card ok">
+                  <span>OK</span>
+                  <div>
+                    <strong>Allowed locally</strong>
+                    <p>Research, organize evidence, draft workflows, prepare reports, save notes, and package work for review.</p>
+                  </div>
+                </div>
+                <div class="gate-rule-card no">
+                  <span>NO</span>
+                  <div>
+                    <strong>Blocked without approval</strong>
+                    <p>Publishing, spending, trades, customer contact, account changes, API key changes, or live agent creation.</p>
+                  </div>
+                </div>
+                <div class="gate-rule-metrics">
+                  <div><span>State</span><strong>active / supervised</strong></div>
+                  <div><span>External actions</span><strong>Draft only</strong></div>
+                </div>
+              </section>
+
+              <section class="panel gate-side-panel">
+                <p class="eyebrow">Quick actions</p>
+                <div class="gate-quick-actions">
+                  <button type="button" data-gate-quick-action="review-all">Review all pending</button>
+                  <button type="button" data-gate-quick-action="rule">Create approval rule</button>
+                  <button type="button" data-gate-quick-action="history">View approval history</button>
+                  <button type="button" data-gate-quick-action="settings">Approval settings</button>
+                </div>
+              </section>
+
+              <section class="panel gate-side-panel gate-insights-panel">
+                <p class="eyebrow">Approval insights</p>
+                <div class="gate-insight-top">
+                  <div class="gate-insight-ring" id="gateInsightRing" style="--value: 0">
+                    <strong id="gateAccuracyMetric">0%</strong>
+                    <span>Accuracy</span>
+                  </div>
+                  <div>
+                    <strong>Approval accuracy</strong>
+                    <p>Based on current approval decisions.</p>
+                    <small>Avg. review time <b id="gateAvgReviewMetric">--</b></small>
+                  </div>
+                </div>
+                <div class="gate-insight-list">
+                  <span><i></i>Approved <strong id="gateApprovedInsight">0</strong></span>
+                  <span><i></i>Sent back <strong id="gateRevisedInsight">0</strong></span>
+                  <span><i></i>Blocked <strong id="gateBlockedInsight">0</strong></span>
+                </div>
+                <div class="gate-insight-spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+              </section>
+
+              <section class="panel gate-side-panel">
+                <p class="eyebrow">Connected offices</p>
+                <div class="gate-office-list">
+                  <span><b>Clips Office</b><em>Draft lane</em></span>
+                  <span><b>Stock Office</b><em>Read-only</em></span>
+                  <span><b>Etsy Store Office</b><em>Approval gated</em></span>
+                  <span><b>Essentrx Office</b><em>Local prep</em></span>
+                  <span><b>System Log</b><em>Active</em></span>
+                  <span><b>Human Gate</b><em>Review layer</em></span>
+                </div>
+              </section>
+            </aside>
+          </div>
         </section>
 
         <section class="view" id="view-outputs" aria-label="Business outputs">
@@ -1518,6 +1638,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=agent-control-1"></script>
+    <script src="./script.js?v=human-gate-center-1"></script>
   </body>
 </html>

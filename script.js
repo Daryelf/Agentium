@@ -122,6 +122,14 @@ const fallbackState = {
   ],
   workflows: [
     {
+      id: "workflow-clips-office",
+      name: "Clips Office",
+      status: "active_draft",
+      risk: "medium",
+      description: "Plan short-form clips, prepare CapCut handoff instructions, draft posting packages, and route publishing through Human Gate.",
+      nextFunction: "Create a clip brief, CapCut edit plan, captions, and approval package without posting.",
+    },
+    {
       id: "workflow-pod-lab",
       name: "Print-on-demand lab",
       status: "active_draft",
@@ -147,6 +155,14 @@ const fallbackState = {
     },
   ],
   taskTemplates: [
+    {
+      id: "tpl-clips-video-package",
+      name: "Clips video package",
+      workflowId: "workflow-clips-office",
+      risk: "medium",
+      prompt: "Create 3 short clips from raw footage, prepare edits in CapCut, write captions, prepare TikTok posting drafts, and package everything for Human Gate approval. Do not post or change accounts.",
+      outcome: "Clip brief + CapCut handoff + posting package",
+    },
     {
       id: "tpl-pod-niche-scan",
       name: "POD niche scan",
@@ -294,6 +310,12 @@ const taskInput = document.querySelector("#taskInput");
 const taskWorkflow = document.querySelector("#taskWorkflow");
 const taskList = document.querySelector("#taskList");
 const taskCount = document.querySelector("#taskCount");
+const agentToolGrid = document.querySelector("#agentToolGrid");
+const settingsToolGrid = document.querySelector("#settingsToolGrid");
+const agentToolRefreshBtn = document.querySelector("#agentToolRefreshBtn");
+const clipsStageMetric = document.querySelector("#clipsStageMetric");
+const clipsFilesMetric = document.querySelector("#clipsFilesMetric");
+const clipsApprovalStatus = document.querySelector("#clipsApprovalStatus");
 const functionList = document.querySelector("#functionList");
 const functionCount = document.querySelector("#functionCount");
 const executionList = document.querySelector("#executionList");
@@ -1774,6 +1796,7 @@ let aiProviderSettings = {
   },
 };
 let aiProviderNotice = "";
+let agent101ToolStatus = null;
 let sidebarSystemStatus = null;
 
 const settingsSectionGroups = {
@@ -1842,6 +1865,7 @@ async function loadState() {
     apiAvailable = false;
   }
   await loadAiProviderSettings();
+  await loadAgent101ToolStatus();
   await loadSidebarSystemStatus();
   render();
   applyMapView(false);
@@ -4522,6 +4546,93 @@ async function loadAiProviderSettings() {
   renderAiProviderSettings();
 }
 
+function fallbackAgent101ToolStatus() {
+  return {
+    agent101: {
+      id: "agent-101",
+      name: "Agent 101",
+      role: "Master Agent",
+      mode: "Draft-only",
+      status: "Active supervised",
+      currentOffice: "Clips Office",
+      approvalRequired: true,
+      externalActions: "Locked",
+    },
+    tools: {
+      openai: {
+        provider: "OpenAI",
+        status: aiProviderSettings.connectionStatus || "Local Demo",
+        mode: aiProviderSettings.modeLabel || "Local Demo",
+        model: aiProviderSettings.activeModel || "local-demo",
+        budgetLimit: aiProviderSettings.monthlyLimitUsd || 10,
+      },
+      browser: { label: "Restricted", status: "restricted" },
+      capcut: { label: "Manual handoff", status: "manual_handoff" },
+      tiktok: { label: "Draft package", status: "not_connected", mode: "draft_package", postingMode: "Draft package" },
+      instagram: { label: "Not connected", status: "not_connected" },
+      youtube: { label: "Not connected", status: "not_connected" },
+      storage: { label: "Ready", status: "ready", localProjectFiles: true },
+    },
+  };
+}
+
+function renderAgent101ToolStatus() {
+  const status = agent101ToolStatus || fallbackAgent101ToolStatus();
+  const tools = status.tools || {};
+  const rows = [
+    ["OpenAI", tools.openai?.mode || "Local Demo", "demo"],
+    ["Browser", tools.browser?.label || "Restricted", "restricted"],
+    ["CapCut", tools.capcut?.label || "Manual handoff", "manual"],
+    ["TikTok", tools.tiktok?.postingMode || tools.tiktok?.mode || "Draft package", "draft"],
+    ["Storage", tools.storage?.label || "Ready", "ready"],
+  ];
+  if (agentToolGrid) {
+    agentToolGrid.innerHTML = rows
+      .map(([name, value, className]) => `<span><b>${escapeHtml(name)}</b><em class="${escapeHtml(className)}">${escapeHtml(value)}</em></span>`)
+      .join("");
+  }
+  if (settingsToolGrid) {
+    const settingsRows = [
+      ["OpenAI", tools.openai?.mode || "Local Demo"],
+      ["Browser", tools.browser?.label || "Restricted"],
+      ["CapCut", tools.capcut?.label || "Manual handoff"],
+      ["TikTok", tools.tiktok?.postingMode || "Draft package"],
+      ["Instagram", tools.instagram?.label || "Not connected"],
+      ["YouTube", tools.youtube?.label || "Not connected"],
+      ["Storage", tools.storage?.label || "Ready"],
+    ];
+    settingsToolGrid.innerHTML = settingsRows.map(([name, value]) => `<span><b>${escapeHtml(name)}</b><em>${escapeHtml(value)}</em></span>`).join("");
+  }
+  const clipsTasks = (state.tasks || []).filter((task) => task.workflowId === "workflow-clips-office" || task.intent === "content_creation");
+  const clipsArtifacts = (state.artifacts || []).filter((artifact) => artifact.workflowId === "workflow-clips-office");
+  const pendingClipsApproval = (state.approvals || []).find((approval) => approval.workflowId === "workflow-clips-office" && approval.status === "pending");
+  if (clipsStageMetric) {
+    clipsStageMetric.textContent = pendingClipsApproval ? "Human Gate" : clipsArtifacts.length ? "Preview Package" : clipsTasks.length ? "Plan & Brief" : "Ready";
+  }
+  if (clipsFilesMetric) {
+    clipsFilesMetric.textContent = clipsArtifacts.length ? `${clipsArtifacts.length} artifact${clipsArtifacts.length === 1 ? "" : "s"}` : "Raw footage, audio, script";
+  }
+  if (clipsApprovalStatus) {
+    clipsApprovalStatus.textContent = pendingClipsApproval ? "Approval waiting" : "Draft-only";
+    clipsApprovalStatus.classList.toggle("danger-status", Boolean(pendingClipsApproval));
+  }
+}
+
+async function loadAgent101ToolStatus() {
+  if (!apiAvailable) {
+    agent101ToolStatus = fallbackAgent101ToolStatus();
+    renderAgent101ToolStatus();
+    return;
+  }
+  try {
+    agent101ToolStatus = await api("/api/agent101/tool-status");
+  } catch (error) {
+    addLocalAudit("Tool status unavailable", error.message);
+    agent101ToolStatus = fallbackAgent101ToolStatus();
+  }
+  renderAgent101ToolStatus();
+}
+
 function fallbackSidebarStatus() {
   const tasks = Array.isArray(state.tasks) ? state.tasks : [];
   const approvals = Array.isArray(state.approvals) ? state.approvals : [];
@@ -5850,6 +5961,7 @@ function render() {
   renderCapabilities();
   renderWorkflows();
   renderTemplates();
+  renderAgent101ToolStatus();
   renderTasks();
   renderFunctions();
   renderExecutions();
@@ -6153,6 +6265,7 @@ function officeRoomFromChatText(text, fallbackRoom = "depo-habitat") {
 
 function workflowForOffice(roomKey) {
   const resolved = resolveRoomKey(roomKey);
+  if (resolved === "clips-office") return "workflow-clips-office";
   if (resolved === "stock-office") return "workflow-stock-watch";
   if (resolved === "depo-habitat" || resolved === "human-gate") return "workflow-agent-factory";
   return "workflow-pod-lab";
@@ -6179,7 +6292,7 @@ function riskForOffice(roomKey) {
 function blockedActionFromChatText(text) {
   const normalized = String(text || "").toLowerCase();
   const blockedMap = [
-    ["publish externally", ["publish", "post", "launch listing", "make live", "go live"]],
+    ["publish externally", ["publish", "post", "post this video", "post it to tiktok", "upload this video", "upload this to tiktok", "launch listing", "make live", "go live"]],
     ["spend money", ["spend", "buy", "purchase", "pay for", "ad spend", "run ads"]],
     ["move money", ["move money", "transfer", "withdraw", "deposit", "send money"]],
     ["place trades", ["trade", "buy stock", "sell stock", "broker", "robinhood order"]],
@@ -6351,8 +6464,10 @@ async function submitDepoChat(roomKey, message) {
     responseMeta = command.meta || responseMeta;
   } else if (apiAvailable) {
     try {
-      const payload = await postJson("/api/depo/chat", {
+      const useAgent101Clips = resolved === "clips-office" || resolved === "depo-habitat";
+      const payload = await postJson(useAgent101Clips ? "/api/agent101/chat" : "/api/depo/chat", {
         message: trimmed,
+        office: useAgent101Clips ? "clips-office" : resolved,
         roomId: resolved,
         currentStage: depoAgent.currentStage,
         selectedRoom: selectedRoomKey,
@@ -6389,7 +6504,14 @@ async function submitDepoChat(roomKey, message) {
   });
   if (responseMeta.requiresApproval || responseMeta.blockedAction) {
     const actionType = responseMeta.blockedAction || "external_api_action";
-    addBlockedActionApproval(actionType, command?.targetRoom || resolved, "Agent 101 brain");
+    if (!responseMeta.approval) addBlockedActionApproval(actionType, command?.targetRoom || resolved, "Agent 101 brain");
+    if (responseMeta.approval && apiAvailable) {
+      try {
+        await loadState();
+      } catch (error) {
+        addLocalAudit("Approval refresh failed", error.message);
+      }
+    }
     addSystemLogEntry({
       type: "human_gate_block",
       message: `Human Gate approval required for ${actionType}.`,
@@ -6547,6 +6669,66 @@ function activateView(viewName) {
     setActiveSettingsSection(activeSettingsTarget);
     loadAccessState();
     loadAiProviderSettings();
+    loadAgent101ToolStatus();
+  }
+}
+
+async function createClipsBriefFromAgent() {
+  const payload = {
+    title: "Three short clips from raw footage",
+    goal: "Create 3 short clips, prepare CapCut edit instructions, draft captions, and package posting for Human Gate approval.",
+  };
+  if (!apiAvailable) {
+    addLocalAudit("Clips brief prepared", "Static preview created a local Clips Office note. Start npm start to persist artifacts.");
+    render();
+    return;
+  }
+  try {
+    const result = await postJson("/api/agent101/clips/brief", payload);
+    addLocalAudit("Clips brief created", result.artifact?.title || "Agent 101 prepared a Clips Office brief.");
+    await loadState();
+    activateView("depo");
+  } catch (error) {
+    addLocalAudit("Clips brief failed", error.message);
+    render();
+  }
+}
+
+async function packageClipsForHumanGate() {
+  const payload = {
+    title: "Three short clips from raw footage",
+    goal: "Package CapCut edit brief, captions, hashtags, file checklist, and posting decision for Human Gate.",
+  };
+  if (!apiAvailable) {
+    addLocalAudit("Clips approval package queued", "Static preview recorded a Human Gate package note. Start npm start to persist approvals.");
+    render();
+    return;
+  }
+  try {
+    const result = await postJson("/api/agent101/clips/package", payload);
+    addLocalAudit("Approval requested", result.approval?.title || "Clips Office package sent to Human Gate.");
+    await loadState();
+    activateView("depo");
+  } catch (error) {
+    addLocalAudit("Clips package failed", error.message);
+    render();
+  }
+}
+
+async function askAgent101Clips(message) {
+  if (!apiAvailable) {
+    addLocalAudit("Agent 101 local response", "Clips Office can plan, prepare CapCut handoff, draft captions, and package approval locally.");
+    render();
+    return;
+  }
+  try {
+    const response = await postJson("/api/agent101/chat", { message, office: "clips-office" });
+    addLocalAudit("Agent 101 chat", response.message || "Agent 101 prepared a Clips Office response.");
+    if (response.approval || response.requiresApproval) await loadState();
+    else render();
+  } catch (error) {
+    addLocalAudit("Agent 101 chat failed", error.message);
+    render();
   }
 }
 
@@ -6560,6 +6742,9 @@ document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
     const prompt = button.dataset.agentPrompt || "";
     const promptMap = {
       "Research a topic": "Research one business topic and return evidence, risks, and a draft recommendation.",
+      "Create clips plan": "Create 3 short clips from raw footage, prepare edits in CapCut, write captions, prepare TikTok posting drafts, and package everything for Human Gate approval.",
+      "Prepare CapCut brief": "Prepare a CapCut handoff brief with aspect ratio, duration, captions, effects, transitions, music notes, export settings, and blocked actions.",
+      "Draft TikTok captions": "Draft TikTok caption options, hashtags, pinned comment idea, and posting checklist. Do not post without Human Gate approval.",
       "Draft a plan": "Draft a clear business plan with steps, assumptions, and approval gates.",
       "Create workflow": "Create a safe workflow Agent 101 can run locally before Human Gate review.",
       "Prepare report": "Prepare a short report with summary, evidence, blockers, and next action.",
@@ -6578,6 +6763,10 @@ document.querySelectorAll("[data-agent-quick-action]").forEach((button) => {
       runNextTaskBtn?.click();
     } else if (action === "pause") {
       pauseBtn?.click();
+    } else if (action === "clips-brief" || action === "capcut-brief") {
+      createClipsBriefFromAgent();
+    } else if (action === "clips-package") {
+      packageClipsForHumanGate();
     } else if (action === "package") {
       packageRoomForApproval("depo-habitat");
     } else if (action === "human-gate") {
@@ -6588,6 +6777,10 @@ document.querySelectorAll("[data-agent-quick-action]").forEach((button) => {
       activateView("memory");
     }
   });
+});
+
+agentToolRefreshBtn?.addEventListener("click", () => {
+  loadAgent101ToolStatus();
 });
 
 function openSystemFeed() {
@@ -7321,13 +7514,14 @@ taskForm.addEventListener("submit", (event) => {
   if (!text) return;
   if (!apiAvailable) {
     const classification = taskWorkflow.value || "workflow-pod-lab";
+    const isClips = classification.includes("clips");
     state.tasks.unshift({
       id: `local-task-${Date.now()}`,
       title: text.length > 76 ? `${text.slice(0, 73)}...` : text,
       operatorText: text,
       workflowId: classification,
-      intent: classification.includes("stock") ? "market_monitoring" : classification.includes("factory") ? "agent_factory" : "print_on_demand",
-      risk: classification.includes("stock") ? "high" : classification.includes("factory") ? "medium" : "low",
+      intent: isClips ? "content_creation" : classification.includes("stock") ? "market_monitoring" : classification.includes("factory") ? "agent_factory" : "print_on_demand",
+      risk: classification.includes("stock") ? "high" : classification.includes("factory") || isClips ? "medium" : "low",
       status: "queued",
       evidence: [],
       output: "",
@@ -7337,11 +7531,14 @@ taskForm.addEventListener("submit", (event) => {
     render();
     return;
   }
-  postJson("/api/tasks", {
+  const targetEndpoint = taskWorkflow.value === "workflow-clips-office" ? "/api/agent101/tasks" : "/api/tasks";
+  postJson(targetEndpoint, {
     text,
+    title: text,
+    goal: text,
     workflowId: taskWorkflow.value,
-  }).then((nextState) => {
-    state = nextState;
+  }).then((result) => {
+    state = result.state || result;
     taskInput.value = "";
     render();
   }).catch((error) => {
@@ -7363,7 +7560,7 @@ templateList.addEventListener("click", (event) => {
       operatorText: template.prompt,
       workflowId: template.workflowId,
       templateId: template.id,
-      intent: template.workflowId.includes("stock") ? "market_monitoring" : template.workflowId.includes("factory") ? "agent_factory" : "print_on_demand",
+      intent: template.workflowId.includes("clips") ? "content_creation" : template.workflowId.includes("stock") ? "market_monitoring" : template.workflowId.includes("factory") ? "agent_factory" : "print_on_demand",
       risk: template.risk,
       status: "queued",
       evidence: [],

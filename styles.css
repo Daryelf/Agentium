@@ -8555,14 +8555,109 @@ label {
   gap: 10px;
 }
 
+.agent-tools-panel,
+.clips-office-panel {
+  grid-column: span 3;
+}
+
+.agent-tool-grid,
+.clips-office-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agent-tool-grid span,
+.clips-office-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.36);
+}
+
+.agent-tool-grid b,
+.clips-office-grid b {
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-grid em,
+.clips-office-grid small {
+  color: #94a3b8;
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agent-tool-grid em.ready,
+.agent-tool-grid em.live,
+.agent-tool-grid em.demo {
+  color: #34d399;
+}
+
+.agent-tool-grid em.restricted,
+.agent-tool-grid em.manual,
+.agent-tool-grid em.draft {
+  color: #67e8f9;
+}
+
+.clips-office-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.clips-office-actions button {
+  min-height: 36px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 10px;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.68);
+  font-size: 0.7rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.clips-office-actions button:first-child {
+  color: #fff;
+  border-color: rgba(139, 92, 246, 0.38);
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.76), rgba(14, 165, 233, 0.6));
+}
+
 .active-task-panel,
 .agent-pipeline-panel,
 .agent-quick-panel,
 .agent-focus-panel,
 .agent-output-preview,
 .agent-resources-panel,
-.agent-offices-panel {
+.agent-offices-panel,
+.agent-tools-panel,
+.clips-office-panel,
+.agent-blocked-panel {
   min-width: 0;
+}
+
+.agent-blocked-list {
+  display: grid;
+  gap: 7px;
+}
+
+.agent-blocked-list span {
+  padding: 8px 9px;
+  border: 1px solid rgba(248, 113, 113, 0.16);
+  border-radius: 9px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.12);
+  font-size: 0.68rem;
+  font-weight: 780;
 }
 
 .agent-task-list {
@@ -9016,6 +9111,39 @@ label {
 .settings-list {
   display: grid;
   gap: 10px;
+}
+
+.settings-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.settings-tool-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.34);
+}
+
+.settings-tool-grid b {
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-tool-grid em {
+  color: #94a3b8;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .settings-list > div {

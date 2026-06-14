@@ -522,6 +522,7 @@
                   <span>Route</span>
                   <select id="taskWorkflow" name="workflow" aria-label="Workflow route">
                     <option value="">Auto route</option>
+                    <option value="workflow-clips-office">Clips Office</option>
                     <option value="workflow-pod-lab">Print-on-demand lab</option>
                     <option value="workflow-stock-watch">Stock algorithm watch</option>
                     <option value="workflow-agent-factory">Agent factory</option>
@@ -534,6 +535,9 @@
               </form>
               <div class="agent-command-presets" aria-label="Agent 101 common requests">
                 <button type="button" data-agent-prompt="Research a topic">Research a topic</button>
+                <button type="button" data-agent-prompt="Create clips plan">Create clips plan</button>
+                <button type="button" data-agent-prompt="Prepare CapCut brief">Prepare CapCut brief</button>
+                <button type="button" data-agent-prompt="Draft TikTok captions">Draft TikTok captions</button>
                 <button type="button" data-agent-prompt="Draft a plan">Draft a plan</button>
                 <button type="button" data-agent-prompt="Create workflow">Create workflow</button>
                 <button type="button" data-agent-prompt="Prepare report">Prepare report</button>
@@ -543,6 +547,44 @@
             </section>
 
             <div class="agent-center-grid">
+              <section class="panel agent-tools-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Connected Tools</p>
+                    <h3>Agent 101 tool access</h3>
+                  </div>
+                  <button class="ghost-button compact-action" id="agentToolRefreshBtn" type="button">Refresh</button>
+                </div>
+                <div class="agent-tool-grid" id="agentToolGrid">
+                  <span><b>OpenAI</b><em>Local Demo</em></span>
+                  <span><b>Browser</b><em>Restricted</em></span>
+                  <span><b>CapCut</b><em>Manual handoff</em></span>
+                  <span><b>TikTok</b><em>Draft package</em></span>
+                  <span><b>Storage</b><em>Ready</em></span>
+                </div>
+              </section>
+
+              <section class="panel clips-office-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Clips Office</p>
+                    <h3>Short-form video workflow</h3>
+                  </div>
+                  <span class="metric-chip" id="clipsApprovalStatus">Draft-only</span>
+                </div>
+                <div class="clips-office-grid">
+                  <span><small>Goal</small><b>Create 3 short clips</b></span>
+                  <span><small>Stage</small><b id="clipsStageMetric">Plan & Brief</b></span>
+                  <span><small>Files needed</small><b id="clipsFilesMetric">Raw footage, audio, script</b></span>
+                  <span><small>Output target</small><b>CapCut + posting drafts</b></span>
+                </div>
+                <div class="clips-office-actions">
+                  <button type="button" data-agent-quick-action="clips-brief">Create clip brief</button>
+                  <button type="button" data-agent-quick-action="capcut-brief">Prepare CapCut handoff</button>
+                  <button type="button" data-agent-quick-action="clips-package">Package for Human Gate</button>
+                </div>
+              </section>
+
               <section class="panel active-task-panel">
                 <div class="panel-heading">
                   <div>
@@ -602,15 +644,15 @@
               <section class="panel agent-output-preview">
                 <div class="panel-heading">
                   <div>
-                    <p class="eyebrow">Output Preview</p>
-                    <h3 id="agentPreviewTitle">No output staged yet</h3>
+                    <p class="eyebrow">Preview Output</p>
+                    <h3 id="agentPreviewTitle">Clip package preview</h3>
                   </div>
                   <span class="metric-chip" id="agentPreviewStatus">Draft</span>
                 </div>
                 <div class="agent-preview-body">
                   <span class="agent-preview-thumb" aria-hidden="true"></span>
                   <div>
-                    <p id="agentPreviewMeta">Assign a bounded job and Agent 101 will prepare a draft package here.</p>
+                    <p id="agentPreviewMeta">9:16 · 15-30s · caption draft, hashtags, thumbnail idea, and file checklist stay internal until Human Gate approval.</p>
                     <button class="ghost-button compact-action" type="button" data-agent-quick-action="outputs">View preview</button>
                   </div>
                 </div>
@@ -624,11 +666,29 @@
                   </div>
                 </div>
                 <div class="agent-resource-list" id="agentResourceList">
-                  <span><b>local_state.json</b><em>ready</em></span>
-                  <span><b>approval_rules.md</b><em>locked</em></span>
-                  <span><b>memory_notes</b><em>local</em></span>
+                  <span><b>Browser / Internet</b><em>Restricted</em></span>
+                  <span><b>CapCut handoff</b><em>Manual</em></span>
+                  <span><b>File uploads</b><em>Local</em></span>
+                  <span><b>TikTok OAuth</b><em>Later</em></span>
+                  <span><b>Google Drive</b><em>Optional</em></span>
                 </div>
                 <button class="ghost-button compact-action" type="button" data-agent-quick-action="memory">Add input</button>
+              </section>
+
+              <section class="panel agent-blocked-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Blocked</p>
+                    <h3>Needs Human Gate</h3>
+                  </div>
+                </div>
+                <div class="agent-blocked-list">
+                  <span>Posting without approval</span>
+                  <span>Spending money or ad actions</span>
+                  <span>Account changes</span>
+                  <span>Customer contact</span>
+                  <span>Raw credential login automation</span>
+                </div>
               </section>
 
               <section class="panel agent-offices-panel">
@@ -1550,6 +1610,15 @@
                       <span>Activate</span>
                     </div>
                   </div>
+                  <div class="settings-tool-grid" id="settingsToolGrid" aria-label="Connected apps and tools">
+                    <span><b>OpenAI</b><em>Local Demo</em></span>
+                    <span><b>Browser</b><em>Restricted</em></span>
+                    <span><b>CapCut</b><em>Manual handoff</em></span>
+                    <span><b>TikTok</b><em>Draft package</em></span>
+                    <span><b>Instagram</b><em>Placeholder</em></span>
+                    <span><b>YouTube</b><em>Placeholder</em></span>
+                    <span><b>Storage</b><em>Ready</em></span>
+                  </div>
                   <div class="settings-list">
                     <div>
                       <span class="settings-list-icon" aria-hidden="true">
@@ -1586,6 +1655,15 @@
                     <div class="settings-stat"><small>Runtime</small><strong>JSON</strong><span>Ignored by Git</span></div>
                     <div class="settings-stat"><small>Memory</small><strong>Private</strong><span>Operator controlled</span></div>
                     <div class="settings-stat"><small>Export</small><strong>Gated</strong><span>Approval required</span></div>
+                  </div>
+                  <div class="settings-tool-grid storage-tool-grid">
+                    <span><b>Raw footage</b><em>Supported</em></span>
+                    <span><b>Music / audio</b><em>Supported</em></span>
+                    <span><b>Scripts</b><em>Supported</em></span>
+                    <span><b>Exported clips</b><em>Draft</em></span>
+                    <span><b>Thumbnails</b><em>Draft</em></span>
+                    <span><b>Captions</b><em>Draft</em></span>
+                    <span><b>Google Drive</b><em>Not connected</em></span>
                   </div>
                   <div class="settings-list">
                     <div>

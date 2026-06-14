@@ -36,11 +36,17 @@ const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
   "publish",
+  "publish_video",
+  "upload_to_tiktok",
+  "direct_post",
   "spend_money",
   "move_money",
+  "access_payment_methods",
   "contact_customer",
   "modify_account",
+  "change_account_settings",
   "create_live_agent",
+  "modify_permissions",
   "change_permissions",
   "change_api_key",
   "deploy_campaign",
@@ -674,6 +680,35 @@ function defaultState() {
       externalActions: "Draft only",
       memoryAccess: "Working + verified shared",
     },
+    agent101: {
+      id: "agent-101",
+      name: "Agent 101",
+      role: "Master Agent",
+      mode: "Draft-only",
+      status: "Active supervised",
+      currentOffice: "Clips Office",
+      approvalRequired: true,
+      externalActions: "Locked",
+    },
+    toolConnections: {
+      openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
+      browser: {
+        status: "restricted",
+        allowedDomains: ["capcut.com", "tiktok.com", "instagram.com", "youtube.com", "drive.google.com"],
+        blockedDomains: ["payment settings", "ad spend", "account credentials"],
+        approvalRequired: true,
+      },
+      capcut: { status: "manual_handoff", mode: "manual_handoff", handoffUrl: process.env.CAPCUT_HANDOFF_URL || "" },
+      tiktok: { status: "not_connected", mode: "draft_package", accountHandle: "", lastSync: null },
+      instagram: { status: "not_connected" },
+      youtube: { status: "not_connected" },
+      storage: {
+        status: "ready",
+        localProjectFiles: true,
+        googleDrive: "not_connected",
+        fileTypes: ["raw_footage", "audio", "scripts", "exports", "thumbnails", "captions", "posting_package"],
+      },
+    },
     governance: {
       killSwitch: false,
       cycleCount: 0,
@@ -783,6 +818,15 @@ function defaultState() {
     ],
     workflows: [
       {
+        id: "workflow-clips-office",
+        name: "Clips Office",
+        type: "content_lane",
+        status: "active_draft",
+        risk: "medium",
+        description: "Plan short-form clips, prepare CapCut handoff instructions, draft posting packages, and route publishing through Human Gate.",
+        nextFunction: "Create a clip brief, CapCut edit plan, captions, and approval package without posting.",
+      },
+      {
         id: "workflow-pod-lab",
         name: "Print-on-demand lab",
         type: "business_lane",
@@ -811,6 +855,14 @@ function defaultState() {
       }
     ],
     taskTemplates: [
+      {
+        id: "tpl-clips-video-package",
+        name: "Clips video package",
+        workflowId: "workflow-clips-office",
+        risk: "medium",
+        prompt: "Create 3 short clips from raw footage, prepare edits in CapCut, write captions, prepare TikTok posting drafts, and package everything for Human Gate approval. Do not post or change accounts.",
+        outcome: "Clip brief + CapCut handoff + posting package",
+      },
       {
         id: "tpl-pod-niche-scan",
         name: "POD niche scan",
@@ -953,16 +1005,21 @@ function normalizeState(state) {
   const fresh = defaultState();
   state.meta = { ...fresh.meta, ...state.meta };
   state.agent = { ...fresh.agent, ...state.agent };
+  state.agent101 = { ...fresh.agent101, ...state.agent101 };
+  state.toolConnections = {
+    ...fresh.toolConnections,
+    ...(state.toolConnections || {}),
+  };
   if (state.agent?.id === "agent-001-depo") {
     state.agent.name = "Agent 101";
     state.agent.role = "Draft-only Operator";
   }
   state.governance = { ...fresh.governance, ...state.governance };
   state.mission = { ...fresh.mission, ...state.mission };
-  state.capabilities = Array.isArray(state.capabilities) ? state.capabilities : fresh.capabilities;
-  state.functions = Array.isArray(state.functions) ? state.functions : fresh.functions;
-  state.workflows = Array.isArray(state.workflows) ? state.workflows : fresh.workflows;
-  state.taskTemplates = Array.isArray(state.taskTemplates) ? state.taskTemplates : fresh.taskTemplates;
+  state.capabilities = mergeById(Array.isArray(state.capabilities) ? state.capabilities : [], fresh.capabilities);
+  state.functions = mergeById(Array.isArray(state.functions) ? state.functions : [], fresh.functions);
+  state.workflows = mergeById(Array.isArray(state.workflows) ? state.workflows : [], fresh.workflows);
+  state.taskTemplates = mergeById(Array.isArray(state.taskTemplates) ? state.taskTemplates : [], fresh.taskTemplates);
   state.tasks = Array.isArray(state.tasks) ? state.tasks : fresh.tasks;
   state.artifacts = Array.isArray(state.artifacts) ? state.artifacts : fresh.artifacts;
   state.executions = Array.isArray(state.executions) ? state.executions : fresh.executions;
@@ -974,6 +1031,18 @@ function normalizeState(state) {
   };
   state.audit = Array.isArray(state.audit) ? state.audit : fresh.audit;
   return state;
+}
+
+function mergeById(existing, seeded) {
+  const next = [...existing];
+  const ids = new Set(next.map((item) => item?.id).filter(Boolean));
+  seeded.forEach((item) => {
+    if (item?.id && !ids.has(item.id)) {
+      next.push(item);
+      ids.add(item.id);
+    }
+  });
+  return next;
 }
 
 function readState() {
@@ -1415,12 +1484,18 @@ function removeAiProviderKey(payload) {
 function detectRiskyAction(text) {
   const value = String(text || "").toLowerCase();
   const checks = [
+    ["publish_video", ["publish video", "post video", "post this video", "upload video", "upload this video", "publish the clip", "post the clip", "post to tiktok", "post this to tiktok", "post it to tiktok", "post to instagram", "post to youtube"]],
+    ["direct_post", ["direct post", "post it live", "publish now", "go live", "make this live", "send it live"]],
+    ["upload_to_tiktok", ["upload to tiktok", "upload this to tiktok", "tiktok upload"]],
     ["publish", ["publish", "post listing", "go live", "external publish"]],
     ["spend_money", ["spend money", "buy ", "purchase", "pay for", "charge card"]],
     ["move_money", ["move money", "transfer money", "wire funds", "withdraw"]],
     ["contact_customer", ["contact customer", "email customer", "call customer", "message customer"]],
+    ["change_account_settings", ["change account setting", "update profile", "change profile", "delete post"]],
+    ["access_payment_methods", ["payment method", "ad settings", "billing settings", "payment settings"]],
     ["modify_account", ["modify account", "change account", "update account", "delete account"]],
     ["create_live_agent", ["create live agent", "activate agent", "launch agent", "make agent live"]],
+    ["modify_permissions", ["modify permission", "edit permission"]],
     ["change_permissions", ["change permission", "grant permission", "admin permission"]],
     ["change_api_key", ["change api key", "rotate key", "replace key"]],
     ["deploy_campaign", ["deploy campaign", "launch campaign", "send campaign"]],
@@ -1436,6 +1511,9 @@ function requiresHumanGate(actionType) {
 
 function localDepoDemoResponse(message) {
   const text = String(message || "").toLowerCase();
+  if (text.includes("clip") || text.includes("capcut") || text.includes("tiktok") || text.includes("short video")) {
+    return "Clips Office plan: 1. define goal and audience, 2. list raw footage/audio/script assets, 3. create three hook-first clip structures, 4. prepare CapCut handoff notes, 5. draft TikTok/Instagram/YouTube captions, 6. package the posting decision for Human Gate. No posting or account action will happen without approval.";
+  }
   if (text.includes("what can you do") || text.includes("can you do")) {
     return "I can help you turn ideas into safe, structured work: research, organize evidence, draft outputs, create task plans, draft workflows, save internal notes, prepare reports, and package risky work for Human Gate review.";
   }
@@ -1683,6 +1761,359 @@ async function handleDepoChat(payload = {}) {
   };
 }
 
+function agent101Model(state = readState()) {
+  return {
+    ...(state.agent101 || {}),
+    currentOffice: "Clips Office",
+    approvalRequired: true,
+    externalActions: "Locked",
+  };
+}
+
+function publicToolConnections(state = readState()) {
+  const ai = currentAiProviderStatus();
+  const stored = state.toolConnections || {};
+  const browser = stored.browser || {};
+  const capcut = stored.capcut || {};
+  const tiktok = stored.tiktok || {};
+  return {
+    openai: {
+      provider: "OpenAI",
+      status: ai.configured ? ai.connectionStatus : "Not configured",
+      mode: ai.modeLabel,
+      keyStatus: ai.configured ? "Configured server-side or not required" : "Not configured",
+      model: ai.activeModel,
+      budgetLimit: ai.monthlyLimitUsd,
+      estimatedSpend: ai.usage?.estimatedMonthlyUsd || 0,
+      lastTest: ai.lastTest,
+      lastTestResult: ai.lastError || ai.lastTest?.message || "Not tested",
+    },
+    browser: {
+      status: browser.status || "restricted",
+      label: browser.status === "ready" ? "Ready" : "Restricted",
+      allowedDomains: browser.allowedDomains || [],
+      blockedDomains: browser.blockedDomains || [],
+      approvalRequired: true,
+      note: "Login, payment, and account changes require Human Gate approval. Browser automation is not enabled yet.",
+    },
+    capcut: {
+      status: capcut.status || "manual_handoff",
+      label: capcut.status === "connected" ? "Connected" : "Manual handoff",
+      mode: "manual_handoff",
+      handoffUrl: capcut.handoffUrl || "",
+      blocked: ["automatic publishing", "account changes", "payment actions", "raw credential login"],
+    },
+    tiktok: {
+      status: tiktok.status || "not_connected",
+      label: tiktok.status === "oauth_connected" ? "OAuth connected" : "Not connected",
+      mode: tiktok.mode || "draft_package",
+      postingMode: "Draft package",
+      accountHandle: tiktok.accountHandle || "",
+      lastSync: tiktok.lastSync || null,
+      blocked: ["direct posting", "profile changes", "deleting posts", "ad spend", "payment settings"],
+    },
+    instagram: { status: stored.instagram?.status || "not_connected", label: "Not connected", placeholder: true },
+    youtube: { status: stored.youtube?.status || "not_connected", label: "Not connected", placeholder: true },
+    storage: {
+      status: stored.storage?.status || "ready",
+      label: "Ready",
+      localProjectFiles: true,
+      googleDrive: stored.storage?.googleDrive || "not_connected",
+      fileTypes: stored.storage?.fileTypes || ["raw_footage", "audio", "scripts", "exports", "thumbnails", "captions", "posting_package"],
+    },
+  };
+}
+
+function clipWorkflowStages() {
+  return [
+    "Plan & Brief",
+    "Gather Assets",
+    "Create Clip Structure",
+    "CapCut Handoff",
+    "Preview Package",
+    "Human Gate",
+    "Output",
+  ];
+}
+
+function buildClipBrief(payload = {}) {
+  const title = String(payload.title || payload.goal || "Three short clips from raw footage").trim();
+  const audience = String(payload.audience || "warm audience").trim();
+  const style = String(payload.style || "clean, fast, useful, premium").trim();
+  const format = String(payload.format || "9:16 vertical").trim();
+  return {
+    title,
+    goal: String(payload.goal || "Create 3 short clips from raw footage and prepare approval-ready posting drafts.").trim(),
+    audience,
+    format,
+    duration: String(payload.duration || "15-30s each").trim(),
+    style,
+    filesNeeded: [
+      "Raw footage clips",
+      "Logo or brand mark if needed",
+      "Music/audio preference",
+      "Product or topic notes",
+      "Posting account target",
+    ],
+    clipStructures: [1, 2, 3].map((index) => ({
+      clip: index,
+      hook: `Open with the strongest visual or claim in the first 2 seconds for clip ${index}.`,
+      body: "Cut to the proof, result, or process. Keep each shot short and captions readable.",
+      captionMoments: ["Hook text", "Proof point", "CTA"],
+      visualCuts: ["Fast intro cut", "Detail close-up", "Result shot"],
+      cta: "Save this, follow for the next step, or review the full package.",
+    })),
+    capcut: {
+      aspectRatio: "9:16",
+      resolution: "1080x1920",
+      exportFormat: "MP4",
+      captions: "Auto captions on, manually reviewed before export.",
+      effects: "Clean zooms, light motion blur, no distracting overlays.",
+      transitions: "Fast cuts or subtle push transitions.",
+      musicNotes: "Use low-volume music under voice or natural audio; no copyrighted audio unless licensed.",
+    },
+    postingDrafts: {
+      tiktok: {
+        caption: `${title}: quick version. Draft only until Human Gate approves posting.`,
+        hashtags: ["#shorts", "#behindthescenes", "#business", "#draft"],
+      },
+      instagram: {
+        caption: `${title} - save this workflow. Draft only.`,
+        hashtags: ["#reels", "#creatorworkflow", "#smallbusiness"],
+      },
+      youtube: {
+        title: `${title} | Short draft`,
+        description: "Prepared by Agent 101. Human approval required before posting.",
+      },
+    },
+    thumbnailIdea: "High-contrast still with 3-5 word headline and clear subject.",
+    checklist: ["Confirm raw files", "Review captions", "Export MP4", "Attach posting drafts", "Submit to Human Gate"],
+    status: "Draft",
+  };
+}
+
+function createAgent101Artifact(state, artifact) {
+  const next = {
+    id: artifact.id || `artifact-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    workflowId: artifact.workflowId || "workflow-clips-office",
+    type: artifact.type || "clips_package",
+    title: artifact.title || "Agent 101 artifact",
+    summary: artifact.summary || "Draft artifact prepared by Agent 101.",
+    status: artifact.status || "draft_ready",
+    risk: artifact.risk || "medium",
+    content: artifact.content || null,
+    fileRefs: Array.isArray(artifact.fileRefs) ? artifact.fileRefs : [],
+    evidence: Array.isArray(artifact.evidence) ? artifact.evidence : ["Created locally by Agent 101."],
+    sections: Array.isArray(artifact.sections) ? artifact.sections : [],
+    blockedActions: Array.isArray(artifact.blockedActions) ? artifact.blockedActions : ["external posting"],
+    createdBy: "agent-101",
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  state.artifacts.unshift(next);
+  state.artifacts = state.artifacts.slice(0, 50);
+  return next;
+}
+
+function createAgent101Task(payload = {}) {
+  const state = readState();
+  const text = String(payload.text || payload.goal || payload.title || "Create a Clips Office package for review.").trim();
+  const classification = classifyTask(text, payload.workflowId || "workflow-clips-office");
+  const task = {
+    id: `agent101-task-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: String(payload.title || text).slice(0, 90),
+    goal: String(payload.goal || text),
+    operatorText: text,
+    workflowId: classification.workflowId,
+    intent: classification.intent,
+    risk: classification.risk,
+    status: "queued",
+    stage: "Plan & Brief",
+    rawFiles: Array.isArray(payload.rawFiles) ? payload.rawFiles : [],
+    script: String(payload.script || ""),
+    captions: [],
+    editBrief: null,
+    postingDrafts: [],
+    approvalStatus: "not_requested",
+    evidence: ["Agent 101 received a bounded local job.", "No external action has been executed."],
+    output: "",
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  state.tasks.unshift(task);
+  state.mission.activeWorkflowId = task.workflowId;
+  state.agent101 = { ...agent101Model(state), currentOffice: "Clips Office" };
+  audit(state, "Agent 101 received task", task.title);
+  writeState(state);
+  return { task, state };
+}
+
+function createClipsBrief(payload = {}) {
+  const state = readState();
+  const brief = buildClipBrief(payload);
+  const artifact = createAgent101Artifact(state, {
+    type: "clips_edit_brief",
+    title: `Clip brief: ${brief.title}`,
+    summary: `${brief.format}, ${brief.duration}, ${brief.clipStructures.length} clips. CapCut handoff ready.`,
+    content: brief,
+    sections: [
+      { label: "Plan & Brief", body: brief.goal },
+      { label: "Assets Needed", body: brief.filesNeeded.join(", ") },
+      { label: "CapCut Handoff", body: `${brief.capcut.resolution}, ${brief.capcut.captions}, ${brief.capcut.exportFormat}.` },
+      { label: "Posting Drafts", body: "TikTok, Instagram, and YouTube draft copy created. Posting remains blocked." },
+    ],
+    blockedActions: ["publish video", "upload to TikTok", "change account settings", "spend ad money"],
+  });
+  addMemory(state, "working", "Clips brief prepared", brief.goal, "clips_office");
+  audit(state, "Clips brief created", artifact.title);
+  writeState(state);
+  return { brief, artifact };
+}
+
+function createClipsApprovalPackage(payload = {}) {
+  const state = readState();
+  const brief = payload.brief || buildClipBrief(payload);
+  const artifact = createAgent101Artifact(state, {
+    type: "posting_package",
+    title: `Posting package: ${brief.title || "Clips Office"}`,
+    summary: "Approval-ready draft package for short-form video posting. No external upload performed.",
+    content: brief,
+    status: "pending_review",
+    blockedActions: ["publish_video", "upload_to_tiktok", "direct_post", "change_account_settings", "spend_money"],
+  });
+  const approval = {
+    id: `approval-clips-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: `Review Clips Office package: ${brief.title || "short-form video"}`,
+    actionType: "publish_video",
+    risk: "medium",
+    riskLevel: "medium",
+    evidence: "Agent 101 created a local clips brief, CapCut handoff, draft captions, hashtag notes, and export checklist.",
+    action: "Review and decide whether this draft can move toward manual posting. No upload, post, account change, or spend has occurred.",
+    status: "pending",
+    createdBy: "agent-101",
+    artifactId: artifact.id,
+    workflowId: "workflow-clips-office",
+    createdAt: now(),
+  };
+  state.approvals.unshift(approval);
+  state.approvals = state.approvals.slice(0, 50);
+  audit(state, "Approval requested", approval.title);
+  writeState(state);
+  return { package: artifact, approval };
+}
+
+function createHumanGateRequest(payload = {}) {
+  const actionType = String(payload.actionType || detectRiskyAction(payload.message || payload.title || "") || "external_api_action");
+  const state = readState();
+  const approval = {
+    id: `approval-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: String(payload.title || `Review blocked action: ${actionType}`),
+    actionType,
+    risk: payload.riskLevel || "high",
+    riskLevel: payload.riskLevel || "high",
+    evidence: String(payload.evidence || "Agent 101 routed this request to Human Gate before any external action."),
+    action: String(payload.action || "Operator approval required. No external action was executed."),
+    status: "pending",
+    createdBy: "agent-101",
+    createdAt: now(),
+  };
+  state.approvals.unshift(approval);
+  state.approvals = state.approvals.slice(0, 50);
+  audit(state, "Risky action blocked", `${actionType}: Human Gate approval required.`);
+  writeState(state);
+  return { approval, message: "Human Gate approval required.", requiresApproval: true, riskLevel: approval.riskLevel };
+}
+
+function localAgent101ChatResponse(message) {
+  const text = String(message || "").toLowerCase();
+  if (detectRiskyAction(text)) {
+    return blockedDepoResponse(detectRiskyAction(text));
+  }
+  if (text.includes("capcut")) {
+    return {
+      message: "CapCut handoff: use 9:16 1080x1920, 15-30s clips, hook in first 2 seconds, reviewed auto captions, subtle transitions, low-volume music, MP4 export, and a final Human Gate review before any post.",
+      suggestedActions: ["Create clips plan", "Package for approval"],
+      requiresApproval: false,
+      riskLevel: "low",
+      artifacts: [],
+      logs: ["CapCut handoff instructions prepared locally."],
+    };
+  }
+  if (text.includes("tiktok") || text.includes("caption")) {
+    return {
+      message: "TikTok draft package: write one sharp hook caption, 3-5 hashtags, a pinned comment idea, and a file checklist. Posting, uploading, profile changes, ads, and payment settings require Human Gate.",
+      suggestedActions: ["Draft TikTok captions", "Package for approval"],
+      requiresApproval: false,
+      riskLevel: "medium",
+      artifacts: [],
+      logs: ["TikTok draft guidance prepared locally."],
+    };
+  }
+  if (text.includes("access") || text.includes("need")) {
+    return {
+      message: "Access needed: OpenAI brain can run in Local Demo or Live API, browser access is restricted, CapCut is manual handoff, local file uploads are supported, TikTok OAuth can be connected later, and Google Drive is optional.",
+      suggestedActions: ["List files needed", "Prepare CapCut brief"],
+      requiresApproval: false,
+      riskLevel: "low",
+      artifacts: [],
+      logs: ["Access list returned."],
+    };
+  }
+  if (text.includes("blocked") || text.includes("cannot")) {
+    return {
+      message: "Blocked: publishing without approval, spending money, account changes, customer contact, ad actions, raw credential login automation, live agent creation, permission changes, and API key changes.",
+      suggestedActions: ["Package for approval"],
+      requiresApproval: false,
+      riskLevel: "low",
+      artifacts: [],
+      logs: ["Blocked action list returned."],
+    };
+  }
+  return {
+    message: "Clips Office plan: define goal/audience/style, gather raw footage/audio/script assets, create three clip structures, prepare CapCut edit notes, draft TikTok/Instagram/YouTube captions, then package the posting decision for Human Gate.",
+    suggestedActions: ["Create clips plan", "Prepare CapCut brief", "Draft TikTok captions", "Package for approval"],
+    requiresApproval: false,
+    riskLevel: "medium",
+    artifacts: [],
+    logs: ["Local Agent 101 Clips response. No external API call was made."],
+  };
+}
+
+async function handleAgent101Chat(payload = {}) {
+  const message = String(payload.message || "").trim();
+  if (!message) throw guardedError("Message is required.", 400);
+  const risky = detectRiskyAction(message);
+  if (risky && requiresHumanGate(risky)) {
+    const request = createHumanGateRequest({
+      actionType: risky,
+      title: `Review blocked Clips Office action: ${risky}`,
+      evidence: `Agent 101 chat request: ${message}`,
+      riskLevel: "high",
+    });
+    return { ...blockedDepoResponse(risky), approval: request.approval };
+  }
+
+  const config = readAiProviderConfig();
+  const provider = sanitizeProvider(config.provider);
+  const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
+  if (mode !== "live" || isLocalProvider(provider)) {
+    return { ...localAgent101ChatResponse(message), provider: "local_demo", mode: "demo" };
+  }
+
+  try {
+    const live = provider === "openai"
+      ? await callOpenAiProvider(config, `Clips Office workflow request: ${message}`, { roomId: "clips-office", currentStage: "Clips Office" })
+      : await callAnthropicProvider(config, `Clips Office workflow request: ${message}`, { roomId: "clips-office", currentStage: "Clips Office" });
+    const riskyResponse = detectRiskyAction(`${live.message} ${(live.suggestedActions || []).join(" ")}`);
+    if (riskyResponse && requiresHumanGate(riskyResponse)) return blockedDepoResponse(riskyResponse);
+    return { ...live, artifacts: live.artifacts || [], provider, mode };
+  } catch (error) {
+    logAiProviderError("agent101-chat", error);
+    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live provider failed; Local Demo fallback used.";
+    return { ...localAgent101ChatResponse(message), logs: [friendly, "Provider error fallback used."], fallback: true, provider: "local_demo", mode: "demo" };
+  }
+}
+
 function guardedError(message, status = 409) {
   const error = new Error(message);
   error.status = status;
@@ -1779,6 +2210,7 @@ function classifyTask(text, requestedWorkflowId) {
   const lower = text.toLowerCase();
   if (requestedWorkflowId) {
     const workflowRisk = {
+      "workflow-clips-office": ["content_creation", "medium"],
       "workflow-pod-lab": ["print_on_demand", "low"],
       "workflow-stock-watch": ["market_monitoring", "high"],
       "workflow-agent-factory": ["agent_factory", "medium"],
@@ -1790,6 +2222,9 @@ function classifyTask(text, requestedWorkflowId) {
   if (lower.includes("stock") || lower.includes("trade") || lower.includes("algo") || lower.includes("market")) {
     return { workflowId: "workflow-stock-watch", intent: "market_monitoring", risk: "high" };
   }
+  if (lower.includes("clip") || lower.includes("video") || lower.includes("capcut") || lower.includes("tiktok") || lower.includes("reel") || lower.includes("short")) {
+    return { workflowId: "workflow-clips-office", intent: "content_creation", risk: "medium" };
+  }
   if (lower.includes("agent") || lower.includes("function") || lower.includes("capability")) {
     return { workflowId: "workflow-agent-factory", intent: "agent_factory", risk: "medium" };
   }
@@ -1797,6 +2232,18 @@ function classifyTask(text, requestedWorkflowId) {
 }
 
 function taskPlan(task) {
+  if (task.intent === "content_creation") {
+    return {
+      evidence: [
+        "Posting and account actions are blocked until Human Gate approval.",
+        "CapCut is handled as a manual handoff, not a credentialed API integration.",
+        "TikTok, Instagram, and YouTube output stays as draft captions and posting packages.",
+      ],
+      output: "Agent 101 prepared a Clips Office draft: define the clip goal, list raw footage and audio needs, create three clip structures, write CapCut edit instructions, draft posting captions, and route publishing through Human Gate.",
+      approvalTitle: "Review Clips Office posting package",
+      approvalAction: "Decide whether this draft clip package can move toward manual posting. No upload or external account action has been executed.",
+    };
+  }
   if (task.intent === "market_monitoring") {
     return {
       evidence: [
@@ -1834,6 +2281,28 @@ function taskPlan(task) {
 }
 
 function artifactForTask(task, plan) {
+  if (task.intent === "content_creation") {
+    return {
+      type: "clips_package",
+      title: "Clips Office video package",
+      summary: "Draft-only short-form video workflow with CapCut handoff notes and posting drafts.",
+      sections: [
+        {
+          label: "Clip objective",
+          body: "Create three 9:16 short clips, each with a fast hook, clean visual cuts, caption moments, and one clear call to action.",
+        },
+        {
+          label: "CapCut handoff",
+          body: "Use 1080x1920, 15-30 seconds, auto captions reviewed by operator, light transitions, music ducked below speech, and export as MP4.",
+        },
+        {
+          label: "Posting drafts",
+          body: "Prepare TikTok, Instagram, and YouTube Shorts captions and hashtags as drafts only. Posting requires Human Gate approval.",
+        },
+      ],
+      blockedActions: ["publish video", "upload to TikTok", "change social account", "spend ad money", "use raw credentials"],
+    };
+  }
   if (task.intent === "market_monitoring") {
     return {
       type: "stock_watch_note",
@@ -1980,12 +2449,14 @@ function createTaskFromTemplate(templateId) {
 }
 
 function intentForWorkflow(workflowId) {
+  if (workflowId === "workflow-clips-office") return "content_creation";
   if (workflowId === "workflow-stock-watch") return "market_monitoring";
   if (workflowId === "workflow-agent-factory") return "agent_factory";
   return "print_on_demand";
 }
 
 function riskForWorkflow(workflowId) {
+  if (workflowId === "workflow-clips-office") return "medium";
   if (workflowId === "workflow-stock-watch") return "high";
   if (workflowId === "workflow-agent-factory") return "medium";
   return "low";
@@ -2539,6 +3010,22 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/settings/connections/openai/test") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, await testAiProvider({ ...payload, provider: "openai" }));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/settings/connections/tiktok/status") {
+    const state = readState();
+    sendJson(res, 200, publicToolConnections(state).tiktok);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/depo/chat") {
     try {
       const payload = await readBody(req);
@@ -2546,6 +3033,72 @@ async function handleApi(req, res, url) {
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
     }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/tool-status") {
+    const state = readState();
+    sendJson(res, 200, {
+      agent101: agent101Model(state),
+      tools: publicToolConnections(state),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/chat") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, await handleAgent101Chat(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/tasks") {
+    try {
+      const payload = await readBody(req);
+      const result = createAgent101Task(payload);
+      sendJson(res, 200, { task: result.task, state: result.state });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/clips/brief") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createClipsBrief(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/clips/package") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createClipsApprovalPackage(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/human-gate/request") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createHumanGateRequest(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/artifacts") {
+    const state = readState();
+    sendJson(res, 200, (state.artifacts || []).filter((artifact) => artifact.createdBy === "agent-101" || artifact.workflowId === "workflow-clips-office"));
     return;
   }
 

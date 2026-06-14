@@ -4606,15 +4606,19 @@ function renderAiProviderTestResult(result, type = "info") {
 function renderCapabilities() {
   capabilityList.innerHTML = state.capabilities
     .map(
-      (capability) => `
-        <article class="capability-item">
-          <div>
+      (capability, index) => {
+        const accentClass = index % 4 === 0 ? "cyan" : index % 4 === 1 ? "blue" : index % 4 === 2 ? "violet" : "green";
+        return `
+        <article class="capability-item capability-card ${accentClass}">
+          <div class="capability-main">
+            <span class="capability-dot" aria-hidden="true"></span>
             <strong>${escapeHtml(capability.name)}</strong>
             <p>${escapeHtml(capability.description)}</p>
           </div>
-          <button class="small-button" type="button" data-capability="${escapeHtml(capability.id)}">${escapeHtml(capability.status)}</button>
+          <button class="small-button capability-status-button" type="button" data-capability="${escapeHtml(capability.id)}">${escapeHtml(capability.status)}</button>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }
@@ -5059,11 +5063,13 @@ function renderAudit() {
 }
 
 function renderAgent() {
-  agentState.textContent = state.agent.state.replaceAll("_", " / ");
-  const manifestItems = document.querySelectorAll(".manifest-grid dd");
-  manifestItems[1].textContent = state.agent.spendLimit;
-  manifestItems[2].textContent = state.agent.externalActions;
-  manifestItems[3].textContent = state.agent.memoryAccess;
+  const gateRequired = state.governance?.highRiskActionsRequireApproval !== false;
+  setText(agentState, state.agent.state.replaceAll("_", " / "));
+  setText(document.querySelector("#agentModeMetric"), state.agent.externalActions || "Draft only");
+  setText(document.querySelector("#agentGateMetric"), gateRequired ? "Required" : "Off");
+  setText(document.querySelector("#agentBudgetMetric"), state.agent.spendLimit || "$5/day sandbox");
+  setText(document.querySelector("#agentMemoryMetric"), state.agent.memoryAccess || "Working + verified");
+  setText(document.querySelector("#agentExternalMetric"), state.agent.externalActions || "Locked");
 }
 
 function renderStatus() {

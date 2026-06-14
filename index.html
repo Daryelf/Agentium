@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=bottom-metrics-1" />
+    <link rel="stylesheet" href="./styles.css?v=agent-page-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -430,100 +430,132 @@
           </section>
         </section>
 
-        <section class="view" id="view-depo" aria-label="Agent 101 details">
-          <div class="detail-layout">
-            <section class="panel">
-              <div class="agent-profile">
-                <div class="large-avatar" aria-hidden="true">
-                  <div class="agent-body">
-                    <div class="agent-visor"></div>
-                    <div class="agent-pack"></div>
-                  </div>
-                </div>
-                <div>
-                  <p class="eyebrow">Agent 101</p>
-                  <h3>Agent 101</h3>
-                  <p>Draft-only operator for research, memory capture, workflow drafting, and approval packaging.</p>
+        <section class="view agent-command-page" id="view-depo" aria-label="Agent 101 details">
+          <section class="panel agent-command-hero">
+            <div class="agent-profile premium-agent-profile">
+              <div class="large-avatar premium-avatar" aria-hidden="true">
+                <div class="agent-body">
+                  <div class="agent-visor"></div>
+                  <div class="agent-pack"></div>
                 </div>
               </div>
-              <dl class="manifest-grid">
-                <div>
-                  <dt>State</dt>
-                  <dd id="agentState">Active / supervised</dd>
-                </div>
-                <div>
-                  <dt>Spend limit</dt>
-                  <dd>$5/day sandbox</dd>
-                </div>
-                <div>
-                  <dt>External actions</dt>
-                  <dd>Draft only</dd>
-                </div>
-                <div>
-                  <dt>Memory access</dt>
-                  <dd>Working + verified shared</dd>
-                </div>
-              </dl>
-            </section>
+              <div class="agent-hero-copy">
+                <p class="eyebrow">Master Agent</p>
+                <h3>Agent 101</h3>
+                <p>Draft-only operator for business research, memory capture, workflow plans, reports, and approval-ready action packages.</p>
+              </div>
+              <span class="status-chip agent-live-chip">Active supervised</span>
+            </div>
+            <dl class="manifest-grid agent-manifest-grid">
+              <div>
+                <dt>Mode</dt>
+                <dd id="agentModeMetric">Draft only</dd>
+              </div>
+              <div>
+                <dt>Human Gate</dt>
+                <dd id="agentGateMetric">Required</dd>
+              </div>
+              <div>
+                <dt>Budget</dt>
+                <dd id="agentBudgetMetric">$5/day sandbox</dd>
+              </div>
+              <div>
+                <dt>Memory</dt>
+                <dd id="agentMemoryMetric">Working + verified</dd>
+              </div>
+            </dl>
+          </section>
 
-            <section class="panel">
+          <div class="agent-command-grid">
+            <section class="panel agent-capability-panel">
               <div class="panel-heading">
                 <div>
-                  <p class="eyebrow">Function builder</p>
-                  <h3>Capabilities Agent 101 can propose</h3>
+                  <p class="eyebrow">Capability Builder</p>
+                  <h3>What Agent 101 can prepare</h3>
                 </div>
+                <span class="metric-chip">Approval gated</span>
               </div>
               <div class="capability-list" id="capabilityList"></div>
             </section>
+
+            <section class="panel agent-boundary-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Operating Rules</p>
+                  <h3>Clean limits</h3>
+                </div>
+              </div>
+              <div class="agent-rule-grid">
+                <article>
+                  <span class="rule-icon safe">OK</span>
+                  <strong>Allowed locally</strong>
+                  <p>Research, organize evidence, draft workflows, prepare reports, save notes, and package work for review.</p>
+                </article>
+                <article>
+                  <span class="rule-icon locked">NO</span>
+                  <strong>Blocked without approval</strong>
+                  <p>No publishing, spending, trades, customer contact, account changes, API key changes, or live agent creation.</p>
+                </article>
+              </div>
+              <div class="agent-health-strip">
+                <span><small>State</small><b id="agentState">Active / supervised</b></span>
+                <span><small>External actions</small><b id="agentExternalMetric">Locked</b></span>
+              </div>
+            </section>
           </div>
 
-          <section class="panel task-inbox-panel">
+          <section class="panel task-inbox-panel agent-work-panel">
             <div class="panel-heading">
               <div>
-                <p class="eyebrow">Task inbox</p>
-                <h3>Assign Agent 101 work</h3>
+                <p class="eyebrow">Work Command</p>
+                <h3>Give Agent 101 a bounded job</h3>
               </div>
               <span class="metric-chip" id="taskCount">1 task</span>
             </div>
-            <form class="task-form" id="taskForm">
-              <textarea id="taskInput" name="task" rows="3" placeholder="Ask Agent 101 for a POD niche brief, a stock algo watch note, or a new agent function proposal."></textarea>
-              <div class="task-form-row">
-                <select id="taskWorkflow" name="workflow" aria-label="Workflow">
-                  <option value="">Auto route</option>
-                  <option value="workflow-pod-lab">Print-on-demand lab</option>
-                  <option value="workflow-stock-watch">Stock algorithm watch</option>
-                  <option value="workflow-agent-factory">Agent factory</option>
-                </select>
-                <button class="primary-button" type="submit">
+            <form class="task-form agent-task-form" id="taskForm">
+              <textarea id="taskInput" name="task" rows="4" placeholder="Tell Agent 101 what to research, draft, package, or prepare for Human Gate review."></textarea>
+              <div class="task-form-row agent-task-controls">
+                <label>
+                  Route
+                  <select id="taskWorkflow" name="workflow" aria-label="Workflow">
+                    <option value="">Auto route</option>
+                    <option value="workflow-pod-lab">Print-on-demand lab</option>
+                    <option value="workflow-stock-watch">Stock algorithm watch</option>
+                    <option value="workflow-agent-factory">Agent factory</option>
+                  </select>
+                </label>
+                <button class="primary-button assign-work-button" type="submit">
                   <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
-                  Assign
+                  Assign work
                 </button>
               </div>
             </form>
             <div class="task-list" id="taskList"></div>
           </section>
 
-          <section class="panel function-library-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Function library</p>
-                <h3>Reusable work Agent 101 has learned</h3>
+          <div class="agent-library-grid">
+            <section class="panel function-library-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Reusable Playbooks</p>
+                  <h3>Approved functions</h3>
+                </div>
+                <span class="metric-chip" id="functionCount">1 function</span>
               </div>
-              <span class="metric-chip" id="functionCount">1 function</span>
-            </div>
-            <div class="function-list" id="functionList"></div>
-          </section>
+              <div class="function-list" id="functionList"></div>
+            </section>
 
-          <section class="panel function-library-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Execution history</p>
-                <h3>Function runs</h3>
+            <section class="panel function-library-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Run History</p>
+                  <h3>Recent function runs</h3>
+                </div>
+                <span class="metric-chip" id="executionCount">0 runs</span>
               </div>
-              <span class="metric-chip" id="executionCount">0 runs</span>
-            </div>
-            <div class="execution-list" id="executionList"></div>
-          </section>
+              <div class="execution-list" id="executionList"></div>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="view-approval" aria-label="Approval queue">
@@ -1365,6 +1397,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=bottom-metrics-1"></script>
+    <script src="./script.js?v=agent-page-1"></script>
   </body>
 </html>

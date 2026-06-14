@@ -4597,12 +4597,54 @@ function renderAiProviderTestResult(result, type = "info") {
 }
 
 function renderCapabilities() {
-  capabilityList.innerHTML = state.capabilities
+  const cards = [
+    {
+      id: "research-analyze",
+      name: "Research & Analyze",
+      description: "Research niches, products, markets, and competitors.",
+      status: "Active",
+      accent: "cyan",
+    },
+    {
+      id: "plan-structure",
+      name: "Plan & Structure",
+      description: "Create plans, outlines, and structured workflows.",
+      status: "Active",
+      accent: "blue",
+    },
+    {
+      id: "draft-write",
+      name: "Draft & Write",
+      description: "Draft reports, briefs, scripts, OTPs, and content.",
+      status: "Active",
+      accent: "green",
+    },
+    {
+      id: "workflow-design",
+      name: "Workflow Design",
+      description: "Design task flows and operating processes.",
+      status: "Active",
+      accent: "amber",
+    },
+    {
+      id: "blueprint-propose",
+      name: "Blueprint & Propose",
+      description: "Propose agent blueprints and system decisions.",
+      status: "Draft only",
+      accent: "violet",
+    },
+    {
+      id: "execute-external",
+      name: "Execute External",
+      description: "External actions and publishing stay locked.",
+      status: "Requires approval",
+      accent: "red",
+    },
+  ];
+  capabilityList.innerHTML = cards
     .map(
-      (capability, index) => {
-        const accentClass = index % 4 === 0 ? "cyan" : index % 4 === 1 ? "blue" : index % 4 === 2 ? "violet" : "green";
-        return `
-        <article class="capability-item capability-card ${accentClass}">
+      (capability) => `
+        <article class="capability-item capability-card ${escapeHtml(capability.accent)}">
           <div class="capability-main">
             <span class="capability-dot" aria-hidden="true"></span>
             <strong>${escapeHtml(capability.name)}</strong>
@@ -4610,8 +4652,7 @@ function renderCapabilities() {
           </div>
           <button class="small-button capability-status-button" type="button" data-capability="${escapeHtml(capability.id)}">${escapeHtml(capability.status)}</button>
         </article>
-      `;
-      },
+      `,
     )
     .join("");
 }
@@ -5057,12 +5098,44 @@ function renderAudit() {
 
 function renderAgent() {
   const gateRequired = state.governance?.highRiskActionsRequireApproval !== false;
+  const tasks = state.tasks || [];
+  const approvals = state.approvals || [];
+  const artifacts = state.artifacts || [];
+  const memoryLayers = state.memory && typeof state.memory === "object" ? state.memory : {};
+  const memoryCount = Object.values(memoryLayers).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
+  const activeTask = tasks.find((task) => ["queued", "running", "processing", "in_progress", "needs_revision"].includes(task.status)) || tasks[0];
+  const latestArtifact = artifacts[0];
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
   setText(agentState, state.agent.state.replaceAll("_", " / "));
-  setText(document.querySelector("#agentModeMetric"), state.agent.externalActions || "Draft only");
+  setText(document.querySelector("#agentModeMetric"), state.agent.externalActions || "Draft-only");
+  setText(document.querySelector("#agentStageMetric"), depoStageLabel(depoAgent.currentStage));
   setText(document.querySelector("#agentGateMetric"), gateRequired ? "Required" : "Off");
   setText(document.querySelector("#agentBudgetMetric"), state.agent.spendLimit || "$5/day sandbox");
-  setText(document.querySelector("#agentMemoryMetric"), state.agent.memoryAccess || "Working + verified");
-  setText(document.querySelector("#agentExternalMetric"), state.agent.externalActions || "Locked");
+  setText(document.querySelector("#agentMemoryMetric"), memoryCount ? `${memoryCount} notes` : state.agent.memoryAccess || "Working");
+  setText(document.querySelector("#agentExternalMetric"), state.agent.externalActions || "Draft only");
+  setText(document.querySelector("#agentPreviewTitle"), latestArtifact?.title || activeTask?.title || "No output staged yet");
+  setText(
+    document.querySelector("#agentPreviewMeta"),
+    latestArtifact?.summary || activeTask?.operatorText || "Assign a bounded job and Agent 101 will prepare a draft package here.",
+  );
+  setText(document.querySelector("#agentPreviewStatus"), latestArtifact ? statusLabel(latestArtifact.status) : activeTask ? statusLabel(activeTask.status) : "Draft");
+  const focusList = document.querySelector("#agentFocusList");
+  if (focusList) {
+    const focusItems = [
+      activeTask ? `Working on: ${activeTask.title}` : "Waiting for one bounded operator task",
+      pendingApprovals ? `${pendingApprovals} Human Gate review${pendingApprovals === 1 ? "" : "s"} pending` : "Human Gate is clear",
+      memoryCount ? `${memoryCount} local memory note${memoryCount === 1 ? "" : "s"} available` : "No stored memory notes yet",
+      latestArtifact ? `Latest output: ${latestArtifact.title}` : "No external action has been taken",
+    ];
+    focusList.innerHTML = focusItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  }
+  const resourceList = document.querySelector("#agentResourceList");
+  if (resourceList) {
+    const evidence = activeTask?.evidence?.length ? activeTask.evidence.slice(0, 3) : ["local_state.json", "approval_rules.md", "memory_notes"];
+    resourceList.innerHTML = evidence
+      .map((item, index) => `<span><b>${escapeHtml(item)}</b><em>${index === 0 ? "ready" : index === 1 ? "locked" : "local"}</em></span>`)
+      .join("");
+  }
 }
 
 function renderStatus() {
@@ -5816,6 +5889,42 @@ function activateView(viewName) {
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => activateView(button.dataset.view));
+});
+
+document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!taskInput) return;
+    const prompt = button.dataset.agentPrompt || "";
+    const promptMap = {
+      "Research a topic": "Research one business topic and return evidence, risks, and a draft recommendation.",
+      "Draft a plan": "Draft a clear business plan with steps, assumptions, and approval gates.",
+      "Create workflow": "Create a safe workflow Agent 101 can run locally before Human Gate review.",
+      "Prepare report": "Prepare a short report with summary, evidence, blockers, and next action.",
+      "Package for approval": "Package this work for Human Gate approval with risks and required operator decision.",
+      "List blockers": "List the blockers, permissions, and external actions that require approval.",
+    };
+    taskInput.value = promptMap[prompt] || prompt;
+    taskInput.focus();
+  });
+});
+
+document.querySelectorAll("[data-agent-quick-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.agentQuickAction;
+    if (action === "run") {
+      runNextTaskBtn?.click();
+    } else if (action === "pause") {
+      pauseBtn?.click();
+    } else if (action === "package") {
+      packageRoomForApproval("depo-habitat");
+    } else if (action === "human-gate") {
+      activateView("approval");
+    } else if (action === "outputs") {
+      activateView("outputs");
+    } else if (action === "memory") {
+      activateView("memory");
+    }
+  });
 });
 
 function openSystemFeed() {

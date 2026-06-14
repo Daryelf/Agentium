@@ -5915,7 +5915,7 @@ main {
   align-items: center;
 }
 
-.agent-command-page {
+.agent-command-page.active {
   display: grid;
   align-content: start;
   gap: 14px;

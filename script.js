@@ -6574,6 +6574,7 @@ functionList.addEventListener("click", (event) => {
 });
 
 loadState().then(() => {
+  activateView("floor");
   loadProfileIdentity();
 });
 startCycle();

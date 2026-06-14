@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=human-gate-center-1" />
+    <link rel="stylesheet" href="./styles.css?v=outputs-center-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -812,17 +812,107 @@
           </div>
         </section>
 
-        <section class="view" id="view-outputs" aria-label="Business outputs">
-          <section class="panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Business outputs</p>
-                <h3>Artifacts Agent 101 has produced</h3>
-              </div>
-              <span class="metric-chip" id="artifactCount">0 artifacts</span>
+        <section class="view" id="view-outputs" aria-label="Outputs center">
+          <div class="outputs-center">
+            <div class="outputs-main">
+              <section class="panel outputs-hero">
+                <div class="outputs-hero-copy">
+                  <span class="outputs-hero-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M6 3h8l4 4v14H6z" />
+                      <path d="M14 3v5h5" />
+                      <path d="M9 13h6" />
+                      <path d="M9 17h4" />
+                    </svg>
+                  </span>
+                  <div>
+                    <p class="eyebrow">Outputs Center</p>
+                    <h3>Track every Agent 101 deliverable</h3>
+                    <p>Artifacts, drafts, packages, proposals, and review-ready outputs live here before anything external happens.</p>
+                  </div>
+                </div>
+                <button class="output-filter-button" type="button" data-output-action="filter">All outputs</button>
+                <div class="outputs-stats" aria-label="Output status summary">
+                  <span><small>Total outputs</small><strong id="artifactCount">0</strong><em id="outputNewThisWeek">No new outputs</em></span>
+                  <span><small>Drafts</small><strong id="outputDraftCount">0</strong><em id="outputDraftReviewCount">0 awaiting review</em></span>
+                  <span><small>Finalized</small><strong id="outputFinalizedCount">0</strong><em id="outputFinalizedWeek">0 this week</em></span>
+                  <span><small>Delivered</small><strong id="outputDeliveredCount">0</strong><em id="outputDeliveredWeek">0 this week</em></span>
+                  <span><small>Archived</small><strong id="outputArchivedCount">0</strong><em>Internal only</em></span>
+                </div>
+              </section>
+
+              <section class="panel outputs-list-panel">
+                <div class="panel-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Recent artifacts</p>
+                    <h3>Output ledger</h3>
+                  </div>
+                  <button class="ghost-button compact-action" type="button" data-output-action="view-all">View all artifacts</button>
+                </div>
+                <div class="artifact-list outputs-artifact-list" id="artifactList"></div>
+              </section>
+
+              <section class="panel output-timeline-panel">
+                <p class="eyebrow">Output timeline</p>
+                <div class="output-timeline" aria-label="Output timeline">
+                  <span class="active"><b>1</b><strong>Created</strong><em id="outputCreatedMetric">0</em></span>
+                  <span><b>2</b><strong>Drafts</strong><em id="outputTimelineDrafts">0</em></span>
+                  <span><b>3</b><strong>In review</strong><em id="outputTimelineReview">0</em></span>
+                  <span><b>4</b><strong>Approved</strong><em id="outputTimelineApproved">0</em></span>
+                  <span><b>5</b><strong>Delivered</strong><em id="outputTimelineDelivered">0</em></span>
+                  <span><b>6</b><strong>Archived</strong><em id="outputTimelineArchived">0</em></span>
+                </div>
+              </section>
             </div>
-            <div class="artifact-list" id="artifactList"></div>
-          </section>
+
+            <aside class="outputs-side" aria-label="Outputs side panel">
+              <section class="panel output-side-panel output-summary-panel">
+                <p class="eyebrow">Output summary</p>
+                <div class="output-summary-top">
+                  <div class="output-summary-ring" id="outputSummaryRing" style="--draft: 0; --review: 0; --finalized: 0; --delivered: 0;">
+                    <strong id="outputSummaryTotal">0</strong>
+                    <span>Total outputs</span>
+                  </div>
+                  <div class="output-summary-legend">
+                    <span><i></i>Drafts <strong id="outputLegendDrafts">0</strong></span>
+                    <span><i></i>Review <strong id="outputLegendReview">0</strong></span>
+                    <span><i></i>Finalized <strong id="outputLegendFinalized">0</strong></span>
+                    <span><i></i>Delivered <strong id="outputLegendDelivered">0</strong></span>
+                    <span><i></i>Archived <strong id="outputLegendArchived">0</strong></span>
+                  </div>
+                </div>
+                <div class="output-week-note">
+                  <span>This week</span>
+                  <strong id="outputWeekDelta">No new artifacts yet</strong>
+                </div>
+              </section>
+
+              <section class="panel output-side-panel">
+                <p class="eyebrow">Top output categories</p>
+                <div class="output-category-list" id="outputCategoryList"></div>
+              </section>
+
+              <section class="panel output-side-panel">
+                <p class="eyebrow">Quick actions</p>
+                <div class="output-quick-actions">
+                  <button type="button" data-output-action="new-artifact">Create new artifact</button>
+                  <button type="button" data-output-action="draft">Start new draft</button>
+                  <button type="button" data-output-action="proposal">New workflow proposal</button>
+                  <button type="button" data-output-action="upload">Attach local input</button>
+                  <button type="button" data-output-action="draft-studio">Go to Draft Studio</button>
+                </div>
+              </section>
+
+              <section class="panel output-side-panel output-storage-panel">
+                <p class="eyebrow">Storage usage</p>
+                <div class="output-storage-bar"><span id="outputStorageBar"></span></div>
+                <div class="output-storage-meta">
+                  <strong id="outputStorageCopy">0 MB used</strong>
+                  <span id="outputStoragePercent">0%</span>
+                </div>
+              </section>
+            </aside>
+          </div>
         </section>
 
         <section class="view" id="view-memory" aria-label="Memory and audit">
@@ -1638,6 +1728,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=human-gate-center-1"></script>
+    <script src="./script.js?v=outputs-center-1"></script>
   </body>
 </html>

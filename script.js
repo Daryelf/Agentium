@@ -4902,22 +4902,222 @@ function renderApprovals() {
     .join("");
 }
 
-function renderArtifacts() {
+function outputStatusClass(status) {
+  const normalized = String(status || "draft").toLowerCase();
+  if (["approved", "finalized", "complete", "completed"].includes(normalized)) return "finalized";
+  if (["delivered", "sent"].includes(normalized)) return "delivered";
+  if (["archived"].includes(normalized)) return "archived";
+  if (["pending", "review", "in_review", "pending_review"].includes(normalized)) return "review";
+  return "draft";
+}
+
+function outputStatusLabel(status) {
+  const normalized = outputStatusClass(status);
+  const labels = {
+    draft: "Draft",
+    review: "Review",
+    finalized: "Finalized",
+    delivered: "Delivered",
+    archived: "Archived",
+  };
+  return labels[normalized] || statusLabel(status);
+}
+
+function outputTypeLabel(value) {
+  const normalized = String(value || "output").replaceAll("_", " ");
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function outputRecords() {
   const artifacts = state.artifacts || [];
-  artifactCount.textContent = `${artifacts.length} ${artifacts.length === 1 ? "artifact" : "artifacts"}`;
-  if (artifacts.length === 0) {
+  const approvals = (state.approvals || []).filter((approval) => approval.status === "pending");
+  const tasks = (state.tasks || []).filter((task) => ["queued", "running", "processing", "in_progress", "draft_ready", "needs_revision"].includes(task.status));
+  const artifactRows = artifacts.map((artifact, index) => ({
+    id: artifact.id || `artifact-${index}`,
+    title: artifact.title || "Untitled output",
+    source: workflowName(artifact.workflowId),
+    version: artifact.version || artifact.revision || "v1.0",
+    summary: artifact.summary || "Structured output prepared by Agent 101.",
+    status: outputStatusClass(artifact.status),
+    statusLabel: outputStatusLabel(artifact.status),
+    category: outputTypeLabel(artifact.type),
+    tags: [artifact.type, artifact.workflowId, artifact.risk].filter(Boolean).map(statusLabel).slice(0, 3),
+    createdAt: artifact.createdAt || artifact.updatedAt || artifact.resolvedAt || new Date(Date.now() - index * 11 * 60 * 1000).toISOString(),
+    storageMb: Number(artifact.storageMb || artifact.sizeMb || 0.24),
+    icon: "file",
+  }));
+  const approvalRows = approvals.map((approval, index) => ({
+    id: approval.id || `approval-output-${index}`,
+    title: approval.title || "Approval package",
+    source: approvalSourceLabel(approval),
+    version: "review",
+    summary: approval.action || approval.evidence || "Review-ready package waiting in Human Gate.",
+    status: "review",
+    statusLabel: "Review",
+    category: "Approval package",
+    tags: [approval.risk || "medium", "human gate", "approval"].map(statusLabel),
+    createdAt: approvalCreatedAt(approval, index),
+    storageMb: 0.12,
+    icon: "review",
+  }));
+  const taskRows = tasks.map((task, index) => ({
+    id: task.id || `task-output-${index}`,
+    title: task.title || "Draft output",
+    source: workflowName(task.workflowId),
+    version: statusLabel(task.status),
+    summary: task.output || task.operatorText || "Draft work queued for Agent 101.",
+    status: "draft",
+    statusLabel: "Draft",
+    category: outputTypeLabel(task.intent || "draft"),
+    tags: [task.intent, task.risk, task.status].filter(Boolean).map(statusLabel).slice(0, 3),
+    createdAt: task.createdAt || task.updatedAt || new Date(Date.now() - (approvals.length + index + 1) * 11 * 60 * 1000).toISOString(),
+    storageMb: 0.18,
+    icon: "draft",
+  }));
+
+  return [...artifactRows, ...approvalRows, ...taskRows].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
+function outputCounts(records = outputRecords()) {
+  const count = (status) => records.filter((record) => record.status === status).length;
+  return {
+    total: records.length,
+    draft: count("draft"),
+    review: count("review"),
+    finalized: count("finalized"),
+    delivered: count("delivered"),
+    archived: count("archived"),
+  };
+}
+
+function outputCategoryCounts(records) {
+  const counts = new Map();
+  records.forEach((record) => {
+    const key = record.category || "Output";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+}
+
+function updateOutputMetrics(records) {
+  const counts = outputCounts(records);
+  const weeklyCount = records.filter((record) => isTodayIso(record.createdAt) || !record.createdAt).length;
+  const storageUsed = records.reduce((sum, record) => sum + Number(record.storageMb || 0), 0);
+  const storageLimit = 10;
+  const storagePercent = clamp(Math.round((storageUsed / storageLimit) * 100), 0, 100);
+  const safeTotal = Math.max(counts.total, 1);
+  const draftEnd = Math.round((counts.draft / safeTotal) * 100);
+  const reviewEnd = draftEnd + Math.round((counts.review / safeTotal) * 100);
+  const finalizedEnd = reviewEnd + Math.round((counts.finalized / safeTotal) * 100);
+  const deliveredEnd = finalizedEnd + Math.round((counts.delivered / safeTotal) * 100);
+
+  setText(artifactCount, String(counts.total));
+  setText(document.querySelector("#outputNewThisWeek"), weeklyCount ? `+ ${weeklyCount} live output${weeklyCount === 1 ? "" : "s"}` : "No new outputs");
+  setText(document.querySelector("#outputDraftCount"), String(counts.draft));
+  setText(document.querySelector("#outputDraftReviewCount"), `${counts.review} awaiting review`);
+  setText(document.querySelector("#outputFinalizedCount"), String(counts.finalized));
+  setText(document.querySelector("#outputFinalizedWeek"), `${counts.finalized} finalized`);
+  setText(document.querySelector("#outputDeliveredCount"), String(counts.delivered));
+  setText(document.querySelector("#outputDeliveredWeek"), `${counts.delivered} delivered`);
+  setText(document.querySelector("#outputArchivedCount"), String(counts.archived));
+  setText(document.querySelector("#outputCreatedMetric"), String(counts.total));
+  setText(document.querySelector("#outputTimelineDrafts"), String(counts.draft));
+  setText(document.querySelector("#outputTimelineReview"), String(counts.review));
+  setText(document.querySelector("#outputTimelineApproved"), String(counts.finalized));
+  setText(document.querySelector("#outputTimelineDelivered"), String(counts.delivered));
+  setText(document.querySelector("#outputTimelineArchived"), String(counts.archived));
+  setText(document.querySelector("#outputSummaryTotal"), String(counts.total));
+  setText(document.querySelector("#outputLegendDrafts"), String(counts.draft));
+  setText(document.querySelector("#outputLegendReview"), String(counts.review));
+  setText(document.querySelector("#outputLegendFinalized"), String(counts.finalized));
+  setText(document.querySelector("#outputLegendDelivered"), String(counts.delivered));
+  setText(document.querySelector("#outputLegendArchived"), String(counts.archived));
+  setText(document.querySelector("#outputWeekDelta"), weeklyCount ? `+ ${weeklyCount} tracked this week` : "No new artifacts yet");
+  setText(document.querySelector("#outputStorageCopy"), `${storageUsed.toFixed(1)} MB of ${storageLimit} GB used`);
+  setText(document.querySelector("#outputStoragePercent"), `${storagePercent}%`);
+
+  const ring = document.querySelector("#outputSummaryRing");
+  if (ring) {
+    ring.style.setProperty("--draft", `${draftEnd}%`);
+    ring.style.setProperty("--review", `${reviewEnd}%`);
+    ring.style.setProperty("--finalized", `${finalizedEnd}%`);
+    ring.style.setProperty("--delivered", `${deliveredEnd}%`);
+  }
+  const storageBar = document.querySelector("#outputStorageBar");
+  if (storageBar) storageBar.style.width = `${Math.max(4, storagePercent)}%`;
+
+  const categoryList = document.querySelector("#outputCategoryList");
+  if (categoryList) {
+    const categories = outputCategoryCounts(records);
+    categoryList.innerHTML = categories.length
+      ? categories.map(([category, value], index) => `
+          <span class="output-category-row cat-${index}">
+            <i></i>
+            <b>${escapeHtml(category)}</b>
+            <strong>${escapeHtml(value)}</strong>
+          </span>
+        `).join("")
+      : `
+          <span class="output-category-row">
+            <i></i>
+            <b>No categories yet</b>
+            <strong>0</strong>
+          </span>
+        `;
+  }
+}
+
+function outputIconMarkup(type) {
+  const icons = {
+    file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/>',
+    review: '<path d="M12 3 4 7v6c0 4 3 7 8 8 5-1 8-4 8-8V7z"/><path d="m9 12 2 2 4-5"/>',
+    draft: '<path d="M4 20h16"/><path d="m14 4 6 6L9 21H3v-6z"/>',
+  };
+  return `<svg viewBox="0 0 24 24">${icons[type] || icons.file}</svg>`;
+}
+
+function renderArtifacts() {
+  const records = outputRecords();
+  updateOutputMetrics(records);
+  if (records.length === 0) {
     artifactList.innerHTML = `
-      <article class="artifact-item empty-state">
-        <strong>No artifacts yet</strong>
-        <p>Run an Agent 101 task to produce a POD brief, stock watch note, or agent proposal.</p>
+      <article class="artifact-item output-row empty-state">
+        <span class="output-row-icon" aria-hidden="true">${outputIconMarkup("file")}</span>
+        <div>
+          <strong>No outputs yet</strong>
+          <p>Assign Agent 101 a bounded job and new drafts, review packages, and artifacts will appear here.</p>
+        </div>
       </article>
     `;
     return;
   }
 
-  artifactList.innerHTML = artifacts
+  artifactList.innerHTML = records
     .map(
-      (artifact) => `
+      (record) => `
+        <article class="artifact-item output-row ${escapeHtml(record.status)}">
+          <span class="output-row-icon" aria-hidden="true">${outputIconMarkup(record.icon)}</span>
+          <div class="output-row-main">
+            <div class="output-row-title">
+              <strong>${escapeHtml(record.title)}</strong>
+              <span>${escapeHtml(record.source)} · ${escapeHtml(record.version)}</span>
+            </div>
+            <p>${escapeHtml(record.summary)}</p>
+            <div class="output-tags">
+              ${record.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+            </div>
+          </div>
+          <span class="output-status-pill ${escapeHtml(record.status)}">${escapeHtml(record.statusLabel)}</span>
+          <time>${escapeHtml(formatFeedTime({ createdAt: record.createdAt }))}</time>
+          <button class="output-row-menu" type="button" data-output-action="inspect" data-output-id="${escapeHtml(record.id)}" aria-label="Inspect output">...</button>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function legacyArtifactMarkup(artifact) {
+  return `
         <article class="artifact-item">
           <div class="task-top">
             <div>
@@ -4953,9 +5153,7 @@ function renderArtifacts() {
             </div>
           </div>
         </article>
-      `,
-    )
-    .join("");
+      `;
 }
 
 function statusLabel(value) {
@@ -6714,6 +6912,47 @@ document.querySelectorAll("[data-gate-quick-action]").forEach((button) => {
     }
     if (action === "settings") {
       activateView("settings");
+    }
+  });
+});
+
+document.querySelectorAll("[data-output-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.outputAction;
+    if (action === "draft" || action === "new-artifact") {
+      activateView("depo");
+      if (taskInput) {
+        taskInput.value = action === "draft"
+          ? "Draft a safe internal output package for Human Gate review."
+          : "Create a new internal artifact from the current business workflow.";
+        taskInput.focus();
+      }
+      return;
+    }
+    if (action === "proposal") {
+      activateView("depo");
+      if (taskWorkflow) taskWorkflow.value = "workflow-agent-factory";
+      if (taskInput) {
+        taskInput.value = "Prepare a workflow proposal for operator review. Do not create a live agent.";
+        taskInput.focus();
+      }
+      return;
+    }
+    if (action === "draft-studio") {
+      selectedRoomKey = "draft-studio";
+      activateView("floor");
+      openModuleInfoCard("draft-studio");
+      return;
+    }
+    if (action === "upload") {
+      addLocalAudit("Local input requested", "Attach local source files through Agent 101 work intake before packaging an output.");
+      render();
+      return;
+    }
+    if (action === "inspect") {
+      const id = button.dataset.outputId || "output";
+      addLocalAudit("Output inspected", `Operator inspected ${id}. Outputs remain internal until approved.`);
+      render();
     }
   });
 });

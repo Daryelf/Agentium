@@ -412,9 +412,8 @@ const scanBtn = document.querySelector("#scanBtn");
 const systemClockNodes = document.querySelectorAll("[data-system-clock]");
 const systemDateNodes = document.querySelectorAll("[data-system-date]");
 const systemSearch = document.querySelector("#systemSearch");
-const coreLabelTitle = document.querySelector("#coreLabelTitle");
-const coreLabelStage = document.querySelector("#coreLabelStage");
-const coreLabelAgent = document.querySelector("#coreLabelAgent");
+const agentCoreName = document.querySelector("#agentCoreName");
+const agentCoreRole = document.querySelector("#agentCoreRole");
 const sidebarSystemHealth = document.querySelector("#sidebarSystemHealth");
 const sidebarAgentId = document.querySelector("#sidebarAgentId");
 const sidebarAgentMode = document.querySelector("#sidebarAgentMode");
@@ -1886,9 +1885,8 @@ function renderDepoOrbitState(agent = depoAgent) {
   if (confidenceChip) confidenceChip.textContent = agent.mode;
   if (taskStage) taskStage.textContent = `Stage: ${stageLabel}`;
   if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
-  if (coreLabelTitle) coreLabelTitle.textContent = "Agent Habitat";
-  if (coreLabelStage) coreLabelStage.textContent = "Active agent";
-  if (coreLabelAgent) coreLabelAgent.textContent = `Agent ${agent.number}`;
+  if (agentCoreName) agentCoreName.textContent = `Agent ${agent.number}`;
+  if (agentCoreRole) agentCoreRole.textContent = "Superior Agent";
 }
 
 function setStep() {

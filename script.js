@@ -5290,19 +5290,103 @@ function renderExecutions() {
     .join("");
 }
 
+function memoryLayerEntries(layer) {
+  const memory = state.memory && typeof state.memory === "object" ? state.memory : {};
+  return Array.isArray(memory[layer]) ? memory[layer] : [];
+}
+
+function memoryLayerLabel(layer) {
+  const labels = {
+    working: "Working",
+    shared: "Shared",
+    agent: "Agent",
+  };
+  return labels[layer] || statusLabel(layer);
+}
+
+function memoryIconType(entry, index = 0) {
+  const haystack = `${entry.title || ""} ${entry.body || ""}`.toLowerCase();
+  if (haystack.includes("question") || haystack.includes("open")) return "question";
+  if (haystack.includes("operator") || haystack.includes("agent")) return "agent";
+  if (haystack.includes("rule") || haystack.includes("gate") || haystack.includes("approval")) return "shield";
+  if (haystack.includes("artifact") || haystack.includes("draft") || haystack.includes("workflow")) return "document";
+  return index % 3 === 0 ? "document" : index % 3 === 1 ? "agent" : "shield";
+}
+
+function memoryIconMarkup(type) {
+  const icons = {
+    document: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/>',
+    agent: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    shield: '<path d="M12 3 5 6v6c0 4 3 7 7 8 4-1 7-4 7-8V6z"/><path d="m9 12 2 2 4-5"/>',
+    question: '<path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.1-1.9 1.4-2.5 2.5"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/>',
+    pencil: '<path d="m14 4 6 6L9 21H3v-6z"/><path d="M13 5l6 6"/>',
+  };
+  return `<svg viewBox="0 0 24 24">${icons[type] || icons.document}</svg>`;
+}
+
+function memoryTags(entry) {
+  const tags = [];
+  if (entry.provenance) tags.push(entry.provenance);
+  const text = `${entry.title || ""} ${entry.body || ""}`.toLowerCase();
+  if (text.includes("workflow")) tags.push("workflow");
+  if (text.includes("task")) tags.push("task");
+  if (text.includes("approval") || text.includes("gate")) tags.push("approval");
+  if (text.includes("artifact") || text.includes("draft")) tags.push("artifact");
+  if (!tags.length) tags.push("local");
+  return [...new Set(tags)].slice(0, 3);
+}
+
+function memoryEntryTime(entry, index = 0) {
+  return entry.updatedAt || entry.createdAt || entry.timestamp || new Date(Date.now() - (index + 1) * 7 * 60 * 1000).toISOString();
+}
+
+function updateMemoryCounts() {
+  const working = memoryLayerEntries("working").length;
+  const shared = memoryLayerEntries("shared").length;
+  const agent = memoryLayerEntries("agent").length;
+  setText(document.querySelector("#memoryWorkingCount"), String(working));
+  setText(document.querySelector("#memorySharedCount"), String(shared));
+  setText(document.querySelector("#memoryAgentCount"), String(agent));
+}
+
 function renderMemory() {
-  const entries = state.memory[activeMemoryLayer] || [];
-  memoryList.innerHTML = entries
-    .map(
-      (entry) => `
-        <article class="memory-item">
-          <strong>${escapeHtml(entry.title)}</strong>
-          <p>${escapeHtml(entry.body)}</p>
-          <span class="memory-source">${escapeHtml(entry.provenance || "local")}</span>
+  updateMemoryCounts();
+  const entries = memoryLayerEntries(activeMemoryLayer);
+  const layerLabel = memoryLayerLabel(activeMemoryLayer);
+  setText(document.querySelector("#memoryShowingText"), entries.length ? `Showing 1-${entries.length} of ${entries.length} ${layerLabel.toLowerCase()} memories` : `No ${layerLabel.toLowerCase()} memories yet`);
+  memoryList.innerHTML = entries.length
+    ? entries
+      .map(
+        (entry, index) => `
+          <article class="memory-item premium-memory-card ${escapeHtml(activeMemoryLayer)}">
+            <span class="memory-card-icon ${escapeHtml(memoryIconType(entry, index))}" aria-hidden="true">${memoryIconMarkup(memoryIconType(entry, index))}</span>
+            <div class="memory-card-main">
+              <strong>${escapeHtml(entry.title || "Memory note")}</strong>
+              <p>${escapeHtml(entry.body || "No memory body recorded yet.")}</p>
+              <div class="memory-card-tags">
+                ${memoryTags(entry).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+              </div>
+            </div>
+            <div class="memory-card-meta">
+              <span>${escapeHtml(layerLabel)}</span>
+              <time>${escapeHtml(formatFeedTime({ createdAt: memoryEntryTime(entry, index) }))}</time>
+              <small>By Agent 101</small>
+            </div>
+            <button class="memory-card-menu" type="button" data-memory-action="inspect" aria-label="Inspect memory">...</button>
+          </article>
+        `,
+      )
+      .join("")
+    : `
+        <article class="memory-item premium-memory-card empty-state">
+          <span class="memory-card-icon document" aria-hidden="true">${memoryIconMarkup("document")}</span>
+          <div class="memory-card-main">
+            <strong>No ${escapeHtml(layerLabel.toLowerCase())} memories yet</strong>
+            <p>Agent 101 will save useful notes here after a task, report, or approval package creates durable context.</p>
+          </div>
         </article>
-      `,
-    )
-    .join("");
+      `;
 }
 
 function systemFeedEntries() {
@@ -5421,17 +5505,36 @@ function renderSystemFeed() {
 }
 
 function renderAudit() {
-  auditLog.innerHTML = state.audit
-    .slice(0, 12)
-    .map(
-      (entry) => `
-        <article class="audit-item">
-          <strong>${escapeHtml(entry.title)}</strong>
-          <p>${escapeHtml(entry.body)}</p>
+  const entries = systemFeedEntries().slice(0, 25);
+  setText(document.querySelector("#auditShowingText"), `Showing latest ${entries.length} of ${systemFeedEntries().length} events`);
+  auditLog.innerHTML = entries.length
+    ? entries
+      .map(
+        (entry, index) => {
+          const type = index % 4 === 0 ? "search" : index % 4 === 1 ? "shield" : index % 4 === 2 ? "pencil" : "document";
+          return `
+            <article class="audit-item premium-audit-row ${escapeHtml(type)}">
+              <span class="audit-line-marker" aria-hidden="true">${memoryIconMarkup(type)}</span>
+              <div class="audit-row-main">
+                <strong>${escapeHtml(entry.title)}</strong>
+                <p>${escapeHtml(entry.body)}</p>
+              </div>
+              <time>${escapeHtml(formatFeedTime(entry))}</time>
+            </article>
+          `;
+        },
+      )
+      .join("")
+    : `
+        <article class="audit-item premium-audit-row">
+          <span class="audit-line-marker" aria-hidden="true">${memoryIconMarkup("document")}</span>
+          <div class="audit-row-main">
+            <strong>No audit events yet</strong>
+            <p>Agent 101 actions and decisions will appear here as the system runs.</p>
+          </div>
+          <time>Now</time>
         </article>
-      `,
-    )
-    .join("");
+      `;
   renderSystemFeed();
 }
 
@@ -6450,9 +6553,9 @@ systemSearch?.addEventListener("input", () => {
   });
 });
 
-document.querySelectorAll(".tab").forEach((tab) => {
+document.querySelectorAll("[data-memory]").forEach((tab) => {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+    document.querySelectorAll("[data-memory]").forEach((item) => item.classList.remove("active"));
     tab.classList.add("active");
     activeMemoryLayer = tab.dataset.memory;
     renderMemory();
@@ -6955,6 +7058,40 @@ document.querySelectorAll("[data-output-action]").forEach((button) => {
       render();
     }
   });
+});
+
+document.querySelectorAll("[data-memory-action]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.memoryAction;
+    if (action === "new") {
+      activateView("depo");
+      if (taskInput) {
+        taskInput.value = "Save a useful internal memory note from the current business context.";
+        taskInput.focus();
+      }
+      return;
+    }
+    if (action === "audit") {
+      activateView("feed");
+      return;
+    }
+    if (action === "filter") {
+      addLocalAudit("Memory filter requested", "Memory filters are staged for local-only search and audit narrowing.");
+      render();
+      return;
+    }
+    if (action === "inspect") {
+      addLocalAudit("Memory inspected", "Operator inspected an Agent 101 memory note.");
+      render();
+    }
+  });
+});
+
+memoryList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-memory-action='inspect']");
+  if (!button) return;
+  addLocalAudit("Memory inspected", "Operator inspected an Agent 101 memory note.");
+  render();
 });
 
 taskForm.addEventListener("submit", (event) => {

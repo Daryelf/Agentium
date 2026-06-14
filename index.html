@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Argentum</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=outputs-center-1" />
+    <link rel="stylesheet" href="./styles.css?v=memory-center-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -915,31 +915,54 @@
           </div>
         </section>
 
-        <section class="view" id="view-memory" aria-label="Memory and audit">
-          <div class="memory-layout">
-            <section class="panel">
-              <div class="panel-heading">
+        <section class="view" id="view-memory" aria-label="Memory center">
+          <div class="memory-center">
+            <section class="panel memory-library-panel">
+              <div class="memory-header">
                 <div>
-                  <p class="eyebrow">Structured memory</p>
+                  <p class="eyebrow">Structured Memory</p>
                   <h3>Agent 101 memory layers</h3>
+                  <p>Organized memory for long-term context, artifacts, decisions, and operator notes.</p>
+                </div>
+                <button class="memory-new-button" type="button" data-memory-action="new">New memory</button>
+              </div>
+              <div class="memory-tabs-row" role="tablist" aria-label="Memory layers">
+                <button class="tab active" data-memory="working" type="button">
+                  <span>Working</span>
+                  <strong id="memoryWorkingCount">0</strong>
+                </button>
+                <button class="tab" data-memory="shared" type="button">
+                  <span>Shared</span>
+                  <strong id="memorySharedCount">0</strong>
+                </button>
+                <button class="tab" data-memory="agent" type="button">
+                  <span>Agent</span>
+                  <strong id="memoryAgentCount">0</strong>
+                </button>
+              </div>
+              <div class="memory-list premium-memory-list" id="memoryList"></div>
+              <div class="memory-list-footer">
+                <span id="memoryShowingText">Showing 0 memories</span>
+                <div class="memory-pages" aria-hidden="true">
+                  <b>1</b><span>2</span><span>3</span><span>4</span><span>5</span>
                 </div>
               </div>
-              <div class="tabs" role="tablist" aria-label="Memory layers">
-                <button class="tab active" data-memory="working" type="button">Working</button>
-                <button class="tab" data-memory="shared" type="button">Shared</button>
-                <button class="tab" data-memory="agent" type="button">Agent</button>
-              </div>
-              <div class="memory-list" id="memoryList"></div>
             </section>
 
-            <section class="panel">
-              <div class="panel-heading">
+            <section class="panel memory-trace-panel">
+              <div class="memory-header trace-header">
                 <div>
                   <p class="eyebrow">Trace</p>
                   <h3>Audit trail</h3>
+                  <p>Chronological record of Agent 101's actions, decisions, and local system events.</p>
                 </div>
+                <button class="memory-filter-button" type="button" data-memory-action="filter">Filters</button>
               </div>
-              <div class="audit-log" id="auditLog"></div>
+              <div class="audit-log premium-audit-log" id="auditLog"></div>
+              <div class="memory-trace-footer">
+                <span id="auditShowingText">Showing latest events</span>
+                <button class="ghost-button compact-action" type="button" data-memory-action="audit">View full audit trail</button>
+              </div>
             </section>
           </div>
         </section>
@@ -1728,6 +1751,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=outputs-center-1"></script>
+    <script src="./script.js?v=memory-center-1"></script>
   </body>
 </html>

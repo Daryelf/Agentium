@@ -2508,11 +2508,19 @@ main {
 .office-notes > div,
 .office-tools,
 .office-timeline,
-.office-chat,
 .office-approval-queue,
 .office-quick-actions,
 .office-pipeline {
   min-width: 0;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.office-chat {
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
   border-radius: 12px;
   padding: 12px;
 }
@@ -2751,13 +2759,15 @@ main {
 }
 
 .office-chat-log {
-  min-height: 214px;
-  max-height: 286px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 10px;
   overflow: auto;
-  padding: 4px 7px 4px 2px;
+  padding: 4px 7px 10px 2px;
   overscroll-behavior: contain;
 }
 
@@ -2808,23 +2818,38 @@ main {
   color: #ffffff;
 }
 
-.office-chat-form {
+.office-chat .office-chat-form {
+  position: static;
+  z-index: auto;
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 78px;
+  align-items: center;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: auto;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(34, 211, 238, 0.14);
+  background: transparent;
 }
 
-.office-chat-form input {
+.office-chat .office-chat-form input {
+  width: 100%;
   min-width: 0;
   height: 40px;
+  min-height: 40px;
   border: 1px solid rgba(34, 211, 238, 0.26);
   border-radius: 12px;
   padding: 0 12px;
   color: var(--text);
+  font-size: 0.68rem;
   background: rgba(2, 6, 23, 0.78);
   box-shadow: 0 0 22px rgba(34, 211, 238, 0.08);
   outline: none;
+}
+
+.office-chat .office-chat-form button {
+  min-height: 40px;
+  border-radius: 12px;
 }
 
 .office-approval-queue {

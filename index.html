@@ -542,7 +542,10 @@
                     <p class="eyebrow">Connected Tools</p>
                     <h3>Agent 101 tool access</h3>
                   </div>
-                  <button class="ghost-button compact-action" id="agentToolRefreshBtn" type="button">Refresh</button>
+                  <div class="panel-action-row">
+                    <button class="ghost-button compact-action" id="agentOpenAiTestBtn" type="button">Test OpenAI</button>
+                    <button class="ghost-button compact-action" id="agentToolRefreshBtn" type="button">Refresh</button>
+                  </div>
                 </div>
                 <div class="agent-tool-grid" id="agentToolGrid">
                   <span><b>OpenAI</b><em>Local Demo</em></span>
@@ -551,6 +554,7 @@
                   <span><b>TikTok</b><em>Draft package</em></span>
                   <span><b>Storage</b><em>Ready</em></span>
                 </div>
+                <div class="agent-readiness-grid" id="agentReadinessGrid" aria-label="Agent 101 readiness checklist"></div>
               </section>
 
               <section class="panel clips-office-panel">

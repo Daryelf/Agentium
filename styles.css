@@ -2518,7 +2518,7 @@ main {
 
 .office-chat {
   min-width: 0;
-  min-height: 100%;
+  min-height: 260px;
   display: flex;
   flex-direction: column;
   border-radius: 12px;
@@ -2764,7 +2764,7 @@ main {
   max-height: none;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 10px;
   overflow: auto;
   padding: 4px 7px 10px 2px;
@@ -2818,6 +2818,20 @@ main {
   color: #ffffff;
 }
 
+.office-chat article.pending,
+.chat-message.pending {
+  opacity: 0.72;
+}
+
+.office-chat article.pending p::after,
+.chat-message.pending p::after {
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: thinkingDots 1.1s steps(4, end) infinite;
+}
+
 .office-chat .office-chat-form {
   position: static;
   z-index: auto;
@@ -2850,6 +2864,14 @@ main {
 .office-chat .office-chat-form button {
   min-height: 40px;
   border-radius: 12px;
+}
+
+@keyframes thinkingDots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75%,
+  100% { content: "..."; }
 }
 
 .office-approval-queue {
@@ -8596,6 +8618,13 @@ label {
   grid-column: span 3;
 }
 
+.panel-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .agent-tool-grid,
 .clips-office-grid {
   display: grid;
@@ -8642,6 +8671,45 @@ label {
 .agent-tool-grid em.manual,
 .agent-tool-grid em.draft {
   color: #67e8f9;
+}
+
+.agent-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.agent-readiness-grid span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.agent-readiness-grid b {
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-readiness-grid em {
+  color: #34d399;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agent-readiness-grid .waiting em {
+  color: #fbbf24;
 }
 
 .clips-office-actions {

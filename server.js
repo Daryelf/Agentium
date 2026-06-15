@@ -22,6 +22,7 @@ const ENV_ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "";
 const ENV_AI_PROVIDER = process.env.AI_PROVIDER || "";
 const ENV_AI_MODE = process.env.AI_MODE || "";
 const ENV_AI_MONTHLY_LIMIT_USD = process.env.AI_MONTHLY_LIMIT_USD || "";
+const ENV_OPENAI_TEST_BUDGET_USD = process.env.OPENAI_TEST_BUDGET_USD || "";
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
@@ -51,6 +52,8 @@ const AI_RISKY_ACTION_TYPES = new Set([
   "change_api_key",
   "deploy_campaign",
   "external_api_action",
+  "browser_login",
+  "payment_action",
 ]);
 const DEPO_SYSTEM_RULES = [
   "Agent 101 is the supervised draft-only agent inside Argentum OS.",
@@ -1097,6 +1100,9 @@ function defaultAiUsage() {
     inputTokens: 0,
     outputTokens: 0,
     blockedByLimit: false,
+    warnedAt: null,
+    lastCallAt: null,
+    lastError: null,
   };
 }
 
@@ -1106,7 +1112,7 @@ function defaultAiProviderConfig() {
     version: 1,
     provider,
     mode: provider === "openai" ? sanitizeAiMode(ENV_AI_MODE || "live") : "demo",
-    monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD, 10),
+    monthlyLimitUsd: parseMonthlyLimit(ENV_OPENAI_TEST_BUDGET_USD || ENV_AI_MONTHLY_LIMIT_USD, 10),
     usage: defaultAiUsage(),
     providers: {
       openai: {
@@ -1154,6 +1160,9 @@ function normalizeAiUsage(usage) {
     inputTokens: Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : 0,
     outputTokens: Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : 0,
     blockedByLimit: Boolean(usage.blockedByLimit),
+    warnedAt: usage.warnedAt || null,
+    lastCallAt: usage.lastCallAt || null,
+    lastError: usage.lastError ? String(usage.lastError).slice(0, 240) : null,
   };
 }
 
@@ -1168,7 +1177,7 @@ function readAiProviderConfig() {
       ...stored,
       provider: sanitizeProvider(stored.provider || fresh.provider),
       mode: sanitizeAiMode(stored.mode || fresh.mode),
-      monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD || stored.monthlyLimitUsd, fresh.monthlyLimitUsd),
+      monthlyLimitUsd: parseMonthlyLimit(ENV_OPENAI_TEST_BUDGET_USD || ENV_AI_MONTHLY_LIMIT_USD || stored.monthlyLimitUsd, fresh.monthlyLimitUsd),
       usage: normalizeAiUsage(stored.usage || fresh.usage),
       providers: {
         openai: {
@@ -1191,7 +1200,7 @@ function writeAiProviderConfig(config) {
     ...config,
     provider: sanitizeProvider(config.provider),
     mode: sanitizeAiMode(config.mode),
-    monthlyLimitUsd: parseMonthlyLimit(ENV_AI_MONTHLY_LIMIT_USD || config.monthlyLimitUsd, 10),
+    monthlyLimitUsd: parseMonthlyLimit(ENV_OPENAI_TEST_BUDGET_USD || ENV_AI_MONTHLY_LIMIT_USD || config.monthlyLimitUsd, 10),
     usage: normalizeAiUsage(config.usage),
     updatedAt: now(),
   };
@@ -1433,9 +1442,28 @@ function aiUsageLimitReached(config) {
   return limit > 0 && usage.estimatedMonthlyUsd >= limit;
 }
 
+function aiUsageBudgetStatus(config) {
+  const usage = normalizeAiUsage(config.usage);
+  const limit = parseMonthlyLimit(config.monthlyLimitUsd, 10);
+  const ratio = limit > 0 ? usage.estimatedMonthlyUsd / limit : 0;
+  return {
+    limitUsd: limit,
+    estimatedMonthlyUsd: usage.estimatedMonthlyUsd,
+    percentUsed: limit > 0 ? Math.min(100, Math.round(ratio * 100)) : 0,
+    warning: limit > 0 && ratio >= 0.75 && ratio < 1,
+    blocked: limit > 0 && ratio >= 1,
+  };
+}
+
 function assertAiUsageBudget(config) {
   if (!aiUsageLimitReached(config)) return;
-  throw guardedError("AI monthly spending limit reached. Switch to Local Demo Mode or raise AI_MONTHLY_LIMIT_USD.", 402);
+  config.usage = {
+    ...normalizeAiUsage(config.usage),
+    blockedByLimit: true,
+    lastError: "AI monthly spending limit reached.",
+  };
+  writeAiProviderConfig(config);
+  throw guardedError("AI monthly spending limit reached. Agent 101 used Local Demo Mode fallback.", 402);
 }
 
 function recordAiUsage(config, usage = {}) {
@@ -1448,10 +1476,21 @@ function recordAiUsage(config, usage = {}) {
     inputTokens: current.inputTokens + (Number.isFinite(inputTokens) ? inputTokens : 0),
     outputTokens: current.outputTokens + (Number.isFinite(outputTokens) ? outputTokens : 0),
     estimatedMonthlyUsd: Math.round((current.estimatedMonthlyUsd + estimatedAiCostUsd(usage)) * 10000) / 10000,
+    lastCallAt: now(),
+    lastError: null,
   };
   config.usage.blockedByLimit = aiUsageLimitReached(config);
+  if (aiUsageBudgetStatus(config).warning && !config.usage.warnedAt) config.usage.warnedAt = now();
   writeAiProviderConfig(config);
   return config.usage;
+}
+
+function recordAiProviderFailure(config, message) {
+  config.usage = {
+    ...normalizeAiUsage(config.usage),
+    lastError: String(message || "Provider error").slice(0, 240),
+  };
+  writeAiProviderConfig(config);
 }
 
 function saveAiProviderKey(payload) {
@@ -1500,6 +1539,8 @@ function detectRiskyAction(text) {
     ["change_api_key", ["change api key", "rotate key", "replace key"]],
     ["deploy_campaign", ["deploy campaign", "launch campaign", "send campaign"]],
     ["external_api_action", ["call external api", "run external api", "external api action"]],
+    ["browser_login", ["log in for me", "login for me", "use my login", "sign into", "sign in to my account"]],
+    ["payment_action", ["payment action", "use payment", "add card", "charge this", "buy with my card"]],
   ];
   const match = checks.find(([, phrases]) => phrases.some((phrase) => value.includes(phrase)));
   return match ? match[0] : null;
@@ -1558,6 +1599,101 @@ function normalizeDepoAiPayload(payload, fallbackMessage) {
   };
 }
 
+function extractOpenAiOutputText(payload = {}) {
+  if (typeof payload.output_text === "string") return payload.output_text;
+  return (payload.output || [])
+    .flatMap((item) => item.content || [])
+    .map((part) => part.text || part.value || "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function extractJsonObjectText(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start >= 0 && end > start) return candidate.slice(start, end + 1);
+  return candidate;
+}
+
+function normalizeSuggestedActions(actions) {
+  if (!Array.isArray(actions)) return [];
+  return actions.slice(0, 6).map((action) => {
+    if (typeof action === "string") {
+      return { label: action, action: action.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""), requiresApproval: false };
+    }
+    return {
+      label: String(action?.label || action?.action || "Review").slice(0, 80),
+      action: String(action?.action || action?.label || "review").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""),
+      requiresApproval: Boolean(action?.requiresApproval),
+    };
+  });
+}
+
+function normalizeAgent101AiPayload(payload, fallbackMessage = "") {
+  const parsed = typeof payload === "string" ? safeJsonParse(extractJsonObjectText(payload), null) : payload;
+  const validTypes = new Set(["general", "code_plan", "content", "clips", "agent_blueprint", "approval_request"]);
+  const validRisk = new Set(["low", "medium", "high"]);
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      message: String(fallbackMessage || payload || "").trim() || "Agent 101 prepared a response.",
+      taskType: "general",
+      suggestedActions: [],
+      artifacts: [],
+      requiresApproval: false,
+      riskLevel: "low",
+      blockedAction: null,
+      logs: ["Agent 101 returned text. JSON parsing fallback used."],
+    };
+  }
+  return {
+    message: String(parsed.message || fallbackMessage || "Agent 101 response ready.").trim(),
+    taskType: validTypes.has(parsed.taskType) ? parsed.taskType : "general",
+    suggestedActions: normalizeSuggestedActions(parsed.suggestedActions),
+    artifacts: Array.isArray(parsed.artifacts)
+      ? parsed.artifacts.slice(0, 5).map((artifact) => ({
+        type: String(artifact?.type || "plan").slice(0, 40),
+        title: String(artifact?.title || "Agent 101 artifact").slice(0, 120),
+        content: String(artifact?.content || "").slice(0, 6000),
+      }))
+      : [],
+    requiresApproval: Boolean(parsed.requiresApproval),
+    riskLevel: validRisk.has(parsed.riskLevel) ? parsed.riskLevel : "low",
+    blockedAction: parsed.blockedAction ? String(parsed.blockedAction).slice(0, 80) : null,
+    logs: Array.isArray(parsed.logs) ? parsed.logs.map(String).slice(0, 6) : [],
+  };
+}
+
+function agent101SystemInstructions() {
+  return [
+    "You are Agent 101, the first supervised master agent inside Argentum OS.",
+    "You help the user turn ideas into safe, structured work.",
+    "You can plan, research, organize, draft, write prompts, create implementation plans, prepare code-change instructions, create workflow plans, generate content packages, and propose future agents.",
+    "You are draft-only. You cannot perform external actions.",
+    "You cannot publish, spend money, contact customers, modify accounts, change API keys, create live agents, grant permissions, run external APIs/tools, or deploy campaigns.",
+    "Any risky action must be routed to Human Gate for approval.",
+    "If the user asks for a coding task, create a clear implementation plan, file checklist, patch strategy, test plan, and prompt for Codex or Claude if needed.",
+    "Do not claim you edited files unless a real code-editing tool exists and was used.",
+    "Be direct, useful, operational, and concise.",
+    "Return only valid JSON with keys: message, taskType, suggestedActions, artifacts, requiresApproval, riskLevel, blockedAction, logs.",
+  ].join(" ");
+}
+
+function agent101UserInput(message, context = {}) {
+  return [
+    `Message: ${message}`,
+    `Room ID: ${context.roomId || context.office || "agent-office"}`,
+    `Current stage: ${context.currentStage || "Agent 101"}`,
+    `Context: ${JSON.stringify(context.context || {}, null, 2).slice(0, 2000)}`,
+    "Allowed task types: general, code_plan, content, clips, agent_blueprint, approval_request.",
+    "If risky, return taskType approval_request, requiresApproval true, riskLevel high, blockedAction, and a Send to Human Gate suggested action.",
+  ].join("\n");
+}
+
 function depoResponseSchemaInstruction() {
   return "Return only JSON with keys: message string, suggestedActions array, requiresApproval boolean, riskLevel low|medium|high, logs array. If a risky action is requested, set requiresApproval true, riskLevel high, and blockedAction to the action type.";
 }
@@ -1595,8 +1731,67 @@ async function callOpenAiProvider(config, message, context) {
     throw error;
   }
   recordAiUsage(config, payload.usage || {});
-  const outputText = payload.output_text || payload.output?.flatMap((item) => item.content || []).map((part) => part.text || "").join("\n");
+  const outputText = extractOpenAiOutputText(payload);
   return normalizeDepoAiPayload(outputText, outputText);
+}
+
+async function callOpenAiAgent101(config, message, context = {}) {
+  const key = keyFromConfig(config, "openai");
+  if (!key) throw guardedError("OpenAI API key is not configured.", 400);
+  assertAiUsageBudget(config);
+  const settings = config.providers.openai;
+  const requestBody = {
+    model: settings.model,
+    instructions: agent101SystemInstructions(),
+    input: [
+      {
+        role: "user",
+        content: agent101UserInput(message, context),
+      },
+    ],
+    temperature: settings.temperature,
+    max_output_tokens: Math.max(700, Number(settings.maxOutputTokens || 900)),
+  };
+
+  async function sendRequest(body) {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+      error.openAiCode = payload.error?.code || "";
+      error.openAiType = payload.error?.type || "";
+      throw error;
+    }
+    recordAiUsage(config, payload.usage || {});
+    return extractOpenAiOutputText(payload);
+  }
+
+  const firstText = await sendRequest(requestBody);
+  let normalized = normalizeAgent101AiPayload(firstText, firstText);
+  if (normalized.logs.includes("Agent 101 returned text. JSON parsing fallback used.")) {
+    const retryText = await sendRequest({
+      ...requestBody,
+      input: [
+        ...requestBody.input,
+        {
+          role: "user",
+          content: `Your previous response was not valid JSON. Convert this text into the exact required JSON schema and return JSON only:\n${firstText.slice(0, 6000)}`,
+        },
+      ],
+    });
+    normalized = normalizeAgent101AiPayload(retryText, firstText);
+    if (normalized.logs.includes("Agent 101 returned text. JSON parsing fallback used.")) {
+      normalized.logs = ["OpenAI response was not valid JSON after retry; text fallback used."];
+    }
+  }
+  return normalized;
 }
 
 async function callAnthropicProvider(config, message, context) {
@@ -1692,6 +1887,109 @@ async function testAiProvider(payload = {}) {
     };
     config.lastTest = { ...result, testedAt: now() };
     writeAiProviderConfig(config);
+    return result;
+  }
+}
+
+function agent101OpenAiStatus(config = readAiProviderConfig()) {
+  const provider = sanitizeProvider(config.provider);
+  const mode = provider === "openai" ? sanitizeAiMode(config.mode || "live") : "demo";
+  const configured = Boolean(keyFromConfig(config, "openai"));
+  const budget = aiUsageBudgetStatus(config);
+  const lastTest = config.lastTest || null;
+  const hasError = lastTest?.provider === "openai" && lastTest?.success === false;
+  return {
+    provider: "openai",
+    mode: provider === "openai" && mode === "live" ? "live" : "demo",
+    configured,
+    model: config.providers.openai.model,
+    status: configured ? budget.blocked ? "error" : hasError ? "error" : "ready" : "missing_key",
+    lastTest: lastTest?.testedAt || lastTest?.timestamp || null,
+    error: hasError ? safeAiErrorMessage(lastTest) : null,
+    budget,
+  };
+}
+
+async function testAgent101OpenAi() {
+  const config = readAiProviderConfig();
+  const configured = Boolean(keyFromConfig(config, "openai"));
+  if (!configured) {
+    const result = {
+      success: false,
+      provider: "openai",
+      mode: "demo",
+      configured: false,
+      model: config.providers.openai.model,
+      message: "OpenAI API key is not configured. Agent 101 is using Local Demo Mode.",
+      status: "missing_key",
+      testedAt: now(),
+    };
+    config.lastTest = result;
+    writeAiProviderConfig(config);
+    return result;
+  }
+  try {
+    assertAiUsageBudget(config);
+    const settings = config.providers.openai;
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${keyFromConfig(config, "openai")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        instructions: "Reply with exactly: Agent 101 online.",
+        input: [{ role: "user", content: "Reply with exactly: Agent 101 online." }],
+        max_output_tokens: 24,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+      error.openAiCode = payload.error?.code || "";
+      throw error;
+    }
+    recordAiUsage(config, payload.usage || {});
+    const outputText = extractOpenAiOutputText(payload);
+    const result = {
+      success: true,
+      provider: "openai",
+      mode: "live",
+      configured: true,
+      model: settings.model,
+      message: outputText || "Agent 101 online.",
+      status: "ready",
+      testedAt: now(),
+      budget: aiUsageBudgetStatus(config),
+    };
+    config.lastTest = result;
+    writeAiProviderConfig(config);
+    const state = readState();
+    audit(state, "OpenAI connection tested", "Agent 101 OpenAI Live health check succeeded.");
+    writeState(state);
+    return result;
+  } catch (error) {
+    logAiProviderError("agent101-openai-test", error);
+    const friendly = safeAiErrorMessage(error);
+    recordAiProviderFailure(config, friendly);
+    const result = {
+      success: false,
+      provider: "openai",
+      mode: "demo",
+      configured: true,
+      model: config.providers.openai.model,
+      message: friendly,
+      error: friendly,
+      status: "error",
+      testedAt: now(),
+      budget: aiUsageBudgetStatus(config),
+    };
+    config.lastTest = result;
+    writeAiProviderConfig(config);
+    const state = readState();
+    audit(state, "OpenAI connection test failed", friendly);
+    writeState(state);
     return result;
   }
 }
@@ -2026,43 +2324,79 @@ function createHumanGateRequest(payload = {}) {
 
 function localAgent101ChatResponse(message) {
   const text = String(message || "").toLowerCase();
-  if (detectRiskyAction(text)) {
-    return blockedDepoResponse(detectRiskyAction(text));
-  }
-  if (text.includes("capcut")) {
+  const risky = detectRiskyAction(text);
+  if (risky) return blockedDepoResponse(risky);
+  if (text.includes("codex") || text.includes("code") || text.includes("ui") || text.includes("fix") || text.includes("implement")) {
     return {
-      message: "CapCut handoff: use 9:16 1080x1920, 15-30s clips, hook in first 2 seconds, reviewed auto captions, subtle transitions, low-volume music, MP4 export, and a final Human Gate review before any post.",
-      suggestedActions: ["Create clips plan", "Package for approval"],
+      message: "Code plan ready: define the broken behavior, inspect the affected files first, patch only the scoped UI/backend path, run the app checks, then verify the exact screen or endpoint before shipping.",
+      taskType: "code_plan",
+      suggestedActions: [
+        { label: "Create Codex prompt", action: "create_codex_prompt", requiresApproval: false },
+        { label: "Create task plan", action: "create_task_plan", requiresApproval: false },
+      ],
       requiresApproval: false,
       riskLevel: "low",
-      artifacts: [],
-      logs: ["CapCut handoff instructions prepared locally."],
+      artifacts: [
+        {
+          type: "code_plan",
+          title: "Codex implementation prompt",
+          content: [
+            "Goal: make the requested change without redesigning unrelated surfaces.",
+            "Inspect: README, project memory, target UI component, related CSS, backend route if data is involved.",
+            "Patch strategy: keep edits scoped, preserve existing state and safety rules, avoid key exposure.",
+            "Test: npm run check, endpoint smoke tests, and browser verification for the touched UI.",
+            "Acceptance: no console errors, no layout overlap, and only requested behavior changes.",
+          ].join("\n"),
+        },
+      ],
+      logs: ["Agent 101 created a local Codex-style implementation plan."],
     };
   }
-  if (text.includes("tiktok") || text.includes("caption")) {
+  if (text.includes("clip") || text.includes("capcut") || text.includes("tiktok") || text.includes("caption")) {
     return {
-      message: "TikTok draft package: write one sharp hook caption, 3-5 hashtags, a pinned comment idea, and a file checklist. Posting, uploading, profile changes, ads, and payment settings require Human Gate.",
-      suggestedActions: ["Draft TikTok captions", "Package for approval"],
+      message: "Clips plan ready: create three short hooks, list required raw footage/audio, prepare CapCut edit notes, draft captions, then send posting decisions to Human Gate. No upload or posting happens here.",
+      taskType: "clips",
+      suggestedActions: [
+        { label: "Create clips plan", action: "create_clips_plan", requiresApproval: false },
+        { label: "Package for approval", action: "package_for_approval", requiresApproval: true },
+      ],
       requiresApproval: false,
       riskLevel: "medium",
-      artifacts: [],
-      logs: ["TikTok draft guidance prepared locally."],
+      artifacts: [
+        {
+          type: "brief",
+          title: "Short-form clips draft package",
+          content: "Hooks, asset checklist, CapCut handoff notes, caption drafts, and Human Gate posting note.",
+        },
+      ],
+      logs: ["Agent 101 created a local clips plan."],
     };
   }
-  if (text.includes("access") || text.includes("need")) {
+  if (text.includes("agent") || text.includes("blueprint") || text.includes("hire")) {
     return {
-      message: "Access needed: OpenAI brain can run in Local Demo or Live API, browser access is restricted, CapCut is manual handoff, local file uploads are supported, TikTok OAuth can be connected later, and Google Drive is optional.",
-      suggestedActions: ["List files needed", "Prepare CapCut brief"],
+      message: "Blueprint draft only: define the future agent role, allowed local tools, blocked permissions, approval requirements, eval checks, and budget. Human Gate must approve before any live agent exists.",
+      taskType: "agent_blueprint",
+      suggestedActions: [
+        { label: "Propose new agent", action: "propose_new_agent", requiresApproval: true },
+        { label: "Package for approval", action: "package_for_approval", requiresApproval: true },
+      ],
       requiresApproval: false,
-      riskLevel: "low",
-      artifacts: [],
-      logs: ["Access list returned."],
+      riskLevel: "medium",
+      artifacts: [
+        {
+          type: "brief",
+          title: "Future agent blueprint",
+          content: "Role, purpose, requested permissions, blocked actions, eval checklist, and Human Gate activation requirement.",
+        },
+      ],
+      logs: ["Agent 101 drafted a future-agent blueprint locally."],
     };
   }
-  if (text.includes("blocked") || text.includes("cannot")) {
+  if (text.includes("blocked") || text.includes("cannot") || text.includes("can't")) {
     return {
       message: "Blocked: publishing without approval, spending money, account changes, customer contact, ad actions, raw credential login automation, live agent creation, permission changes, and API key changes.",
-      suggestedActions: ["Package for approval"],
+      taskType: "general",
+      suggestedActions: [{ label: "Package for approval", action: "package_for_approval", requiresApproval: true }],
       requiresApproval: false,
       riskLevel: "low",
       artifacts: [],
@@ -2070,12 +2404,23 @@ function localAgent101ChatResponse(message) {
     };
   }
   return {
-    message: "Clips Office plan: define goal/audience/style, gather raw footage/audio/script assets, create three clip structures, prepare CapCut edit notes, draft TikTok/Instagram/YouTube captions, then package the posting decision for Human Gate.",
-    suggestedActions: ["Create clips plan", "Prepare CapCut brief", "Draft TikTok captions", "Package for approval"],
+    message: "I can turn this into bounded supervised work: clarify the goal, list needed context, break it into steps, label risks, draft the output, and route anything risky to Human Gate.",
+    taskType: "general",
+    suggestedActions: [
+      { label: "Create task plan", action: "create_task_plan", requiresApproval: false },
+      { label: "Draft workflow", action: "draft_workflow", requiresApproval: false },
+      { label: "Package for approval", action: "package_for_approval", requiresApproval: true },
+    ],
     requiresApproval: false,
-    riskLevel: "medium",
-    artifacts: [],
-    logs: ["Local Agent 101 Clips response. No external API call was made."],
+    riskLevel: "low",
+    artifacts: [
+      {
+        type: "plan",
+        title: "Bounded task plan",
+        content: "Goal, context needed, steps, risks, draft output, Human Gate check, and final log.",
+      },
+    ],
+    logs: ["Local Agent 101 response. No external API call was made."],
   };
 }
 
@@ -2086,31 +2431,76 @@ async function handleAgent101Chat(payload = {}) {
   if (risky && requiresHumanGate(risky)) {
     const request = createHumanGateRequest({
       actionType: risky,
-      title: `Review blocked Clips Office action: ${risky}`,
+      title: `Review blocked Agent 101 action: ${risky}`,
       evidence: `Agent 101 chat request: ${message}`,
       riskLevel: "high",
     });
-    return { ...blockedDepoResponse(risky), approval: request.approval };
+    return {
+      ...blockedDepoResponse(risky),
+      taskType: "approval_request",
+      suggestedActions: [{ label: "Send to Human Gate", action: "send_to_human_gate", requiresApproval: true }],
+      artifacts: [],
+      approval: request.approval,
+      provider: "local_demo",
+      mode: "demo",
+    };
   }
 
   const config = readAiProviderConfig();
   const provider = sanitizeProvider(config.provider);
   const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
-  if (mode !== "live" || isLocalProvider(provider)) {
+  const canUseOpenAi = provider === "openai" && mode === "live" && Boolean(keyFromConfig(config, "openai"));
+  if (!canUseOpenAi) {
     return { ...localAgent101ChatResponse(message), provider: "local_demo", mode: "demo" };
   }
 
   try {
-    const live = provider === "openai"
-      ? await callOpenAiProvider(config, `Clips Office workflow request: ${message}`, { roomId: "clips-office", currentStage: "Clips Office" })
-      : await callAnthropicProvider(config, `Clips Office workflow request: ${message}`, { roomId: "clips-office", currentStage: "Clips Office" });
-    const riskyResponse = detectRiskyAction(`${live.message} ${(live.suggestedActions || []).join(" ")}`);
-    if (riskyResponse && requiresHumanGate(riskyResponse)) return blockedDepoResponse(riskyResponse);
-    return { ...live, artifacts: live.artifacts || [], provider, mode };
+    const live = await callOpenAiAgent101(config, message, payload);
+    const riskyResponse = detectRiskyAction(
+      [
+        live.message,
+        live.blockedAction,
+        ...(live.suggestedActions || []).map((action) => `${action.label} ${action.action}`),
+        ...(live.artifacts || []).map((artifact) => `${artifact.title} ${artifact.content}`),
+      ].join(" "),
+    );
+    if ((live.requiresApproval || riskyResponse) && requiresHumanGate(live.blockedAction || riskyResponse)) {
+      const actionType = live.blockedAction || riskyResponse;
+      const request = createHumanGateRequest({
+        actionType,
+        title: `Review Agent 101 request: ${actionType}`,
+        evidence: `Agent 101 live chat request: ${message}`,
+        riskLevel: "high",
+      });
+      return {
+        ...live,
+        taskType: "approval_request",
+        requiresApproval: true,
+        riskLevel: "high",
+        blockedAction: actionType,
+        approval: request.approval,
+        provider,
+        mode,
+      };
+    }
+    const state = readState();
+    audit(state, "Agent 101 live response", `${live.taskType}: ${message.slice(0, 120)}`);
+    writeState(state);
+    return { ...live, provider, mode };
   } catch (error) {
     logAiProviderError("agent101-chat", error);
     const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live provider failed; Local Demo fallback used.";
-    return { ...localAgent101ChatResponse(message), logs: [friendly, "Provider error fallback used."], fallback: true, provider: "local_demo", mode: "demo" };
+    recordAiProviderFailure(config, friendly);
+    const state = readState();
+    audit(state, "Agent 101 provider fallback", friendly);
+    writeState(state);
+    return {
+      ...localAgent101ChatResponse(message),
+      logs: [friendly, "Provider error fallback used."],
+      fallback: true,
+      provider: "local_demo",
+      mode: "demo",
+    };
   }
 }
 
@@ -3042,6 +3432,16 @@ async function handleApi(req, res, url) {
       agent101: agent101Model(state),
       tools: publicToolConnections(state),
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/openai-status") {
+    sendJson(res, 200, agent101OpenAiStatus());
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/openai-test") {
+    sendJson(res, 200, await testAgent101OpenAi());
     return;
   }
 

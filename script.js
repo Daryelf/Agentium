@@ -420,6 +420,8 @@ const aiKeyStatus = document.querySelector("#aiKeyStatus");
 const aiProviderTestBtn = document.querySelector("#aiProviderTestBtn");
 const aiProviderRemoveKeyBtn = document.querySelector("#aiProviderRemoveKeyBtn");
 const aiProviderTestResult = document.querySelector("#aiProviderTestResult");
+const agentOpenAiTestBtn = document.querySelector("#agentOpenAiTestBtn");
+const agentReadinessGrid = document.querySelector("#agentReadinessGrid");
 const agentRosterList = document.querySelector("#agentRosterList");
 const habitatModules = document.querySelector("#habitatModules");
 const habitatRoutes = document.querySelector("#habitatRoutes");
@@ -3269,14 +3271,14 @@ function agentChatMarkup(card) {
   const snapshot = depoKnowledgeSnapshot();
   const stageLabel = depoWorkflowStageLabels[depoAgent.currentStage] || "Agent Habitat";
   const promptButtons = [
-    "What can you do?",
     "Create a task plan",
+    "Create Codex prompt",
     "Draft a workflow",
+    "Create clips plan",
     "Propose a new agent",
     "Package for approval",
+    "What can you do?",
     "What is blocked?",
-    "View current stage",
-    "View Human Gate rules",
   ];
   return `
     <div class="module-info-head agent-chat-head">
@@ -3308,7 +3310,7 @@ function agentChatMarkup(card) {
       ${messages
         .map(
           (message) => `
-            <article class="chat-message ${message.speaker === "operator" ? "operator" : "depo"}">
+            <article class="chat-message ${message.speaker === "operator" ? "operator" : "depo"} ${message.pending ? "pending" : ""}">
               <span>${message.speaker === "operator" ? "You" : message.prompt ? `You · ${escapeHtml(message.prompt)}` : "Agent 101"}</span>
               <p>${escapeHtml(message.text)}</p>
             </article>
@@ -3741,16 +3743,19 @@ function officeNotesMarkup(runtime) {
 function officeChatMarkup(card) {
   const resolved = resolveRoomKey(card.id);
   const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-12);
+  const visibleMessages = messages.length
+    ? messages
+    : [{ speaker: "depo", text: "I'm ready. Tell me what to check, plan, draft, or package in this office." }];
   return `
     <section class="office-chat">
       <div class="office-section-head">
         <h4>Agent 101 Command Chat</h4>
       </div>
       <div class="office-chat-log" aria-live="polite">
-        ${messages
+        ${visibleMessages
           .map(
             (message) => `
-              <article class="${message.speaker === "operator" ? "operator" : ""}">
+              <article class="${message.speaker === "operator" ? "operator" : ""} ${message.pending ? "pending" : ""}">
                 <strong>${message.speaker === "operator" ? "You" : "Agent 101"}</strong>
                 <p>${escapeHtml(message.text)}</p>
               </article>
@@ -4483,6 +4488,9 @@ function formatAiMoney(value) {
 
 function aiProviderChatLabel() {
   if (aiProviderNotice) return "Provider Error";
+  const openaiStatus = agent101ToolStatus?.openaiStatus || null;
+  if (openaiStatus?.status === "error") return "Provider Error";
+  if (openaiStatus?.status === "missing_key") return "Local Demo";
   const provider = normalizeUiProvider(aiProviderSettings.provider);
   if (provider === "openai" && aiProviderSettings.mode === "live") return "OpenAI Live";
   return "Local Demo";
@@ -4580,14 +4588,21 @@ function fallbackAgent101ToolStatus() {
       youtube: { label: "Not connected", status: "not_connected" },
       storage: { label: "Ready", status: "ready", localProjectFiles: true },
     },
+    openaiStatus: null,
   };
 }
 
 function renderAgent101ToolStatus() {
   const status = agent101ToolStatus || fallbackAgent101ToolStatus();
   const tools = status.tools || {};
+  const openaiStatus = status.openaiStatus || null;
+  const openaiMode = openaiStatus?.status === "ready" && openaiStatus.mode === "live"
+    ? "OpenAI Live"
+    : openaiStatus?.status === "error"
+      ? "Provider Error"
+      : tools.openai?.mode || "Local Demo";
   const rows = [
-    ["OpenAI", tools.openai?.mode || "Local Demo", "demo"],
+    ["OpenAI", openaiMode, openaiMode === "OpenAI Live" ? "live" : openaiMode === "Provider Error" ? "restricted" : "demo"],
     ["Browser", tools.browser?.label || "Restricted", "restricted"],
     ["CapCut", tools.capcut?.label || "Manual handoff", "manual"],
     ["TikTok", tools.tiktok?.postingMode || tools.tiktok?.mode || "Draft package", "draft"],
@@ -4596,6 +4611,22 @@ function renderAgent101ToolStatus() {
   if (agentToolGrid) {
     agentToolGrid.innerHTML = rows
       .map(([name, value, className]) => `<span><b>${escapeHtml(name)}</b><em class="${escapeHtml(className)}">${escapeHtml(value)}</em></span>`)
+      .join("");
+  }
+  if (agentReadinessGrid) {
+    const ready = openaiStatus?.status === "ready" && openaiStatus?.mode === "live";
+    const readiness = [
+      ["OpenAI connection", ready ? "Ready" : "Not ready", ready],
+      ["Human Gate", "Active", true],
+      ["Draft-only mode", "Active", true],
+      ["System logs", "Active", true],
+      ["Task creation", "Ready", true],
+      ["Artifact creation", "Ready", true],
+      ["Approval routing", "Ready", true],
+      ["External actions", "Locked", true],
+    ];
+    agentReadinessGrid.innerHTML = readiness
+      .map(([label, value, ok]) => `<span class="${ok ? "ready" : "waiting"}"><b>${escapeHtml(label)}</b><em>${escapeHtml(value)}</em></span>`)
       .join("");
   }
   if (settingsToolGrid) {
@@ -4632,7 +4663,11 @@ async function loadAgent101ToolStatus() {
     return;
   }
   try {
-    agent101ToolStatus = await api("/api/agent101/tool-status");
+    const [toolStatus, openaiStatus] = await Promise.all([
+      api("/api/agent101/tool-status"),
+      api("/api/agent101/openai-status"),
+    ]);
+    agent101ToolStatus = { ...toolStatus, openaiStatus };
   } catch (error) {
     addLocalAudit("Tool status unavailable", error.message);
     agent101ToolStatus = fallbackAgent101ToolStatus();
@@ -6466,6 +6501,10 @@ async function submitDepoChat(roomKey, message) {
   const trimmed = String(message || "").trim();
   if (!trimmed) return;
   depoChatMessages.push({ roomId: resolved, speaker: "operator", text: trimmed });
+  const pendingMessage = { roomId: resolved, speaker: "depo", text: "Thinking...", pending: true };
+  depoChatMessages.push(pendingMessage);
+  renderShellData();
+  requestAnimationFrame(scrollAgentChatToLatest);
   let responseText = depoChatResponse(trimmed, resolved);
   let responseMeta = { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [] };
   const command = handleOfficeChatCommand(resolved, trimmed);
@@ -6495,6 +6534,7 @@ async function submitDepoChat(roomKey, message) {
       });
     }
   }
+  depoChatMessages = depoChatMessages.filter((item) => item !== pendingMessage);
   depoChatMessages.push({ roomId: resolved, speaker: "depo", text: responseText });
   depoChatMessages = depoChatMessages.slice(-18);
   addSystemLogEntry({
@@ -6947,6 +6987,30 @@ aiProviderTestBtn?.addEventListener("click", async () => {
   }
 });
 
+agentOpenAiTestBtn?.addEventListener("click", async () => {
+  if (!apiAvailable) {
+    addLocalAudit("OpenAI test unavailable", "Start the local server to test Agent 101 OpenAI Live.");
+    return;
+  }
+  const originalText = agentOpenAiTestBtn.textContent;
+  agentOpenAiTestBtn.disabled = true;
+  agentOpenAiTestBtn.textContent = "Testing";
+  try {
+    const result = await postJson("/api/agent101/openai-test", {});
+    await loadAiProviderSettings();
+    await loadAgent101ToolStatus();
+    aiProviderNotice = result.success || result.status === "missing_key" ? "" : result.message || result.error || "OpenAI test returned a clean error.";
+    addLocalAudit(result.success ? "OpenAI Live ready" : "OpenAI test needs attention", result.message || result.error || "Agent 101 OpenAI test complete.");
+  } catch (error) {
+    aiProviderNotice = error.message;
+    addLocalAudit("OpenAI test failed", error.message);
+  } finally {
+    agentOpenAiTestBtn.disabled = false;
+    agentOpenAiTestBtn.textContent = originalText || "Test OpenAI";
+    renderShellData();
+  }
+});
+
 scanBtn?.addEventListener("click", () => {
   selectedAgentKey = null;
   focusRoom("depo-habitat", { scale: 1.72 });
@@ -7141,9 +7205,20 @@ moduleInfoCard?.addEventListener("submit", (event) => {
   event.preventDefault();
   const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
   const input = form.querySelector('input[name="message"]');
+  const button = form.querySelector('button[type="submit"]');
   const message = input?.value || "";
+  const originalButtonText = button?.textContent || "Send";
   if (input) input.value = "";
-  submitDepoChat(stationId, message);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Sending";
+  }
+  submitDepoChat(stationId, message).finally(() => {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalButtonText;
+    }
+  });
 });
 
 moduleInfoCard?.addEventListener("focusin", () => {

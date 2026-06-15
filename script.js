@@ -4767,16 +4767,19 @@ function renderCapabilities() {
   ];
   capabilityList.innerHTML = cards
     .map(
-      (capability) => `
+      (capability) => {
+        const statusClass = capability.status === "Active" ? "is-active" : capability.status === "Draft only" ? "is-draft" : "is-locked";
+        return `
         <article class="capability-item capability-card ${escapeHtml(capability.accent)}">
           <div class="capability-main">
             <span class="capability-dot" aria-hidden="true"></span>
             <strong>${escapeHtml(capability.name)}</strong>
             <p>${escapeHtml(capability.description)}</p>
           </div>
-          <button class="small-button capability-status-button" type="button" data-capability="${escapeHtml(capability.id)}">${escapeHtml(capability.status)}</button>
+          <button class="small-button capability-status-button ${statusClass}" type="button" data-capability="${escapeHtml(capability.id)}">${escapeHtml(capability.status)}</button>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }

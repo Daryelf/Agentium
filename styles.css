@@ -8453,7 +8453,7 @@ label {
 .capability-card.red .capability-status-button {
   color: #fecaca;
   border-color: rgba(248, 113, 113, 0.28);
-  background: rgba(127, 29, 29, 0.28);
+  background: rgba(127, 29, 29, 0.18);
 }
 
 .capability-main {
@@ -8480,15 +8480,38 @@ label {
   justify-self: start;
   align-self: end;
   min-width: 0;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 8px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #dbeafe;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(15, 23, 42, 0.74);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   font-size: 0.58rem;
+  font-weight: 860;
+}
+
+.capability-status-button.is-active {
+  color: #99f6e4;
+  border-color: rgba(45, 212, 191, 0.3);
+  background: rgba(20, 184, 166, 0.14);
+}
+
+.capability-status-button.is-draft {
+  color: #ddd6fe;
+  border-color: rgba(167, 139, 250, 0.3);
+  background: rgba(109, 40, 217, 0.18);
+}
+
+.capability-status-button.is-locked {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(127, 29, 29, 0.22);
 }
 
 .agent-work-panel {
   grid-area: work;
-  gap: 9px;
+  gap: 8px;
 }
 
 .agent-task-form {
@@ -8524,23 +8547,16 @@ label {
 .assign-work-button {
   min-height: 50px;
   border-radius: 12px;
-}
-
-.agent-command-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.agent-command-presets button {
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: 9px;
-  color: #cbd5e1;
-  border: 1px solid rgba(125, 211, 252, 0.12);
-  background: rgba(15, 23, 42, 0.52);
-  font-size: 0.68rem;
-  font-weight: 820;
+  color: #e0f2fe;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  background:
+    linear-gradient(135deg, rgba(99, 102, 241, 0.58), rgba(14, 165, 233, 0.5));
+  box-shadow:
+    0 12px 24px rgba(14, 165, 233, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  font-size: 0.8rem;
+  font-weight: 780;
+  letter-spacing: 0;
 }
 
 .agent-center-grid {

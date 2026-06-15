@@ -718,19 +718,133 @@ function permissionBadge(status) {
 }
 
 function renderRadar() {
+  const selected = selectedCandidate();
+  const sorted = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const highScore = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 70);
+  const ready = countWhere(state.candidates, (candidate) => candidate.status === "packaged");
+  const reviewed = countWhere(state.candidates, (candidate) => ["reviewed", "packaged", "rejected"].includes(candidate.status));
+  const dismissed = countWhere(state.candidates, (candidate) => candidate.status === "rejected");
   view.innerHTML = `
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Clip Radar</h2>
+    <section class="radar-page">
+      <div class="radar-tabs">
+        <button class="active">All Candidates <b>${state.candidates.length}</b></button>
+        <button>High Score <b>${highScore}</b></button>
+        <button>Ready to Package <b>${ready}</b></button>
+        <button>Reviewed <b>${reviewed}</b></button>
+        <button>Dismissed <b>${dismissed}</b></button>
+      </div>
+
+      <div class="radar-shell">
+        <section class="panel radar-board">
+          <div class="radar-filterbar">
+            <label class="stream-search radar-search">Search clips <input placeholder="Search clips..." aria-label="Search clips"></label>
+            <select aria-label="Platform filter"><option>Platform: All</option><option>Twitch</option><option>YouTube</option></select>
+            <select aria-label="Streamer filter"><option>Streamer: All</option>${state.streamers.map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}</select>
+            <select aria-label="Score filter"><option>Score: All</option><option>70+</option><option>90+</option></select>
+            <select aria-label="Duration filter"><option>Duration: All</option><option>Short</option><option>Ideal</option><option>Long</option></select>
+            <select aria-label="Status filter"><option>Status: All</option><option>New</option><option>Packaged</option><option>Rejected</option></select>
+          </div>
+
+          ${sorted.length ? renderRadarTable(sorted) : empty("No clip candidates yet. Run a watch cycle after adding approved streamers.")}
+        </section>
+
+        <aside class="panel radar-inspector">
+          ${selected ? renderCandidateInspector(selected) : empty("Select a clip candidate")}
+        </aside>
+      </div>
+
+      <div class="radar-footer">
+        <span>${selected ? `1 selected` : `${state.candidates.length} candidates`}</span>
         <div class="actions">
-          <button class="primary" data-action="run-watch">Run Watch Cycle</button>
-          <button data-action="refresh">Refresh</button>
+          <button data-action="run-watch">Run Watch Cycle</button>
+          <button data-score-candidate="${selected?.id || ""}" ${selected ? "" : "disabled"}>Mark Reviewed</button>
+          <button class="primary" data-package-candidate="${selected?.id || ""}" ${selected ? "" : "disabled"}>Create Package${selected ? " (1)" : ""}</button>
         </div>
       </div>
-      <div class="card-list">
-        ${state.candidates.length ? state.candidates.map(renderCandidateCard).join("") : empty("No candidates yet")}
-      </div>
     </section>
+  `;
+}
+
+function renderRadarTable(candidates) {
+  return `
+    <div class="radar-table-wrap">
+      <table class="radar-table">
+        <thead>
+          <tr>
+            <th><span class="select-box"></span></th>
+            <th>Clip Candidate</th>
+            <th>Streamer / Stream</th>
+            <th>Score</th>
+            <th>Hook Strength</th>
+            <th>Engagement</th>
+            <th>Duration</th>
+            <th>Detected</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${candidates.map((candidate, index) => renderRadarRow(candidate, index)).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderRadarRow(candidate, index) {
+  const selected = selectedCandidate()?.id === candidate.id;
+  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
+  const score = Number(candidate.score || 0);
+  const duration = Number(candidate.duration || 0);
+  const hook = Number(candidate.hookScore || 0);
+  return `
+    <tr class="${selected ? "selected" : ""}" data-select-candidate="${candidate.id}">
+      <td><span class="select-box ${selected ? "checked" : ""}"></span></td>
+      <td>
+        <div class="radar-candidate-cell">
+          ${radarThumb(candidate, index)}
+          <div>
+            <strong>${esc(candidate.title || "Untitled clip")}</strong>
+            <span>${candidateTags(candidate, index)}</span>
+            <small>${esc(candidate.transcriptSnippet || candidate.reason || "Candidate needs transcript context.").slice(0, 84)}</small>
+          </div>
+        </div>
+      </td>
+      <td>
+        <div class="radar-streamer-cell">
+          <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
+          <div>
+            <strong>${esc(streamer?.displayName || "Unknown streamer")} <em>verified</em></strong>
+            <small>${esc(candidate.category || "Demo stream")}${streamer?.liveStatus ? ` · ${liveLabel(streamer.liveStatus)}` : ""}</small>
+          </div>
+        </div>
+      </td>
+      <td>${scoreRing(score)}</td>
+      <td>
+        <div class="hook-cell">
+          <b>${hook}</b>
+          <span>Hook score</span>
+          <i style="width:${Math.max(8, Math.min(100, hook))}%"></i>
+        </div>
+      </td>
+      <td>
+        <div class="engagement-cell">
+          <b>${formatEngagement(candidate, index)}</b>
+          <span>Chat spike</span>
+          <em>${sparkline(score + index * 7)}</em>
+        </div>
+      </td>
+      <td><b>${duration || 30}s</b><small class="${durationLabelTone(duration)}">${durationLabel(duration)}</small></td>
+      <td><b>${timeAgo(candidate.updatedAt || candidate.createdAt)}</b><small>${candidate.sourceType || "Live"}</small></td>
+      <td>${candidateStatusBadge(candidate.status)}</td>
+      <td>
+        <div class="radar-row-actions">
+          <button data-select-candidate="${candidate.id}">Play</button>
+          <button data-package-candidate="${candidate.id}">Box</button>
+          <button data-reject-candidate="${candidate.id}">...</button>
+        </div>
+      </td>
+    </tr>
   `;
 }
 
@@ -758,6 +872,137 @@ function renderCandidateCard(candidate) {
         <button class="danger" data-reject-candidate="${candidate.id}">Reject</button>
       </div>
     </article>
+  `;
+}
+
+function selectedCandidate() {
+  const selected = state.candidates.find((item) => item.id === state.selectedCandidateId);
+  if (selected) return selected;
+  return [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+}
+
+function radarThumb(candidate, index = 0) {
+  const start = candidate.timestampStart || "00:00";
+  const end = candidate.timestampEnd || "00:30";
+  return `
+    <div class="radar-thumb thumb-${index % 5}">
+      <span>LIVE</span>
+      <button type="button" data-select-candidate="${candidate.id}">▶</button>
+      <small>${esc(start)}</small>
+      <em>${esc(end)}</em>
+    </div>
+  `;
+}
+
+function candidateTags(candidate, index = 0) {
+  const labels = [
+    candidate.category || "Clip",
+    Number(candidate.score || 0) >= 85 ? "High Energy" : index % 2 ? "Clean Hook" : "Review"
+  ];
+  return labels.map((label) => `<em>${esc(label)}</em>`).join("");
+}
+
+function liveLabel(value) {
+  return String(value || "").includes("live") ? "Live now" : String(value || "Demo");
+}
+
+function scoreRing(score) {
+  const tone = score >= 90 ? "excellent" : score >= 80 ? "strong" : score >= 70 ? "good" : "watch";
+  const label = score >= 90 ? "Exceptional" : score >= 80 ? "Very good" : score >= 70 ? "Good" : "Review";
+  return `<div class="score-ring score-${tone}" style="--score:${Math.max(0, Math.min(100, score))}"><b>${score}</b><small>${label}</small></div>`;
+}
+
+function formatEngagement(candidate, index = 0) {
+  const spike = Number(candidate.chatSignals?.spike || candidate.chatSignals?.messagesPerMinute || 0);
+  const fallback = Number(candidate.score || 0) * 94 + index * 730;
+  const value = spike ? spike * 420 : fallback;
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 1 : 1)}K` : String(Math.round(value));
+}
+
+function durationLabel(duration) {
+  if (!duration) return "Ideal";
+  if (duration < 20) return "Short";
+  if (duration <= 60) return "Ideal";
+  return "Long";
+}
+
+function durationLabelTone(duration) {
+  const label = durationLabel(duration);
+  return label === "Ideal" ? "good-text" : label === "Short" ? "info-text" : "warn-text";
+}
+
+function timeAgo(value) {
+  if (!value) return "Now";
+  const diff = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(diff) || diff < 0) return "Now";
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 1) return "Now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function candidateStatusBadge(status) {
+  if (status === "packaged") return badge("Packaged", "good");
+  if (status === "rejected") return badge("Dismissed", "bad");
+  if (status === "reviewed") return badge("Reviewed", "info");
+  return badge("New", "warn");
+}
+
+function renderCandidateInspector(candidate) {
+  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
+  const score = Number(candidate.score || 0);
+  const hook = Number(candidate.hookScore || 0);
+  const engagement = formatEngagement(candidate, 2);
+  return `
+    <div class="inspector-head">
+      <h2>Selected Clip</h2>
+      <button class="ghost" data-nav-jump="builder">Open Builder</button>
+    </div>
+    ${radarThumb(candidate, 1)}
+    <div class="selected-title">
+      <div>
+        <h3>${esc(candidate.title || "Untitled clip")}</h3>
+        <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || "Demo")} · ${timeAgo(candidate.updatedAt || candidate.createdAt)}</p>
+      </div>
+      ${scoreRing(score)}
+    </div>
+    <div class="inspector-tabs">
+      <span class="active">Overview</span>
+      <span>Transcript</span>
+      <span>Chat Moments</span>
+      <span>Analysis</span>
+    </div>
+    <div class="inspector-section">
+      <h3>Why this clip is strong</h3>
+      <p>${esc(candidate.reason || "Candidate scored from engagement, transcript energy, hook potential, length, context, and risk.")}</p>
+      <div class="clip-metrics">
+        <span><b>${hook}</b><em>Hook Strength</em></span>
+        <span><b>${esc(engagement)}</b><em>Engagement</em></span>
+        <span><b>${candidate.confidence || "medium"}</b><em>Confidence</em></span>
+      </div>
+    </div>
+    <div class="inspector-section">
+      <h3>Transcript Preview</h3>
+      <p class="transcript-box">${esc(candidate.transcriptSnippet || "Transcript will appear here after the clip has audio or chat context.")}</p>
+    </div>
+    <div class="inspector-section compact-actions">
+      <h3>Quick Actions</h3>
+      <button class="primary" data-package-candidate="${candidate.id}">Create Clip Package</button>
+      <button data-nav-jump="builder">Preview in Builder</button>
+      <button data-score-candidate="${candidate.id}">Rescore</button>
+      <button class="danger" data-reject-candidate="${candidate.id}">Dismiss</button>
+    </div>
+    <div class="inspector-section">
+      <h3>Clip Details</h3>
+      <div class="inspector-kv">
+        <span>Source</span><b>${esc(candidate.sourceType || "demo")}</b>
+        <span>Resolution</span><b>1080x1920</b>
+        <span>Duration</span><b>${candidate.duration || 30}s</b>
+        <span>Risk</span><b>${candidate.riskScore || 0}/100</b>
+      </div>
+    </div>
   `;
 }
 
@@ -1099,7 +1344,7 @@ document.addEventListener("click", async (event) => {
     if (selectCandidate) {
       state.selectedCandidateId = selectCandidate;
       localStorage.setItem("selectedCandidateId", selectCandidate);
-      setView("builder");
+      render();
     }
     if (packageId) await packageCandidate(packageId);
     if (scoreId) {

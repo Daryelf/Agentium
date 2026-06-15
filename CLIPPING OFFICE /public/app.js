@@ -23,7 +23,8 @@ const state = {
   approvals: [],
   artifacts: [],
   logs: [],
-  selectedCandidateId: localStorage.getItem("selectedCandidateId") || ""
+  selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
+  selectedStreamerId: localStorage.getItem("selectedStreamerId") || ""
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -458,91 +459,254 @@ function renderSystemTiles() {
 }
 
 function renderWatchlist() {
+  const liveCount = countWhere(state.streamers, (streamer) => String(streamer.liveStatus || "").includes("live"));
+  const monitoringCount = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
+  const offlineCount = countWhere(state.streamers, (streamer) => !String(streamer.liveStatus || "").includes("live"));
+  const pendingCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "pending");
+  const blockedCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "blocked");
+  const selected = selectedStreamer();
   view.innerHTML = `
-    <section class="panel">
-      <h2>Add Streamer</h2>
-      <form id="streamer-form" class="form-grid">
-        <label>Name <input name="displayName" required placeholder="creatorname"></label>
-        <label>Platform
-          <select name="platform">
-            <option value="twitch">Twitch</option>
-            <option value="youtube_live">YouTube Live</option>
-            <option value="kick">Kick</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label>Channel ID / Login <input name="channelId" required placeholder="creatorname"></label>
-        <label>Channel URL <input name="channelUrl" placeholder="https://www.twitch.tv/creatorname"></label>
-        <label>Permission
-          <select name="permissionStatus">
-            <option value="approved">approved</option>
-            <option value="pending">pending</option>
-            <option value="blocked">blocked</option>
-          </select>
-        </label>
-        <label>Monitor
-          <select name="monitorEnabled">
-            <option value="true">on</option>
-            <option value="false">off</option>
-          </select>
-        </label>
-        <div class="wide">
-          <span class="muted">Allowed use</span>
-          <div class="check-row">
-            ${["clips", "reposts", "edits", "monetized"].map((use) => `<label><input type="checkbox" name="allowedUse" value="${use}" ${use === "clips" ? "checked" : ""}>${use}</label>`).join("")}
-          </div>
-        </div>
-        <label class="wide">Notes <textarea name="notes" placeholder="Permission source, contract note, owner note"></textarea></label>
-        <div class="actions wide">
-          <button class="primary" type="submit">Add Streamer</button>
-        </div>
-      </form>
-    </section>
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Watchlist</h2>
-        <button data-action="run-watch">Run Watch Cycle</button>
+    <section class="watchlist-page">
+      <div class="watchlist-tabs">
+        <button class="active">All Streamers <b>${state.streamers.length}</b></button>
+        <button>Live Now <b>${liveCount}</b></button>
+        <button>Monitoring <b>${monitoringCount}</b></button>
+        <button>Offline <b>${offlineCount}</b></button>
+        <button>Pending <b>${pendingCount}</b></button>
       </div>
-      ${state.streamers.length ? renderStreamerTable(true) : empty("No streamers added")}
+
+      <div class="watchlist-actions">
+        <button data-action="test-twitch">Import from Twitch</button>
+        <button class="primary" data-focus-add-streamer>Add Streamer</button>
+      </div>
+
+      <div class="watchlist-stats">
+        ${watchStat("Total Streamers", state.streamers.length, "+ local workspace", "TEAM", "warn")}
+        ${watchStat("Live Right Now", liveCount, `${state.streamers.length ? Math.round((liveCount / state.streamers.length) * 100) : 0}% of total`, "LIVE", "bad")}
+        ${watchStat("Monitoring", monitoringCount, "Actively watching", "EYE", "info")}
+        ${watchStat("Pending Approval", pendingCount, "Needs review", "CLK", "warn")}
+        ${watchStat("Blocked", blockedCount, "No blocked channels", "SHD", "neutral")}
+      </div>
+
+      <div class="watchlist-shell">
+        <section class="panel streamer-directory">
+          <div class="watchlist-filterbar">
+            <label class="stream-search">Search streamers <input placeholder="Search streamers..." aria-label="Search streamers"></label>
+            <select aria-label="Platform filter"><option>Platform: All</option><option>Twitch</option><option>YouTube</option><option>Kick</option></select>
+            <select aria-label="Status filter"><option>Status: All</option><option>Monitoring</option><option>Paused</option></select>
+            <select aria-label="Permission filter"><option>Permission: All</option><option>Approved</option><option>Pending</option></select>
+            <select aria-label="Sort filter"><option>Sort: Last Checked</option><option>Sort: Candidates</option><option>Sort: Name</option></select>
+          </div>
+          ${state.streamers.length ? renderStreamerTable(true) : empty("No streamers added")}
+        </section>
+
+        <aside class="panel streamer-inspector">
+          ${selected ? renderStreamerInspector(selected) : empty("Select or add a streamer")}
+        </aside>
+      </div>
+
+      <div class="watchlist-bottom">
+        <section class="panel add-streamer-panel" id="add-streamer-panel">
+          <div class="section-head">
+            <span class="panel-icon">TW</span>
+            <div>
+              <h2>Add Streamer</h2>
+              <p class="muted">Add a new channel to monitor.</p>
+            </div>
+          </div>
+          ${renderCompactStreamerForm()}
+        </section>
+        <section class="panel monitoring-panel">
+          <h2>Monitoring Settings</h2>
+          <div class="settings-rows">
+            <span><b>Check Interval</b><em>60 seconds</em></span>
+            <span><b>Clip Detection</b><em>Enabled</em></span>
+            <span><b>Min Clip Score</b><em>60</em></span>
+            <span><b>Max Clips / Day</b><em>${state.config?.postDailyLimit || 20}</em></span>
+          </div>
+        </section>
+        <section class="panel watchlist-quick-actions">
+          <h2>Quick Actions</h2>
+          <button class="primary" data-action="run-watch">Run Watch Cycle Now</button>
+          <button data-nav-jump="radar">View Clip Radar</button>
+          <button data-action="seed-demo">Load Demo Mission</button>
+          <button data-nav-jump="settings">API Connections</button>
+        </section>
+      </div>
     </section>
   `;
 }
 
 function renderStreamerTable(editable) {
+  const sortedStreamers = [...state.streamers].sort((a, b) => {
+    const liveDelta = Number(String(b.liveStatus || "").includes("live")) - Number(String(a.liveStatus || "").includes("live"));
+    if (liveDelta) return liveDelta;
+    return String(b.lastCheckedAt || "").localeCompare(String(a.lastCheckedAt || ""));
+  });
   return `
-    <div class="table-wrap">
-      <table>
+    <div class="watch-table-wrap">
+      <table class="watch-table">
         <thead>
           <tr>
+            <th><span class="select-box"></span></th>
             <th>Streamer</th>
             <th>Platform</th>
+            <th>Status</th>
             <th>Permission</th>
-            <th>Allowed Use</th>
-            <th>Monitor</th>
-            <th>Live</th>
+            <th>Live Status</th>
             <th>Last Checked</th>
+            <th>Clip Candidates</th>
             ${editable ? "<th>Actions</th>" : ""}
           </tr>
         </thead>
         <tbody>
-          ${state.streamers.map((streamer) => `
-            <tr>
-              <td><strong>${esc(streamer.displayName)}</strong><br><span class="muted">${esc(streamer.channelId || streamer.channelUrl)}</span></td>
-              <td>${esc(streamer.platform)}</td>
+          ${sortedStreamers.map((streamer, index) => `
+            <tr class="${selectedStreamer()?.id === streamer.id ? "selected" : ""}" data-select-streamer="${streamer.id}">
+              <td><span class="select-box"></span></td>
+              <td>
+                <div class="streamer-cell">
+                  <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer.displayName))}</span>
+                  <div>
+                    <strong>${esc(streamer.displayName)} <em>verified</em></strong>
+                    <small>${esc(streamer.channelId || streamer.channelUrl || "local channel")}</small>
+                  </div>
+                </div>
+              </td>
+              <td>${platformBadge(streamer.platform)}</td>
+              <td>${streamer.monitorEnabled ? badge("Monitoring", "good") : badge("Paused", "info")}</td>
               <td>${permissionBadge(streamer.permissionStatus)}</td>
-              <td>${esc((streamer.allowedUse || []).join(", "))}</td>
-              <td>${streamer.monitorEnabled ? badge("on", "good") : badge("off", "neutral")}</td>
-              <td>${esc(streamer.liveStatus || "unknown")}</td>
+              <td>${liveBadge(streamer)}</td>
               <td>${fmtDate(streamer.lastCheckedAt)}</td>
+              <td>
+                <div class="candidate-mini">
+                  <b>${streamerCandidateCount(streamer.id)}</b>
+                  <span class="spark">${sparkline(index * 11)}</span>
+                </div>
+              </td>
               ${editable ? `<td><div class="actions">
                 <button data-toggle-monitor="${streamer.id}">${streamer.monitorEnabled ? "Pause" : "Monitor"}</button>
-                <button data-approve-streamer="${streamer.id}">Approve</button>
-                <button class="danger" data-delete-streamer="${streamer.id}">Delete</button>
+                <button data-approve-streamer="${streamer.id}">OK</button>
+                <button class="danger" data-delete-streamer="${streamer.id}">Del</button>
               </div></td>` : ""}
             </tr>
           `).join("")}
         </tbody>
       </table>
+    </div>
+  `;
+}
+
+function watchStat(label, value, detail, icon, tone = "info") {
+  return `
+    <section class="panel watch-stat watch-stat-${esc(tone)}">
+      <span>${esc(icon)}</span>
+      <div>
+        <small>${esc(label)}</small>
+        <strong>${esc(value)}</strong>
+        <em>${esc(detail)}</em>
+      </div>
+    </section>
+  `;
+}
+
+function renderCompactStreamerForm() {
+  return `
+    <form id="streamer-form" class="streamer-mini-form">
+      <input name="displayName" required placeholder="Twitch channel name or URL">
+      <select name="platform">
+        <option value="twitch">Twitch</option>
+        <option value="youtube_live">YouTube</option>
+        <option value="kick">Kick</option>
+        <option value="other">Other</option>
+      </select>
+      <input name="channelId" required placeholder="Channel ID / login">
+      <input name="channelUrl" placeholder="Channel URL">
+      <select name="permissionStatus">
+        <option value="approved">approved</option>
+        <option value="pending">pending</option>
+        <option value="blocked">blocked</option>
+      </select>
+      <select name="monitorEnabled">
+        <option value="true">monitoring on</option>
+        <option value="false">monitoring off</option>
+      </select>
+      <div class="hidden-checks">
+        <label><input type="checkbox" name="allowedUse" value="clips" checked>clips</label>
+        <label><input type="checkbox" name="allowedUse" value="edits" checked>edits</label>
+        <label><input type="checkbox" name="allowedUse" value="reposts">reposts</label>
+      </div>
+      <textarea name="notes" placeholder="Permission source, owner notes, highlight style"></textarea>
+      <button class="primary" type="submit">Add</button>
+    </form>
+  `;
+}
+
+function selectedStreamer() {
+  const selected = state.streamers.find((streamer) => streamer.id === state.selectedStreamerId);
+  if (selected) return selected;
+  return state.streamers[0] || null;
+}
+
+function streamerCandidateCount(streamerId) {
+  return countWhere(state.candidates, (candidate) => candidate.streamerId === streamerId);
+}
+
+function platformBadge(platform) {
+  const label = platform === "youtube_live" ? "YouTube" : platform || "Twitch";
+  return `<span class="platform-badge">${esc(label)}</span>`;
+}
+
+function liveBadge(streamer) {
+  const live = String(streamer.liveStatus || "").includes("live");
+  return `<span class="live-badge ${live ? "is-live" : ""}">${live ? "LIVE" : "OFFLINE"}</span>`;
+}
+
+function renderStreamerInspector(streamer) {
+  const live = String(streamer.liveStatus || "").includes("live");
+  return `
+    <div class="inspector-profile">
+      <span class="creator-avatar large">${esc(initials(streamer.displayName))}</span>
+      <div>
+        <h2>${esc(streamer.displayName)}</h2>
+        <p>${esc(streamer.channelId || "local channel")} · ${streamerCandidateCount(streamer.id)} candidates</p>
+      </div>
+      <span class="live-badge ${live ? "is-live" : ""}">${live ? "LIVE" : "OFFLINE"}</span>
+    </div>
+    <div class="inspector-tabs">
+      <span class="active">Overview</span>
+      <span>Permissions</span>
+      <span>History</span>
+      <span>Settings</span>
+    </div>
+    <div class="inspector-section">
+      <h3>Channel Info</h3>
+      <div class="inspector-kv">
+        <span>Channel ID</span><b>${esc(streamer.channelId || "not set")}</b>
+        <span>Platform</span><b>${esc(streamer.platform)}</b>
+        <span>Partner Status</span><b>${streamer.permissionStatus === "approved" ? "Approved" : "Needs review"}</b>
+        <span>Language</span><b>English</b>
+      </div>
+    </div>
+    <div class="inspector-section">
+      <h3>Performance</h3>
+      <div class="performance-grid">
+        <span><b>${streamerCandidateCount(streamer.id)}</b><em>Candidates</em></span>
+        <span><b>${streamer.monitorEnabled ? "On" : "Off"}</b><em>Monitor</em></span>
+        <span><b>${(streamer.allowedUse || []).length}</b><em>Allowed uses</em></span>
+      </div>
+      <div class="wide-spark">${sparkline(streamerCandidateCount(streamer.id) * 13)}</div>
+    </div>
+    <div class="inspector-section">
+      <h3>Monitoring Settings</h3>
+      <div class="toggle-list">
+        <span>Monitor Live Streams <b class="${streamer.monitorEnabled ? "on" : ""}"></b></span>
+        <span>Monitor VODs <b class="on"></b></span>
+        <span>Detect Clips Automatically <b class="on"></b></span>
+      </div>
+    </div>
+    <div class="inspector-section">
+      <h3>Notes</h3>
+      <p class="note-box">${esc(streamer.notes || "High energy variety streamer. Good for reaction and highlight clips.")}</p>
     </div>
   `;
 }
@@ -906,8 +1070,20 @@ document.addEventListener("click", async (event) => {
   const gateApprove = target.closest("[data-gate-approve]")?.dataset.gateApprove;
   const gateReject = target.closest("[data-gate-reject]")?.dataset.gateReject;
   const gateSendBack = target.closest("[data-gate-sendback]")?.dataset.gateSendback;
+  const selectStreamer = target.closest("[data-select-streamer]")?.dataset.selectStreamer;
+  const focusAddStreamer = target.closest("[data-focus-add-streamer]");
 
   try {
+    if (focusAddStreamer) {
+      document.querySelector("#add-streamer-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.querySelector("#add-streamer-panel input[name='displayName']")?.focus();
+      return;
+    }
+    if (selectStreamer) {
+      state.selectedStreamerId = selectStreamer;
+      localStorage.setItem("selectedStreamerId", selectStreamer);
+      render();
+    }
     if (action === "refresh") await refresh();
     if (action === "run-watch") await runWatch();
     if (action === "seed-demo") await seedDemo();

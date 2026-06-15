@@ -1,13 +1,16 @@
 const navItems = [
-  ["dashboard", "Dashboard", "D"],
-  ["watchlist", "Stream Watchlist", "W"],
-  ["radar", "Clip Radar", "R"],
-  ["builder", "Clip Builder", "B"],
-  ["queue", "Posting Queue", "Q"],
-  ["gate", "Human Gate", "G"],
-  ["outputs", "Outputs", "O"],
-  ["logs", "Logs", "L"],
-  ["settings", "Settings", "S"]
+  { id: "dashboard", label: "Dashboard", icon: "grid", group: "core" },
+  { id: "watchlist", label: "Stream Watchlist", icon: "broadcast", group: "core", count: "streamers", tone: "neutral" },
+  { id: "radar", label: "Clip Radar", icon: "radar", group: "core", count: "candidates", tone: "info" },
+  { id: "builder", label: "Clip Builder", icon: "scissors", group: "core" },
+  { id: "queue", label: "Posting Queue", icon: "queue", group: "core", count: "queue", tone: "warn" },
+  { id: "gate", label: "Human Gate", icon: "shield", group: "core", count: "gate", tone: "pink" },
+  { id: "outputs", label: "Outputs", icon: "folder", group: "records" },
+  { id: "analytics", label: "Analytics", icon: "chart", group: "records", route: "dashboard" },
+  { id: "logs", label: "Logs", icon: "document", group: "records" },
+  { id: "settings", label: "Settings", icon: "settings", group: "admin" },
+  { id: "integrations", label: "Integrations", icon: "plug", group: "admin", route: "settings" },
+  { id: "team", label: "Team & Permissions", icon: "team", group: "admin", route: "settings" }
 ];
 
 const state = {
@@ -114,24 +117,15 @@ function miniThumb(label, index = 0) {
 }
 
 function renderSidebarOps() {
-  const limit = dailyLimitValue();
-  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
   $("#sidebar-ops").innerHTML = `
-    <section class="limit-card">
-      <span>Daily Limit</span>
-      <div class="limit-ring" style="--p:${limit.pct}">
-        <b>${limit.approvedToday} / ${limit.limit}</b>
-        <small>Approved today</small>
-      </div>
-      <div class="limit-track"><i style="width:${limit.pct}%"></i></div>
-      <p>${limit.pct}% used</p>
-    </section>
-    <section class="agent-chip">
-      <span class="agent-orb">SC</span>
+    <section class="sidebar-health-card">
+      <span class="health-light"></span>
       <div>
-        <strong>StreamClipper Pro</strong>
-        <small>${pendingApprovals ? `${pendingApprovals} gate reviews` : "Supervised and ready"}</small>
+        <strong>System Operational</strong>
+        <small>All systems running smoothly</small>
       </div>
+      <span class="health-wave" aria-hidden="true">⌁</span>
+      <span class="health-arrow" aria-hidden="true">›</span>
     </section>
   `;
 }
@@ -203,19 +197,19 @@ function updateStatus(limit) {
 }
 
 function renderNav() {
+  let lastGroup = "";
   $("#nav").innerHTML = navItems
-    .map(([id, label, icon]) => {
-      const count =
-        id === "queue"
-          ? countWhere(state.drafts, (draft) => draft.approvalStatus === "pending")
-          : id === "gate"
-            ? countWhere(state.approvals, (approval) => approval.status === "pending")
-            : "";
+    .map((item) => {
+      const { id, label, icon, group, route = id, tone = "" } = item;
+      const count = navCount(item.count);
+      const divider = lastGroup && lastGroup !== group ? `<span class="nav-divider"></span>` : "";
+      lastGroup = group;
       return `
-        <button class="${state.view === id ? "active" : ""}" data-nav="${id}">
-          <span>${esc(icon)}</span>
+        ${divider}
+        <button class="${state.view === id ? "active" : ""}" data-nav="${route}" data-nav-id="${id}">
+          <span class="nav-glyph nav-${esc(icon)}" aria-hidden="true">${navIcon(icon)}</span>
           <em>${esc(label)}</em>
-          ${count ? `<b>${count}</b>` : ""}
+          ${count ? `<b class="${esc(tone)}">${esc(count)}</b>` : ""}
         </button>
       `;
     })
@@ -227,9 +221,35 @@ function renderNav() {
   };
 }
 
+function navCount(key) {
+  if (key === "streamers") return state.streamers.length || "";
+  if (key === "candidates") return state.candidates.length || "";
+  if (key === "queue") return countWhere(state.drafts, (draft) => draft.approvalStatus === "pending") || "";
+  if (key === "gate") return countWhere(state.approvals, (approval) => approval.status === "pending") || "";
+  return "";
+}
+
+function navIcon(icon) {
+  const icons = {
+    grid: `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>`,
+    broadcast: `<svg viewBox="0 0 24 24"><path d="M8 8a6 6 0 0 0 0 8"/><path d="M16 8a6 6 0 0 1 0 8"/><circle cx="12" cy="12" r="2"/><path d="M5 5a10 10 0 0 0 0 14"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>`,
+    radar: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 12h8"/><path d="M12 4v3"/><path d="M4 12h3"/></svg>`,
+    scissors: `<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18"/><path d="M8 15.5 20 6"/></svg>`,
+    queue: `<svg viewBox="0 0 24 24"><path d="M4 6h14"/><path d="M4 12h16"/><path d="M4 18h12"/><path d="M19 6v5"/></svg>`,
+    shield: `<svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.5-2.7 7.6-7 10-4.3-2.4-7-5.5-7-10V6l7-3Z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10 11V9.5a2 2 0 0 1 4 0V11"/></svg>`,
+    folder: `<svg viewBox="0 0 24 24"><path d="M3 7.5h7l2 2h9v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>`,
+    chart: `<svg viewBox="0 0 24 24"><path d="M5 20V9"/><path d="M12 20V4"/><path d="M19 20v-7"/></svg>`,
+    document: `<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"/><path d="M14 3v4h4"/><path d="M9 12h6"/><path d="M9 16h5"/></svg>`,
+    settings: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.8 4.8 2.1 2.1"/><path d="m17.1 17.1 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.8 19.2 2.1-2.1"/><path d="m17.1 6.9 2.1-2.1"/></svg>`,
+    plug: `<svg viewBox="0 0 24 24"><path d="M9 3v6"/><path d="M15 3v6"/><path d="M7 9h10v3a5 5 0 0 1-10 0Z"/><path d="M12 17v4"/></svg>`,
+    team: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="10" r="2"/><path d="M15 16a5 5 0 0 1 6 4"/></svg>`
+  };
+  return icons[icon] || icons.grid;
+}
+
 function setView(id) {
   state.view = id;
-  const label = navItems.find((item) => item[0] === id)?.[1] || "Dashboard";
+  const label = navItems.find((item) => item.id === id)?.label || "Dashboard";
   $("#view-title").textContent = label;
   $("#view-subtitle").textContent = subtitleFor(id);
   renderNav();
@@ -1991,6 +2011,7 @@ function empty(label) {
 
 async function refresh() {
   await loadCore();
+  renderNav();
   render();
 }
 
@@ -2201,6 +2222,7 @@ renderNav();
 loadCore()
   .then(() => {
     $("#api-status").textContent = "API online";
+    renderNav();
     render();
   })
   .catch((error) => {

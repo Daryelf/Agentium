@@ -1292,17 +1292,256 @@ function renderDraftSummary(draft) {
 }
 
 function renderQueue() {
+  const drafts = state.drafts;
+  const limit = dailyLimitValue();
+  const pending = countWhere(drafts, (draft) => draft.approvalStatus === "pending");
+  const approved = countWhere(drafts, (draft) => draft.approvalStatus === "approved");
+  const rejected = countWhere(drafts, (draft) => draft.approvalStatus === "rejected");
+  const sendBack = countWhere(drafts, (draft) => draft.approvalStatus === "send_back");
+  const scheduled = countWhere(drafts, (draft) => Boolean(draft.scheduledFor) || draft.status === "queued");
+  const needsApproval = countWhere(state.approvals, (approval) => approval.status === "pending" && approval.type === "posting_draft");
   view.innerHTML = `
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Posting Queue</h2>
-        <button data-action="refresh">Refresh</button>
+    <section class="queue-page">
+      <div class="queue-tabs">
+        ${queueTab("Queue", pending, true)}
+        ${queueTab("Scheduled", scheduled)}
+        ${queueTab("Approved", approved)}
+        ${queueTab("Needs review", needsApproval)}
+        ${queueTab("Returned", sendBack + rejected)}
       </div>
-      <div class="card-list">
-        ${state.drafts.length ? state.drafts.map(renderDraftCard).join("") : empty("No posting drafts")}
+
+      <div class="queue-shell">
+        <section class="panel queue-board">
+          <div class="queue-filterbar">
+            <select aria-label="All platforms">
+              <option>All Platforms</option>
+              <option>TikTok</option>
+              <option>Instagram Reels</option>
+              <option>YouTube Shorts</option>
+            </select>
+            <select aria-label="All status">
+              <option>All Status</option>
+              <option>Awaiting approval</option>
+              <option>Approved queue</option>
+              <option>Returned</option>
+            </select>
+            <select aria-label="All streamers">
+              <option>All Streamers</option>
+              ${state.streamers.map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}
+            </select>
+            <select aria-label="All dates">
+              <option>All Dates</option>
+              <option>Today</option>
+              <option>This week</option>
+            </select>
+            <input aria-label="Search posts" placeholder="Search posts..." readonly>
+            <button data-action="refresh">Refresh</button>
+          </div>
+
+          <div class="queue-table-wrap">
+            <table class="queue-table">
+              <thead>
+                <tr>
+                  <th>Clip / Title</th>
+                  <th>Streamer</th>
+                  <th>Platform</th>
+                  <th>Scheduled for</th>
+                  <th>Status</th>
+                  <th>Potential</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${drafts.length ? drafts.map((draft, index) => renderQueueRow(draft, index)).join("") : `<tr><td colspan="7">${empty("No posting drafts yet. Build a clip package first.")}</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+
+          <footer class="queue-footer">
+            <span>Showing ${drafts.length ? `1 to ${Math.min(8, drafts.length)} of ${drafts.length}` : "0"} posts</span>
+            <div class="pager"><button class="active">1</button><button ${drafts.length > 8 ? "" : "disabled"}>2</button><button ${drafts.length > 16 ? "" : "disabled"}>Next</button></div>
+          </footer>
+        </section>
+
+        <aside class="queue-side">
+          <section class="panel queue-calendar">
+            <div class="section-head compact">
+              <h2>Post Calendar</h2>
+              <button data-action="refresh">Today</button>
+            </div>
+            ${renderPostCalendar(drafts)}
+          </section>
+
+          <section class="panel queue-summary">
+            <div class="section-head compact">
+              <h2>Queue Overview</h2>
+              <span>Today</span>
+            </div>
+            ${queueSummaryLine("Awaiting approval", pending, "info")}
+            ${queueSummaryLine("Approved queue", approved, "good")}
+            ${queueSummaryLine("Returned or blocked", sendBack + rejected, "bad")}
+            <div class="daily-meter">
+              <b>${limit.approvedToday} / ${limit.limit}</b>
+              <span>Daily approval limit</span>
+              <i><em style="width:${limit.pct}%"></em></i>
+              <small>${limit.pct}% used</small>
+            </div>
+          </section>
+
+          <section class="panel queue-actions">
+            <h2>Quick Actions</h2>
+            <button class="primary" data-nav-jump="builder">Create New Post</button>
+            <button data-nav-jump="builder">Build from Clip Package</button>
+            <button data-nav-jump="gate">Open Human Gate</button>
+            <button data-nav-jump="outputs">View Outputs</button>
+          </section>
+
+          <section class="panel queue-settings">
+            <h2>Posting Rules</h2>
+            <div class="settings-list">
+              <span><b>Daily approvals</b><em>${limit.limit}</em></span>
+              <span><b>Auto publish</b><em>Locked</em></span>
+              <span><b>Best-time scheduling</b><em>Draft only</em></span>
+              <span><b>Human approval</b><em>Required</em></span>
+            </div>
+          </section>
+        </aside>
       </div>
     </section>
   `;
+}
+
+function queueTab(label, count, active = false) {
+  return `<button class="${active ? "active" : ""}">${esc(label)} <b>${count}</b></button>`;
+}
+
+function renderQueueRow(draft, index) {
+  const candidate = draftCandidate(draft);
+  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+  const score = Number(candidate?.score || 68 + ((index * 7) % 28));
+  return `
+    <tr>
+      <td>
+        <div class="queue-clip-cell">
+          ${queueThumb(draft, candidate, index)}
+          <div>
+            <strong>${esc(draft.thumbnailText || candidate?.title || "Posting draft")}</strong>
+            <p>${esc(draft.caption || candidate?.transcriptSnippet || "Draft caption waiting for approval.")}</p>
+            <span>${(draft.hashtags || []).slice(0, 3).map((tag) => `<em>${esc(tag.replace("#", ""))}</em>`).join("")}</span>
+          </div>
+        </div>
+      </td>
+      <td>${queueStreamerCell(streamer, index)}</td>
+      <td>${queuePlatformCell(draft.platform)}</td>
+      <td>${queueScheduleCell(draft, index)}</td>
+      <td>${queueApprovalBadge(draft)}</td>
+      <td>${scoreRing(score)}<small>${formatEngagement(candidate || {}, index)} est. views</small></td>
+      <td>
+        <div class="queue-row-actions">
+          <button data-request-post="${draft.id}">Request</button>
+          <button data-nav-jump="builder">Preview</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function draftPackage(draft) {
+  return state.packages.find((item) => item.id === draft.clipPackageId) || null;
+}
+
+function draftCandidate(draft) {
+  const clipPackage = draftPackage(draft);
+  return state.candidates.find((item) => item.id === clipPackage?.candidateId) || null;
+}
+
+function queueThumb(draft, candidate, index) {
+  const start = candidate?.timestampStart || "00:00";
+  const duration = candidate?.duration || 30;
+  return `
+    <div class="queue-thumb thumb-${index % 5}">
+      <span>${esc(start.slice(0, 5))}</span>
+      <button data-nav-jump="builder">Play</button>
+      <em>${duration}s</em>
+    </div>
+  `;
+}
+
+function queueStreamerCell(streamer, index) {
+  return `
+    <div class="queue-streamer-cell">
+      <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
+      <div>
+        <strong>${esc(streamer?.displayName || "Unknown")}</strong>
+        <small>${esc(streamer?.category || streamer?.platform || "Demo channel")}</small>
+      </div>
+    </div>
+  `;
+}
+
+function queuePlatformCell(platform) {
+  const label = platform === "instagram_reels" ? "Instagram Reels" : platform === "youtube_shorts" ? "YouTube Shorts" : "TikTok";
+  const icon = platform === "instagram_reels" ? "IG" : platform === "youtube_shorts" ? "YT" : "TT";
+  return `
+    <div class="queue-platform-cell">
+      <span class="platform-icon">${esc(icon)}</span>
+      <div>
+        <strong>${esc(label)}</strong>
+        <small>@streamclipper</small>
+      </div>
+    </div>
+  `;
+}
+
+function queueScheduleCell(draft, index) {
+  if (draft.scheduledFor) {
+    return `<b>${esc(fmtDate(draft.scheduledFor))}</b><small>Draft schedule</small>`;
+  }
+  const date = new Date(draft.createdAt || Date.now());
+  date.setHours(19 + (index % 3), index % 2 ? 30 : 0, 0, 0);
+  return `<b>${esc(date.toLocaleDateString([], { month: "short", day: "numeric" }))}</b><small>${esc(date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</small>`;
+}
+
+function queueApprovalBadge(draft) {
+  if (draft.approvalStatus === "approved") return `${badge("Approved", "good")}<small>Ready after manual handoff</small>`;
+  if (draft.approvalStatus === "rejected") return `${badge("Blocked", "bad")}<small>Stopped by Human Gate</small>`;
+  if (draft.approvalStatus === "send_back") return `${badge("Revise", "warn")}<small>Needs edits</small>`;
+  return `${badge("Queued", "info")}<small>Approval required</small>`;
+}
+
+function renderPostCalendar(drafts) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startOffset = first.getDay();
+  const buckets = new Map();
+  drafts.forEach((draft, index) => {
+    const base = new Date(draft.scheduledFor || draft.createdAt || Date.now());
+    const day = Number.isFinite(base.getTime()) ? base.getDate() : ((index % daysInMonth) + 1);
+    buckets.set(day, (buckets.get(day) || 0) + 1);
+  });
+  const cells = [];
+  for (let i = 0; i < startOffset; i += 1) cells.push(`<span class="muted-day"></span>`);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const count = buckets.get(day) || 0;
+    cells.push(`<span class="${count ? "has-posts" : ""} ${day === now.getDate() ? "today" : ""}">${day}${count ? `<em>${count}</em>` : ""}</span>`);
+  }
+  return `
+    <div class="calendar-month">${esc(now.toLocaleDateString([], { month: "long", year: "numeric" }))}</div>
+    <div class="calendar-weekdays">${["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((day) => `<b>${day}</b>`).join("")}</div>
+    <div class="calendar-grid">${cells.join("")}</div>
+    <div class="calendar-legend">
+      <span><i class="info-dot"></i>Queued</span>
+      <span><i class="good-dot"></i>Approved</span>
+      <span><i class="bad-dot"></i>Limit locked</span>
+    </div>
+  `;
+}
+
+function queueSummaryLine(label, value, tone) {
+  return `<div class="queue-summary-line ${tone}"><span>${esc(label)}</span><b>${value}</b></div>`;
 }
 
 function renderDraftCard(draft) {

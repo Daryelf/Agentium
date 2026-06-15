@@ -24,7 +24,8 @@ const state = {
   artifacts: [],
   logs: [],
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
-  selectedStreamerId: localStorage.getItem("selectedStreamerId") || ""
+  selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
+  selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -242,7 +243,7 @@ function subtitleFor(id) {
     radar: "Detected moments and scoring",
     builder: "9:16 packages and CapCut handoffs",
     queue: "Draft-only social packages",
-    gate: "Approvals for risky actions",
+    gate: "Review and approve critical actions before they go live",
     outputs: "Exported briefs and caption files",
     logs: "System event trail",
     settings: "Backend status and limits"
@@ -1568,16 +1569,221 @@ function renderDraftCard(draft) {
 }
 
 function renderGate() {
+  const approvals = state.approvals;
+  const pending = approvals.filter((approval) => approval.status === "pending");
+  const selected = selectedApproval(pending);
+  const postApprovals = countWhere(pending, (approval) => approval.type === "posting_draft" || approval.type === "clip_package");
+  const streamerAccess = countWhere(pending, (approval) => approval.type === "streamer_permission");
+  const accountApi = countWhere(pending, (approval) => approval.type === "connector_setup" || approval.type === "account_api");
+  const highRisk = countWhere(pending, (approval) => approval.riskLevel === "high");
+  const mediumRisk = countWhere(pending, (approval) => approval.riskLevel === "medium");
+  const lowRisk = countWhere(pending, (approval) => approval.riskLevel === "low");
+  const recentDecisions = approvals.filter((approval) => approval.status !== "pending").slice(0, 4);
   view.innerHTML = `
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Human Gate</h2>
-        <button data-action="refresh">Refresh</button>
+    <section class="gate-page">
+      <div class="gate-metrics">
+        ${gateMetric("Pending Decisions", pending.length, "Needs your review", "violet")}
+        ${gateMetric("High Risk", highRisk, "Requires attention", "amber")}
+        ${gateMetric("Posts Awaiting Approval", postApprovals, "Ready to review", "info")}
+        ${gateMetric("Auto-Approved", 0, "Low-risk actions", "good")}
       </div>
-      <div class="card-list">
-        ${state.approvals.length ? state.approvals.map(renderApprovalCard).join("") : empty("No approval requests")}
+
+      <div class="gate-shell">
+        <section class="panel gate-board">
+          <div class="gate-tabs">
+            ${gateTab("All", pending.length, true)}
+            ${gateTab("Posts", postApprovals)}
+            ${gateTab("Streamer Access", streamerAccess)}
+            ${gateTab("Account & API", accountApi)}
+            ${gateTab("System Actions", 0)}
+          </div>
+          <div class="gate-filterbar">
+            <input aria-label="Search approvals" placeholder="Search approvals..." readonly>
+            <button data-action="refresh">Refresh</button>
+            <select aria-label="Newest first">
+              <option>Newest First</option>
+              <option>Highest Risk</option>
+              <option>Oldest First</option>
+            </select>
+          </div>
+          <div class="gate-table-wrap">
+            <table class="gate-table">
+              <thead>
+                <tr>
+                  <th>Request</th>
+                  <th>Type</th>
+                  <th>Risk</th>
+                  <th>Requested by</th>
+                  <th>Created</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pending.length ? pending.map((approval, index) => renderGateRow(approval, index, selected?.id)).join("") : `<tr><td colspan="7">${empty("No pending approvals. Human Gate is clear.")}</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="gate-side">
+          <section class="panel gate-summary">
+            <h2>Approval Queue Summary</h2>
+            <div class="risk-donut" style="--high:${highRisk}; --medium:${mediumRisk}; --low:${lowRisk}; --total:${Math.max(1, pending.length)}">
+              <b>${pending.length}</b>
+              <small>Total Pending</small>
+            </div>
+            <div class="risk-list">
+              ${riskLine("High Risk", highRisk, "high")}
+              ${riskLine("Medium Risk", mediumRisk, "medium")}
+              ${riskLine("Low Risk", lowRisk, "low")}
+              ${riskLine("Info", Math.max(0, pending.length - highRisk - mediumRisk - lowRisk), "info")}
+            </div>
+            <div class="risk-breakdown">
+              <span>Posting Content <b>${postApprovals}</b></span>
+              <span>Streamer Access <b>${streamerAccess}</b></span>
+              <span>Account & API <b>${accountApi}</b></span>
+              <span>System Actions <b>0</b></span>
+            </div>
+          </section>
+
+          <section class="panel gate-decisions">
+            <h2>Recent Decisions</h2>
+            ${recentDecisions.length ? recentDecisions.map(renderDecisionLine).join("") : empty("No decisions recorded yet")}
+          </section>
+        </aside>
       </div>
+
+      ${selected ? renderApprovalDetail(selected) : ""}
     </section>
+  `;
+}
+
+function selectedApproval(pending) {
+  const selected = state.approvals.find((approval) => approval.id === state.selectedApprovalId && approval.status === "pending");
+  if (selected) return selected;
+  const fallback = pending[0] || null;
+  if (fallback) {
+    state.selectedApprovalId = fallback.id;
+    localStorage.setItem("selectedApprovalId", fallback.id);
+  }
+  return fallback;
+}
+
+function gateMetric(label, value, sublabel, tone) {
+  return `
+    <article class="panel gate-metric ${tone}">
+      <span>${tone.slice(0, 2).toUpperCase()}</span>
+      <strong>${value}</strong>
+      <div>
+        <b>${esc(label)}</b>
+        <small>${esc(sublabel)}</small>
+      </div>
+    </article>
+  `;
+}
+
+function gateTab(label, count, active = false) {
+  return `<button class="${active ? "active" : ""}">${esc(label)} <b>${count}</b></button>`;
+}
+
+function approvalContext(approval) {
+  if (!approval) return {};
+  if (approval.type === "posting_draft") {
+    const draft = state.drafts.find((item) => item.id === approval.linkedId) || approval.evidence?.draft;
+    const candidate = draft ? draftCandidate(draft) : null;
+    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+    return { draft, candidate, streamer, platform: draft?.platform, title: candidate?.title || draft?.thumbnailText || approval.title };
+  }
+  if (approval.type === "clip_package") {
+    const clipPackage = state.packages.find((item) => item.id === approval.linkedId);
+    const candidate = state.candidates.find((item) => item.id === (clipPackage?.candidateId || approval.evidence?.candidateId));
+    const streamer = state.streamers.find((item) => item.id === (candidate?.streamerId || approval.evidence?.streamerId));
+    return { clipPackage, candidate, streamer, platform: "package", title: clipPackage?.packagePlan?.title || candidate?.title || approval.title };
+  }
+  if (approval.type === "streamer_permission") {
+    const streamer = state.streamers.find((item) => item.id === approval.linkedId || item.id === approval.evidence?.streamerId);
+    return { streamer, title: streamer?.displayName || approval.title, platform: streamer?.platform };
+  }
+  return { title: approval.title };
+}
+
+function approvalTypeLabel(type) {
+  if (type === "posting_draft") return "Post Approval";
+  if (type === "clip_package") return "Clip Package";
+  if (type === "streamer_permission") return "Streamer Access";
+  if (type === "connector_setup") return "Account & API";
+  return type.replaceAll("_", " ");
+}
+
+function renderGateRow(approval, index, selectedId) {
+  const context = approvalContext(approval);
+  const score = Number(context.candidate?.score || 72 + ((index * 9) % 24));
+  return `
+    <tr class="${approval.id === selectedId ? "selected" : ""}">
+      <td>
+        <button class="gate-request-cell" data-select-approval="${approval.id}">
+          ${queueThumb(context.draft || {}, context.candidate, index)}
+          <span>
+            <strong>${esc(context.title || approval.title)}</strong>
+            <small>${esc(approval.type === "posting_draft" ? `Post to ${platformName(context.platform)}` : approval.title)}</small>
+          </span>
+        </button>
+      </td>
+      <td>${gateTypeCell(approval, context)}</td>
+      <td>${riskBadge(approval.riskLevel)}</td>
+      <td>${esc(context.streamer?.displayName || "Agent 101")}</td>
+      <td>${timeAgo(approval.createdAt)}</td>
+      <td>${badge("Pending", "warn")}<small>Waiting decision</small></td>
+      <td>
+        <div class="gate-row-actions">
+          <button data-select-approval="${approval.id}">Review</button>
+          <button data-gate-approve="${approval.id}">Approve</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function gateTypeCell(approval, context) {
+  const icon = context.platform === "instagram_reels" ? "IG" : context.platform === "youtube_shorts" ? "YT" : context.platform === "tiktok" ? "TT" : approval.type === "streamer_permission" ? "TW" : "PK";
+  return `
+    <div class="gate-type-cell">
+      <span>${esc(icon)}</span>
+      <b>${esc(approvalTypeLabel(approval.type))}</b>
+    </div>
+  `;
+}
+
+function platformName(platform) {
+  if (platform === "instagram_reels") return "Instagram Reels";
+  if (platform === "youtube_shorts") return "YouTube Shorts";
+  if (platform === "tiktok") return "TikTok";
+  if (platform === "package") return "Posting Queue";
+  return platform || "manual handoff";
+}
+
+function riskBadge(risk) {
+  const normalized = risk || "medium";
+  const tone = normalized === "high" ? "bad" : normalized === "low" ? "good" : "warn";
+  return badge(normalized[0].toUpperCase() + normalized.slice(1), tone);
+}
+
+function riskLine(label, count, tone) {
+  return `<span class="${tone}"><i></i>${esc(label)}<b>${count}</b></span>`;
+}
+
+function renderDecisionLine(approval) {
+  const good = approval.status === "approved";
+  return `
+    <article>
+      <span class="${good ? "good" : "bad"}">${good ? "✓" : "×"}</span>
+      <div>
+        <b>${esc(approval.status === "send_back" ? "Sent back" : approval.status)}</b>
+        <small>${esc(approval.title)}</small>
+      </div>
+      <time>${timeAgo(approval.decidedAt || approval.createdAt)}</time>
+    </article>
   `;
 }
 
@@ -1602,6 +1808,100 @@ function renderApprovalCard(approval) {
       </div>
     </article>
   `;
+}
+
+function renderApprovalDetail(approval) {
+  const context = approvalContext(approval);
+  const draft = context.draft;
+  const candidate = context.candidate;
+  const score = Number(candidate?.score || 86);
+  const platform = platformName(context.platform || draft?.platform);
+  return `
+    <section class="panel gate-detail">
+      <div class="gate-detail-head">
+        <button data-nav-jump="gate">Back to Human Gate</button>
+        <div>
+          <h2>${esc(approval.type === "posting_draft" ? "Approve Post" : approvalTypeLabel(approval.type))}</h2>
+          <p>${esc(approval.title)} · ${esc(approval.riskLevel || "medium")} risk</p>
+        </div>
+        ${riskBadge(approval.riskLevel)}
+      </div>
+
+      <div class="gate-detail-grid">
+        <section class="gate-preview-card">
+          <h3>Approval Preview</h3>
+          ${renderPhonePreview(candidate || { title: context.title, duration: draft?.duration || 30 }, fallbackPackagePlan(candidate || { title: context.title }), "large")}
+          <div class="preview-meta">
+            <span><b>Resolution</b>1080x1920</span>
+            <span><b>Duration</b>${candidate?.duration || 30}s</span>
+            <span><b>Mode</b>Draft only</span>
+          </div>
+        </section>
+
+        <section class="gate-detail-card">
+          <h3>Request Details</h3>
+          <div class="detail-kv">
+            <span>Title / Hook</span><b>${esc(context.title || approval.title)}</b>
+            <span>Platform</span><b>${esc(platform)}</b>
+            <span>Created By</span><b>${esc(context.streamer?.displayName || "Agent 101")}</b>
+            <span>Scheduled For</span><b>${esc(draft?.scheduledFor ? fmtDate(draft.scheduledFor) : "Manual handoff after approval")}</b>
+            <span>Visibility</span><b>Blocked until approved</b>
+          </div>
+          <h3>Caption & Hashtags</h3>
+          <p class="gate-caption">${esc(draft?.caption || candidate?.transcriptSnippet || "No caption draft attached yet.")}</p>
+          <div class="hashtag-cloud">${(draft?.hashtags || ["#streamer", "#clips", "#gaming"]).slice(0, 8).map((tag) => `<span>${esc(tag)}</span>`).join("")}</div>
+        </section>
+
+        <section class="gate-analysis-card">
+          <h3>AI Analysis</h3>
+          ${scoreRing(score)}
+          <div class="analysis-bars">
+            ${analysisBar("Hook Strength", Math.min(100, score + 3))}
+            ${analysisBar("Engagement Potential", Math.min(100, score + 1))}
+            ${analysisBar("Brand Safety", approval.riskLevel === "high" ? 62 : 88)}
+            ${analysisBar("Retention Potential", Math.min(100, score + 2))}
+          </div>
+          <p>Agent 101 says this can continue only as an approved draft/manual handoff. External posting remains locked.</p>
+        </section>
+
+        <section class="gate-risk-card">
+          <h3>Risk Assessment</h3>
+          ${riskItem("Content Type", approval.riskLevel === "high" ? "Medium" : "Low")}
+          ${riskItem("Copyright Risk", "Review")}
+          ${riskItem("Community Guidelines", approval.riskLevel === "high" ? "Review" : "Low")}
+          ${riskItem("External Action", "Blocked")}
+        </section>
+
+        <section class="gate-approval-actions">
+          <h3>Approval Actions</h3>
+          <button class="primary" data-gate-approve="${approval.id}">Approve & Add to Queue</button>
+          <button data-gate-sendback="${approval.id}">Send Back for Changes</button>
+          <button class="danger" data-gate-reject="${approval.id}">Reject</button>
+          <textarea readonly>Add note about this decision...</textarea>
+        </section>
+      </div>
+
+      <div class="gate-timeline">
+        ${timelineStep("Package created", true)}
+        ${timelineStep("AI analysis completed", true)}
+        ${timelineStep("Submitted for approval", true)}
+        ${timelineStep("Operator decision", false)}
+      </div>
+    </section>
+  `;
+}
+
+function analysisBar(label, value) {
+  return `<span><b>${esc(label)}</b><i><em style="width:${value}%"></em></i><small>${value}/100</small></span>`;
+}
+
+function riskItem(label, value) {
+  const tone = value === "Low" ? "good" : value === "Blocked" ? "bad" : "warn";
+  return `<span><b>${esc(label)}</b>${badge(value, tone)}</span>`;
+}
+
+function timelineStep(label, done) {
+  return `<span class="${done ? "done" : ""}"><i>${done ? "✓" : "·"}</i>${esc(label)}</span>`;
 }
 
 function renderOutputs() {
@@ -1801,6 +2101,7 @@ document.addEventListener("click", async (event) => {
   const selectCandidate = target.closest("[data-select-candidate]")?.dataset.selectCandidate;
   const packageId = target.closest("[data-package-candidate]")?.dataset.packageCandidate;
   const saveDraftId = target.closest("[data-save-builder-draft]")?.dataset.saveBuilderDraft;
+  const selectApproval = target.closest("[data-select-approval]")?.dataset.selectApproval;
   const scoreId = target.closest("[data-score-candidate]")?.dataset.scoreCandidate;
   const rejectId = target.closest("[data-reject-candidate]")?.dataset.rejectCandidate;
   const toggleId = target.closest("[data-toggle-monitor]")?.dataset.toggleMonitor;
@@ -1843,6 +2144,11 @@ document.addEventListener("click", async (event) => {
       render();
     }
     if (saveDraftId) await saveBuilderDraft(saveDraftId);
+    if (selectApproval) {
+      state.selectedApprovalId = selectApproval;
+      localStorage.setItem("selectedApprovalId", selectApproval);
+      render();
+    }
     if (packageId) await packageCandidate(packageId);
     if (scoreId) {
       await api("/api/clips/candidates/score", { method: "POST", body: JSON.stringify({ id: scoreId }) });

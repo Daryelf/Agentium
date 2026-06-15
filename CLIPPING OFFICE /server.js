@@ -779,6 +779,10 @@ async function handleApi(req, res, pathname, searchParams) {
     });
   }
 
+  if (req.method === "GET" && pathname === "/api/clips/packages") {
+    return sendJson(res, 200, { packages: state.clipPackages });
+  }
+
   if (req.method === "POST" && pathname === "/api/clips/candidates/score") {
     const body = await readJsonBody(req);
     const candidate = state.clipCandidates.find((item) => item.id === body.id) || body.candidate;
@@ -790,6 +794,23 @@ async function handleApi(req, res, pathname, searchParams) {
       await saveState();
     }
     return sendJson(res, 200, { candidate, score });
+  }
+
+  if (req.method === "POST" && pathname === "/api/clips/draft") {
+    const body = await readJsonBody(req);
+    const candidate = state.clipCandidates.find((item) => item.id === body.candidateId);
+    if (!candidate) return sendError(res, 404, "Candidate not found");
+    candidate.builderDraft = {
+      format: body.format || "9:16",
+      resolution: body.resolution || "1080x1920",
+      duration: Number(body.duration || candidate.duration || 30),
+      status: "saved",
+      updatedAt: now()
+    };
+    candidate.updatedAt = now();
+    await logEvent("builder_draft_saved", "Clip builder draft saved", { candidateId: candidate.id });
+    await saveState();
+    return sendJson(res, 200, { candidate });
   }
 
   if (req.method === "POST" && pathname === "/api/clips/package") {

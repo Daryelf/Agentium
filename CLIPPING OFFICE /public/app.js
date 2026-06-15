@@ -160,13 +160,14 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, streamers, candidates, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
     api("/api/twitch/status"),
     api("/api/twitch/streamers"),
     api("/api/clips/candidates"),
+    api("/api/clips/packages"),
     api("/api/posts/queue"),
     api("/api/human-gate/approvals"),
     api("/api/artifacts"),
@@ -179,6 +180,7 @@ async function loadCore() {
     twitch,
     streamers: streamers.streamers,
     candidates: candidates.candidates,
+    packages: packages.packages,
     drafts: posts.drafts,
     approvals: approvals.approvals,
     artifacts: artifacts.artifacts,
@@ -1007,42 +1009,274 @@ function renderCandidateInspector(candidate) {
 }
 
 function renderBuilder() {
-  const candidate = state.candidates.find((item) => item.id === state.selectedCandidateId) || state.candidates[0];
+  const candidate = selectedCandidate();
   if (candidate && candidate.id !== state.selectedCandidateId) {
     state.selectedCandidateId = candidate.id;
     localStorage.setItem("selectedCandidateId", candidate.id);
   }
-  const relatedPackage = state.drafts.find((draft) => draft.clipPackageId)?.clipPackageId;
+  const clipPackage = selectedClipPackage(candidate);
+  const plan = clipPackage?.packagePlan || fallbackPackagePlan(candidate);
+  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+  const relatedDrafts = state.drafts.filter((draft) => draft.clipPackageId && draft.clipPackageId === clipPackage?.id);
+  const capcutReady = Boolean(clipPackage?.capcutBriefId || state.artifacts.some((artifact) => artifact.kind === "capcut_brief"));
+  const moments = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0)).slice(0, 5);
   view.innerHTML = `
-    <div class="split">
-      <section class="panel">
-        <h2>Selected Candidate</h2>
-        ${candidate ? `
-          <div class="kv">
-            <span>Streamer</span><span>${esc(streamerName(candidate.streamerId))}</span>
-            <span>Title</span><span>${esc(candidate.title)}</span>
-            <span>Score</span><span>${candidate.score || 0}/100</span>
-            <span>Status</span><span>${esc(candidate.status)}</span>
-            <span>Reason</span><span>${esc(candidate.reason)}</span>
-          </div>
-          <div class="actions" style="margin-top:12px">
-            <button class="primary" data-package-candidate="${candidate.id}">Generate Package</button>
-            <button data-nav-jump="radar">Clip Radar</button>
-          </div>
-        ` : empty("Select a candidate from Clip Radar")}
-      </section>
-      <section class="panel">
-        <h2>Latest Draft Package</h2>
-        ${state.drafts.length ? renderDraftSummary(state.drafts[0]) : empty("No package generated yet")}
-      </section>
-    </div>
-    <section class="panel">
-      <div class="toolbar">
-        <h2>CapCut Handoff</h2>
-        <button data-action="create-capcut" ${relatedPackage ? "" : "disabled"}>Create Handoff</button>
+    <section class="builder-page">
+      <div class="builder-actions">
+        <button data-save-builder-draft="${candidate?.id || ""}" ${candidate ? "" : "disabled"}>Save Draft</button>
+        <button class="primary" data-package-candidate="${candidate?.id || ""}" ${candidate ? "" : "disabled"}>Package for Review</button>
       </div>
-      ${state.artifacts.filter((artifact) => artifact.kind === "capcut_brief").length ? renderArtifacts(state.artifacts.filter((artifact) => artifact.kind === "capcut_brief")) : empty("No CapCut briefs yet")}
+
+      <div class="builder-steps">
+        ${builderStep(1, "Source", true)}
+        ${builderStep(2, "Moment", true)}
+        ${builderStep(3, "Edit & Style", true)}
+        ${builderStep(4, "Package", Boolean(clipPackage))}
+      </div>
+
+      ${candidate ? `
+        <section class="panel builder-hero">
+          <div class="builder-creator">
+            <span class="creator-avatar large">${esc(initials(streamer?.displayName || "SC"))}</span>
+            <div>
+              <strong>${esc(streamer?.displayName || "Unknown streamer")} <em>verified</em></strong>
+              <span>${esc(candidate.category || "Demo stream")}</span>
+              ${liveBadge(streamer || {})}
+            </div>
+          </div>
+          <div class="builder-moment-title">
+            <h2>${esc(candidate.title || "Untitled clip")}</h2>
+            <p>${esc(candidate.transcriptSnippet || plan.hook || "Draft a stronger hook before review.")}</p>
+            <span>${esc(candidate.createdAt ? new Date(candidate.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "Today")} · ${esc(candidate.timestampStart || "00:00")} · ${candidate.duration || 30}s</span>
+          </div>
+          <div class="builder-source-meta">
+            <span><b>Source</b>${esc(candidate.sourceType || "demo")}</span>
+            <span><b>Detected</b>${timeAgo(candidate.updatedAt || candidate.createdAt)}</span>
+          </div>
+          <div class="builder-score">${scoreRing(Number(candidate.score || 0))}</div>
+        </section>
+
+        <div class="builder-layout">
+          <section class="panel builder-editor">
+            <div class="builder-tabbar">
+              <span class="active">Edit & Style</span>
+              <span>Captions</span>
+              <span>Overlays</span>
+              <span>Music & SFX</span>
+              <span>Settings</span>
+            </div>
+
+            <div class="builder-edit-grid">
+              <div class="timeline-card">
+                <div class="section-head compact">
+                  <h2>Timeline</h2>
+                  <button data-score-candidate="${candidate.id}">Auto-detect</button>
+                </div>
+                ${renderTimeline(candidate)}
+                <div class="time-grid">
+                  <label>Start <input value="${esc(candidate.timestampStart || "00:00:00")}" readonly></label>
+                  <label>End <input value="${esc(candidate.timestampEnd || "00:00:30")}" readonly></label>
+                  <label>Duration <input value="${candidate.duration || 30}s" readonly></label>
+                  <div class="duration-pills">
+                    ${[15, 30, 45, 60].map((value) => `<button class="${Number(candidate.duration || 30) === value ? "active" : ""}">${value}s</button>`).join("")}
+                  </div>
+                </div>
+              </div>
+
+              <div class="suggestion-card">
+                <div class="section-head compact">
+                  <h2>AI Hook & Title Suggestions</h2>
+                  <button data-score-candidate="${candidate.id}">Refresh</button>
+                </div>
+                ${renderHookSuggestions(plan, candidate)}
+              </div>
+
+              <div class="vertical-card">
+                <h2>Vertical Preview (9:16)</h2>
+                ${renderPhonePreview(candidate, plan)}
+              </div>
+
+              <div class="style-card">
+                <h2>Output Style</h2>
+                <div class="ratio-control">
+                  <button class="active">9:16</button>
+                  <button>1:1</button>
+                  <button>16:9</button>
+                </div>
+                <label>Resolution
+                  <select><option>1080x1920 recommended</option><option>720x1280 draft</option></select>
+                </label>
+                <div class="safe-zone-list">
+                  <label><input type="checkbox" checked> Show TikTok safe zone</label>
+                  <label><input type="checkbox" checked> Show all safe zones</label>
+                </div>
+                <div class="crop-grid">
+                  ${Array.from({ length: 9 }, (_, index) => `<span class="${index === 4 ? "active" : ""}"></span>`).join("")}
+                </div>
+              </div>
+
+              <div class="caption-card">
+                <div class="section-head compact">
+                  <h2>TikTok Caption</h2>
+                  <span>${(plan.captions?.tiktok || "").length} / 2200</span>
+                </div>
+                <textarea readonly>${esc(plan.captions?.tiktok || `${plan.hook || "Strong hook"}\n\n${plan.hashtags?.join(" ") || "#streamer #clips"}`)}</textarea>
+              </div>
+
+              <div class="hashtags-card">
+                <h2>Hashtags</h2>
+                <div class="hashtag-cloud">
+                  ${(plan.hashtags || ["#streamer", "#clips", "#gaming"]).map((tag) => `<span>${esc(tag)}</span>`).join("")}
+                  <button>+ Add</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="builder-side">
+            <section class="panel final-preview-card">
+              <h2>Final Clip Preview</h2>
+              <p>This is a local draft preview. Final quality after export.</p>
+              ${renderPhonePreview(candidate, plan, "large")}
+            </section>
+
+            <section class="panel handoff-card">
+              <div class="section-head compact">
+                <h2>CapCut Handoff</h2>
+                ${badge(capcutReady ? "Ready" : "Draft", capcutReady ? "good" : "warn")}
+              </div>
+              <ul>
+                <li>9:16 · 1080x1920 · ${candidate.duration || 30}s</li>
+                <li>Cut list · ${(plan.cutInstructions || []).length || 3} edits</li>
+                <li>Caption track · ${(plan.captionOverlays || []).length || 3} overlays</li>
+                <li>Zoom & crop · Auto</li>
+                <li>Export · MP4 H.264 · 30fps</li>
+              </ul>
+              <button class="primary" data-action="create-capcut" ${clipPackage ? "" : "disabled"}>Create CapCut Handoff</button>
+              <button data-action="create-captions" ${clipPackage ? "" : "disabled"}>Create Captions</button>
+            </section>
+
+            <section class="panel next-steps-card">
+              <h2>Next Steps</h2>
+              ${nextStep("Review and approve this clip", Boolean(clipPackage), "Review")}
+              ${nextStep("Send to Human Gate", relatedDrafts.length > 0, "Required")}
+              ${nextStep("Add to Posting Queue", relatedDrafts.length > 0, "Draft")}
+              ${nextStep("Export and edit in CapCut", capcutReady, "Ready")}
+            </section>
+          </aside>
+        </div>
+
+        <section class="panel detected-moments">
+          <div class="toolbar">
+            <h2>Detected Moments in This Stream</h2>
+            <button data-nav-jump="radar">View All Moments</button>
+          </div>
+          <div class="moment-strip">
+            ${moments.map((moment, index) => renderMomentTile(moment, index)).join("")}
+          </div>
+        </section>
+      ` : empty("Select a candidate from Clip Radar")}
     </section>
+  `;
+}
+
+function selectedClipPackage(candidate = selectedCandidate()) {
+  if (!candidate) return null;
+  return state.packages.find((item) => item.candidateId === candidate.id) || null;
+}
+
+function fallbackPackagePlan(candidate) {
+  const title = candidate?.suggestedTitle || candidate?.title || "Stream clip draft";
+  const hook = candidate?.suggestedHook || candidate?.title || "Watch this moment";
+  return {
+    title,
+    hook,
+    captionOverlays: [`${hook}?`, "No way.", "Watch the end."],
+    cutInstructions: ["Start before the reaction beat.", "Remove dead air.", "End on the payoff."],
+    captions: {
+      tiktok: `${hook}\n\n${title}\n\n#streamer #clips #gaming`
+    },
+    hashtags: ["#streamer", "#clips", "#gaming", "#viral"]
+  };
+}
+
+function builderStep(number, label, active) {
+  return `
+    <span class="${active ? "active" : ""}">
+      <b>${number}</b>
+      ${esc(label)}
+      ${active && number < 4 ? "<em>OK</em>" : ""}
+    </span>
+  `;
+}
+
+function renderTimeline(candidate) {
+  return `
+    <div class="timeline-strip">
+      <button>‹</button>
+      <div class="waveform">${Array.from({ length: 24 }, (_, index) => `<i style="height:${18 + ((index * 17 + Number(candidate.score || 0)) % 58)}%"></i>`).join("")}</div>
+      <div class="frame-reel">${Array.from({ length: 7 }, (_, index) => `<span class="thumb-${index % 5}"></span>`).join("")}</div>
+      <button>›</button>
+    </div>
+  `;
+}
+
+function renderHookSuggestions(plan, candidate) {
+  const choices = [
+    plan.hook || candidate.title,
+    `${candidate.title || "This moment"} is the save`,
+    "When chat realizes what happened",
+    "This is why the timing matters",
+    "The cleanest moment from the stream"
+  ].filter(Boolean);
+  return `
+    <div class="hook-list">
+      ${choices.map((choice, index) => `
+        <label class="${index === 0 ? "active" : ""}">
+          <input type="radio" ${index === 0 ? "checked" : ""} disabled>
+          <span>${esc(choice)}</span>
+        </label>
+      `).join("")}
+    </div>
+    <button data-score-candidate="${candidate.id}">Generate More</button>
+  `;
+}
+
+function renderPhonePreview(candidate, plan, size = "") {
+  return `
+    <div class="phone-preview ${size}">
+      <div class="phone-video thumb-${Math.abs(String(candidate.id || "").length) % 5}">
+        <span>ACE</span>
+        <strong>${esc((plan.thumbnailText || plan.hook || "WHAT A CLUTCH").toUpperCase().slice(0, 18))}</strong>
+        <button type="button">▶</button>
+      </div>
+      <div class="phone-controls">
+        <span>▶</span>
+        <b>${esc(candidate.timestampStart || "0:12")} / ${candidate.duration || 30}s</b>
+        <i></i>
+        <span>▣</span>
+      </div>
+    </div>
+  `;
+}
+
+function nextStep(label, done, status) {
+  return `
+    <div class="next-step ${done ? "done" : ""}">
+      <span>${done ? "✓" : "□"}</span>
+      <b>${esc(label)}</b>
+      <em>${esc(status)}</em>
+    </div>
+  `;
+}
+
+function renderMomentTile(candidate, index) {
+  return `
+    <button class="moment-tile ${candidate.id === state.selectedCandidateId ? "active" : ""}" data-select-candidate="${candidate.id}">
+      ${radarThumb(candidate, index)}
+      <strong>${esc(candidate.title || "Clip moment")}</strong>
+      <span>${candidate.score || 0}</span>
+    </button>
   `;
 }
 
@@ -1246,14 +1480,35 @@ async function packageCandidate(id) {
   setView("builder");
 }
 
+async function saveBuilderDraft(id) {
+  await api("/api/clips/draft", {
+    method: "POST",
+    body: JSON.stringify({ candidateId: id })
+  });
+  toast("Clip builder draft saved", "good");
+  await refresh();
+  setView("builder");
+}
+
 async function createCapCut() {
-  const latestDraft = state.drafts[0];
-  if (!latestDraft?.clipPackageId) return;
+  const packageId = selectedClipPackage()?.id || state.drafts[0]?.clipPackageId;
+  if (!packageId) return;
   await api("/api/clips/capcut-brief", {
     method: "POST",
-    body: JSON.stringify({ clipPackageId: latestDraft.clipPackageId })
+    body: JSON.stringify({ clipPackageId: packageId })
   });
   toast("CapCut handoff created", "good");
+  await refresh();
+}
+
+async function createCaptions() {
+  const packageId = selectedClipPackage()?.id || state.drafts[0]?.clipPackageId;
+  if (!packageId) return;
+  await api("/api/clips/captions", {
+    method: "POST",
+    body: JSON.stringify({ clipPackageId: packageId })
+  });
+  toast("Caption files created", "good");
   await refresh();
 }
 
@@ -1306,6 +1561,7 @@ document.addEventListener("click", async (event) => {
   const action = target.closest("[data-action]")?.dataset.action;
   const selectCandidate = target.closest("[data-select-candidate]")?.dataset.selectCandidate;
   const packageId = target.closest("[data-package-candidate]")?.dataset.packageCandidate;
+  const saveDraftId = target.closest("[data-save-builder-draft]")?.dataset.saveBuilderDraft;
   const scoreId = target.closest("[data-score-candidate]")?.dataset.scoreCandidate;
   const rejectId = target.closest("[data-reject-candidate]")?.dataset.rejectCandidate;
   const toggleId = target.closest("[data-toggle-monitor]")?.dataset.toggleMonitor;
@@ -1333,6 +1589,7 @@ document.addEventListener("click", async (event) => {
     if (action === "run-watch") await runWatch();
     if (action === "seed-demo") await seedDemo();
     if (action === "create-capcut") await createCapCut();
+    if (action === "create-captions") await createCaptions();
     if (action === "test-openai") {
       const result = await api("/api/openai/test", { method: "POST", body: "{}" });
       toast(result.message || "OpenAI test complete", result.live ? "good" : "info");
@@ -1346,6 +1603,7 @@ document.addEventListener("click", async (event) => {
       localStorage.setItem("selectedCandidateId", selectCandidate);
       render();
     }
+    if (saveDraftId) await saveBuilderDraft(saveDraftId);
     if (packageId) await packageCandidate(packageId);
     if (scoreId) {
       await api("/api/clips/candidates/score", { method: "POST", body: JSON.stringify({ id: scoreId }) });

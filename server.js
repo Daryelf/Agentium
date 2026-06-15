@@ -875,7 +875,7 @@ function defaultState() {
       ],
     },
     mission: {
-      activeWorkflowId: "workflow-pod-lab",
+      activeWorkflowId: "workflow-clips-office",
       currentStep: 0,
       paused: false,
       steps: [
@@ -885,8 +885,8 @@ function defaultState() {
           y: "44%",
           progress: 28,
           confidence: 72,
-          title: "Build Etsy print-on-demand research lane",
-          copy: "Agent 101 is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
+          title: "Set up the Clips Office workflow",
+          copy: "Agent 101 is preparing clipping account setup checklists, manual handoff steps, and safe content-package flow.",
           risk: "Low",
         },
         {
@@ -895,8 +895,8 @@ function defaultState() {
           y: "44%",
           progress: 51,
           confidence: 82,
-          title: "Check contradictions and policy risk",
-          copy: "Agent 101 is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
+          title: "Check platform and account risk",
+          copy: "Agent 101 is separating safe draft work from login, posting, account, API key, and payment actions that require Human Gate.",
           risk: "Medium",
         },
         {
@@ -905,8 +905,8 @@ function defaultState() {
           y: "70%",
           progress: 74,
           confidence: 88,
-          title: "Draft the first workflow",
-          copy: "Agent 101 is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
+          title: "Draft the first clips package",
+          copy: "Agent 101 is drafting hooks, captions, CapCut handoff notes, file checklist, and posting-package structure.",
           risk: "Low",
         },
         {
@@ -915,24 +915,24 @@ function defaultState() {
           y: "70%",
           progress: 92,
           confidence: 91,
-          title: "Package decision for the operator",
-          copy: "Agent 101 is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
+          title: "Package risky steps for the operator",
+          copy: "Agent 101 is bundling any login, posting, connector, or account setup decision for Human Gate review.",
           risk: "Approval required",
         }
       ],
     },
     capabilities: [
       {
-        id: "cap-pod-niche-scout",
-        name: "POD niche scout",
+        id: "cap-clips-package-builder",
+        name: "Clips package builder",
         status: "Draft ready",
-        description: "Researches product niches, ranks evidence, and creates listing briefs for approval.",
+        description: "Creates hooks, clip structures, captions, CapCut handoff notes, and posting packages for approval.",
       },
       {
-        id: "cap-market-signal-notebook",
-        name: "Market signal notebook",
-        status: "Sandbox",
-        description: "Summarizes watchlist movement and creates notes. It cannot place trades.",
+        id: "cap-connector-setup-planner",
+        name: "Connector setup planner",
+        status: "Manual handoff",
+        description: "Prepares Twitch, TikTok, YouTube, CapCut, and Drive setup checklists without logging in or creating keys.",
       },
       {
         id: "cap-agent-manifest-drafter",
@@ -949,16 +949,16 @@ function defaultState() {
     ],
     functions: [
       {
-        id: "func-pod-research-brief",
-        name: "POD research brief",
-        workflowId: "workflow-pod-lab",
+        id: "func-clips-package-v1",
+        name: "Clips package v1",
+        workflowId: "workflow-clips-office",
         status: "seeded",
-        risk: "low",
+        risk: "medium",
         ownerAgentId: "agent-001-depo",
-        description: "Reusable draft-only process for turning a print-on-demand niche idea into an evidence-labeled listing brief.",
-        inputs: ["niche hypothesis", "product type", "evidence notes"],
-        outputs: ["listing brief", "assumption log", "approval package"],
-        blockedActions: ["publish listing", "create seller account", "purchase inventory", "make earnings claims"],
+        description: "Reusable draft-only process for turning one raw video idea into a clipping package for Human Gate review.",
+        inputs: ["raw video notes", "platform target", "brand context"],
+        outputs: ["clip plan", "CapCut handoff", "caption package", "approval package"],
+        blockedActions: ["publish video", "log into accounts", "create API keys", "change account settings", "spend money"],
         createdAt: now(),
       }
     ],
@@ -1010,28 +1010,20 @@ function defaultState() {
         outcome: "Clip brief + CapCut handoff + posting package",
       },
       {
-        id: "tpl-pod-niche-scan",
-        name: "POD niche scan",
-        workflowId: "workflow-pod-lab",
-        risk: "low",
-        prompt: "Research one Etsy print-on-demand niche and draft an evidence-labeled niche brief. Do not publish, create accounts, or spend money.",
-        outcome: "POD brief artifact",
+        id: "tpl-clips-setup-checklist",
+        name: "Clipping setup checklist",
+        workflowId: "workflow-clips-office",
+        risk: "medium",
+        prompt: "Prepare the manual setup checklist for Twitch, TikTok, YouTube, CapCut, and file handoff. Do not log in, create API keys, connect accounts, or publish.",
+        outcome: "Connector setup checklist",
       },
       {
-        id: "tpl-pod-listing-outline",
-        name: "Listing outline",
-        workflowId: "workflow-pod-lab",
-        risk: "low",
-        prompt: "Turn an approved POD niche into a draft listing outline with title angles, keyword themes, mockup needs, and blocked actions.",
-        outcome: "Draft listing plan",
-      },
-      {
-        id: "tpl-stock-watch-note",
-        name: "Stock watch note",
-        workflowId: "workflow-stock-watch",
-        risk: "high",
-        prompt: "Prepare a read-only stock algorithm watch note in paper mode. Do not connect a broker, place trades, move money, or make return claims.",
-        outcome: "Paper-mode watch note",
+        id: "tpl-capcut-handoff",
+        name: "CapCut handoff",
+        workflowId: "workflow-clips-office",
+        risk: "medium",
+        prompt: "Draft a CapCut edit handoff for one short-form video: hook, cut list, caption beats, audio notes, export settings, and Human Gate posting approval.",
+        outcome: "CapCut handoff artifact",
       },
       {
         id: "tpl-agent-function-proposal",
@@ -1042,56 +1034,23 @@ function defaultState() {
         outcome: "Future-function proposal",
       }
     ],
-    tasks: [
-      {
-        id: "task-seed-pod-niche-brief",
-        title: "Draft a POD niche research brief",
-        operatorText: "Find a low-risk print-on-demand niche and prepare a listing research workflow for approval.",
-        workflowId: "workflow-pod-lab",
-        intent: "print_on_demand",
-        risk: "low",
-        status: "queued",
-        evidence: [],
-        output: "",
-        createdAt: now(),
-        updatedAt: now(),
-      }
-    ],
+    tasks: [],
     artifacts: [],
     executions: [],
-    approvals: [
-      {
-        id: "approval-pod-lane-v0",
-        title: "Approve POD research lane v0",
-        risk: "low",
-        evidence: "3 source notes, 1 contradiction check, 1 spend estimate",
-        action: "Allow Agent 101 to save this workflow as a reusable playbook.",
-        status: "pending",
-        createdAt: now(),
-      },
-      {
-        id: "approval-stock-readonly-v0",
-        title: "Review stock algorithm monitor",
-        risk: "high",
-        evidence: "Signal summary only. Execution permissions blocked.",
-        action: "Confirm this lane remains read-only and paper-trading only.",
-        status: "pending",
-        createdAt: now(),
-      }
-    ],
+    approvals: [],
     memory: {
       working: [
         {
           id: "mem-working-current-task",
           title: "Current task",
-          body: "Design a visible first-agent system for Argentum with Agent 101 as the supervised starting worker.",
+          body: "Build Clips Office v1 so Agent 101 can prepare clip plans, CapCut handoffs, captions, and approval packages in draft-only mode.",
           provenance: "operator_goal",
           updatedAt: now(),
         },
         {
-          id: "mem-working-domain-priority",
+          id: "mem-working-clips-inputs",
           title: "Open question",
-          body: "Business domain priorities are Etsy print-on-demand first, stock algorithm monitoring second.",
+          body: "Operator still needs to choose the first raw video or stream highlight for the initial Clips Office package.",
           provenance: "operator_goal",
           updatedAt: now(),
         }
@@ -1163,32 +1122,61 @@ function normalizeState(state) {
   }
   state.governance = { ...fresh.governance, ...state.governance };
   state.mission = { ...fresh.mission, ...state.mission };
-  state.capabilities = mergeById(Array.isArray(state.capabilities) ? state.capabilities : [], fresh.capabilities);
-  state.functions = mergeById(Array.isArray(state.functions) ? state.functions : [], fresh.functions);
+  const retiredCapabilityIds = new Set(["cap-pod-niche-scout", "cap-market-signal-notebook"]);
+  const retiredFunctionIds = new Set(["func-pod-research-brief"]);
+  const retiredTemplateIds = new Set(["tpl-pod-niche-scan", "tpl-pod-listing-outline", "tpl-stock-watch-note"]);
+  state.capabilities = mergeById(Array.isArray(state.capabilities) ? state.capabilities : [], fresh.capabilities)
+    .filter((capability) => !retiredCapabilityIds.has(capability?.id));
+  state.functions = mergeById(Array.isArray(state.functions) ? state.functions : [], fresh.functions)
+    .filter((fn) => !retiredFunctionIds.has(fn?.id));
   state.workflows = mergeById(Array.isArray(state.workflows) ? state.workflows : [], fresh.workflows);
-  state.taskTemplates = mergeById(Array.isArray(state.taskTemplates) ? state.taskTemplates : [], fresh.taskTemplates);
+  state.taskTemplates = mergeById(Array.isArray(state.taskTemplates) ? state.taskTemplates : [], fresh.taskTemplates)
+    .filter((template) => !retiredTemplateIds.has(template?.id));
   state.tasks = Array.isArray(state.tasks) ? state.tasks : fresh.tasks;
+  state.tasks = state.tasks.filter((task) => task?.id !== "task-seed-pod-niche-brief");
   state.artifacts = Array.isArray(state.artifacts) ? state.artifacts : fresh.artifacts;
   state.executions = Array.isArray(state.executions) ? state.executions : fresh.executions;
   state.approvals = Array.isArray(state.approvals) ? state.approvals : fresh.approvals;
+  state.approvals = state.approvals.filter((approval) => !["approval-pod-lane-v0", "approval-stock-readonly-v0"].includes(approval?.id));
   state.chatMessages = normalizeChatMessages(Array.isArray(state.chatMessages) ? state.chatMessages : fresh.chatMessages);
   state.memory = {
-    working: state.memory?.working || fresh.memory.working,
-    shared: state.memory?.shared || fresh.memory.shared,
-    agent: state.memory?.agent || fresh.memory.agent,
+    working: mergeById(normalizeMemoryEntries(state.memory?.working || []), fresh.memory.working),
+    shared: mergeById(normalizeMemoryEntries(state.memory?.shared || []), fresh.memory.shared),
+    agent: mergeById(normalizeMemoryEntries(state.memory?.agent || []), fresh.memory.agent),
   };
   state.audit = Array.isArray(state.audit) ? state.audit : fresh.audit;
   return state;
 }
 
+function normalizeMemoryEntries(entries = []) {
+  const legacyPhrases = ["etsy print-on-demand", "pod research lane", "stock algorithm monitoring"];
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => {
+      const searchable = `${entry?.title || ""} ${entry?.body || ""}`.toLowerCase();
+      return !legacyPhrases.some((phrase) => searchable.includes(phrase));
+    });
+}
+
 function normalizeChatMessages(messages = []) {
   const validSpeakers = new Set(["operator", "depo", "agent"]);
   const validRooms = new Set(Object.keys(BUSINESS_OFFICES));
+  const legacyDemoPhrases = [
+    "approve pod research lane v0",
+    "review stock algorithm monitor",
+    "pod research lane",
+    "pod workflow",
+    "etsy store",
+    "returned this to etsy",
+    "returned this to stock",
+    "stock algorithm",
+    "stock.",
+  ];
   const seen = new Set();
   return messages
     .map((message) => {
       const text = String(message?.text || "").trim().slice(0, 2000);
       if (!text) return null;
+      if (legacyDemoPhrases.some((phrase) => text.toLowerCase().includes(phrase))) return null;
       const rawRoom = String(message?.roomId || "depo-habitat").trim();
       const roomId = validRooms.has(rawRoom) ? rawRoom : "depo-habitat";
       const speaker = validSpeakers.has(message?.speaker) ? message.speaker : "depo";
@@ -3201,11 +3189,11 @@ function functionSpecForTask(task) {
     };
   }
   return {
-    name: "POD niche brief",
-    description: "Reusable draft-only workflow for converting a print-on-demand idea into an evidence-labeled niche and listing brief.",
-    inputs: ["niche idea", "product format", "source notes"],
-    outputs: ["niche brief", "listing outline", "assumption log"],
-    blockedActions: ["publish listing", "create seller account", "spend money", "make earnings claims"],
+    name: "Clips Office package",
+    description: "Reusable draft-only workflow for turning raw video notes into a short-form content package for Human Gate review.",
+    inputs: ["raw video notes", "platform target", "brand context"],
+    outputs: ["clip plan", "CapCut handoff", "caption package", "approval package"],
+    blockedActions: ["publish video", "log into accounts", "create API keys", "change account settings", "spend money"],
   };
 }
 
@@ -3269,7 +3257,7 @@ function classifyTask(text, requestedWorkflowId) {
   if (lower.includes("agent") || lower.includes("function") || lower.includes("capability")) {
     return { workflowId: "workflow-agent-factory", intent: "agent_factory", risk: "medium" };
   }
-  return { workflowId: "workflow-pod-lab", intent: "print_on_demand", risk: "low" };
+  return { workflowId: "workflow-clips-office", intent: "content_creation", risk: "medium" };
 }
 
 function taskPlan(task) {
@@ -3311,13 +3299,13 @@ function taskPlan(task) {
   }
   return {
     evidence: [
-      "Publishing and store actions are blocked.",
-      "Listing research must separate verified evidence from assumptions.",
-      "Reusable POD playbooks need human approval before promotion to shared memory.",
+      "Posting and account actions are blocked until Human Gate approval.",
+      "CapCut and platform setup remain manual handoffs.",
+      "Agent 101 can draft clips packages, but cannot log in, upload, publish, or create API keys.",
     ],
-    output: "Agent 101 drafted a POD research brief: choose one niche hypothesis, gather demand and competitor evidence, label assumptions, create a listing outline, estimate costs, and stop before publishing or account actions.",
-    approvalTitle: "Review POD task output",
-    approvalAction: "Approve whether this POD task output can be promoted into shared memory as a reusable playbook.",
+    output: "Agent 101 prepared a Clips Office draft: define the clip goal, list source footage needs, write three hook options, create a CapCut handoff, draft captions, and package any posting step for Human Gate approval.",
+    approvalTitle: "Review Clips Office package",
+    approvalAction: "Decide whether this draft clip package can move toward manual posting. No upload or external account action has been executed.",
   };
 }
 
@@ -3883,7 +3871,7 @@ function advanceCycle() {
       state,
       "working",
       "Draft artifact prepared",
-      "Agent 101 prepared the POD research lane as a reusable draft workflow. Publishing remains blocked.",
+      "Agent 101 prepared the Clips Office lane as a reusable draft workflow. Posting, login, connector, and account actions remain blocked.",
       "depo_cycle",
     );
   }
@@ -3895,8 +3883,8 @@ function advanceCycle() {
         id: "approval-depo-cycle-package",
         title: "Review Agent 101 cycle package",
         risk: "medium",
-        evidence: "Latest cycle includes research, verification, draft, and policy classification.",
-        action: "Review whether Agent 101 can promote the POD workflow into shared memory.",
+        evidence: "Latest Clips Office cycle includes setup planning, verification, draft package, and blocked-action classification.",
+        action: "Review whether Agent 101 can continue the Clips Office package toward manual Human Gate handoff.",
         status: "pending",
         createdAt: now(),
       });
@@ -4414,17 +4402,6 @@ async function handleApi(req, res, url) {
           audit(state, "Agent 101 promoted a function", `${fn.name} is now available as an approved reusable function.`);
         }
       }
-    }
-    if (approval.status === "approved" && approval.id === "approval-pod-lane-v0") {
-      addMemory(
-        state,
-        "shared",
-        "POD research lane approved",
-        "The operator approved Agent 101's print-on-demand research workflow as a reusable playbook.",
-        "human_approval",
-      );
-      const workflow = state.workflows.find((item) => item.id === "workflow-pod-lab");
-      if (workflow) workflow.status = "approved_playbook";
     }
     writeState(state);
     sendJson(res, 200, state);

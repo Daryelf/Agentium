@@ -36,6 +36,7 @@ const fallbackState = {
     ],
   },
   mission: {
+    activeWorkflowId: "workflow-clips-office",
     currentStep: 0,
     paused: false,
     steps: [
@@ -45,8 +46,8 @@ const fallbackState = {
         y: "44%",
         progress: 28,
         confidence: 72,
-        title: "Build Etsy print-on-demand research lane",
-        copy: "Agent 101 is collecting demand signals, competitor notes, and freshness labels before any listing idea becomes durable memory.",
+        title: "Set up the Clips Office workflow",
+        copy: "Agent 101 is preparing clipping account setup checklists, manual handoff steps, and safe content-package flow.",
         risk: "Low",
       },
       {
@@ -55,8 +56,8 @@ const fallbackState = {
         y: "44%",
         progress: 51,
         confidence: 82,
-        title: "Check contradictions and policy risk",
-        copy: "Agent 101 is separating verified evidence from guesses and blocking claims that would need legal, financial, or customer-facing review.",
+        title: "Check platform and account risk",
+        copy: "Agent 101 is separating safe draft work from login, posting, account, API key, and payment actions that require Human Gate.",
         risk: "Medium",
       },
       {
@@ -65,8 +66,8 @@ const fallbackState = {
         y: "70%",
         progress: 74,
         confidence: 88,
-        title: "Draft the first workflow",
-        copy: "Agent 101 is preparing a repeatable research-to-approval workflow with no account creation, publishing, or spending permission.",
+        title: "Draft the first clips package",
+        copy: "Agent 101 is drafting hooks, captions, CapCut handoff notes, file checklist, and posting-package structure.",
         risk: "Low",
       },
       {
@@ -75,24 +76,24 @@ const fallbackState = {
         y: "70%",
         progress: 92,
         confidence: 91,
-        title: "Package decision for the operator",
-        copy: "Agent 101 is bundling evidence, assumptions, expected upside, risks, and the exact action that needs your sign-off.",
+        title: "Package risky steps for the operator",
+        copy: "Agent 101 is bundling any login, posting, connector, or account setup decision for Human Gate review.",
         risk: "Approval required",
       },
     ],
   },
   capabilities: [
     {
-      id: "cap-pod-niche-scout",
-      name: "POD niche scout",
+      id: "cap-clips-package-builder",
+      name: "Clips package builder",
       status: "Draft ready",
-      description: "Researches product niches, ranks evidence, and creates listing briefs for approval.",
+      description: "Creates hooks, clip structures, captions, CapCut handoff notes, and posting packages for approval.",
     },
     {
-      id: "cap-market-signal-notebook",
-      name: "Market signal notebook",
-      status: "Sandbox",
-      description: "Summarizes watchlist movement and creates notes. It cannot place trades.",
+      id: "cap-connector-setup-planner",
+      name: "Connector setup planner",
+      status: "Manual handoff",
+      description: "Prepares Twitch, TikTok, YouTube, CapCut, and Drive setup checklists without logging in or creating keys.",
     },
     {
       id: "cap-agent-manifest-drafter",
@@ -109,15 +110,15 @@ const fallbackState = {
   ],
   functions: [
     {
-      id: "func-pod-research-brief",
-      name: "POD research brief",
-      workflowId: "workflow-pod-lab",
+      id: "func-clips-package-v1",
+      name: "Clips package v1",
+      workflowId: "workflow-clips-office",
       status: "seeded",
-      risk: "low",
-      description: "Reusable draft-only process for turning a print-on-demand niche idea into an evidence-labeled listing brief.",
-      inputs: ["niche hypothesis", "product type", "evidence notes"],
-      outputs: ["listing brief", "assumption log", "approval package"],
-      blockedActions: ["publish listing", "create seller account", "purchase inventory", "make earnings claims"],
+      risk: "medium",
+      description: "Reusable draft-only process for turning one raw video idea into a clipping package for Human Gate review.",
+      inputs: ["raw video notes", "platform target", "brand context"],
+      outputs: ["clip plan", "CapCut handoff", "caption package", "approval package"],
+      blockedActions: ["publish video", "log into accounts", "create API keys", "change account settings", "spend money"],
     },
   ],
   workflows: [
@@ -164,64 +165,35 @@ const fallbackState = {
       outcome: "Clip brief + CapCut handoff + posting package",
     },
     {
-      id: "tpl-pod-niche-scan",
-      name: "POD niche scan",
-      workflowId: "workflow-pod-lab",
-      risk: "low",
-      prompt: "Research one Etsy print-on-demand niche and draft an evidence-labeled niche brief. Do not publish, create accounts, or spend money.",
-      outcome: "POD brief artifact",
+      id: "tpl-clips-setup-checklist",
+      name: "Clipping setup checklist",
+      workflowId: "workflow-clips-office",
+      risk: "medium",
+      prompt: "Prepare the manual setup checklist for Twitch, TikTok, YouTube, CapCut, and file handoff. Do not log in, create API keys, connect accounts, or publish.",
+      outcome: "Connector setup checklist",
     },
     {
-      id: "tpl-stock-watch-note",
-      name: "Stock watch note",
-      workflowId: "workflow-stock-watch",
-      risk: "high",
-      prompt: "Prepare a read-only stock algorithm watch note in paper mode. Do not connect a broker, place trades, move money, or make return claims.",
-      outcome: "Paper-mode watch note",
+      id: "tpl-capcut-handoff",
+      name: "CapCut handoff",
+      workflowId: "workflow-clips-office",
+      risk: "medium",
+      prompt: "Draft a CapCut edit handoff for one short-form video: hook, cut list, caption beats, audio notes, export settings, and Human Gate posting approval.",
+      outcome: "CapCut handoff artifact",
     },
   ],
-  tasks: [
-    {
-      id: "task-seed-pod-niche-brief",
-      title: "Draft a POD niche research brief",
-      operatorText: "Find a low-risk print-on-demand niche and prepare a listing research workflow for approval.",
-      workflowId: "workflow-pod-lab",
-      intent: "print_on_demand",
-      risk: "low",
-      status: "queued",
-      evidence: [],
-      output: "",
-    },
-  ],
+  tasks: [],
   artifacts: [],
   executions: [],
-  approvals: [
-    {
-      id: "approval-pod-lane-v0",
-      title: "Approve POD research lane v0",
-      risk: "low",
-      evidence: "3 source notes, 1 contradiction check, 1 spend estimate",
-      action: "Allow Agent 101 to save this workflow as a reusable playbook.",
-      status: "pending",
-    },
-    {
-      id: "approval-stock-readonly-v0",
-      title: "Review stock algorithm monitor",
-      risk: "high",
-      evidence: "Signal summary only. Execution permissions blocked.",
-      action: "Confirm this lane remains read-only and paper-trading only.",
-      status: "pending",
-    },
-  ],
+  approvals: [],
   memory: {
     working: [
       {
         title: "Current task",
-        body: "Design a visible first-agent system for Argentum with Agent 101 as the supervised starting worker.",
+        body: "Build Clips Office v1 so Agent 101 can prepare clip plans, CapCut handoffs, captions, and approval packages in draft-only mode.",
       },
       {
         title: "Open question",
-        body: "Business domain priorities are Etsy print-on-demand first, stock algorithm monitoring second.",
+        body: "Operator still needs to choose the first raw video or stream highlight for the initial Clips Office package.",
       },
     ],
     shared: [
@@ -7893,15 +7865,15 @@ taskForm.addEventListener("submit", (event) => {
   const text = taskInput.value.trim();
   if (!text) return;
   if (!apiAvailable) {
-    const classification = taskWorkflow.value || "workflow-pod-lab";
+    const classification = taskWorkflow.value || "workflow-clips-office";
     const isClips = classification.includes("clips");
     state.tasks.unshift({
       id: `local-task-${Date.now()}`,
       title: text.length > 76 ? `${text.slice(0, 73)}...` : text,
       operatorText: text,
       workflowId: classification,
-      intent: isClips ? "content_creation" : classification.includes("stock") ? "market_monitoring" : classification.includes("factory") ? "agent_factory" : "print_on_demand",
-      risk: classification.includes("stock") ? "high" : classification.includes("factory") || isClips ? "medium" : "low",
+      intent: isClips ? "content_creation" : classification.includes("stock") ? "market_monitoring" : classification.includes("factory") ? "agent_factory" : "content_creation",
+      risk: classification.includes("stock") ? "high" : classification.includes("factory") || isClips ? "medium" : "medium",
       status: "queued",
       evidence: [],
       output: "",
@@ -7911,12 +7883,13 @@ taskForm.addEventListener("submit", (event) => {
     render();
     return;
   }
-  const targetEndpoint = taskWorkflow.value === "workflow-clips-office" ? "/api/agent101/tasks" : "/api/tasks";
+  const selectedWorkflow = taskWorkflow.value || "workflow-clips-office";
+  const targetEndpoint = selectedWorkflow === "workflow-clips-office" ? "/api/agent101/tasks" : "/api/tasks";
   postJson(targetEndpoint, {
     text,
     title: text,
     goal: text,
-    workflowId: taskWorkflow.value,
+    workflowId: selectedWorkflow,
   }).then((result) => {
     state = result.state || result;
     taskInput.value = "";
@@ -7940,7 +7913,7 @@ templateList.addEventListener("click", (event) => {
       operatorText: template.prompt,
       workflowId: template.workflowId,
       templateId: template.id,
-      intent: template.workflowId.includes("clips") ? "content_creation" : template.workflowId.includes("stock") ? "market_monitoring" : template.workflowId.includes("factory") ? "agent_factory" : "print_on_demand",
+      intent: template.workflowId.includes("clips") ? "content_creation" : template.workflowId.includes("stock") ? "market_monitoring" : template.workflowId.includes("factory") ? "agent_factory" : "content_creation",
       risk: template.risk,
       status: "queued",
       evidence: [],
@@ -7991,7 +7964,7 @@ functionList.addEventListener("click", (event) => {
       operatorText: input || `Run ${fn.name} with draft-only safeguards.`,
       workflowId: fn.workflowId,
       functionId: fn.id,
-      intent: fn.workflowId?.includes("stock") ? "market_monitoring" : fn.workflowId?.includes("factory") ? "agent_factory" : "print_on_demand",
+      intent: fn.workflowId?.includes("clips") ? "content_creation" : fn.workflowId?.includes("stock") ? "market_monitoring" : fn.workflowId?.includes("factory") ? "agent_factory" : "content_creation",
       risk: fn.risk,
       status: "queued",
       evidence: [],

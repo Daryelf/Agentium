@@ -2818,6 +2818,80 @@ main {
   color: #ffffff;
 }
 
+.office-chat .approval-chat-card {
+  width: 100%;
+  max-width: min(94%, 620px);
+  align-self: flex-start;
+  display: grid;
+  gap: 8px;
+  border-radius: 16px;
+  border-color: rgba(125, 211, 252, 0.2);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(34, 211, 238, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 0.9));
+}
+
+.office-chat .approval-chat-card.high {
+  border-color: rgba(248, 113, 113, 0.34);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(248, 113, 113, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 0.9));
+}
+
+.approval-chat-top,
+.approval-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-chat-top {
+  justify-content: space-between;
+}
+
+.approval-chat-top span,
+.approval-chat-card small {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 820;
+}
+
+.office-chat .approval-chat-card > strong {
+  color: #f8fafc;
+  font-size: 0.82rem;
+}
+
+.approval-chat-card small {
+  line-height: 1.35;
+}
+
+.approval-chat-actions {
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.approval-chat-actions button {
+  min-height: 29px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(15, 23, 42, 0.72);
+  color: #dbeafe;
+  font-size: 0.64rem;
+  font-weight: 880;
+}
+
+.approval-chat-actions button:first-child {
+  border-color: rgba(45, 212, 191, 0.36);
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.24), rgba(37, 99, 235, 0.26));
+  color: #a7f3d0;
+}
+
+.approval-chat-actions button:last-child {
+  border-color: rgba(248, 113, 113, 0.34);
+  color: #fecaca;
+}
+
 .office-chat article.pending,
 .chat-message.pending {
   opacity: 0.72;

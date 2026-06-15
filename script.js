@@ -3800,7 +3800,7 @@ function businessOfficeMarkup(card) {
             </div>
           </section>
           <div class="office-command-grid">
-            ${card.id === "human-gate" ? humanGateOfficeQueueMarkup(runtime) : officeChatMarkup(card)}
+            ${card.id === "human-gate" ? humanGateChatMarkup(card, runtime) : officeChatMarkup(card)}
             <section class="office-capabilities">
               <div>
                 <h4>What This Office Will Do</h4>
@@ -3906,6 +3906,63 @@ function humanGateOfficeQueueMarkup(runtime) {
               .join("")
           : `<article class="empty"><strong>No pending approvals</strong><p>Risky work will appear here before anything external can happen.</p></article>`
       }
+    </section>
+  `;
+}
+
+function humanGateChatMarkup(card, runtime) {
+  const resolved = resolveRoomKey(card.id);
+  const chatMessages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-8);
+  const approvals = runtime.pending.slice(0, 5);
+  const feedItems = [
+    ...chatMessages.map((message) => ({ type: "message", message })),
+    ...approvals.map((approval) => ({ type: "approval", approval })),
+  ];
+  const visibleItems = feedItems.length
+    ? feedItems
+    : [{ type: "message", message: { speaker: "depo", text: "Human Gate is clear. Risky work will appear here as approval cards inside this chat." } }];
+  return `
+    <section class="office-chat human-gate-chat">
+      <div class="office-section-head">
+        <h4>Approval Chat</h4>
+        <span>${escapeHtml(pluralize(runtime.pending.length, "pending"))}</span>
+      </div>
+      <div class="office-chat-log approval-chat-log" aria-live="polite">
+        ${visibleItems
+          .map((item) => {
+            if (item.type === "message") {
+              const message = item.message;
+              return `
+                <article class="${message.speaker === "operator" ? "operator" : ""} ${message.pending ? "pending" : ""}">
+                  <strong>${message.speaker === "operator" ? "You" : "Agent 101"}</strong>
+                  <p>${escapeHtml(message.text)}</p>
+                </article>
+              `;
+            }
+            const approval = item.approval;
+            return `
+              <article class="approval-chat-card ${escapeHtml(approval.risk || "medium")}">
+                <div class="approval-chat-top">
+                  <span>${escapeHtml(approvalSourceLabel(approval))}</span>
+                  <em class="risk-tag ${escapeHtml(approval.risk || "medium")}">${escapeHtml(approval.risk || "medium")}</em>
+                </div>
+                <strong>${escapeHtml(approval.title || "Approval package")}</strong>
+                <p>${escapeHtml(approval.action || "Operator review required before this can continue.")}</p>
+                <small>${escapeHtml(approval.evidence || "No evidence attached yet.")}</small>
+                <div class="approval-chat-actions">
+                  <button type="button" data-card-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve</button>
+                  <button type="button" data-card-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
+                  <button type="button" data-card-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+      <form class="agent-chat-form office-chat-form" data-depo-chat-form>
+        <input name="message" type="text" autocomplete="off" placeholder="Ask Agent 101 about approvals, evidence, or next decision..." />
+        <button type="submit">Send</button>
+      </form>
     </section>
   `;
 }
@@ -6257,6 +6314,57 @@ function approvalActionTitle(action) {
   return statusLabel(action);
 }
 
+function approvalReturnRoom(approval = {}) {
+  const rawRoom = String(approval.officeId || approval.roomId || "").trim();
+  const explicit = rawRoom ? resolveRoomKey(rawRoom) : "";
+  if (explicit && explicit !== "human-gate" && explicit !== "depo-habitat") return explicit;
+  const workflowId = String(approval.workflowId || "");
+  if (workflowId === "workflow-clips-office") return "clips-office";
+  if (workflowId === "workflow-stock-watch") return "stock-office";
+  if (workflowId === "workflow-pod-lab") return "etsy-office";
+  const title = `${approval.title || ""} ${approval.action || ""} ${approval.evidence || ""}`.toLowerCase();
+  if (title.includes("clip") || title.includes("capcut") || title.includes("tiktok") || title.includes("video")) return "clips-office";
+  if (title.includes("stock") || title.includes("trade") || title.includes("market")) return "stock-office";
+  if (title.includes("etsy") || title.includes("pod") || title.includes("listing")) return "etsy-office";
+  if (title.includes("essentrx") || title.includes("scent") || title.includes("customer")) return "essentrx-office";
+  return "depo-habitat";
+}
+
+function recordApprovalChatDecision(approval = {}, action, source = "Human Gate") {
+  const label = approvalActionTitle(action);
+  const title = approval.title || "approval package";
+  const nextRoom = approvalReturnRoom(approval);
+  const nextRoomName = businessOfficeProfile(nextRoom).title.replace(/^Business Office: |^Agent Office: /, "");
+  const agentReply = action === "approve"
+    ? `${label}. I recorded the decision and returned this to ${nextRoomName}. Agent 101 can continue only with the approved draft step.`
+    : action === "revise"
+      ? `${label}. I sent this back to ${nextRoomName} for revision. Nothing external was executed.`
+      : `${label}. I blocked this package. Agent 101 will keep the risky action locked and log the decision.`;
+  depoChatMessages.push(
+    {
+      roomId: "human-gate",
+      speaker: "operator",
+      text: `${label}: ${title}`,
+      source,
+    },
+    {
+      roomId: "human-gate",
+      speaker: "depo",
+      text: agentReply,
+      source,
+    },
+  );
+  if (nextRoom !== "human-gate") {
+    depoChatMessages.push({
+      roomId: nextRoom,
+      speaker: "depo",
+      text: `Human Gate ${label.toLowerCase()} "${title}". ${action === "approve" ? "Continue with the approved local draft step only." : action === "revise" ? "Revise the package before asking again." : "Keep this work blocked."}`,
+      source,
+    });
+  }
+  depoChatMessages = depoChatMessages.slice(-40);
+}
+
 function changeApprovalStatusLocally(id, action, source = "Human Gate") {
   const approvals = stateList("approvals");
   const approval = approvals.find((item) => item.id === id);
@@ -6274,17 +6382,23 @@ function changeApprovalStatusLocally(id, action, source = "Human Gate") {
     riskLevel: approval.risk || "medium",
     roomId: "human-gate",
   });
+  recordApprovalChatDecision(approval, action, source);
   render();
   openModuleInfoCard("human-gate");
   return true;
 }
 
 function changeApprovalStatus(id, action, source = "Human Gate") {
+  const approvalBeforeChange = stateList("approvals").find((item) => item.id === id);
   mutate(`/api/approvals/${encodeURIComponent(id)}/${action}`).then((changed) => {
     if (changed) {
       selectedAgentKey = null;
       selectedRoomKey = "human-gate";
+      if (approvalBeforeChange) {
+        recordApprovalChatDecision(approvalBeforeChange, action, source);
+      }
       openModuleInfoCard("human-gate");
+      requestAnimationFrame(scrollAgentChatToLatest);
       return;
     }
     changeApprovalStatusLocally(id, action, source);

@@ -4562,6 +4562,15 @@ async function loadAiProviderSettings() {
 }
 
 function fallbackAgent101ToolStatus() {
+  const connectors = [
+    { id: "openai", label: "OpenAI", status: aiProviderSettings.connectionStatus || "not_configured", mode: aiProviderSettings.modeLabel || "Local Demo" },
+    { id: "browser", label: "Browser", status: "approval_required", mode: "Restricted" },
+    { id: "capcut", label: "CapCut", status: "manual_handoff", mode: "Manual handoff" },
+    { id: "tiktok", label: "TikTok", status: "manual_handoff", mode: "Draft package" },
+    { id: "twitch", label: "Twitch", status: "manual_handoff", mode: "Manual handoff" },
+    { id: "youtube", label: "YouTube", status: "manual_handoff", mode: "Manual handoff" },
+    { id: "google_drive", label: "Google Drive", status: "manual_handoff", mode: "Manual handoff" },
+  ];
   return {
     agent101: {
       id: "agent-101",
@@ -4588,6 +4597,15 @@ function fallbackAgent101ToolStatus() {
       youtube: { label: "Not connected", status: "not_connected" },
       storage: { label: "Ready", status: "ready", localProjectFiles: true },
     },
+    connectors,
+    readiness: {
+      humanGate: "active",
+      taskCreation: "ready",
+      artifactCreation: "ready",
+      approvalRouting: "ready",
+      externalActions: "locked",
+      pendingApprovals: pendingApprovals().length,
+    },
     openaiStatus: null,
   };
 }
@@ -4595,6 +4613,8 @@ function fallbackAgent101ToolStatus() {
 function renderAgent101ToolStatus() {
   const status = agent101ToolStatus || fallbackAgent101ToolStatus();
   const tools = status.tools || {};
+  const connectors = Array.isArray(status.connectors) ? status.connectors : [];
+  const connectorById = Object.fromEntries(connectors.map((connector) => [connector.id, connector]));
   const openaiStatus = status.openaiStatus || null;
   const openaiMode = openaiStatus?.status === "ready" && openaiStatus.mode === "live"
     ? "OpenAI Live"
@@ -4604,8 +4624,8 @@ function renderAgent101ToolStatus() {
   const rows = [
     ["OpenAI", openaiMode, openaiMode === "OpenAI Live" ? "live" : openaiMode === "Provider Error" ? "restricted" : "demo"],
     ["Browser", tools.browser?.label || "Restricted", "restricted"],
-    ["CapCut", tools.capcut?.label || "Manual handoff", "manual"],
-    ["TikTok", tools.tiktok?.postingMode || tools.tiktok?.mode || "Draft package", "draft"],
+    ["CapCut", connectorById.capcut?.mode || tools.capcut?.label || "Manual handoff", "manual"],
+    ["TikTok", connectorById.tiktok?.mode || tools.tiktok?.postingMode || tools.tiktok?.mode || "Draft package", "draft"],
     ["Storage", tools.storage?.label || "Ready", "ready"],
   ];
   if (agentToolGrid) {
@@ -4615,14 +4635,15 @@ function renderAgent101ToolStatus() {
   }
   if (agentReadinessGrid) {
     const ready = openaiStatus?.status === "ready" && openaiStatus?.mode === "live";
+    const liveReadiness = status.readiness || {};
     const readiness = [
       ["OpenAI connection", ready ? "Ready" : "Not ready", ready],
-      ["Human Gate", "Active", true],
+      ["Human Gate", liveReadiness.humanGate === "active" ? "Active" : "Waiting", liveReadiness.humanGate === "active"],
       ["Draft-only mode", "Active", true],
       ["System logs", "Active", true],
-      ["Task creation", "Ready", true],
-      ["Artifact creation", "Ready", true],
-      ["Approval routing", "Ready", true],
+      ["Task creation", liveReadiness.taskCreation || "Ready", true],
+      ["Artifact creation", liveReadiness.artifactCreation || "Ready", true],
+      ["Approval routing", liveReadiness.approvalRouting || "Ready", true],
       ["External actions", "Locked", true],
     ];
     agentReadinessGrid.innerHTML = readiness
@@ -4633,10 +4654,11 @@ function renderAgent101ToolStatus() {
     const settingsRows = [
       ["OpenAI", tools.openai?.mode || "Local Demo"],
       ["Browser", tools.browser?.label || "Restricted"],
-      ["CapCut", tools.capcut?.label || "Manual handoff"],
-      ["TikTok", tools.tiktok?.postingMode || "Draft package"],
+      ["CapCut", connectorById.capcut?.mode || tools.capcut?.label || "Manual handoff"],
+      ["TikTok", connectorById.tiktok?.mode || tools.tiktok?.postingMode || "Draft package"],
+      ["Twitch", connectorById.twitch?.mode || "Manual handoff"],
       ["Instagram", tools.instagram?.label || "Not connected"],
-      ["YouTube", tools.youtube?.label || "Not connected"],
+      ["YouTube", connectorById.youtube?.mode || tools.youtube?.label || "Manual handoff"],
       ["Storage", tools.storage?.label || "Ready"],
     ];
     settingsToolGrid.innerHTML = settingsRows.map(([name, value]) => `<span><b>${escapeHtml(name)}</b><em>${escapeHtml(value)}</em></span>`).join("");
@@ -4663,11 +4685,13 @@ async function loadAgent101ToolStatus() {
     return;
   }
   try {
-    const [toolStatus, openaiStatus] = await Promise.all([
+    const [toolStatus, openaiStatus, readiness, connectorStatus] = await Promise.all([
       api("/api/agent101/tool-status"),
       api("/api/agent101/openai-status"),
+      api("/api/agent101/readiness"),
+      api("/api/connectors/status"),
     ]);
-    agent101ToolStatus = { ...toolStatus, openaiStatus };
+    agent101ToolStatus = { ...toolStatus, openaiStatus, readiness, connectors: connectorStatus.connectors || toolStatus.connectors || [] };
   } catch (error) {
     addLocalAudit("Tool status unavailable", error.message);
     agent101ToolStatus = fallbackAgent101ToolStatus();
@@ -6496,6 +6520,42 @@ function handleOfficeChatCommand(roomKey, message) {
   return null;
 }
 
+function agent101ActionFromChat(roomKey, message) {
+  const normalized = String(message || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const targetRoom = officeRoomFromChatText(normalized, roomKey);
+  const blockedAction = blockedActionFromChatText(normalized);
+  if (blockedAction) {
+    return {
+      action: "package_for_approval",
+      officeId: targetRoom,
+      message,
+      riskLevel: "high",
+      packageType: "general",
+      actionType: blockedAction,
+    };
+  }
+  if (includesAny(normalized, ["setup", "set up", "connect twitch", "connect tiktok", "connect youtube", "connect capcut", "api key", "env var", "clipping account", "creator account"])) {
+    return { action: "connector_setup_checklist", officeId: targetRoom === "depo-habitat" ? "clips-office" : targetRoom, message };
+  }
+  if (includesAny(normalized, ["codex prompt", "prompt for codex"])) {
+    return { action: "create_codex_prompt", officeId: targetRoom, message };
+  }
+  if (includesAny(normalized, ["clips plan", "clip plan", "capcut brief", "caption draft", "video workflow"])) {
+    return { action: "create_clips_plan", officeId: "clips-office", message };
+  }
+  if (includesAny(normalized, ["package", "request approval", "send for approval", "send to human gate", "prepare approval", "route to human gate", "submit for review", "send for review"])) {
+    return { action: "package_for_approval", officeId: targetRoom, message, packageType: targetRoom === "clips-office" ? "posting_package" : "general" };
+  }
+  if (includesAny(normalized, ["create task", "task plan", "make a plan", "go do", "do this", "start work", "bounded job", "assign", "draft workflow"])) {
+    return { action: normalized.includes("workflow") ? "draft_workflow" : "create_task_plan", officeId: targetRoom, message };
+  }
+  if (includesAny(normalized, ["save note", "remember this", "add memory"])) {
+    return { action: "save_memory", officeId: targetRoom, message };
+  }
+  return null;
+}
+
 async function submitDepoChat(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const trimmed = String(message || "").trim();
@@ -6507,16 +6567,43 @@ async function submitDepoChat(roomKey, message) {
   requestAnimationFrame(scrollAgentChatToLatest);
   let responseText = depoChatResponse(trimmed, resolved);
   let responseMeta = { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [] };
-  const command = handleOfficeChatCommand(resolved, trimmed);
-  if (command) {
+  const agent101Rooms = new Set(["depo-habitat", "clips-office", "stock-office", "etsy-office", "essentrx-office", "human-gate"]);
+  const serverAction = agent101ActionFromChat(resolved, trimmed);
+  const command = serverAction ? null : handleOfficeChatCommand(resolved, trimmed);
+  if (apiAvailable && serverAction) {
+    try {
+      const payload = await postJson("/api/agent101/actions", serverAction);
+      responseText = payload.message || responseText;
+      responseMeta = payload;
+      aiProviderNotice = "";
+      await loadState();
+      await loadAgent101ToolStatus();
+    } catch (error) {
+      aiProviderNotice = error.message;
+      const fallbackCommand = handleOfficeChatCommand(resolved, trimmed);
+      if (fallbackCommand) {
+        responseText = fallbackCommand.text;
+        responseMeta = fallbackCommand.meta || responseMeta;
+      } else {
+        responseText = "I could not create that server-side record yet. The local draft response is still available, but nothing external was executed.";
+      }
+      addSystemLogEntry({
+        type: "agent101_action_error",
+        message: `Agent 101 action failed cleanly: ${error.message}`,
+        riskLevel: "medium",
+        roomId: resolved,
+      });
+    }
+  } else if (command) {
     responseText = command.text;
     responseMeta = command.meta || responseMeta;
   } else if (apiAvailable) {
     try {
-      const useAgent101Clips = resolved === "clips-office" || resolved === "depo-habitat";
-      const payload = await postJson(useAgent101Clips ? "/api/agent101/chat" : "/api/depo/chat", {
+      const useAgent101 = agent101Rooms.has(resolved);
+      const payload = await postJson(useAgent101 ? "/api/agent101/chat" : "/api/depo/chat", {
         message: trimmed,
-        office: useAgent101Clips ? "clips-office" : resolved,
+        office: useAgent101 ? resolved : "clips-office",
+        officeId: useAgent101 ? resolved : "clips-office",
         roomId: resolved,
         currentStage: depoAgent.currentStage,
         selectedRoom: selectedRoomKey,
@@ -6524,6 +6611,10 @@ async function submitDepoChat(roomKey, message) {
       responseText = payload.message || responseText;
       responseMeta = payload;
       aiProviderNotice = "";
+      if (payload.task || payload.artifact || payload.approval || payload.memory) {
+        await loadState();
+        await loadAgent101ToolStatus();
+      }
     } catch (error) {
       aiProviderNotice = error.message;
       addSystemLogEntry({
@@ -6782,6 +6873,28 @@ async function askAgent101Clips(message) {
   }
 }
 
+async function createClipsSetupChecklist() {
+  if (!apiAvailable) {
+    addLocalAudit("Connector checklist drafted", "Static preview prepared a local setup checklist note. Start npm start to persist connector artifacts.");
+    render();
+    return;
+  }
+  try {
+    const result = await postJson("/api/agent101/actions", {
+      action: "connector_setup_checklist",
+      officeId: "clips-office",
+      message: "Prepare manual-handoff setup checklist for Twitch, TikTok, YouTube, CapCut, and Google Drive clipping workflow.",
+    });
+    addLocalAudit("Connector checklist created", result.artifact?.title || result.message || "Agent 101 prepared setup checklist.");
+    await loadState();
+    await loadAgent101ToolStatus();
+    activateView("approval");
+  } catch (error) {
+    addLocalAudit("Connector checklist failed", error.message);
+    render();
+  }
+}
+
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => activateView(button.dataset.view));
 });
@@ -6815,6 +6928,8 @@ document.querySelectorAll("[data-agent-quick-action]").forEach((button) => {
       pauseBtn?.click();
     } else if (action === "clips-brief" || action === "capcut-brief") {
       createClipsBriefFromAgent();
+    } else if (action === "clips-setup") {
+      createClipsSetupChecklist();
     } else if (action === "clips-package") {
       packageClipsForHumanGate();
     } else if (action === "package") {

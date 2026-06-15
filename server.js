@@ -62,6 +62,149 @@ const DEPO_SYSTEM_RULES = [
   "Any risky action must be returned as pending approval, not executed.",
 ].join(" ");
 
+const CONNECTOR_STATUS_VALUES = new Set(["not_configured", "manual_handoff", "ready", "error", "approval_required"]);
+
+const CONNECTOR_DEFINITIONS = {
+  openai: {
+    label: "OpenAI",
+    category: "ai_provider",
+    status: "not_configured",
+    requiredEnv: ["OPENAI_API_KEY", "AI_PROVIDER", "AI_MODEL", "AI_MONTHLY_LIMIT_USD"],
+    approvalRequired: false,
+    blockedActions: ["frontend key exposure", "unlimited spend"],
+    checklist: ["Set Railway environment variables", "Run backend test", "Confirm monthly limit", "Keep key server-side"],
+  },
+  browser: {
+    label: "Browser",
+    category: "manual_operator",
+    status: "approval_required",
+    requiredEnv: [],
+    approvalRequired: true,
+    blockedActions: ["raw credential login", "payment settings", "account changes"],
+    checklist: ["Operator opens account manually", "Agent 101 prepares checklist", "Human Gate approves any risky step"],
+  },
+  capcut: {
+    label: "CapCut",
+    category: "content_tool",
+    status: "manual_handoff",
+    requiredEnv: ["CAPCUT_HANDOFF_URL"],
+    approvalRequired: true,
+    blockedActions: ["account login", "publishing", "payment changes"],
+    checklist: ["Install or open CapCut manually", "Create project manually", "Use Agent 101 edit notes", "Export locally before approval"],
+  },
+  tiktok: {
+    label: "TikTok",
+    category: "social_platform",
+    status: "manual_handoff",
+    requiredEnv: ["TIKTOK_CLIENT_ID", "TIKTOK_CLIENT_SECRET", "TIKTOK_REDIRECT_URI"],
+    approvalRequired: true,
+    blockedActions: ["direct posting", "profile changes", "ad spend", "credential login"],
+    checklist: ["Operator controls login", "Agent 101 drafts captions", "Human Gate approves posting package"],
+  },
+  twitch: {
+    label: "Twitch",
+    category: "social_platform",
+    status: "manual_handoff",
+    requiredEnv: ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET", "TWITCH_REDIRECT_URI"],
+    approvalRequired: true,
+    blockedActions: ["credential login", "API key creation", "account changes", "paid actions"],
+    checklist: ["Operator creates/owns developer app", "Add env vars in Railway", "Test connector status", "Keep stream/account actions manual"],
+  },
+  youtube: {
+    label: "YouTube",
+    category: "social_platform",
+    status: "manual_handoff",
+    requiredEnv: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "YOUTUBE_CHANNEL_ID"],
+    approvalRequired: true,
+    blockedActions: ["direct upload", "channel changes", "credential login", "monetization changes"],
+    checklist: ["Operator owns OAuth app", "Agent 101 drafts metadata", "Posting remains manual until approved"],
+  },
+  google_drive: {
+    label: "Google Drive",
+    category: "storage",
+    status: "manual_handoff",
+    requiredEnv: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_DRIVE_FOLDER_ID"],
+    approvalRequired: true,
+    blockedActions: ["credential login", "sharing permission changes", "deleting files"],
+    checklist: ["Operator chooses folder", "Store folder id in Railway only", "Agent 101 can reference file metadata after approval"],
+  },
+};
+
+const BUSINESS_OFFICES = {
+  "depo-habitat": {
+    id: "depo-habitat",
+    name: "Agent Office",
+    title: "Agent Office: Agent 101",
+    workflowId: "workflow-agent-factory",
+    intent: "agent_operations",
+    risk: "medium",
+    allowedWork: ["review offices", "plan bounded work", "draft outputs", "prepare approvals"],
+    requiredInputs: ["operator goal", "office context", "memory notes", "approval state"],
+    outputs: ["task plan", "workflow plan", "approval package", "audit note"],
+    blockedWork: ["create live agents", "grant permissions", "external execution"],
+  },
+  "clips-office": {
+    id: "clips-office",
+    name: "Clips Office",
+    title: "Business Office: Clips & Video",
+    workflowId: "workflow-clips-office",
+    intent: "content_creation",
+    risk: "medium",
+    allowedWork: ["clip plans", "script drafts", "caption drafts", "CapCut handoff notes", "posting packages"],
+    requiredInputs: ["raw footage notes", "brand notes", "target platform", "approval decision"],
+    outputs: ["clips plan", "account setup checklist", "caption package", "posting approval package"],
+    blockedWork: ["log in", "create API keys", "post videos", "spend ad money", "change account settings"],
+  },
+  "stock-office": {
+    id: "stock-office",
+    name: "Stock Office",
+    title: "Business Office: Stock",
+    workflowId: "workflow-stock-watch",
+    intent: "market_monitoring",
+    risk: "high",
+    allowedWork: ["watch notes", "risk labels", "paper-mode summaries", "operator review packets"],
+    requiredInputs: ["watchlist", "market notes", "risk rule", "operator decision"],
+    outputs: ["stock watch note", "risk memo", "approval package"],
+    blockedWork: ["place trades", "move money", "promise returns", "broker account changes"],
+  },
+  "etsy-office": {
+    id: "etsy-office",
+    name: "Etsy Office",
+    title: "Business Office: Etsy Store",
+    workflowId: "workflow-pod-lab",
+    intent: "print_on_demand",
+    risk: "low",
+    allowedWork: ["POD ideas", "listing drafts", "SEO notes", "mockup requirements", "store-change packages"],
+    requiredInputs: ["niche goal", "product constraints", "evidence", "approval queue"],
+    outputs: ["POD brief", "listing outline", "store-change approval package"],
+    blockedWork: ["publish listings", "change prices", "spend money", "message customers"],
+  },
+  "essentrx-office": {
+    id: "essentrx-office",
+    name: "Essentrx Office",
+    title: "Business Office: Essentrx",
+    workflowId: "workflow-pod-lab",
+    intent: "brand_operations",
+    risk: "medium",
+    allowedWork: ["brand notes", "product admin plans", "customer-safe copy drafts", "review bundles"],
+    requiredInputs: ["brand context", "product notes", "admin notes", "approval queue"],
+    outputs: ["brand plan", "admin checklist", "customer-safe draft", "approval package"],
+    blockedWork: ["contact customers", "change checkout", "publish campaigns", "modify accounts"],
+  },
+  "human-gate": {
+    id: "human-gate",
+    name: "Human Gate",
+    title: "Human Gate",
+    workflowId: "workflow-agent-factory",
+    intent: "approval_review",
+    risk: "high",
+    allowedWork: ["review packages", "approve drafts", "send back", "block", "mark manually completed"],
+    requiredInputs: ["evidence", "risk label", "operator decision"],
+    outputs: ["approval decision", "audit entry", "memory note"],
+    blockedWork: ["auto-approve risky actions", "execute external actions"],
+  },
+};
+
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -2122,6 +2265,132 @@ function publicToolConnections(state = readState()) {
   };
 }
 
+function normalizeConnectorStatus(value, fallback = "not_configured") {
+  const normalized = String(value || fallback).toLowerCase();
+  return CONNECTOR_STATUS_VALUES.has(normalized) ? normalized : fallback;
+}
+
+function envConfigured(names = []) {
+  return names.filter((name) => Boolean(String(process.env[name] || "").trim()));
+}
+
+function publicConnectorStatus(connectorId, state = readState()) {
+  const definition = CONNECTOR_DEFINITIONS[connectorId];
+  if (!definition) throw guardedError("Connector not found.", 404);
+  if (connectorId === "openai") {
+    const ai = currentAiProviderStatus();
+    const configured = Boolean(ai.configured);
+    const connected = ai.connectionStatus === "Connected" || ai.connectionStatus === "Local Demo";
+    return {
+      id: "openai",
+      label: definition.label,
+      category: definition.category,
+      status: configured ? (connected ? "ready" : "error") : "not_configured",
+      mode: ai.modeLabel,
+      configured,
+      connected,
+      model: ai.activeModel,
+      monthlyLimitUsd: ai.monthlyLimitUsd,
+      estimatedMonthlyUsd: ai.usage?.estimatedMonthlyUsd || 0,
+      lastTest: ai.lastTest,
+      lastError: ai.lastError || null,
+      requiredEnv: definition.requiredEnv,
+      missingEnv: configured ? [] : ["OPENAI_API_KEY"],
+      approvalRequired: false,
+      blockedActions: definition.blockedActions,
+      checklist: definition.checklist,
+    };
+  }
+
+  const stored = state.toolConnections?.[connectorId] || {};
+  const configuredEnv = envConfigured(definition.requiredEnv);
+  const missingEnv = definition.requiredEnv.filter((name) => !configuredEnv.includes(name));
+  const storedStatus = normalizeConnectorStatus(stored.status || stored.googleDrive, definition.status);
+  const readyByEnv = definition.requiredEnv.length > 0 && missingEnv.length === 0;
+  const status = readyByEnv && storedStatus !== "error" ? "approval_required" : storedStatus;
+  return {
+    id: connectorId,
+    label: definition.label,
+    category: definition.category,
+    status,
+    mode: stored.mode || status,
+    configured: readyByEnv || status === "manual_handoff" || status === "approval_required" || status === "ready",
+    connected: status === "ready",
+    requiredEnv: definition.requiredEnv,
+    missingEnv,
+    approvalRequired: definition.approvalRequired || status === "approval_required",
+    blockedActions: definition.blockedActions,
+    checklist: definition.checklist,
+    lastTest: stored.lastTest || null,
+    lastError: stored.lastError || null,
+  };
+}
+
+function publicConnectorStatuses(state = readState()) {
+  return Object.keys(CONNECTOR_DEFINITIONS).map((connectorId) => publicConnectorStatus(connectorId, state));
+}
+
+function testConnector(connectorId) {
+  const state = readState();
+  const status = publicConnectorStatus(connectorId, state);
+  const testedAt = now();
+  if (connectorId === "openai") {
+    return testAgent101OpenAi();
+  }
+  const success = status.status === "manual_handoff" || status.status === "ready" || status.status === "approval_required";
+  const result = {
+    success,
+    connectorId,
+    status: status.status,
+    mode: status.mode,
+    testedAt,
+    message: success
+      ? `${status.label} is available as ${status.status.replaceAll("_", " ")}. External execution remains gated.`
+      : `${status.label} is not configured yet. Add Railway env vars and keep secrets server-side.`,
+    missingEnv: status.missingEnv,
+    approvalRequired: status.approvalRequired,
+  };
+  state.toolConnections = state.toolConnections || {};
+  state.toolConnections[connectorId] = {
+    ...(state.toolConnections[connectorId] || {}),
+    status: status.status,
+    lastTest: result,
+    lastError: success ? null : result.message,
+  };
+  audit(state, "Connector test", `${status.label}: ${result.message}`);
+  writeState(state);
+  return result;
+}
+
+function officeDefinition(officeId = "clips-office") {
+  const normalized = String(officeId || "clips-office").trim().toLowerCase();
+  return BUSINESS_OFFICES[normalized] || BUSINESS_OFFICES["clips-office"];
+}
+
+function agent101Readiness(state = readState()) {
+  const connectors = publicConnectorStatuses(state);
+  const openai = connectors.find((connector) => connector.id === "openai");
+  const pendingApprovals = (state.approvals || []).filter((approval) => approval.status === "pending").length;
+  const queuedTasks = (state.tasks || []).filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
+  const agent = agent101Model(state);
+  return {
+    agent,
+    openaiConnection: openai?.status || "not_configured",
+    providerMode: openai?.mode || "Local Demo",
+    humanGate: "active",
+    draftOnlyMode: String(agent.mode || "").toLowerCase().includes("draft"),
+    systemLogs: "active",
+    taskCreation: "ready",
+    artifactCreation: "ready",
+    approvalRouting: "ready",
+    externalActions: "locked",
+    queuedTasks,
+    pendingApprovals,
+    connectors,
+    clipsOfficeReady: Boolean(connectors.find((connector) => connector.id === "capcut") && connectors.find((connector) => connector.id === "tiktok") && connectors.find((connector) => connector.id === "youtube")),
+  };
+}
+
 function clipWorkflowStages() {
   return [
     "Plan & Brief",
@@ -2190,6 +2459,110 @@ function buildClipBrief(payload = {}) {
   };
 }
 
+function buildTaskPlanArtifact(payload = {}, office = officeDefinition(payload.officeId)) {
+  const message = String(payload.message || payload.goal || payload.title || "Create a bounded supervised task.").trim();
+  return {
+    type: "task_plan",
+    title: payload.title || `${office.name}: Task plan`,
+    summary: `Bounded ${office.name} task plan prepared by Agent 101.`,
+    risk: payload.riskLevel || office.risk,
+    workflowId: office.workflowId,
+    content: {
+      officeId: office.id,
+      office: office.name,
+      goal: message,
+      allowedWork: office.allowedWork,
+      requiredInputs: office.requiredInputs,
+      outputs: office.outputs,
+      blockedWork: office.blockedWork,
+      steps: [
+        "Clarify the exact operator goal.",
+        "Collect only local or approved context.",
+        "Draft the work product with evidence labels.",
+        "Check risk and blocked actions.",
+        "Package anything external for Human Gate.",
+        "Log what changed.",
+      ],
+    },
+    sections: [
+      { label: "Goal", body: message },
+      { label: "Allowed work", body: office.allowedWork.join(", ") },
+      { label: "Blocked work", body: office.blockedWork.join(", ") },
+    ],
+    blockedActions: office.blockedWork,
+  };
+}
+
+function buildCodexPromptArtifact(payload = {}, office = officeDefinition(payload.officeId)) {
+  const message = String(payload.message || payload.goal || "Implement the bounded Argentum change safely.").trim();
+  return {
+    type: "codex_prompt",
+    title: payload.title || `${office.name}: Codex prompt`,
+    summary: "Scoped implementation prompt prepared for Codex.",
+    risk: payload.riskLevel || office.risk,
+    workflowId: office.workflowId,
+    content: [
+      "You are editing the existing Argentum OS project.",
+      `Focus area: ${office.title}.`,
+      `Goal: ${message}`,
+      "Keep API keys and credentials server-side only.",
+      "Do not execute external actions, publish, spend, change accounts, or create live agents.",
+      "Implement the smallest safe backend/frontend path, run npm run check, and verify the touched UI or endpoint.",
+    ].join("\n"),
+    sections: [
+      { label: "Focus", body: office.title },
+      { label: "Goal", body: message },
+      { label: "Safety", body: "No external execution. Human Gate handles risky actions." },
+    ],
+    blockedActions: office.blockedWork,
+  };
+}
+
+function buildConnectorSetupChecklist(payload = {}) {
+  const office = officeDefinition(payload.officeId || "clips-office");
+  const requested = Array.isArray(payload.connectors) && payload.connectors.length
+    ? payload.connectors
+    : ["twitch", "tiktok", "youtube", "capcut", "google_drive"];
+  const connectors = requested
+    .filter((connectorId) => CONNECTOR_DEFINITIONS[connectorId])
+    .map((connectorId) => publicConnectorStatus(connectorId));
+  return {
+    type: "connector_setup_checklist",
+    title: payload.title || "Clipping account setup checklist",
+    summary: "Manual-handoff setup checklist for clipping accounts and creator tools. No login or API key creation performed.",
+    risk: "medium",
+    workflowId: office.workflowId,
+    content: {
+      officeId: office.id,
+      operatorOwns: [
+        "Create or log into Twitch, TikTok, YouTube, CapCut, and Drive accounts manually.",
+        "Create OAuth apps or API keys manually when approved.",
+        "Add secrets only to Railway environment variables.",
+        "Confirm every connector test from the authenticated Argentum UI.",
+      ],
+      agent101CanDo: [
+        "Prepare env var names and setup steps.",
+        "Create content workflow plans.",
+        "Draft captions, metadata, checklists, and approval bundles.",
+        "Log connector readiness without exposing keys.",
+      ],
+      agent101CannotDo: [
+        "Log into accounts.",
+        "Create or rotate API keys.",
+        "Publish videos.",
+        "Change profile/account settings.",
+        "Spend money or enable campaigns.",
+      ],
+      connectors,
+    },
+    sections: connectors.map((connector) => ({
+      label: connector.label,
+      body: `${connector.status}. Env: ${connector.requiredEnv.join(", ") || "none"}. Missing: ${connector.missingEnv.join(", ") || "none"}.`,
+    })),
+    blockedActions: ["browser_login", "change_api_key", "modify_account", "publish_video", "spend_money"],
+  };
+}
+
 function createAgent101Artifact(state, artifact) {
   const next = {
     id: artifact.id || `artifact-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -2216,15 +2589,17 @@ function createAgent101Artifact(state, artifact) {
 function createAgent101Task(payload = {}) {
   const state = readState();
   const text = String(payload.text || payload.goal || payload.title || "Create a Clips Office package for review.").trim();
-  const classification = classifyTask(text, payload.workflowId || "workflow-clips-office");
+  const office = officeDefinition(payload.officeId || payload.office || "clips-office");
+  const classification = classifyTask(text, payload.workflowId || office.workflowId || "workflow-clips-office");
   const task = {
     id: `agent101-task-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title: String(payload.title || text).slice(0, 90),
     goal: String(payload.goal || text),
     operatorText: text,
+    officeId: office.id,
     workflowId: classification.workflowId,
-    intent: classification.intent,
-    risk: classification.risk,
+    intent: payload.intent || office.intent || classification.intent,
+    risk: payload.riskLevel || payload.risk || office.risk || classification.risk,
     status: "queued",
     stage: "Plan & Brief",
     rawFiles: Array.isArray(payload.rawFiles) ? payload.rawFiles : [],
@@ -2240,10 +2615,46 @@ function createAgent101Task(payload = {}) {
   };
   state.tasks.unshift(task);
   state.mission.activeWorkflowId = task.workflowId;
-  state.agent101 = { ...agent101Model(state), currentOffice: "Clips Office" };
+  state.agent101 = { ...agent101Model(state), currentOffice: office.name };
   audit(state, "Agent 101 received task", task.title);
   writeState(state);
   return { task, state };
+}
+
+function createOfficeTask(officeId, payload = {}) {
+  const office = officeDefinition(officeId || payload.officeId);
+  const result = createAgent101Task({
+    ...payload,
+    officeId: office.id,
+    workflowId: payload.workflowId || office.workflowId,
+    title: payload.title || `${office.name}: ${payload.intent || "bounded task"}`,
+    goal: payload.goal || payload.message || `Prepare supervised work for ${office.name}.`,
+  });
+  return { ...result, office };
+}
+
+function createOfficeArtifact(officeId, payload = {}) {
+  const office = officeDefinition(officeId || payload.officeId);
+  const state = readState();
+  const artifact = createAgent101Artifact(state, {
+    ...payload,
+    workflowId: payload.workflowId || office.workflowId,
+    type: payload.type || "office_artifact",
+    title: payload.title || `${office.name}: Draft artifact`,
+    summary: payload.summary || `Draft artifact prepared for ${office.name}.`,
+    risk: payload.risk || payload.riskLevel || office.risk,
+    content: payload.content || {
+      officeId: office.id,
+      message: payload.message || payload.goal || "Draft artifact prepared locally.",
+      allowedWork: office.allowedWork,
+      blockedWork: office.blockedWork,
+    },
+    blockedActions: payload.blockedActions || office.blockedWork,
+  });
+  addMemory(state, "working", `${office.name} artifact drafted`, artifact.summary, office.id);
+  audit(state, "Office artifact drafted", `${office.name}: ${artifact.title}`);
+  writeState(state);
+  return { artifact, office, state };
 }
 
 function createClipsBrief(payload = {}) {
@@ -2320,6 +2731,191 @@ function createHumanGateRequest(payload = {}) {
   audit(state, "Risky action blocked", `${actionType}: Human Gate approval required.`);
   writeState(state);
   return { approval, message: "Human Gate approval required.", requiresApproval: true, riskLevel: approval.riskLevel };
+}
+
+function createHumanGatePackage(payload = {}) {
+  const packageTypes = new Set(["connector_setup", "posting_package", "store_change", "campaign", "new_agent_proposal", "general"]);
+  const packageType = packageTypes.has(String(payload.packageType || "")) ? payload.packageType : "general";
+  const office = officeDefinition(payload.officeId || payload.office || "clips-office");
+  const actionType = payload.actionType || detectRiskyAction(payload.message || payload.title || "") || (
+    packageType === "connector_setup" ? "external_api_action" :
+      packageType === "posting_package" ? "publish_video" :
+        packageType === "new_agent_proposal" ? "create_live_agent" :
+          "external_api_action"
+  );
+  const request = createHumanGateRequest({
+    ...payload,
+    actionType,
+    title: payload.title || `${office.name}: ${packageType.replaceAll("_", " ")} review`,
+    evidence: payload.evidence || `Agent 101 prepared a ${packageType.replaceAll("_", " ")} package for ${office.name}.`,
+    action: payload.action || "Operator must approve, send back, block, or mark manually completed. No external action was executed.",
+    riskLevel: payload.riskLevel || (packageType === "connector_setup" || packageType === "posting_package" ? "medium" : office.risk),
+  });
+  const state = readState();
+  const approval = (state.approvals || []).find((item) => item.id === request.approval.id);
+  if (approval) {
+    approval.packageType = packageType;
+    approval.officeId = office.id;
+    approval.connectedOffice = office.name;
+    approval.decisionOptions = ["approve_draft", "send_back", "block", "mark_manually_completed"];
+    writeState(state);
+    return { ...request, approval, office, packageType };
+  }
+  return { ...request, office, packageType };
+}
+
+function detectAgent101ActionIntent(message, explicitAction) {
+  const action = String(explicitAction || "").trim().toLowerCase();
+  const text = String(message || "").toLowerCase();
+  if (action) return action;
+  if (text.includes("codex prompt") || text.includes("prompt for codex")) return "create_codex_prompt";
+  if (text.includes("setup") || text.includes("set up") || text.includes("connector") || text.includes("twitch") || text.includes("capcut account") || text.includes("youtube account") || text.includes("tiktok account")) return "connector_setup_checklist";
+  if (text.includes("clips plan") || text.includes("clip plan") || text.includes("capcut brief") || text.includes("caption")) return "create_clips_plan";
+  if (text.includes("package") || text.includes("approval") || text.includes("human gate")) return "package_for_approval";
+  if (text.includes("task plan") || text.includes("make a plan") || text.includes("bounded job") || text.includes("go do") || text.includes("start work")) return "create_task_plan";
+  if (text.includes("remember this") || text.includes("save note") || text.includes("add memory")) return "save_memory";
+  return "";
+}
+
+function handleAgent101Action(payload = {}) {
+  const message = String(payload.message || payload.context || payload.goal || "").trim();
+  const action = detectAgent101ActionIntent(message, payload.action || payload.intent);
+  if (!action) throw guardedError("Agent 101 action is required.", 400);
+  const risky = detectRiskyAction(message);
+  if (risky && requiresHumanGate(risky)) {
+    return createHumanGatePackage({
+      ...payload,
+      packageType: "general",
+      actionType: risky,
+      title: `Review blocked Agent 101 action: ${risky}`,
+      evidence: `Requested action: ${message}`,
+      riskLevel: "high",
+    });
+  }
+
+  const office = officeDefinition(payload.officeId || payload.office || "clips-office");
+  if (action === "create_task_plan" || action === "draft_workflow") {
+    const task = createOfficeTask(office.id, {
+      ...payload,
+      message,
+      title: payload.title || `${office.name}: Bounded task plan`,
+      goal: message || `Create a bounded task plan for ${office.name}.`,
+    });
+    const artifact = createOfficeArtifact(office.id, buildTaskPlanArtifact({ ...payload, message }, office));
+    return {
+      message: `Created a bounded ${office.name} task plan. It is queued in draft-only mode and external actions remain locked.`,
+      task: task.task,
+      artifact: artifact.artifact,
+      office,
+      taskType: "task_plan",
+      suggestedActions: [{ label: "Package for approval", action: "package_for_approval", requiresApproval: true }],
+      requiresApproval: false,
+      riskLevel: task.task.risk,
+      logs: [`Task queued for ${office.name}.`, `Plan artifact created for ${office.name}.`],
+    };
+  }
+
+  if (action === "create_codex_prompt") {
+    const artifact = createOfficeArtifact(office.id, buildCodexPromptArtifact({ ...payload, message }, office));
+    return {
+      message: `Created a scoped Codex prompt for ${office.name}.`,
+      artifact: artifact.artifact,
+      office,
+      taskType: "codex_prompt",
+      suggestedActions: [{ label: "Create task plan", action: "create_task_plan", requiresApproval: false }],
+      requiresApproval: false,
+      riskLevel: office.risk,
+      logs: [`Codex prompt artifact created for ${office.name}.`],
+    };
+  }
+
+  if (action === "create_clips_plan") {
+    const task = createOfficeTask("clips-office", {
+      ...payload,
+      title: payload.title || "Clips Office: Short-form video workflow",
+      goal: message || "Create clips plan, CapCut handoff, captions, and Human Gate package.",
+      workflowId: "workflow-clips-office",
+    });
+    const brief = createClipsBrief({
+      ...payload,
+      title: payload.title || "Short-form video workflow",
+      goal: message || "Create clips plan, CapCut handoff, captions, and Human Gate package.",
+    });
+    return {
+      message: "Created a real Clips Office plan with a queued task and draft artifact. Posting, login, and account changes remain blocked.",
+      task: task.task,
+      artifact: brief.artifact,
+      brief: brief.brief,
+      office: BUSINESS_OFFICES["clips-office"],
+      taskType: "clips_plan",
+      suggestedActions: [{ label: "Package for approval", action: "package_for_approval", requiresApproval: true }],
+      requiresApproval: false,
+      riskLevel: "medium",
+      logs: ["Clips task queued.", "Clips plan artifact created."],
+    };
+  }
+
+  if (action === "connector_setup_checklist") {
+    const artifact = createOfficeArtifact(office.id, buildConnectorSetupChecklist({ ...payload, officeId: office.id }));
+    const approval = createHumanGatePackage({
+      ...payload,
+      officeId: office.id,
+      packageType: "connector_setup",
+      title: `${office.name}: Connector setup review`,
+      evidence: "Agent 101 prepared a manual-handoff connector checklist. Operator must own account login, API key creation, and Railway env changes.",
+      riskLevel: "medium",
+    });
+    return {
+      message: `Created a connector setup checklist for ${office.name} and routed the risky setup decision to Human Gate.`,
+      artifact: artifact.artifact,
+      approval: approval.approval,
+      office,
+      taskType: "connector_setup",
+      suggestedActions: [{ label: "Review in Human Gate", action: "review_human_gate", requiresApproval: true }],
+      requiresApproval: true,
+      riskLevel: "medium",
+      logs: ["Connector checklist created.", "Human Gate package created."],
+    };
+  }
+
+  if (action === "package_for_approval" || action === "send_to_human_gate") {
+    const approval = createHumanGatePackage({
+      ...payload,
+      officeId: office.id,
+      packageType: payload.packageType || (office.id === "clips-office" ? "posting_package" : "general"),
+      title: payload.title || `${office.name}: Approval package`,
+      evidence: payload.evidence || `Agent 101 packaged this request from ${office.name}: ${message || "operator requested review"}`,
+      riskLevel: payload.riskLevel || office.risk,
+    });
+    return {
+      message: `Packaged ${office.name} for Human Gate. The operator can approve draft, send back, block, or mark manually completed.`,
+      approval: approval.approval,
+      office,
+      taskType: "approval_package",
+      suggestedActions: [{ label: "Review Human Gate", action: "review_human_gate", requiresApproval: true }],
+      requiresApproval: true,
+      riskLevel: approval.approval.riskLevel,
+      logs: [`Human Gate package created for ${office.name}.`],
+    };
+  }
+
+  if (action === "save_memory") {
+    const state = readState();
+    addMemory(state, "working", `${office.name} note`, message || "Operator note saved.", office.id);
+    audit(state, "Agent 101 saved memory", `${office.name}: ${String(message).slice(0, 120)}`);
+    writeState(state);
+    return {
+      message: `Saved a working-memory note for ${office.name}.`,
+      memory: state.memory.working[0],
+      office,
+      taskType: "memory_note",
+      requiresApproval: false,
+      riskLevel: "low",
+      logs: [`Memory saved for ${office.name}.`],
+    };
+  }
+
+  throw guardedError("Agent 101 action is not supported yet.", 400);
 }
 
 function localAgent101ChatResponse(message) {
@@ -2441,6 +3037,20 @@ async function handleAgent101Chat(payload = {}) {
       suggestedActions: [{ label: "Send to Human Gate", action: "send_to_human_gate", requiresApproval: true }],
       artifacts: [],
       approval: request.approval,
+      provider: "local_demo",
+      mode: "demo",
+    };
+  }
+
+  const actionIntent = detectAgent101ActionIntent(message, payload.action || "");
+  if (actionIntent) {
+    return {
+      ...handleAgent101Action({
+        ...payload,
+        action: actionIntent,
+        message,
+        officeId: payload.officeId || payload.office || payload.roomId || "clips-office",
+      }),
       provider: "local_demo",
       mode: "demo",
     };
@@ -3426,11 +4036,42 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/connectors/status") {
+    try {
+      const state = readState();
+      sendJson(res, 200, { connectors: publicConnectorStatuses(state) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const connectorTestMatch = url.pathname.match(/^\/api\/connectors\/([^/]+)\/test$/);
+  if (req.method === "POST" && connectorTestMatch) {
+    try {
+      sendJson(res, 200, await testConnector(connectorTestMatch[1]));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/readiness") {
+    try {
+      sendJson(res, 200, agent101Readiness(readState()));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/agent101/tool-status") {
     const state = readState();
     sendJson(res, 200, {
       agent101: agent101Model(state),
       tools: publicToolConnections(state),
+      connectors: publicConnectorStatuses(state),
+      readiness: agent101Readiness(state),
     });
     return;
   }
@@ -3449,6 +4090,48 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req);
       sendJson(res, 200, await handleAgent101Chat(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/actions") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, handleAgent101Action(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const officeTaskMatch = url.pathname.match(/^\/api\/offices\/([^/]+)\/tasks$/);
+  if (req.method === "POST" && officeTaskMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createOfficeTask(officeTaskMatch[1], payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const officeArtifactMatch = url.pathname.match(/^\/api\/offices\/([^/]+)\/artifacts$/);
+  if (req.method === "POST" && officeArtifactMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createOfficeArtifact(officeArtifactMatch[1], payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/human-gate/packages") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createHumanGatePackage(payload));
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
     }

@@ -1768,6 +1768,58 @@ const workspaceProfiles = {
 let selectedRoomKey = null;
 let selectedAgentKey = null;
 let depoChatMessages = [];
+
+function normalizeClientChatMessage(message = {}) {
+  const text = String(message.text || "").trim();
+  const roomId = resolveRoomKey(message.roomId || "depo-habitat");
+  const speaker = ["operator", "depo", "agent"].includes(message.speaker) ? message.speaker : "depo";
+  const createdAt = message.createdAt || new Date().toISOString();
+  return {
+    id: message.id || `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    roomId,
+    speaker,
+    text,
+    prompt: message.prompt,
+    source: message.source,
+    pending: Boolean(message.pending),
+    createdAt,
+  };
+}
+
+function normalizeClientChatMessages(messages = []) {
+  const seen = new Set();
+  return (Array.isArray(messages) ? messages : [])
+    .map(normalizeClientChatMessage)
+    .filter((message) => {
+      if (!message.text || seen.has(message.id)) return false;
+      seen.add(message.id);
+      return true;
+    })
+    .slice(-120);
+}
+
+function appendDepoChatMessages(messages = [], options = {}) {
+  const incoming = normalizeClientChatMessages(Array.isArray(messages) ? messages : [messages]);
+  if (!incoming.length) return [];
+  depoChatMessages = normalizeClientChatMessages([...depoChatMessages, ...incoming]).slice(-120);
+  state.chatMessages = normalizeClientChatMessages([...(state.chatMessages || []), ...incoming.filter((message) => !message.pending)]).slice(-120);
+  if (options.persist !== false && apiAvailable) {
+    persistChatMessages(incoming.filter((message) => !message.pending));
+  }
+  return incoming;
+}
+
+async function persistChatMessages(messages = []) {
+  if (!apiAvailable) return;
+  const safeMessages = normalizeClientChatMessages(messages).filter((message) => !message.pending);
+  if (!safeMessages.length) return;
+  try {
+    await postJson("/api/chat/messages", { messages: safeMessages });
+  } catch (error) {
+    addLocalAudit("Chat memory unavailable", error.message);
+  }
+}
+
 const mapHomeScale = 1;
 const mapMinScale = 0.86;
 const mapMaxScale = 2.8;
@@ -1861,9 +1913,11 @@ async function postJson(path, payload = {}) {
 async function loadState() {
   try {
     state = await api("/api/state");
+    depoChatMessages = normalizeClientChatMessages(state.chatMessages || []);
     apiAvailable = true;
   } catch (error) {
     state = fallbackState;
+    depoChatMessages = normalizeClientChatMessages(state.chatMessages || []);
     apiAvailable = false;
   }
   await loadAiProviderSettings();
@@ -6212,7 +6266,7 @@ function createDepoTaskPlan(roomKey = "task-intake") {
     riskLevel: "medium",
     roomId: roomKey,
   });
-  depoChatMessages.push({
+  appendDepoChatMessages({
     roomId: resolveRoomKey(roomKey),
     speaker: "depo",
     text: "Task plan created locally: 1. Define goal 2. Gather context 3. Verify assumptions 4. Draft output 5. Check risk 6. Package for approval 7. Log result.",
@@ -6238,7 +6292,7 @@ function draftDepoWorkflow(roomKey = "draft-studio") {
     riskLevel: "low",
     roomId: roomKey,
   });
-  depoChatMessages.push({
+  appendDepoChatMessages({
     roomId: resolveRoomKey(roomKey),
     speaker: "depo",
     text: "Workflow draft created: Agent Office -> selected business office -> evidence check -> draft package -> Human Gate -> Output Desk -> System Log.",
@@ -6268,7 +6322,7 @@ function draftAgentBlueprint(roomKey = "depo-habitat") {
     riskLevel: "low",
     roomId: roomKey,
   });
-  depoChatMessages.push({
+  appendDepoChatMessages({
     roomId: resolveRoomKey(roomKey),
     speaker: "depo",
     text: "Future-agent blueprint drafted: Research Agent, Evidence Researcher. It is not live. Human Gate approval is required before any activation.",
@@ -6340,7 +6394,7 @@ function recordApprovalChatDecision(approval = {}, action, source = "Human Gate"
     : action === "revise"
       ? `${label}. I sent this back to ${nextRoomName} for revision. Nothing external was executed.`
       : `${label}. I blocked this package. Agent 101 will keep the risky action locked and log the decision.`;
-  depoChatMessages.push(
+  const messages = [
     {
       roomId: "human-gate",
       speaker: "operator",
@@ -6353,16 +6407,16 @@ function recordApprovalChatDecision(approval = {}, action, source = "Human Gate"
       text: agentReply,
       source,
     },
-  );
+  ];
   if (nextRoom !== "human-gate") {
-    depoChatMessages.push({
+    messages.push({
       roomId: nextRoom,
       speaker: "depo",
       text: `Human Gate ${label.toLowerCase()} "${title}". ${action === "approve" ? "Continue with the approved local draft step only." : action === "revise" ? "Revise the package before asking again." : "Keep this work blocked."}`,
       source,
     });
   }
-  depoChatMessages = depoChatMessages.slice(-40);
+  appendDepoChatMessages(messages);
 }
 
 function changeApprovalStatusLocally(id, action, source = "Human Gate") {
@@ -6674,13 +6728,13 @@ async function submitDepoChat(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const trimmed = String(message || "").trim();
   if (!trimmed) return;
-  depoChatMessages.push({ roomId: resolved, speaker: "operator", text: trimmed });
-  const pendingMessage = { roomId: resolved, speaker: "depo", text: "Thinking...", pending: true };
-  depoChatMessages.push(pendingMessage);
+  const [operatorMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "operator", text: trimmed }, { persist: false });
+  const [pendingMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "depo", text: "Thinking...", pending: true }, { persist: false });
   renderShellData();
   requestAnimationFrame(scrollAgentChatToLatest);
   let responseText = depoChatResponse(trimmed, resolved);
   let responseMeta = { provider: "local", mode: "demo", requiresApproval: false, riskLevel: "low", logs: [] };
+  let shouldRefreshState = false;
   const agent101Rooms = new Set(["depo-habitat", "clips-office", "stock-office", "etsy-office", "essentrx-office", "human-gate"]);
   const serverAction = agent101ActionFromChat(resolved, trimmed);
   const command = serverAction ? null : handleOfficeChatCommand(resolved, trimmed);
@@ -6690,8 +6744,7 @@ async function submitDepoChat(roomKey, message) {
       responseText = payload.message || responseText;
       responseMeta = payload;
       aiProviderNotice = "";
-      await loadState();
-      await loadAgent101ToolStatus();
+      shouldRefreshState = true;
     } catch (error) {
       aiProviderNotice = error.message;
       const fallbackCommand = handleOfficeChatCommand(resolved, trimmed);
@@ -6726,8 +6779,7 @@ async function submitDepoChat(roomKey, message) {
       responseMeta = payload;
       aiProviderNotice = "";
       if (payload.task || payload.artifact || payload.approval || payload.memory) {
-        await loadState();
-        await loadAgent101ToolStatus();
+        shouldRefreshState = true;
       }
     } catch (error) {
       aiProviderNotice = error.message;
@@ -6740,8 +6792,12 @@ async function submitDepoChat(roomKey, message) {
     }
   }
   depoChatMessages = depoChatMessages.filter((item) => item !== pendingMessage);
-  depoChatMessages.push({ roomId: resolved, speaker: "depo", text: responseText });
-  depoChatMessages = depoChatMessages.slice(-18);
+  const [responseMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "depo", text: responseText }, { persist: false });
+  await persistChatMessages([operatorMessage, responseMessage].filter(Boolean));
+  if (shouldRefreshState) {
+    await loadState();
+    await loadAgent101ToolStatus();
+  }
   addSystemLogEntry({
     type: "depo_chat",
     message: `Asked Agent 101 about ${moduleDisplayName(resolved)}.`,

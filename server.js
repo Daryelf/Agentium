@@ -1129,6 +1129,7 @@ function defaultState() {
         }
       ],
     },
+    chatMessages: [],
     audit: [
       {
         id: "audit-system-created",
@@ -1170,6 +1171,7 @@ function normalizeState(state) {
   state.artifacts = Array.isArray(state.artifacts) ? state.artifacts : fresh.artifacts;
   state.executions = Array.isArray(state.executions) ? state.executions : fresh.executions;
   state.approvals = Array.isArray(state.approvals) ? state.approvals : fresh.approvals;
+  state.chatMessages = normalizeChatMessages(Array.isArray(state.chatMessages) ? state.chatMessages : fresh.chatMessages);
   state.memory = {
     working: state.memory?.working || fresh.memory.working,
     shared: state.memory?.shared || fresh.memory.shared,
@@ -1177,6 +1179,45 @@ function normalizeState(state) {
   };
   state.audit = Array.isArray(state.audit) ? state.audit : fresh.audit;
   return state;
+}
+
+function normalizeChatMessages(messages = []) {
+  const validSpeakers = new Set(["operator", "depo", "agent"]);
+  const validRooms = new Set(Object.keys(BUSINESS_OFFICES));
+  const seen = new Set();
+  return messages
+    .map((message) => {
+      const text = String(message?.text || "").trim().slice(0, 2000);
+      if (!text) return null;
+      const rawRoom = String(message?.roomId || "depo-habitat").trim();
+      const roomId = validRooms.has(rawRoom) ? rawRoom : "depo-habitat";
+      const speaker = validSpeakers.has(message?.speaker) ? message.speaker : "depo";
+      const createdAt = message?.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : now();
+      const id = String(message?.id || `chat-${createdAt}-${roomId}-${speaker}-${crypto.randomBytes(4).toString("hex")}`);
+      if (seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        roomId,
+        speaker,
+        text,
+        prompt: message?.prompt ? String(message.prompt).slice(0, 120) : undefined,
+        source: message?.source ? String(message.source).slice(0, 120) : undefined,
+        createdAt,
+      };
+    })
+    .filter(Boolean)
+    .slice(-240);
+}
+
+function appendChatMessages(payload = {}) {
+  const state = readState();
+  const incoming = normalizeChatMessages(Array.isArray(payload.messages) ? payload.messages : [payload]);
+  if (!incoming.length) throw guardedError("Chat message text is required.", 400);
+  const combined = normalizeChatMessages([...(state.chatMessages || []), ...incoming]);
+  state.chatMessages = combined.slice(-240);
+  writeState(state);
+  return { messages: state.chatMessages };
 }
 
 function mergeById(existing, seeded) {
@@ -4090,6 +4131,16 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req);
       sendJson(res, 200, await handleAgent101Chat(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/chat/messages") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, appendChatMessages(payload));
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
     }

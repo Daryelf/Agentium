@@ -1,13 +1,13 @@
 const navItems = [
-  ["dashboard", "Dashboard"],
-  ["watchlist", "Stream Watchlist"],
-  ["radar", "Clip Radar"],
-  ["builder", "Clip Builder"],
-  ["queue", "Posting Queue"],
-  ["gate", "Human Gate"],
-  ["outputs", "Outputs"],
-  ["logs", "Logs"],
-  ["settings", "Settings"]
+  ["dashboard", "Dashboard", "D"],
+  ["watchlist", "Stream Watchlist", "W"],
+  ["radar", "Clip Radar", "R"],
+  ["builder", "Clip Builder", "B"],
+  ["queue", "Posting Queue", "Q"],
+  ["gate", "Human Gate", "G"],
+  ["outputs", "Outputs", "O"],
+  ["logs", "Logs", "L"],
+  ["settings", "Settings", "S"]
 ];
 
 const state = {
@@ -57,6 +57,81 @@ function badge(text, tone = "neutral") {
 
 function streamerName(id) {
   return state.streamers.find((streamer) => streamer.id === id)?.displayName || "Unknown streamer";
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function countWhere(items, predicate) {
+  return items.filter(predicate).length;
+}
+
+function dailyLimitValue() {
+  const approvedToday = countWhere(
+    state.drafts,
+    (draft) => draft.approvalStatus === "approved" && (draft.approvedAt || draft.updatedAt || draft.createdAt || "").slice(0, 10) === todayKey()
+  );
+  return {
+    approvedToday,
+    limit: state.config?.postDailyLimit || 20,
+    pct: Math.min(100, Math.round((approvedToday / (state.config?.postDailyLimit || 20)) * 100))
+  };
+}
+
+function candidateTone(score) {
+  if (score >= 90) return "good";
+  if (score >= 60) return "warn";
+  return "info";
+}
+
+function initials(label) {
+  return String(label || "SC")
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function sparkline(seed = 0) {
+  return Array.from({ length: 12 }, (_, index) => {
+    const value = 16 + ((seed + index * 13) % 34);
+    return `<i style="height:${value}%"></i>`;
+  }).join("");
+}
+
+function miniThumb(label, index = 0) {
+  return `
+    <div class="clip-thumb thumb-${index % 5}">
+      <span>LIVE</span>
+      <strong>${esc(initials(label))}</strong>
+      <em>${(index + 1) * 3}.${index + 7}K</em>
+    </div>
+  `;
+}
+
+function renderSidebarOps() {
+  const limit = dailyLimitValue();
+  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
+  $("#sidebar-ops").innerHTML = `
+    <section class="limit-card">
+      <span>Daily Limit</span>
+      <div class="limit-ring" style="--p:${limit.pct}">
+        <b>${limit.approvedToday} / ${limit.limit}</b>
+        <small>Approved today</small>
+      </div>
+      <div class="limit-track"><i style="width:${limit.pct}%"></i></div>
+      <p>${limit.pct}% used</p>
+    </section>
+    <section class="agent-chip">
+      <span class="agent-orb">SC</span>
+      <div>
+        <strong>StreamClipper Pro</strong>
+        <small>${pendingApprovals ? `${pendingApprovals} gate reviews` : "Supervised and ready"}</small>
+      </div>
+    </section>
+  `;
 }
 
 async function api(path, options = {}) {
@@ -120,17 +195,32 @@ function updateStatus(limit) {
   $("#twitch-status").textContent = state.twitch?.configured ? "Twitch ready" : "Twitch demo";
   $("#limit-status").className = `pill ${limit?.blocked ? "bad" : limit?.warning ? "warn" : "info"}`;
   $("#limit-status").textContent = `${limit?.approvedToday ?? 0}/${limit?.limit ?? 20} approved`;
+  renderSidebarOps();
 }
 
 function renderNav() {
   $("#nav").innerHTML = navItems
-    .map(([id, label]) => `<button class="${state.view === id ? "active" : ""}" data-nav="${id}">${label}</button>`)
+    .map(([id, label, icon]) => {
+      const count =
+        id === "queue"
+          ? countWhere(state.drafts, (draft) => draft.approvalStatus === "pending")
+          : id === "gate"
+            ? countWhere(state.approvals, (approval) => approval.status === "pending")
+            : "";
+      return `
+        <button class="${state.view === id ? "active" : ""}" data-nav="${id}">
+          <span>${esc(icon)}</span>
+          <em>${esc(label)}</em>
+          ${count ? `<b>${count}</b>` : ""}
+        </button>
+      `;
+    })
     .join("");
-  $("#nav").addEventListener("click", (event) => {
+  $("#nav").onclick = (event) => {
     const button = event.target.closest("[data-nav]");
     if (!button) return;
     setView(button.dataset.nav);
-  });
+  };
 }
 
 function setView(id) {
@@ -172,37 +262,199 @@ function render() {
 }
 
 function renderDashboard() {
-  const pendingCandidates = state.candidates.filter((candidate) => candidate.status === "candidate").length;
-  const ready = state.candidates.filter((candidate) => candidate.status === "packaged").length;
-  const queuedToday = state.drafts.filter((draft) => (draft.createdAt || "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
-  const pendingApprovals = state.approvals.filter((approval) => approval.status === "pending").length;
+  const watched = countWhere(state.streamers, (item) => item.monitorEnabled);
+  const approved = countWhere(state.streamers, (item) => item.permissionStatus === "approved");
+  const liveNow = countWhere(state.streamers, (item) => String(item.liveStatus || "").includes("live"));
+  const pendingCandidates = countWhere(state.candidates, (candidate) => candidate.status === "candidate");
+  const highScore = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 60);
+  const ready = countWhere(state.candidates, (candidate) => candidate.status === "packaged");
+  const queuedToday = countWhere(state.drafts, (draft) => (draft.createdAt || "").slice(0, 10) === todayKey());
+  const awaitingApproval = countWhere(state.drafts, (draft) => draft.approvalStatus === "pending");
+  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
+  const approvedToday = dailyLimitValue().approvedToday;
   view.innerHTML = `
-    <div class="grid cols-4">
-      ${metric("Watched Streams", state.streamers.filter((item) => item.monitorEnabled).length)}
-      ${metric("Approved Streamers", state.streamers.filter((item) => item.permissionStatus === "approved").length)}
-      ${metric("Clip Candidates", pendingCandidates)}
-      ${metric("Human Gate", pendingApprovals)}
-    </div>
-    <div class="grid cols-3">
-      ${metric("Ready Packages", ready)}
-      ${metric("Posts Queued Today", queuedToday)}
-      ${metric("Daily Limit", `${state.drafts.filter((draft) => draft.approvalStatus === "approved").length}/${state.config?.postDailyLimit || 20}`)}
-    </div>
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Live Desk</h2>
-        <div class="actions">
-          <button class="primary" data-action="run-watch">Run Watch Cycle</button>
-          <button data-nav-jump="gate">Open Human Gate</button>
-        </div>
+    <div class="dashboard-hero">
+      <div>
+        <span class="eyebrow">Realtime AI clipping desk</span>
+        <h2>StreamClipper Command</h2>
+        <p>Monitor approved creators, score moments, build 9:16 packages, and hold every risky external step at Human Gate.</p>
       </div>
-      ${state.streamers.length ? renderStreamerTable(false) : empty("No streamers yet")}
+      <div class="hero-actions">
+        <button class="primary" data-action="run-watch">Run Watch Cycle</button>
+        <button data-action="seed-demo">Load Demo Mission</button>
+      </div>
+    </div>
+    <div class="metric-strip">
+      ${metric("Watched Streams", watched, `${state.streamers.length} total`, "CAM", "good")}
+      ${metric("Approved Streamers", approved, `${liveNow} live now`, "PRO", "violet")}
+      ${metric("Clip Candidates", pendingCandidates, `${highScore} high score`, "AI", "info")}
+      ${metric("Ready Packages", ready, `${awaitingApproval} for review`, "PKG", "warn")}
+      ${metric("Posts Queued Today", queuedToday, `${approvedToday} approved`, "OUT", "good")}
+      ${metric("Human Gate", pendingApprovals, "Pending decisions", "GATE", "violet")}
+    </div>
+    <div class="dashboard-main">
+      <section class="panel live-desk">
+        <div class="toolbar">
+          <div>
+            <h2>Live Desk</h2>
+            <p class="muted">Realtime stream monitoring</p>
+          </div>
+          <div class="actions">
+            <button class="primary" data-action="run-watch">Run Watch Cycle</button>
+            <button data-nav-jump="gate">Open Human Gate</button>
+          </div>
+        </div>
+        ${renderLiveDesk()}
+      </section>
+      <section class="panel candidate-rail">
+        <div class="toolbar">
+          <h2>Top Clip Candidates</h2>
+          <button data-nav-jump="radar">View all</button>
+        </div>
+        ${renderTopCandidates()}
+      </section>
+    </div>
+    <div class="dashboard-lower">
+      <section class="panel funnel-panel">
+        <div class="toolbar">
+          <h2>Clip Funnel</h2>
+          <span class="pill info">Today</span>
+        </div>
+        ${renderFunnel({ watched, moments: state.candidates.length, highScore, ready, approved: approvedToday })}
+      </section>
+      <section class="panel activity-panel">
+        <div class="toolbar">
+          <h2>Activity Feed</h2>
+          <button data-nav-jump="logs">View all</button>
+        </div>
+        ${renderActivityFeed(5)}
+      </section>
+      <section class="panel system-panel">
+        <div class="toolbar">
+          <h2>System Status</h2>
+          <span class="pill good">Operational</span>
+        </div>
+        ${renderSystemTiles()}
+      </section>
+    </div>
+    <section class="panel quick-command">
+      <h2>Quick Actions</h2>
+      <div class="quick-grid">
+        <button data-nav-jump="watchlist"><span>A</span><b>Add Streamer</b><small>Monitor a channel</small></button>
+        <button data-action="run-watch"><span>R</span><b>Run Watch Cycle</b><small>Scan approved streams</small></button>
+        <button data-nav-jump="builder"><span>P</span><b>Create Clip Package</b><small>Build new package</small></button>
+        <button data-nav-jump="gate"><span>G</span><b>Open Human Gate</b><small>Review approvals</small></button>
+        <button data-nav-jump="queue"><span>Q</span><b>Posting Queue</b><small>Manage drafts</small></button>
+        <button data-nav-jump="outputs"><span>O</span><b>View Outputs</b><small>Browse exports</small></button>
+      </div>
     </section>
   `;
 }
 
-function metric(label, value) {
-  return `<section class="panel metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></section>`;
+function metric(label, value, detail = "", icon = "SC", tone = "info") {
+  return `
+    <section class="panel metric metric-${esc(tone)}">
+      <span class="metric-icon">${esc(icon)}</span>
+      <div>
+        <span>${esc(label)}</span>
+        <strong>${esc(value)}</strong>
+        <small>${esc(detail)}</small>
+      </div>
+    </section>
+  `;
+}
+
+function renderLiveDesk() {
+  if (!state.streamers.length) {
+    return `
+      <div class="empty-mission">
+        <strong>No streamers loaded yet</strong>
+        <p>Add approved creators manually, or load a local demo mission to test the clipping pipeline without Twitch credentials.</p>
+        <button class="primary" data-action="seed-demo">Load Demo Mission</button>
+      </div>
+    `;
+  }
+  const cards = state.streamers.slice(0, 4).map((streamer, index) => `
+    <article class="stream-card">
+      ${miniThumb(streamer.displayName, index)}
+      <div class="stream-meta">
+        <strong>${esc(streamer.displayName)}</strong>
+        ${permissionBadge(streamer.permissionStatus)}
+      </div>
+      <p>${esc(streamer.liveStatus || "unknown")} · ${esc(streamer.platform)}</p>
+      <div class="stream-foot">
+        <span>${fmtDate(streamer.lastCheckedAt)}</span>
+        <span class="spark">${sparkline(index * 7)}</span>
+      </div>
+    </article>
+  `).join("");
+  return `
+    <div class="stream-grid">
+      ${cards}
+      <button class="add-stream-card" data-nav-jump="watchlist"><b>+</b><span>Add Streamer</span><small>Monitor a new channel</small></button>
+    </div>
+  `;
+}
+
+function renderTopCandidates() {
+  const candidates = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0)).slice(0, 5);
+  if (!candidates.length) return empty("No candidates yet. Run a watch cycle after adding approved streamers.");
+  return `<div class="candidate-list">${candidates.map((candidate, index) => `
+    <article class="candidate-row">
+      ${miniThumb(candidate.title, index + 2)}
+      <span class="candidate-score ${candidateTone(Number(candidate.score || 0))}">${Number(candidate.score || 0)}</span>
+      <div>
+        <strong>${esc(candidate.title)}</strong>
+        <small>${esc(streamerName(candidate.streamerId))} · ${esc(candidate.category || "Clip")}</small>
+        <em>${esc(candidate.timestampStart)} · ${esc(candidate.duration || 30)}s</em>
+      </div>
+      <span class="spark">${sparkline(Number(candidate.score || 0))}</span>
+    </article>
+  `).join("")}</div>`;
+}
+
+function renderFunnel({ watched, moments, highScore, ready, approved }) {
+  const rows = [
+    ["Streams Watched", watched, "funnel-1"],
+    ["Moments Detected", moments, "funnel-2"],
+    ["Strong Score (60+)", highScore, "funnel-3"],
+    ["Packages Created", ready, "funnel-4"],
+    ["Approved", approved, "funnel-5"]
+  ];
+  return `
+    <div class="funnel">
+      <div class="funnel-shape">
+        ${rows.map((row) => `<i class="${row[2]}"></i>`).join("")}
+      </div>
+      <div class="funnel-legend">
+        ${rows.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderActivityFeed(limit = 5) {
+  const logs = state.logs.slice(0, limit);
+  if (!logs.length) return empty("No activity yet");
+  return `<div class="activity-list">${logs.map((log, index) => `
+    <article>
+      <span>${esc(log.type?.slice(0, 2).toUpperCase() || "LG")}</span>
+      <p>${esc(log.message)}</p>
+      <time>${fmtDate(log.createdAt)}</time>
+    </article>
+  `).join("")}</div>`;
+}
+
+function renderSystemTiles() {
+  const tiles = [
+    ["Twitch API", state.twitch?.configured ? "Connected" : "Demo mode", state.twitch?.configured ? "good" : "warn"],
+    ["OpenAI API", state.openai?.configured ? "Connected" : "Local fallback", state.openai?.configured ? "good" : "warn"],
+    ["Storage", "Healthy", "good"],
+    ["Human Gate", countWhere(state.approvals, (approval) => approval.status === "pending") ? "Reviewing" : "Ready", "info"]
+  ];
+  return `<div class="system-grid">${tiles.map(([label, value, tone]) => `
+    <span class="system-tile ${esc(tone)}"><b>${esc(label)}</b><em>${esc(value)}</em></span>
+  `).join("")}</div>`;
 }
 
 function renderWatchlist() {
@@ -566,6 +818,13 @@ async function runWatch() {
   await refresh();
 }
 
+async function seedDemo() {
+  const result = await api("/api/demo/seed", { method: "POST", body: "{}" });
+  const seeded = result.seeded || {};
+  toast(`Demo mission loaded: ${seeded.streamers || 0} streamers, ${seeded.candidates || 0} candidates`, "good");
+  await refresh();
+}
+
 async function packageCandidate(id) {
   const result = await api("/api/clips/package", {
     method: "POST",
@@ -651,6 +910,7 @@ document.addEventListener("click", async (event) => {
   try {
     if (action === "refresh") await refresh();
     if (action === "run-watch") await runWatch();
+    if (action === "seed-demo") await seedDemo();
     if (action === "create-capcut") await createCapCut();
     if (action === "test-openai") {
       const result = await api("/api/openai/test", { method: "POST", body: "{}" });

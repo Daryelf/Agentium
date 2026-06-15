@@ -444,6 +444,91 @@ function createPostingDraftsForPackage(clipPackage, packagePlan) {
   });
 }
 
+function demoStreamerProfiles() {
+  return [
+    ["KaiCenat", "kai", "Just Chatting", "Crazy reaction no way moment"],
+    ["HasanAbi", "hasanabi", "Just Chatting", "Hilarious banter caught live"],
+    ["xQc", "xqc", "VALORANT", "Insane clutch final win"],
+    ["tarik", "tarik", "VALORANT", "Epic save perfect team fight"],
+    ["AgentLab", "agentlab", "Creator Ops", "Workflow breakdown with wild hook"]
+  ];
+}
+
+async function seedDemoWorkspace() {
+  const seeded = {
+    streamers: 0,
+    candidates: 0
+  };
+  const existingNames = new Set(state.streamers.map((streamer) => streamer.displayName.toLowerCase()));
+
+  for (const [displayName, channelId] of demoStreamerProfiles()) {
+    if (existingNames.has(displayName.toLowerCase())) continue;
+    state.streamers.unshift({
+      id: newId("streamer"),
+      platform: "twitch",
+      displayName,
+      channelId,
+      channelUrl: `https://www.twitch.tv/${channelId}`,
+      permissionStatus: "approved",
+      allowedUse: ["clips", "edits", "reposts"],
+      monitorEnabled: true,
+      lastCheckedAt: now(),
+      liveStatus: "demo_live",
+      notes: "Approved local demo creator for supervised StreamClipper workflow testing.",
+      createdAt: now(),
+      updatedAt: now()
+    });
+    seeded.streamers += 1;
+  }
+
+  const profiles = demoStreamerProfiles();
+  const activeStreamers = state.streamers.filter((streamer) => streamer.monitorEnabled && isApprovedStreamer(streamer)).slice(0, 5);
+  for (const [index, streamer] of activeStreamers.entries()) {
+    const hasCandidate = state.clipCandidates.some((candidate) => candidate.streamerId === streamer.id);
+    if (hasCandidate) continue;
+    const profile = profiles.find((item) => item[0].toLowerCase() === streamer.displayName.toLowerCase()) || profiles[index] || [];
+    const session = {
+      id: newId("session"),
+      streamerId: streamer.id,
+      platform: streamer.platform,
+      title: `${streamer.displayName} supervised demo stream`,
+      category: profile[2] || "Demo / manual review",
+      startedAt: now(),
+      endedAt: null,
+      vodId: null,
+      status: "demo"
+    };
+    state.streamSessions.unshift(session);
+    const candidateBase = {
+      id: newId("candidate"),
+      streamerId: streamer.id,
+      sessionId: session.id,
+      sourceType: "demo",
+      sourceId: session.id,
+      timestampStart: `00:0${index + 1}:08`,
+      timestampEnd: `00:0${index + 1}:36`,
+      duration: 28,
+      title: profile[3] || `${streamer.displayName} reaction moment`,
+      category: session.category,
+      transcriptSnippet: "Insane live reaction. No way this clutch just happened. Demo candidate generated locally for supervised review.",
+      chatSignals: { spike: 42 + index * 5, source: "demo" },
+      reason: "Safe demo candidate for workflow testing. No download, login, upload, or external post has occurred.",
+      hookScore: 15 + index,
+      riskScore: 12,
+      status: "candidate",
+      createdAt: now(),
+      updatedAt: now()
+    };
+    const candidate = { ...candidateBase, ...scoreClipMoment(candidateBase) };
+    state.clipCandidates.unshift(candidate);
+    seeded.candidates += 1;
+  }
+
+  await logEvent("demo_seeded", "StreamClipper demo mission loaded", seeded);
+  await saveState();
+  return seeded;
+}
+
 async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
@@ -509,6 +594,14 @@ async function handleApi(req, res, pathname, searchParams) {
       await logEvent("api_error", "Twitch status test failed", { error: error.message });
       return sendError(res, 502, error.message);
     }
+  }
+
+  if (req.method === "POST" && pathname === "/api/demo/seed") {
+    const seeded = await seedDemoWorkspace();
+    return sendJson(res, 200, {
+      seeded,
+      message: "Demo mission loaded. StreamClipper is ready to run a supervised clipping cycle."
+    });
   }
 
   if (req.method === "GET" && pathname === "/api/twitch/streams") {

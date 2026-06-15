@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StreamClipper Agent</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">SC</span>
+          <div>
+            <strong>StreamClipper</strong>
+            <span>Agent</span>
+          </div>
+        </div>
+        <nav id="nav" class="nav"></nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="view-title">Dashboard</h1>
+            <p id="view-subtitle">Supervised clipping workflow</p>
+          </div>
+          <div class="status-strip">
+            <span id="api-status" class="pill neutral">API</span>
+            <span id="openai-status" class="pill neutral">OpenAI</span>
+            <span id="twitch-status" class="pill neutral">Twitch</span>
+            <span id="limit-status" class="pill neutral">0/20</span>
+          </div>
+        </header>
+
+        <section id="toast" class="toast" hidden></section>
+        <section id="view" class="view"></section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

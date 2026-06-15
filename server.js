@@ -2,12 +2,14 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { URL } = require("node:url");
+const { URL, pathToFileURL } = require("node:url");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
+const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
+const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -4447,6 +4449,33 @@ function serveStatic(req, res, url) {
   });
 }
 
+let clippingOfficeModulePromise = null;
+
+async function handleClippingOffice(req, res, url) {
+  if (url.pathname === CLIPPING_OFFICE_MOUNT) {
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      location: `${CLIPPING_OFFICE_MOUNT}/`,
+      "cache-control": "no-store",
+    });
+    res.end();
+    return;
+  }
+
+  if (!clippingOfficeModulePromise) {
+    clippingOfficeModulePromise = import(pathToFileURL(CLIPPING_OFFICE_SERVER).href);
+  }
+  const clippingOffice = await clippingOfficeModulePromise;
+  const originalUrl = req.url;
+  const strippedPath = url.pathname.slice(CLIPPING_OFFICE_MOUNT.length) || "/";
+  req.url = `${strippedPath}${url.search || ""}`;
+  try {
+    await clippingOffice.handleRequest(req, res);
+  } finally {
+    req.url = originalUrl;
+  }
+}
+
 ensureState();
 readAuthStore();
 
@@ -4466,6 +4495,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       redirect(res, "/login", req);
+      return;
+    }
+    if (url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {
+      await handleClippingOffice(req, res, url);
       return;
     }
     if (url.pathname.startsWith("/api/")) {

@@ -3478,6 +3478,7 @@ function businessOfficeProfile(roomKey) {
       officeType: "Content Creation",
       status: "Drafting",
       priority: "High",
+      appUrl: "/apps/clipping-office/",
       goal: "Create short-form clips and video packages that Agent 101 can review before anything is posted.",
       willDo: ["Plan hooks", "Draft scripts", "Prepare edit notes", "Package captions", "Create posting checklists"],
       needsAccess: ["Raw footage notes", "Brand notes", "Caption drafts", "Approval queue"],
@@ -3730,6 +3731,7 @@ function officeToolsMarkup(profile, roomKey) {
           `,
         )
         .join("")}
+      ${profile.appUrl ? `<a class="office-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>` : ""}
       <button type="button" data-module-action="${escapeHtml(profile.secondaryAction)}">${escapeHtml(profile.secondaryAction)}</button>
       <button type="button" data-module-action="${resolveRoomKey(roomKey) === "human-gate" ? "View pending approvals" : "Package for approval"}">${resolveRoomKey(roomKey) === "human-gate" ? "View approvals" : "Request approval"}</button>
     </section>
@@ -3810,6 +3812,7 @@ function businessOfficeMarkup(card) {
           <h3>${escapeHtml(profile.title)}</h3>
           <p>Agent 101 · ${escapeHtml(profile.officeType)} · Supervised · Draft-only</p>
         </div>
+        ${profile.appUrl ? `<a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>` : ""}
         <button class="module-info-close" type="button" aria-label="Close office">×</button>
       </div>
       ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}

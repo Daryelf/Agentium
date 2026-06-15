@@ -1925,35 +1925,304 @@ function timelineStep(label, done) {
 }
 
 function renderOutputs() {
+  const outputs = buildOutputRows();
+  const counts = outputCounts(outputs);
+  const recent = outputs.slice(0, 4);
+  const total = outputs.length;
+  const storagePct = Math.min(100, Math.max(8, Math.round((state.artifacts.length / Math.max(1, total)) * 100)));
   view.innerHTML = `
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Outputs</h2>
-        <button data-action="refresh">Refresh</button>
-      </div>
-      ${state.artifacts.length ? renderArtifacts(state.artifacts) : empty("No exported artifacts")}
-    </section>
+    <div class="outputs-page">
+      <section class="outputs-main">
+        <div class="output-tabs">
+          ${outputTab("All Outputs", total, "all", true)}
+          ${outputTab("Clip Packages", counts.clipPackage, "clip_package")}
+          ${outputTab("Videos", counts.video, "video")}
+          ${outputTab("Captions", counts.captions, "captions")}
+          ${outputTab("CapCut Briefs", counts.capcutBrief, "capcut")}
+          ${outputTab("Post Drafts", counts.postDraft, "draft")}
+          ${outputTab("Thumbnails", counts.thumbnail, "thumbnail")}
+        </div>
+
+        <div class="outputs-filterbar">
+          <input placeholder="Search outputs..." aria-label="Search outputs">
+          <select aria-label="Streamer filter"><option>All Streamers</option></select>
+          <select aria-label="Type filter"><option>All Types</option></select>
+          <select aria-label="Status filter"><option>All Status</option></select>
+          <button type="button">Date Range</button>
+          <select aria-label="Sort outputs"><option>Sort: Newest</option></select>
+          <button type="button" aria-label="Grid view">▦</button>
+          <button type="button" aria-label="List view">☰</button>
+        </div>
+
+        <div class="outputs-table-wrap">
+          ${outputs.length ? renderOutputsTable(outputs.slice(0, 10)) : empty("No exported outputs yet")}
+        </div>
+
+        <div class="outputs-footer">
+          <span>Showing 1 to ${Math.min(10, total)} of ${total} outputs</span>
+          <div class="outputs-pages"><b>1</b><span>2</span><span>3</span><em>...</em><span>${Math.max(1, Math.ceil(total / 10))}</span><button type="button">›</button></div>
+          <label>Show <select><option>10</option><option>25</option></select> per page</label>
+        </div>
+      </section>
+
+      <aside class="outputs-side">
+        <section class="outputs-card output-overview-card">
+          <h2>Outputs Overview</h2>
+          <div class="outputs-donut" style="--clip:${percent(counts.clipPackage, total)}; --video:${percent(counts.video, total)}; --captions:${percent(counts.captions, total)}; --capcut:${percent(counts.capcutBrief, total)}; --draft:${percent(counts.postDraft, total)}">
+            <b>${total}</b>
+            <small>Total Outputs</small>
+          </div>
+          <div class="output-legend">
+            ${outputLegend("Clip Packages", counts.clipPackage, "purple")}
+            ${outputLegend("Videos", counts.video, "blue")}
+            ${outputLegend("Captions", counts.captions, "green")}
+            ${outputLegend("CapCut Briefs", counts.capcutBrief, "amber")}
+            ${outputLegend("Post Drafts", counts.postDraft, "red")}
+            ${outputLegend("Thumbnails", counts.thumbnail, "slate")}
+          </div>
+        </section>
+
+        <section class="outputs-card storage-card">
+          <h2>Storage Usage</h2>
+          <div><span>${storagePct}% used</span><span>${state.artifacts.length} stored artifacts</span></div>
+          <i><em style="width:${storagePct}%"></em></i>
+          <button type="button">Manage Storage</button>
+        </section>
+
+        <section class="outputs-card">
+          <h2>Quick Actions</h2>
+          <div class="output-actions">
+            <button type="button">Export Multiple <span>›</span></button>
+            <button type="button">Generate Report <span>›</span></button>
+            <button type="button">Clean Up Old Files <span>›</span></button>
+          </div>
+        </section>
+
+        <section class="outputs-card">
+          <h2>Recent Exports</h2>
+          <div class="recent-exports">
+            ${recent.map(renderRecentExport).join("") || empty("No recent exports")}
+          </div>
+          <button class="ghost" type="button">View all exports →</button>
+        </section>
+      </aside>
+    </div>
   `;
 }
 
-function renderArtifacts(artifacts) {
+function buildOutputRows() {
+  const rows = [];
+  state.packages.forEach((clipPackage, index) => {
+    const candidate = state.candidates.find((item) => item.id === clipPackage.candidateId);
+    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+    rows.push({
+      id: clipPackage.id,
+      title: clipPackage.packagePlan?.title || candidate?.title || "Clip package",
+      subtitle: clipPackage.packagePlan?.hook || candidate?.transcriptSnippet || "9:16 package ready for review.",
+      type: "Clip Package",
+      typeKey: "clip_package",
+      badge: `${clipPackage.format || "9:16"} Vertical`,
+      status: clipPackage.approvalStatus === "approved" ? "Completed" : "Pending Review",
+      statusTone: clipPackage.approvalStatus === "approved" ? "good" : "warn",
+      createdAt: clipPackage.createdAt,
+      size: `${clipPackage.artifacts?.length || 0} files`,
+      streamer,
+      candidate,
+      icon: "PKG",
+      thumbClass: `thumb-${index % 5}`,
+      url: clipPackage.artifacts?.[0]?.url || ""
+    });
+  });
+
+  state.drafts.forEach((draft, index) => {
+    const clipPackage = draftPackage(draft);
+    const candidate = draftCandidate(draft);
+    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+    rows.push({
+      id: draft.id,
+      title: draft.thumbnailText || candidate?.title || "Post draft",
+      subtitle: draft.caption || "Caption, hashtags, and posting package.",
+      type: "Post Draft",
+      typeKey: "post_draft",
+      badge: platformName(draft.platform),
+      status: draft.approvalStatus === "approved" ? "Completed" : draft.approvalStatus === "pending" ? "Queued" : "Draft",
+      statusTone: draft.approvalStatus === "approved" ? "good" : draft.approvalStatus === "pending" ? "warn" : "info",
+      createdAt: draft.createdAt,
+      size: "Draft",
+      streamer,
+      candidate,
+      icon: "TXT",
+      thumbClass: `thumb-${(index + 2) % 5}`,
+      url: clipPackage?.artifacts?.[0]?.url || ""
+    });
+  });
+
+  state.artifacts.forEach((artifact, index) => {
+    const linkedPackage = state.packages.find((item) => (item.artifacts || []).some((entry) => entry.id === artifact.id));
+    const candidate = state.candidates.find((item) => item.id === linkedPackage?.candidateId);
+    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+    const meta = artifactMeta(artifact);
+    rows.push({
+      id: artifact.id,
+      title: meta.title,
+      subtitle: meta.subtitle,
+      type: meta.type,
+      typeKey: artifact.kind,
+      badge: meta.badge,
+      status: "Completed",
+      statusTone: "good",
+      createdAt: artifact.createdAt,
+      size: artifact.size ? formatBytes(artifact.size) : meta.size,
+      streamer,
+      candidate,
+      icon: meta.icon,
+      thumbClass: meta.thumb ? `thumb-${index % 5}` : "",
+      url: artifact.url
+    });
+  });
+
+  return rows.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
+
+function outputCounts(rows) {
+  return {
+    clipPackage: countWhere(rows, (row) => row.typeKey === "clip_package"),
+    video: countWhere(rows, (row) => row.typeKey === "video_export"),
+    captions: countWhere(rows, (row) => row.typeKey === "captions"),
+    capcutBrief: countWhere(rows, (row) => row.typeKey === "capcut_brief"),
+    postDraft: countWhere(rows, (row) => row.typeKey === "post_draft"),
+    thumbnail: countWhere(rows, (row) => row.typeKey === "thumbnail")
+  };
+}
+
+function renderOutputsTable(outputs) {
   return `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Kind</th><th>File</th><th>Created</th><th>Download</th></tr></thead>
-        <tbody>
-          ${artifacts.map((artifact) => `
-            <tr>
-              <td>${esc(artifact.kind)}</td>
-              <td>${esc(artifact.filename)}</td>
-              <td>${fmtDate(artifact.createdAt)}</td>
-              <td><a href="${esc(artifact.url)}" download>Download</a></td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
+    <table class="outputs-table">
+      <thead>
+        <tr>
+          <th>Output</th>
+          <th>Streamer</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Size</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${outputs.map((output, index) => renderOutputRow(output, index)).join("")}
+      </tbody>
+    </table>
   `;
+}
+
+function renderOutputRow(output, index) {
+  return `
+    <tr>
+      <td>
+        <div class="output-name-cell">
+          ${output.thumbClass ? `<div class="output-thumb ${output.thumbClass}"><span>${esc(output.candidate?.timestampStart?.slice(0, 5) || "00:30")}</span><b>${esc(output.icon)}</b></div>` : `<div class="output-file-icon ${outputTypeClass(output.typeKey)}">${esc(output.icon)}</div>`}
+          <div>
+            <strong>${esc(output.title)}</strong>
+            <p>${esc(output.subtitle)}</p>
+            ${output.badge ? `<em>${esc(output.badge)}</em>` : ""}
+          </div>
+        </div>
+      </td>
+      <td>${queueStreamerCell(output.streamer, index)}</td>
+      <td><span class="output-type ${outputTypeClass(output.typeKey)}">${esc(output.type)}</span></td>
+      <td><span class="output-status ${output.statusTone}">${esc(output.status)}</span><small>${output.statusTone === "warn" ? "Needs review" : output.statusTone === "info" ? "Editing in progress" : "Ready to use"}</small></td>
+      <td>${fmtDate(output.createdAt)}</td>
+      <td>${esc(output.size || "Stored")}</td>
+      <td>
+        <div class="output-row-actions">
+          ${output.url ? `<a href="${esc(appUrl(output.url))}" download title="Download">↓</a>` : `<button type="button" title="Download disabled" disabled>↓</button>`}
+          <button type="button" data-nav-jump="builder" title="Open in builder">↗</button>
+          <button type="button" title="More">...</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function artifactMeta(artifact) {
+  const ext = artifact.filename?.split(".").pop()?.toUpperCase() || "FILE";
+  const clean = cleanOutputTitle(artifact.filename || "Artifact");
+  if (artifact.kind === "captions") return { type: "Captions", title: clean, subtitle: "Auto-generated caption file.", badge: ext, icon: ext, size: "Caption file" };
+  if (artifact.kind === "capcut_brief") return { type: "CapCut Brief", title: clean, subtitle: "Editing instructions and timeline handoff.", badge: ext, icon: ext, size: "Brief" };
+  if (artifact.kind === "clip_package") return { type: "Clip Package", title: clean, subtitle: "Structured package JSON with hook, cuts, captions, and approval checklist.", badge: ext, icon: "JSON", size: "Package" };
+  if (artifact.kind === "thumbnail") return { type: "Thumbnail", title: clean, subtitle: "Thumbnail preview image.", badge: ext, icon: ext, size: "Image", thumb: true };
+  if (artifact.kind === "video_export") return { type: "Video Export", title: clean, subtitle: "Rendered video export.", badge: ext, icon: ext, size: "Video", thumb: true };
+  return { type: artifact.kind || "Artifact", title: clean, subtitle: "Stored generated output.", badge: ext, icon: ext, size: "Stored" };
+}
+
+function cleanOutputTitle(filename) {
+  return String(filename || "Output")
+    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/, "")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function outputTab(label, count, icon, active = false) {
+  return `
+    <button class="${active ? "active" : ""}" type="button">
+      <span class="output-tab-icon ${esc(icon)}">${esc(iconLabel(icon))}</span>
+      <em>${esc(label)}</em>
+      <b>${esc(count)}</b>
+    </button>
+  `;
+}
+
+function iconLabel(icon) {
+  return {
+    all: "ALL",
+    clip_package: "PKG",
+    video: "VID",
+    captions: "CC",
+    capcut: "CC",
+    draft: "DR",
+    thumbnail: "IMG"
+  }[icon] || "OUT";
+}
+
+function outputLegend(label, value, tone) {
+  return `<span><i class="${esc(tone)}"></i><em>${esc(label)}</em><b>${esc(value)}</b></span>`;
+}
+
+function renderRecentExport(output) {
+  return `
+    <a class="recent-export" href="${output.url ? esc(appUrl(output.url)) : "#"}" ${output.url ? "download" : ""}>
+      <span class="${outputTypeClass(output.typeKey)}">${esc(output.icon)}</span>
+      <div>
+        <strong>${esc(output.title)}</strong>
+        <small>${timeAgo(output.createdAt)} · ${esc(output.size || "Stored")}</small>
+      </div>
+      <b>✓</b>
+    </a>
+  `;
+}
+
+function percent(value, total) {
+  if (!total) return 0;
+  return Math.round((value / total) * 100);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return "Stored";
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
+function outputTypeClass(type) {
+  if (type === "captions") return "captions";
+  if (type === "capcut_brief") return "capcut";
+  if (type === "post_draft") return "draft";
+  if (type === "thumbnail") return "thumbnail";
+  if (type === "video_export") return "video";
+  return "package";
 }
 
 function renderLogs() {

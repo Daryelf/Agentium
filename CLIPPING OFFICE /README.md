@@ -8,7 +8,7 @@ StreamClipper Agent is a standalone, supervised clipping automation product. It 
 - No public posting or uploads without Human Gate approval.
 - No raw social passwords.
 - No frontend API keys.
-- Twitch-first architecture using official API/OAuth patterns.
+- Twitch and Kick live-check architecture using official server-side API/OAuth patterns.
 - Streamer permission is enforced before watch, clip, package, or queue work.
 
 ## Run
@@ -19,6 +19,25 @@ npm start
 ```
 
 Open `http://localhost:4177`.
+
+## Stream provider variables
+
+Twitch:
+
+```bash
+TWITCH_CLIENT_ID=
+TWITCH_CLIENT_SECRET=
+TWITCH_ALLOWED_CHANNELS=
+```
+
+Kick:
+
+```bash
+KICK_CLIENT_ID=
+KICK_CLIENT_SECRET=
+```
+
+Leave the allowed-channel lists empty when you want StreamClipper to monitor any approved streamer you add in the app. Keep all provider secrets in local env or Railway variables only.
 
 ## Verify
 

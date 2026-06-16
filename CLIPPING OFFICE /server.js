@@ -23,6 +23,9 @@ const config = {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean),
+  kickClientId: process.env.KICK_CLIENT_ID || "",
+  kickClientSecret: process.env.KICK_CLIENT_SECRET || "",
+  kickOAuthToken: process.env.KICK_OAUTH_TOKEN || "",
   uploadDir: path.resolve(__dirname, process.env.CLIPPER_UPLOAD_DIR || "./uploads"),
   outputDir: path.resolve(__dirname, process.env.CLIPPER_OUTPUT_DIR || "./outputs"),
   postDailyLimit: Number(process.env.POST_DAILY_LIMIT || 20),
@@ -42,6 +45,7 @@ const stateDefaults = {
 
 let state = structuredClone(stateDefaults);
 let twitchAppToken = null;
+let kickAppToken = null;
 
 function now() {
   return new Date().toISOString();
@@ -61,6 +65,10 @@ function cleanText(value) {
 
 function twitchApiConfigured() {
   return Boolean(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken));
+}
+
+function kickApiConfigured() {
+  return Boolean(config.kickOAuthToken || (config.kickClientId && config.kickClientSecret));
 }
 
 function normalizeTwitchLogin(value) {
@@ -83,15 +91,38 @@ function normalizeTwitchLogin(value) {
     .toLowerCase();
 }
 
+function normalizeKickSlug(value) {
+  const raw = cleanText(value).replace(/^@/, "");
+  if (!raw) return "";
+  try {
+    const parsed = raw.startsWith("http") ? new URL(raw) : new URL(`https://${raw}`);
+    if (parsed.hostname.includes("kick.com")) {
+      return cleanText(parsed.pathname.split("/").filter(Boolean)[0] || "").replace(/^@/, "").toLowerCase();
+    }
+  } catch {
+    // Fall through to plain slug cleanup.
+  }
+  return raw
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/^kick\.com\//i, "")
+    .split(/[/?#]/)[0]
+    .replace(/^@/, "")
+    .toLowerCase();
+}
+
 function normalizeStreamerInput(body = {}) {
   const channelUrl = cleanText(body.channelUrl);
-  const login = normalizeTwitchLogin(body.channelId || body.displayName || body.streamerName || channelUrl);
+  const platform = normalizeStatus(body.platform || "twitch", ["twitch", "youtube_live", "kick", "other"], "twitch");
+  const rawIdentity = body.channelId || body.displayName || body.streamerName || channelUrl;
+  const login = platform === "kick" ? normalizeKickSlug(rawIdentity) : normalizeTwitchLogin(rawIdentity);
   const rawDisplay = cleanText(body.displayName || body.streamerName);
-  const displayName = rawDisplay && !rawDisplay.includes("twitch.tv") ? rawDisplay : login || "Untitled streamer";
+  const displayName = rawDisplay && !/(twitch\.tv|kick\.com)/i.test(rawDisplay) ? rawDisplay : login || "Untitled streamer";
+  const defaultUrl = platform === "kick" ? `https://kick.com/${login}` : `https://www.twitch.tv/${login}`;
   return {
     displayName,
     channelId: login,
-    channelUrl: channelUrl || (login ? `https://www.twitch.tv/${login}` : "")
+    channelUrl: channelUrl || (login ? defaultUrl : "")
   };
 }
 
@@ -166,6 +197,8 @@ function publicConfig() {
     twitchRedirectConfigured: Boolean(config.twitchRedirectUri),
     twitchOAuthTokenConfigured: Boolean(config.twitchOAuthToken),
     twitchAllowedChannels: config.twitchAllowedChannels,
+    kickConfigured: kickApiConfigured(),
+    kickOAuthTokenConfigured: Boolean(config.kickOAuthToken),
     postDailyLimit: config.postDailyLimit,
     uploadDir: config.uploadDir,
     outputDir: config.outputDir
@@ -181,6 +214,7 @@ function isApprovedStreamer(streamer) {
 }
 
 function channelAllowed(streamer) {
+  if (streamer?.platform !== "twitch") return true;
   if (!config.twitchAllowedChannels.length) return true;
   const identities = [streamer.channelId, streamer.displayName, streamer.channelUrl, normalizeTwitchLogin(streamer.channelUrl)]
     .map((value) => cleanText(value).toLowerCase())
@@ -401,6 +435,42 @@ async function twitchFetch(endpoint) {
   return response.json();
 }
 
+async function getKickAppToken() {
+  if (kickAppToken?.expiresAt > Date.now() + 60_000) return kickAppToken.accessToken;
+  if (!(config.kickClientId && config.kickClientSecret)) {
+    throw new Error("Kick client credentials are not configured");
+  }
+  const params = new URLSearchParams({
+    client_id: config.kickClientId,
+    client_secret: config.kickClientSecret,
+    grant_type: "client_credentials"
+  });
+  const response = await fetch("https://id.kick.com/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: params
+  });
+  if (!response.ok) throw new Error(`Kick token request failed: ${response.status}`);
+  const json = await response.json();
+  kickAppToken = {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + Number(json.expires_in || 3600) * 1000
+  };
+  return kickAppToken.accessToken;
+}
+
+async function kickFetch(endpoint) {
+  const token = config.kickOAuthToken || (await getKickAppToken());
+  const response = await fetch(`https://api.kick.com${endpoint}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json"
+    }
+  });
+  if (!response.ok) throw new Error(`Kick API failed: ${response.status}`);
+  return response.json();
+}
+
 async function fetchTwitchStream(streamer) {
   const channelId = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName);
   if (!channelId) return null;
@@ -411,11 +481,41 @@ async function fetchTwitchStream(streamer) {
   return json.data?.[0] || null;
 }
 
+async function fetchKickStream(streamer) {
+  const slug = normalizeKickSlug(streamer.channelId || streamer.channelUrl || streamer.displayName);
+  if (!slug) return null;
+  const params = new URLSearchParams();
+  if (/^\d+$/.test(slug)) params.append("broadcaster_user_id", slug);
+  else params.append("slug", slug);
+  const json = await kickFetch(`/public/v1/channels?${params}`);
+  const channel = json.data?.[0] || null;
+  if (!channel) return null;
+  streamer.channelId = channel.slug || slug;
+  streamer.channelUrl = `https://kick.com/${streamer.channelId}`;
+  const stream = channel.stream?.is_live ? channel.stream : null;
+  if (!stream) return null;
+  return {
+    id: `kick_${channel.broadcaster_user_id || streamer.channelId}`,
+    title: channel.stream_title || `${streamer.displayName} live on Kick`,
+    game_name: channel.category?.name || "Kick",
+    started_at: stream.start_time || now(),
+    viewer_count: stream.viewer_count || 0,
+    thumbnail_url: stream.thumbnail || "",
+    platform: "kick",
+    channel
+  };
+}
+
 async function checkStreamerLive(streamer) {
   streamer.lastCheckedAt = now();
-  streamer.channelId = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName) || streamer.channelId;
+  streamer.channelId = streamer.platform === "kick"
+    ? normalizeKickSlug(streamer.channelId || streamer.channelUrl || streamer.displayName) || streamer.channelId
+    : normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName) || streamer.channelId;
   if (streamer.platform === "twitch" && streamer.channelId && !streamer.channelUrl) {
     streamer.channelUrl = `https://www.twitch.tv/${streamer.channelId}`;
+  }
+  if (streamer.platform === "kick" && streamer.channelId && !streamer.channelUrl) {
+    streamer.channelUrl = `https://kick.com/${streamer.channelId}`;
   }
 
   if (!isApprovedStreamer(streamer)) {
@@ -430,26 +530,33 @@ async function checkStreamerLive(streamer) {
     return { streamerId: streamer.id, live: false, skipped: true, official: false, reason: streamer.liveStatusReason };
   }
 
-  if (streamer.platform !== "twitch") {
+  if (!["twitch", "kick"].includes(streamer.platform)) {
     streamer.liveStatus = "unsupported";
-    streamer.liveStatusReason = "Only Twitch live checks are wired in v1";
+    streamer.liveStatusReason = "Official live checks are wired for Twitch and Kick only";
     return { streamerId: streamer.id, live: null, skipped: true, official: false, reason: streamer.liveStatusReason };
   }
 
-  if (!twitchApiConfigured()) {
+  if (streamer.platform === "twitch" && !twitchApiConfigured()) {
     streamer.liveStatus = "api_not_configured";
     streamer.liveStatusReason = "Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET for official live checks";
     return { streamerId: streamer.id, live: null, skipped: true, official: false, reason: streamer.liveStatusReason };
   }
+  if (streamer.platform === "kick" && !kickApiConfigured()) {
+    streamer.liveStatus = "api_not_configured";
+    streamer.liveStatusReason = "Set KICK_CLIENT_ID and KICK_CLIENT_SECRET for official Kick live checks";
+    return { streamerId: streamer.id, live: null, skipped: true, official: false, reason: streamer.liveStatusReason };
+  }
 
-  const stream = await fetchTwitchStream(streamer);
+  const stream = streamer.platform === "kick" ? await fetchKickStream(streamer) : await fetchTwitchStream(streamer);
   streamer.liveStatus = stream ? "live" : "offline";
-  streamer.liveStatusReason = stream ? "Official Twitch Helix stream is live" : "Official Twitch Helix stream returned no active stream";
+  streamer.liveStatusReason = stream
+    ? `Official ${streamer.platform === "kick" ? "Kick" : "Twitch Helix"} stream is live`
+    : `Official ${streamer.platform === "kick" ? "Kick" : "Twitch Helix"} API returned no active stream`;
   streamer.liveTitle = stream?.title || "";
   streamer.liveCategory = stream?.game_name || "";
   streamer.liveViewerCount = stream?.viewer_count || 0;
   streamer.lastLiveAt = stream ? now() : streamer.lastLiveAt;
-  return { streamerId: streamer.id, live: Boolean(stream), official: true, stream };
+  return { streamerId: streamer.id, live: Boolean(stream), official: true, provider: streamer.platform, stream };
 }
 
 async function testOpenAI() {
@@ -673,6 +780,34 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  if (req.method === "GET" && pathname === "/api/kick/status") {
+    return sendJson(res, 200, {
+      configured: kickApiConfigured(),
+      clientIdConfigured: Boolean(config.kickClientId),
+      clientSecretConfigured: Boolean(config.kickClientSecret),
+      oauthTokenConfigured: Boolean(config.kickOAuthToken),
+      officialApiOnly: true
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/kick/test") {
+    try {
+      if (!kickApiConfigured()) {
+        return sendJson(res, 200, {
+          configured: false,
+          live: false,
+          message: "Kick credentials are not configured. Kick streamers will show API needed until KICK_CLIENT_ID and KICK_CLIENT_SECRET are set."
+        });
+      }
+      const token = config.kickOAuthToken || (await getKickAppToken());
+      await logEvent("kick_test", "Kick official API connectivity tested", { tokenAvailable: Boolean(token) });
+      return sendJson(res, 200, { configured: true, live: true, officialApiOnly: true });
+    } catch (error) {
+      await logEvent("api_error", "Kick status test failed", { error: error.message });
+      return sendError(res, 502, error.message);
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/demo/seed") {
     const seeded = await seedDemoWorkspace();
     return sendJson(res, 200, {
@@ -681,9 +816,9 @@ async function handleApi(req, res, pathname, searchParams) {
     });
   }
 
-  if (req.method === "GET" && pathname === "/api/twitch/streams") {
+  if (req.method === "GET" && (pathname === "/api/twitch/streams" || pathname === "/api/streams")) {
     const rows = [];
-    for (const streamer of state.streamers.filter((item) => item.platform === "twitch")) {
+    for (const streamer of state.streamers.filter((item) => ["twitch", "kick"].includes(item.platform))) {
       try {
         rows.push(await checkStreamerLive(streamer));
       } catch (error) {
@@ -739,12 +874,16 @@ async function handleApi(req, res, pathname, searchParams) {
         await logEvent("stream_live_checked", "Streamer live status checked", {
           streamerId: streamer.id,
           liveStatus: streamer.liveStatus,
-          official: twitchApiConfigured()
+          provider: streamer.platform
         });
       } catch (error) {
         streamer.liveStatus = "api_error";
         streamer.liveStatusReason = error.message;
-        await logEvent("api_error", "Twitch live check failed after streamer add", { streamerId: streamer.id, error: error.message });
+        await logEvent("api_error", "Official live check failed after streamer add", {
+          streamerId: streamer.id,
+          provider: streamer.platform,
+          error: error.message
+        });
       }
     }
     await saveState();
@@ -760,6 +899,7 @@ async function handleApi(req, res, pathname, searchParams) {
       await logEvent("stream_live_checked", "Streamer live status checked", {
         streamerId: streamer.id,
         liveStatus: streamer.liveStatus,
+        provider: result.provider || streamer.platform,
         official: result.official
       });
       await saveState();
@@ -767,7 +907,11 @@ async function handleApi(req, res, pathname, searchParams) {
     } catch (error) {
       streamer.liveStatus = "api_error";
       streamer.liveStatusReason = error.message;
-      await logEvent("api_error", "Twitch live check failed", { streamerId: streamer.id, error: error.message });
+      await logEvent("api_error", "Official live check failed", {
+        streamerId: streamer.id,
+        provider: streamer.platform,
+        error: error.message
+      });
       await saveState();
       return sendError(res, 502, error.message, { streamerId: streamer.id });
     }
@@ -782,7 +926,8 @@ async function handleApi(req, res, pathname, searchParams) {
     const identity = normalizeStreamerInput({
       displayName: body.displayName !== undefined ? body.displayName : streamer.displayName,
       channelId: body.channelId !== undefined ? body.channelId : streamer.channelId,
-      channelUrl: body.channelUrl !== undefined ? body.channelUrl : streamer.channelUrl
+      channelUrl: body.channelUrl !== undefined ? body.channelUrl : streamer.channelUrl,
+      platform: body.platform !== undefined ? body.platform : streamer.platform
     });
     Object.assign(streamer, {
       platform: body.platform ? normalizeStatus(body.platform, ["twitch", "youtube_live", "kick", "other"], streamer.platform) : streamer.platform,
@@ -824,8 +969,9 @@ async function handleApi(req, res, pathname, searchParams) {
       } catch (error) {
         streamer.liveStatus = "api_error";
         streamer.liveStatusReason = error.message;
-        await logEvent("api_error", "Twitch stream metadata fetch failed", {
+        await logEvent("api_error", "Official stream metadata fetch failed", {
           streamerId: streamer.id,
+          provider: streamer.platform,
           error: error.message
         });
       }
@@ -856,7 +1002,7 @@ async function handleApi(req, res, pathname, searchParams) {
         id: newId("candidate"),
         streamerId: streamer.id,
         sessionId: session.id,
-        sourceType: stream ? "twitch_live" : "demo",
+        sourceType: stream ? `${streamer.platform}_live` : "demo",
         sourceId: stream?.id || session.id,
         timestampStart: "00:00:15",
         timestampEnd: "00:00:45",
@@ -877,7 +1023,7 @@ async function handleApi(req, res, pathname, searchParams) {
       const score = scoreClipMoment(candidateBase);
       const candidate = { ...candidateBase, ...score };
       state.clipCandidates.unshift(candidate);
-      results.push({ ...(liveCheck || { streamerId: streamer.id, live: Boolean(stream), official: twitchApiConfigured() }), session, candidate });
+      results.push({ ...(liveCheck || { streamerId: streamer.id, live: Boolean(stream), official: false }), session, candidate });
       await logEvent("candidate_detected", "Clip candidate detected", {
         streamerId: streamer.id,
         candidateId: candidate.id,

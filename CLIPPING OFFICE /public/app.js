@@ -18,6 +18,7 @@ const state = {
   health: null,
   openai: null,
   twitch: null,
+  kick: null,
   streamers: [],
   candidates: [],
   packages: [],
@@ -154,11 +155,12 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
     api("/api/twitch/status"),
+    api("/api/kick/status"),
     api("/api/twitch/streamers"),
     api("/api/clips/candidates"),
     api("/api/clips/packages"),
@@ -172,6 +174,7 @@ async function loadCore() {
     config,
     openai,
     twitch,
+    kick,
     streamers: streamers.streamers,
     candidates: candidates.candidates,
     packages: packages.packages,
@@ -188,11 +191,21 @@ function updateStatus(limit) {
   $("#api-status").textContent = "API online";
   $("#openai-status").className = `pill ${state.openai?.configured ? "good" : "warn"}`;
   $("#openai-status").textContent = state.openai?.configured ? "OpenAI live" : "OpenAI local";
-  $("#twitch-status").className = `pill ${state.twitch?.configured ? "good" : "warn"}`;
-  $("#twitch-status").textContent = state.twitch?.configured ? "Twitch ready" : "Twitch API needed";
+  const streamApisReady = Boolean(state.twitch?.configured || state.kick?.configured);
+  $("#twitch-status").className = `pill ${streamApisReady ? "good" : "warn"}`;
+  $("#twitch-status").textContent = streamApiStatusLabel();
   $("#limit-status").className = `pill ${limit?.blocked ? "bad" : limit?.warning ? "warn" : "info"}`;
   $("#limit-status").textContent = `${limit?.approvedToday ?? 0}/${limit?.limit ?? 20} approved`;
   renderSidebarOps();
+}
+
+function streamApiStatusLabel() {
+  const twitchReady = Boolean(state.twitch?.configured);
+  const kickReady = Boolean(state.kick?.configured);
+  if (twitchReady && kickReady) return "Twitch + Kick ready";
+  if (kickReady) return "Kick ready";
+  if (twitchReady) return "Twitch ready";
+  return "Stream API needed";
 }
 
 function renderNav() {
@@ -480,7 +493,8 @@ function renderActivityFeed(limit = 5) {
 
 function renderSystemTiles() {
   const tiles = [
-    ["Twitch API", state.twitch?.configured ? "Connected" : "Demo mode", state.twitch?.configured ? "good" : "warn"],
+    ["Twitch API", state.twitch?.configured ? "Connected" : "Needs vars", state.twitch?.configured ? "good" : "warn"],
+    ["Kick API", state.kick?.configured ? "Connected" : "Needs vars", state.kick?.configured ? "good" : "warn"],
     ["OpenAI API", state.openai?.configured ? "Connected" : "Local fallback", state.openai?.configured ? "good" : "warn"],
     ["Storage", "Healthy", "good"],
     ["Human Gate", countWhere(state.approvals, (approval) => approval.status === "pending") ? "Reviewing" : "Ready", "info"]
@@ -703,6 +717,12 @@ function liveStatusMeta(streamer) {
   return { label: "CHECK NEEDED", className: "needs-check" };
 }
 
+function liveSourceLabel(streamer) {
+  if (streamer?.platform === "kick") return state.kick?.configured ? "Official Kick API" : "Needs Kick API vars";
+  if (streamer?.platform === "twitch") return state.twitch?.configured ? "Official Twitch API" : "Needs Twitch API vars";
+  return "Manual/demo source";
+}
+
 function platformBadge(platform) {
   const label = platform === "youtube_live" ? "YouTube" : platform || "Twitch";
   return `<span class="platform-badge">${esc(label)}</span>`;
@@ -737,7 +757,7 @@ function renderStreamerInspector(streamer) {
         <span>Platform</span><b>${esc(streamer.platform)}</b>
         <span>Partner Status</span><b>${streamer.permissionStatus === "approved" ? "Approved" : "Needs review"}</b>
         <span>Language</span><b>English</b>
-        <span>Live source</span><b>${state.twitch?.configured ? "Official Twitch API" : "Needs Twitch API vars"}</b>
+        <span>Live source</span><b>${esc(liveSourceLabel(streamer))}</b>
         <span>Last check</span><b>${esc(fmtDate(streamer.lastCheckedAt))}</b>
       </div>
     </div>
@@ -2628,6 +2648,7 @@ function renderLogs() {
 function renderIntegrations() {
   const openaiReady = Boolean(state.openai?.configured);
   const twitchReady = Boolean(state.twitch?.configured);
+  const kickReady = Boolean(state.kick?.configured);
   const connectors = [
     {
       name: "OpenAI",
@@ -2648,6 +2669,16 @@ function renderIntegrations() {
         : "Add Twitch Client ID and Client Secret or OAuth token in environment variables for real live checks.",
       action: "test-twitch",
       actionLabel: "Test Twitch"
+    },
+    {
+      name: "Kick",
+      label: kickReady ? "Official API ready" : "API needed",
+      tone: kickReady ? "good" : "warn",
+      body: kickReady
+        ? "Kick live checks can use the official Kick public API from the server."
+        : "Add Kick Client ID and Client Secret in environment variables for real Kick live checks.",
+      action: "test-kick",
+      actionLabel: "Test Kick"
     },
     {
       name: "Browser handoff",
@@ -2692,7 +2723,7 @@ function renderIntegrations() {
           <p>Everything sensitive stays server-side. External actions stay manual or Human Gate controlled until you approve a real connector.</p>
         </div>
         <div class="integration-summary">
-          ${integrationSummary("Live", Number(openaiReady) + Number(twitchReady), "good")}
+          ${integrationSummary("Live", Number(openaiReady) + Number(twitchReady) + Number(kickReady), "good")}
           ${integrationSummary("Manual", 3, "info")}
           ${integrationSummary("Gated", 1, "warn")}
         </div>
@@ -2963,6 +2994,8 @@ function renderSettings() {
     twitchConfigured: state.config?.twitchConfigured,
     twitchRedirectConfigured: state.config?.twitchRedirectConfigured,
     twitchAllowedChannels: state.config?.twitchAllowedChannels,
+    kickConfigured: state.config?.kickConfigured,
+    kickOAuthTokenConfigured: state.config?.kickOAuthTokenConfigured,
     postDailyLimit: state.config?.postDailyLimit,
     outputDir: state.config?.outputDir
   };
@@ -2974,11 +3007,13 @@ function renderSettings() {
           <div class="actions">
             <button data-action="test-openai">Test OpenAI</button>
             <button data-action="test-twitch">Test Twitch</button>
+            <button data-action="test-kick">Test Kick</button>
           </div>
         </div>
         <div class="kv">
           <span>OpenAI</span><span>${state.openai?.configured ? "configured" : "not configured"}</span>
           <span>Twitch</span><span>${state.twitch?.configured ? "configured" : "not configured"}</span>
+          <span>Kick</span><span>${state.kick?.configured ? "configured" : "not configured"}</span>
           <span>Official API</span><span>${state.twitch?.officialApiOnly ? "yes" : "no"}</span>
           <span>Secrets</span><span>server-side only</span>
         </div>
@@ -3153,6 +3188,10 @@ document.addEventListener("click", async (event) => {
     if (action === "test-twitch") {
       const result = await api("/api/twitch/test", { method: "POST", body: "{}" });
       toast(result.message || "Twitch test complete", result.live ? "good" : "info");
+    }
+    if (action === "test-kick") {
+      const result = await api("/api/kick/test", { method: "POST", body: "{}" });
+      toast(result.message || "Kick test complete", result.live ? "good" : "info");
     }
     if (selectCandidate) {
       state.selectedCandidateId = selectCandidate;

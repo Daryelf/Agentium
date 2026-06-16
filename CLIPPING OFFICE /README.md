@@ -39,6 +39,10 @@ KICK_CLIENT_SECRET=
 
 Leave the allowed-channel lists empty when you want StreamClipper to monitor any approved streamer you add in the app. Keep all provider secrets in local env or Railway variables only.
 
+## Agent 101 streamer scouting
+
+The Stream Watchlist includes an Agent 101 scout panel. It can call the configured Kick and Twitch live directories from the server, rank promising streamers, and suggest who to monitor next. Adding a recommendation only creates an approved local monitoring source; publishing, account changes, API-key changes, and posting still stay behind Human Gate.
+
 ## Verify
 
 ```bash

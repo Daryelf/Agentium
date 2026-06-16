@@ -506,6 +506,169 @@ async function fetchKickStream(streamer) {
   };
 }
 
+function streamerIdentityKey(streamer = {}) {
+  return `${cleanText(streamer.platform || "twitch").toLowerCase()}:${cleanText(streamer.channelId || streamer.displayName).toLowerCase()}`;
+}
+
+function knownStreamerKeys() {
+  return new Set(state.streamers.map(streamerIdentityKey));
+}
+
+function recommendationScore({ platform, viewerCount = 0, category = "", title = "" }) {
+  let score = 58;
+  score += Math.min(26, Math.floor(Math.log10(Math.max(1, Number(viewerCount))) * 8));
+  if (/valorant|fortnite|warzone|minecraft|gta|just chatting|irl|sports|music/i.test(category)) score += 8;
+  if (/reaction|challenge|ranked|tournament|live|new|clutch|hype/i.test(title)) score += 6;
+  if (platform === "kick") score += 2;
+  return Math.max(45, Math.min(98, score));
+}
+
+function streamerRecommendationReason(item) {
+  const viewers = Number(item.viewerCount || 0).toLocaleString();
+  const parts = [];
+  if (item.category) parts.push(`${item.category} audience`);
+  if (item.viewerCount) parts.push(`${viewers} live viewers`);
+  if (item.title) parts.push("active stream title gives Agent 101 clip context");
+  return parts.length ? parts.join(" - ") : "Public live data suggests this channel is worth reviewing.";
+}
+
+function mapTwitchRecommendation(stream) {
+  const category = stream.game_name || "Twitch";
+  const item = {
+    platform: "twitch",
+    displayName: stream.user_name || stream.user_login || "Twitch streamer",
+    channelId: stream.user_login || stream.user_id || "",
+    channelUrl: stream.user_login ? `https://www.twitch.tv/${stream.user_login}` : "",
+    title: stream.title || "",
+    category,
+    viewerCount: Number(stream.viewer_count || 0),
+    thumbnail: stream.thumbnail_url || "",
+    startedAt: stream.started_at || "",
+    source: "Official Twitch Helix live directory"
+  };
+  return {
+    ...item,
+    score: recommendationScore(item),
+    reason: streamerRecommendationReason(item),
+    suggestedUse: ["clips", "edits", "reposts"]
+  };
+}
+
+function mapKickRecommendation(stream) {
+  const category = stream.category?.name || "Kick";
+  const item = {
+    platform: "kick",
+    displayName: stream.slug || "Kick streamer",
+    channelId: stream.slug || "",
+    channelUrl: stream.slug ? `https://kick.com/${stream.slug}` : "",
+    title: stream.stream_title || "",
+    category,
+    viewerCount: Number(stream.viewer_count || 0),
+    thumbnail: stream.thumbnail || stream.profile_picture || "",
+    startedAt: stream.started_at || "",
+    source: "Official Kick public live directory"
+  };
+  return {
+    ...item,
+    score: recommendationScore(item),
+    reason: streamerRecommendationReason(item),
+    suggestedUse: ["clips", "edits", "reposts"]
+  };
+}
+
+async function fetchTwitchRecommendations(limit) {
+  if (!twitchApiConfigured()) return [];
+  const params = new URLSearchParams({ first: String(Math.min(100, Math.max(1, limit))) });
+  const json = await twitchFetch(`/streams?${params}`);
+  return (json.data || []).map(mapTwitchRecommendation);
+}
+
+async function fetchKickRecommendations(limit) {
+  if (!kickApiConfigured()) return [];
+  const params = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, limit))), sort: "viewer_count" });
+  const json = await kickFetch(`/public/v1/livestreams?${params}`);
+  return (json.data || []).map(mapKickRecommendation);
+}
+
+function fallbackStreamerRecommendations(limit) {
+  return [
+    ["kick", "xqc", "xQc", "High-volume live audience with strong reaction potential.", "Just Chatting", 96],
+    ["kick", "adinross", "Adin Ross", "Large Kick-native audience; needs brand-safety review before monitoring.", "Just Chatting", 88],
+    ["twitch", "kaicenat", "KaiCenat", "High-energy creator with frequent clip-worthy moments.", "Just Chatting", 91],
+    ["twitch", "tarik", "tarik", "Esports creator with repeatable VALORANT clip potential.", "VALORANT", 86],
+    ["twitch", "hasanabi", "HasanAbi", "Long-form commentary creates many possible reaction clips.", "Just Chatting", 82]
+  ].slice(0, limit).map(([platform, channelId, displayName, reason, category, score]) => ({
+    platform,
+    channelId,
+    displayName,
+    channelUrl: platform === "kick" ? `https://kick.com/${channelId}` : `https://www.twitch.tv/${channelId}`,
+    title: "Manual review recommendation",
+    category,
+    viewerCount: 0,
+    thumbnail: "",
+    score,
+    reason,
+    suggestedUse: ["clips", "edits", "reposts"],
+    source: "Agent 101 fallback shortlist"
+  }));
+}
+
+async function recommendStreamers({ platform = "all", limit = 12 } = {}) {
+  const max = Math.min(24, Math.max(1, Number(limit) || 12));
+  const providers = platform === "all" ? ["kick", "twitch"] : [platform];
+  const rows = [];
+  const errors = [];
+  if (providers.includes("kick")) {
+    try {
+      rows.push(...await fetchKickRecommendations(max));
+    } catch (error) {
+      errors.push({ provider: "kick", message: error.message });
+      await logEvent("api_error", "Kick streamer scout failed", { error: error.message });
+    }
+  }
+  if (providers.includes("twitch")) {
+    try {
+      rows.push(...await fetchTwitchRecommendations(max));
+    } catch (error) {
+      errors.push({ provider: "twitch", message: error.message });
+      await logEvent("api_error", "Twitch streamer scout failed", { error: error.message });
+    }
+  }
+
+  const existing = knownStreamerKeys();
+  const seen = new Set();
+  let recommendations = rows
+    .filter((row) => row.channelId)
+    .filter((row) => {
+      const key = streamerIdentityKey(row);
+      if (existing.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.score - a.score || b.viewerCount - a.viewerCount)
+    .slice(0, max);
+
+  if (!recommendations.length) {
+    recommendations = fallbackStreamerRecommendations(max * 2)
+      .filter((row) => providers.includes(row.platform))
+      .filter((row) => !existing.has(streamerIdentityKey(row)))
+      .slice(0, max);
+  }
+
+  return {
+    recommendations,
+    errors,
+    providers: {
+      kickConfigured: kickApiConfigured(),
+      twitchConfigured: twitchApiConfigured()
+    },
+    generatedBy: "Agent 101 Streamer Scout",
+    message: recommendations.some((row) => row.source?.includes("Official"))
+      ? "Agent 101 found live streamer recommendations from configured provider APIs."
+      : "Agent 101 is using a safe fallback shortlist until provider live directories return results."
+  };
+}
+
 async function checkStreamerLive(streamer) {
   streamer.lastCheckedAt = now();
   streamer.channelId = streamer.platform === "kick"
@@ -833,6 +996,19 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "GET" && pathname === "/api/twitch/streamers") {
     return sendJson(res, 200, { streamers: state.streamers });
+  }
+
+  if (req.method === "GET" && pathname === "/api/streamers/recommendations") {
+    const result = await recommendStreamers({
+      platform: normalizeStatus(searchParams.get("platform") || "all", ["all", "kick", "twitch"], "all"),
+      limit: Number(searchParams.get("limit") || 12)
+    });
+    await logEvent("streamer_scout", "Agent 101 generated streamer recommendations", {
+      count: result.recommendations.length,
+      providers: result.providers,
+      errors: result.errors
+    });
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "POST" && pathname === "/api/twitch/streamers") {

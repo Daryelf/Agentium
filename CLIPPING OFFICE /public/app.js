@@ -26,6 +26,8 @@ const state = {
   approvals: [],
   artifacts: [],
   logs: [],
+  recommendations: [],
+  recommendationsMessage: "",
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
   selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
   selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
@@ -534,6 +536,8 @@ function renderWatchlist() {
         ${watchStat("Blocked", blockedCount, "No blocked channels", "SHD", "neutral")}
       </div>
 
+      ${renderStreamerScout()}
+
       <div class="watchlist-shell">
         <section class="panel streamer-directory">
           <div class="watchlist-filterbar">
@@ -653,6 +657,58 @@ function watchStat(label, value, detail, icon, tone = "info") {
         <em>${esc(detail)}</em>
       </div>
     </section>
+  `;
+}
+
+function renderStreamerScout() {
+  const hasRecommendations = state.recommendations.length > 0;
+  return `
+    <section class="panel streamer-scout-panel">
+      <div class="scout-head">
+        <div>
+          <span class="eyebrow">Agent 101 Streamer Scout</span>
+          <h2>Find creators worth monitoring</h2>
+          <p class="muted">${esc(state.recommendationsMessage || "Agent 101 can scan configured Kick/Twitch live directories, score streamer fit, and prepare a monitored shortlist for your approval.")}</p>
+        </div>
+        <div class="scout-actions">
+          <select id="scout-platform" aria-label="Scout platform">
+            <option value="all">Kick + Twitch</option>
+            <option value="kick">Kick only</option>
+            <option value="twitch">Twitch only</option>
+          </select>
+          <button class="primary" data-action="scout-streamers">Scout streamers</button>
+        </div>
+      </div>
+      <div class="scout-provider-row">
+        ${badge(state.kick?.configured ? "Kick ready" : "Kick vars needed", state.kick?.configured ? "good" : "warn")}
+        ${badge(state.twitch?.configured ? "Twitch ready" : "Twitch vars needed", state.twitch?.configured ? "good" : "warn")}
+        ${badge("Human approval before monitoring", "info")}
+      </div>
+      <div class="scout-recommendations">
+        ${hasRecommendations ? state.recommendations.map(renderStreamerRecommendation).join("") : empty("No scout run yet. Click Scout streamers after provider variables finish deploying.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderStreamerRecommendation(item, index) {
+  return `
+    <article class="scout-card">
+      <div class="scout-rank">
+        <span>${index + 1}</span>
+        <b>${esc(item.score || 0)}</b>
+      </div>
+      <div class="scout-copy">
+        <div class="scout-title-row">
+          <strong>${esc(item.displayName)}</strong>
+          ${platformBadge(item.platform)}
+        </div>
+        <p>${esc(item.title || item.reason || "Recommended for review")}</p>
+        <small>${esc(item.category || "General")} - ${Number(item.viewerCount || 0).toLocaleString()} viewers - ${esc(item.source || "Agent 101")}</small>
+        <em>${esc(item.reason || "Good candidate for supervised monitoring.")}</em>
+      </div>
+      <button data-add-recommendation="${index}">Add to monitoring</button>
+    </article>
   `;
 }
 
@@ -3049,6 +3105,38 @@ async function seedDemo() {
   await refresh();
 }
 
+async function scoutStreamers() {
+  const platform = document.querySelector("#scout-platform")?.value || "all";
+  const result = await api(`/api/streamers/recommendations?platform=${encodeURIComponent(platform)}&limit=8`);
+  state.recommendations = result.recommendations || [];
+  state.recommendationsMessage = result.message || "";
+  toast(`Agent 101 found ${state.recommendations.length} streamer recommendations`, "good");
+  render();
+}
+
+async function addRecommendedStreamer(index) {
+  const item = state.recommendations[Number(index)];
+  if (!item) return;
+  const result = await api("/api/twitch/streamers", {
+    method: "POST",
+    body: JSON.stringify({
+      platform: item.platform,
+      displayName: item.displayName,
+      channelId: item.channelId,
+      channelUrl: item.channelUrl,
+      permissionStatus: "approved",
+      monitorEnabled: true,
+      allowedUse: item.suggestedUse || ["clips", "edits", "reposts"],
+      notes: `Added from Agent 101 Streamer Scout. ${item.reason || ""}`.trim()
+    })
+  });
+  state.selectedStreamerId = result.streamer?.id || state.selectedStreamerId;
+  localStorage.setItem("selectedStreamerId", state.selectedStreamerId);
+  toast(`${item.displayName} added to monitoring`, "good");
+  state.recommendations = state.recommendations.filter((_, itemIndex) => itemIndex !== Number(index));
+  await refresh();
+}
+
 async function packageCandidate(id) {
   const result = await api("/api/clips/package", {
     method: "POST",
@@ -3158,6 +3246,7 @@ document.addEventListener("click", async (event) => {
   const approveStreamerId = target.closest("[data-approve-streamer]")?.dataset.approveStreamer;
   const checkStreamerId = target.closest("[data-check-streamer]")?.dataset.checkStreamer;
   const deleteId = target.closest("[data-delete-streamer]")?.dataset.deleteStreamer;
+  const addRecommendation = target.closest("[data-add-recommendation]")?.dataset.addRecommendation;
   const requestPost = target.closest("[data-request-post]")?.dataset.requestPost;
   const gateApprove = target.closest("[data-gate-approve]")?.dataset.gateApprove;
   const gateReject = target.closest("[data-gate-reject]")?.dataset.gateReject;
@@ -3178,6 +3267,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "refresh") await refresh();
     if (action === "run-watch") await runWatch();
+    if (action === "scout-streamers") await scoutStreamers();
     if (action === "seed-demo") await seedDemo();
     if (action === "create-capcut") await createCapCut();
     if (action === "create-captions") await createCaptions();
@@ -3240,6 +3330,7 @@ document.addEventListener("click", async (event) => {
       toast("Streamer deleted", "info");
       await refresh();
     }
+    if (addRecommendation !== undefined) await addRecommendedStreamer(addRecommendation);
     if (requestPost) {
       await api(`/api/posts/${requestPost}/request-approval`, { method: "POST", body: "{}" });
       toast("Approval requested", "good");

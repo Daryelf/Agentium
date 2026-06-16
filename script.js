@@ -486,15 +486,23 @@ const depoCapabilities = {
 
 const riskyActionTypes = new Set([
   "publish",
+  "publish_video",
+  "upload_to_tiktok",
+  "direct_post",
   "spend_money",
   "move_money",
+  "access_payment_methods",
   "contact_customer",
   "modify_account",
+  "change_account_settings",
   "create_live_agent",
+  "modify_permissions",
   "change_permissions",
   "change_api_key",
   "deploy_campaign",
   "external_api_action",
+  "browser_login",
+  "payment_action",
 ]);
 
 const depoAgent = {
@@ -6788,7 +6796,10 @@ async function submitDepoChat(roomKey, message) {
       roomId: resolved,
     });
   });
-  if (responseMeta.requiresApproval || responseMeta.blockedAction) {
+  const blockedActionType = responseMeta.blockedAction || "";
+  const hasRealApproval = Boolean(responseMeta.approval);
+  const hasKnownBlockedAction = blockedActionType && riskyActionTypes.has(blockedActionType);
+  if (hasRealApproval || hasKnownBlockedAction) {
     const actionType = responseMeta.blockedAction || "external_api_action";
     if (!responseMeta.approval) addBlockedActionApproval(actionType, command?.targetRoom || resolved, "Agent 101 brain");
     if (responseMeta.approval && apiAvailable) {

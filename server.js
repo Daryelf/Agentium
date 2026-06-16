@@ -1720,6 +1720,74 @@ function detectRiskyAction(text) {
   return match ? match[0] : null;
 }
 
+function isClipsOfficeIntakeRequest(text) {
+  const value = String(text || "").toLowerCase();
+  const clipsTerms = [
+    "clip",
+    "clipping",
+    "streamer",
+    "stream",
+    "twitch",
+    "kick",
+    "capcut",
+    "tiktok",
+    "youtube shorts",
+    "short-form",
+    "short form",
+  ];
+  return clipsTerms.some((term) => value.includes(term));
+}
+
+function buildClipsOfficeIntakeResponse(message) {
+  return {
+    message: [
+      "Got it. I will treat this as a Clips Office build/intake request, not a shutdown.",
+      "",
+      "I can help build the auto-clipping system for your own channels, approved creators, or public discovery lists. I will not log in, impersonate creators, claim ownership of channels, post, spend, or change accounts without Human Gate.",
+      "",
+      "Answer these so I can turn it into a real workflow:",
+      "1. Which platform first: Twitch, Kick, YouTube, TikTok, or all discovery?",
+      "2. Are we monitoring your own account, creators who gave permission, or public streams for research only?",
+      "3. When you say claim big streamers, do you mean find/recommend streamers, draft outreach, request clipping permission, or manage approved clip packages?",
+      "4. What games/categories should Agent 101 watch first?",
+      "5. What counts as a good clip: reaction, clutch, funny moment, tutorial, drama-free highlight, or something else?",
+      "6. What output should come first: streamer shortlist, clip radar candidates, CapCut brief, posting draft, or Human Gate permission package?",
+      "7. What daily limit should stay active while this is draft-only?",
+      "",
+      "Safe next move: I can create a Clips Office intake plan with a permission checklist, discovery rubric, streamer scoring rules, and a Human Gate package for any external step.",
+    ].join("\n"),
+    taskType: "clips",
+    suggestedActions: [
+      { label: "Create Clips Office intake", action: "create_task_plan", requiresApproval: false },
+      { label: "Create streamer scoring rubric", action: "create_clips_plan", requiresApproval: false },
+      { label: "Package external permissions", action: "package_for_approval", requiresApproval: true },
+    ],
+    artifacts: [
+      {
+        type: "intake",
+        title: "Clips Office intake questions",
+        content: `Original request: ${String(message || "").slice(0, 1200)}\n\nNeeded: platform, permission model, streamer discovery goal, clip scoring rubric, first output, daily limit, and Human Gate boundaries.`,
+      },
+    ],
+    requiresApproval: false,
+    riskLevel: "medium",
+    blockedAction: null,
+    logs: ["Agent 101 entered Clips Office intake mode instead of blocking ambiguous planning work."],
+  };
+}
+
+function shouldUseClipsOfficeIntake(message, response = null) {
+  if (!isClipsOfficeIntakeRequest(message)) return false;
+  if (detectRiskyAction(message)) return false;
+  if (!response) return true;
+  const responseText = [
+    response.message,
+    response.blockedAction,
+    ...(response.logs || []),
+  ].join(" ").toLowerCase();
+  return Boolean(response.requiresApproval || response.blockedAction || /cannot help|can't help|impersonat|deceptive|claiming/.test(responseText));
+}
+
 function requiresHumanGate(actionType) {
   return AI_RISKY_ACTION_TYPES.has(actionType);
 }
@@ -1843,6 +1911,7 @@ function normalizeAgent101AiPayload(payload, fallbackMessage = "") {
 }
 
 function agent101SystemInstructions() {
+  const riskyActions = Array.from(AI_RISKY_ACTION_TYPES).join(", ");
   return [
     "You are Agent 101, the first supervised master agent inside Argentum OS.",
     "You help the user turn ideas into safe, structured work.",
@@ -1850,6 +1919,10 @@ function agent101SystemInstructions() {
     "You are draft-only. You cannot perform external actions.",
     "You cannot publish, spend money, contact customers, modify accounts, change API keys, create live agents, grant permissions, run external APIs/tools, or deploy campaigns.",
     "Any risky action must be routed to Human Gate for approval.",
+    "Important: do not behave like a generic refusal chatbot. If the user gives a vague business goal, ask intake questions and propose safe internal next steps.",
+    "For clipping/streamer ideas, you may create discovery rubrics, approved-streamer checklists, CapCut briefs, posting drafts, permission checklists, and Human Gate packages. Ask clarifying questions when ownership, permission, platform, or output is unclear.",
+    "If the user says claim or get big streamers, clarify what they mean and reframe toward approved discovery, permission requests, and draft-only packages. Do not set blockedAction just because wording is rough.",
+    `Only set blockedAction when the requested action directly matches one of these exact blocked action IDs: ${riskyActions}.`,
     "If the user asks for a coding task, create a clear implementation plan, file checklist, patch strategy, test plan, and prompt for Codex or Claude if needed.",
     "Do not claim you edited files unless a real code-editing tool exists and was used.",
     "Be direct, useful, operational, and concise.",
@@ -1864,7 +1937,9 @@ function agent101UserInput(message, context = {}) {
     `Current stage: ${context.currentStage || "Agent 101"}`,
     `Context: ${JSON.stringify(context.context || {}, null, 2).slice(0, 2000)}`,
     "Allowed task types: general, code_plan, content, clips, agent_blueprint, approval_request.",
-    "If risky, return taskType approval_request, requiresApproval true, riskLevel high, blockedAction, and a Send to Human Gate suggested action.",
+    "If key details are missing, ask follow-up questions in the message and keep requiresApproval false.",
+    "If the request is about Clips Office, streamer discovery, clipping, Twitch, Kick, CapCut, or TikTok and does not explicitly request a blocked external action, return a helpful Clips Office intake/workflow response.",
+    "If risky, return taskType approval_request, requiresApproval true, riskLevel high, blockedAction as an exact blocked action ID only, and a Send to Human Gate suggested action.",
   ].join("\n");
 }
 
@@ -2953,6 +3028,9 @@ function localAgent101ChatResponse(message) {
   const text = String(message || "").toLowerCase();
   const risky = detectRiskyAction(text);
   if (risky) return blockedDepoResponse(risky);
+  if (isClipsOfficeIntakeRequest(text)) {
+    return buildClipsOfficeIntakeResponse(message);
+  }
   if (text.includes("codex") || text.includes("code") || text.includes("ui") || text.includes("fix") || text.includes("implement")) {
     return {
       message: "Code plan ready: define the broken behavior, inspect the affected files first, patch only the scoped UI/backend path, run the app checks, then verify the exact screen or endpoint before shipping.",
@@ -3097,6 +3175,9 @@ async function handleAgent101Chat(payload = {}) {
 
   try {
     const live = await callOpenAiAgent101(config, message, payload);
+    if (shouldUseClipsOfficeIntake(message, live)) {
+      return { ...buildClipsOfficeIntakeResponse(message, payload), provider, mode };
+    }
     const riskyResponse = detectRiskyAction(
       [
         live.message,

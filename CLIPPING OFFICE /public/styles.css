@@ -1044,6 +1044,125 @@ h1 {
   font-weight: 760;
 }
 
+.agent-run-panel {
+  padding: 16px;
+  display: grid;
+  gap: 13px;
+}
+
+.agent-run-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-run-head h2 {
+  margin: 4px 0;
+}
+
+.agent-run-bar {
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(125, 211, 252, 0.12);
+}
+
+.agent-run-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22d3ee, #7c3aed, #22c55e);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.45);
+}
+
+.agent-run-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-run-grid span {
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.13);
+  background: rgba(3, 10, 20, 0.56);
+}
+
+.agent-run-grid b,
+.agent-run-grid em {
+  display: block;
+}
+
+.agent-run-grid b {
+  font-size: 1.04rem;
+}
+
+.agent-run-grid em {
+  margin-top: 4px;
+  color: #8da1ba;
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.agent-run-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.agent-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-run-actions button {
+  min-height: 34px;
+}
+
+.agent-run-steps {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.agent-run-steps span {
+  padding: 9px 10px;
+  border-radius: 11px;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  background: rgba(3, 10, 20, 0.5);
+}
+
+.agent-run-steps span.completed {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.agent-run-steps span.error,
+.agent-run-steps span.blocked {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.agent-run-steps b,
+.agent-run-steps em {
+  display: block;
+}
+
+.agent-run-steps b {
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.agent-run-steps em {
+  margin-top: 2px;
+  color: #9fb3cb;
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
 .metric-warn small,
 .metric-warn .metric-icon {
   color: var(--amber);
@@ -6249,6 +6368,10 @@ h1 {
     gap: 10px;
   }
 
+  .agent-run-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .metric {
     min-height: 116px;
     gap: 10px;
@@ -6311,6 +6434,7 @@ h1 {
   }
 
   .metric-strip,
+  .agent-run-grid,
   .stream-grid,
   .quick-grid,
   .system-grid,

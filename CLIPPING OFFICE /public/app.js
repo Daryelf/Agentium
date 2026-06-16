@@ -28,6 +28,8 @@ const state = {
   logs: [],
   recommendations: [],
   recommendationsMessage: "",
+  agentRun: null,
+  agentRunBusy: false,
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
   selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
   selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
@@ -72,6 +74,10 @@ function todayKey() {
 
 function countWhere(items, predicate) {
   return items.filter(predicate).length;
+}
+
+function isPermissionReady(streamer) {
+  return ["approved", "demo_approved"].includes(streamer?.permissionStatus);
 }
 
 function dailyLimitValue() {
@@ -310,7 +316,7 @@ function render() {
 
 function renderDashboard() {
   const watched = countWhere(state.streamers, (item) => item.monitorEnabled);
-  const approved = countWhere(state.streamers, (item) => item.permissionStatus === "approved");
+  const approved = countWhere(state.streamers, isPermissionReady);
   const liveNow = countWhere(state.streamers, (item) => String(item.liveStatus || "").includes("live"));
   const pendingCandidates = countWhere(state.candidates, (candidate) => candidate.status === "candidate");
   const highScore = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 60);
@@ -327,10 +333,12 @@ function renderDashboard() {
         <p>Monitor approved creators, score moments, build 9:16 packages, and hold every risky external step at Human Gate.</p>
       </div>
       <div class="hero-actions">
-        <button class="primary" data-action="run-watch">Run Watch Cycle</button>
+        <button class="primary" data-action="agent101-demo-workflow">Run Demo Clipping Workflow</button>
+        <button data-action="run-watch">Run Watch Cycle</button>
         <button data-action="seed-demo">Load Demo Mission</button>
       </div>
     </div>
+    ${renderAgentRunPanel()}
     <div class="metric-strip">
       ${metric("Watched Streams", watched, `${state.streamers.length} total`, "CAM", "good")}
       ${metric("Approved Streamers", approved, `${liveNow} live now`, "PRO", "violet")}
@@ -394,6 +402,53 @@ function renderDashboard() {
         <button data-nav-jump="queue"><span>Q</span><b>Posting Queue</b><small>Manage drafts</small></button>
         <button data-nav-jump="outputs"><span>O</span><b>View Outputs</b><small>Browse exports</small></button>
       </div>
+    </section>
+  `;
+}
+
+function renderAgentRunPanel() {
+  const run = state.agentRun || {};
+  const status = state.agentRunBusy ? "running" : run.status || "idle";
+  const progress = state.agentRunBusy ? Math.max(8, Number(run.progress || 8)) : Number(run.progress || 0);
+  const counts = run.counts || {};
+  const steps = run.steps || [];
+  const recentSteps = steps.slice(-5);
+  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "running" ? "info" : "neutral";
+  return `
+    <section class="panel agent-run-panel">
+      <div class="agent-run-head">
+        <div>
+          <span class="eyebrow">Agent 101 Runner</span>
+          <h2>Safe internal clipping workflow</h2>
+          <p class="muted">${esc(run.summary || "Run demo/local tasks without logging in, uploading, publishing, spending, or changing accounts.")}</p>
+        </div>
+        ${badge(status === "idle" ? "Idle" : status, statusTone)}
+      </div>
+      <div class="agent-run-bar">
+        <span style="width:${Math.min(100, Math.max(0, progress))}%"></span>
+      </div>
+      <div class="agent-run-grid">
+        <span><b>${esc(run.currentStep || "Ready")}</b><em>Current step</em></span>
+        <span><b>${esc(counts.candidates || 0)}</b><em>New candidates</em></span>
+        <span><b>${esc(counts.packages || 0)}</b><em>New packages</em></span>
+        <span><b>${esc(counts.approvals || 0)}</b><em>Human Gate items</em></span>
+        <span><b>${esc(counts.artifacts || 0)}</b><em>Artifacts</em></span>
+      </div>
+      <form id="agent101-command-form" class="agent-run-command">
+        <input name="goal" placeholder="Tell Agent 101 what to run, e.g. test the Clips Office and package the top 3 clips">
+        <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Run Agent 101</button>
+      </form>
+      <div class="agent-run-actions">
+        <button data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run demo clipping workflow</button>
+        <button data-action="agent101-add-demo-streamers" ${state.agentRunBusy ? "disabled" : ""}>Add 5 demo streamers</button>
+        <button data-action="agent101-watch-cycle" ${state.agentRunBusy ? "disabled" : ""}>Run watch cycle</button>
+        <button data-action="agent101-create-candidates" ${state.agentRunBusy ? "disabled" : ""}>Generate clip candidates</button>
+        <button data-action="agent101-package-top3" ${state.agentRunBusy ? "disabled" : ""}>Package top 3 clips</button>
+        <button data-action="agent101-human-gate" ${state.agentRunBusy ? "disabled" : ""}>Send drafts to Human Gate</button>
+      </div>
+      ${recentSteps.length ? `<div class="agent-run-steps">${recentSteps.map((step) => `
+        <span class="${esc(step.status)}"><b>${esc(step.tool)}</b><em>${esc(step.message)}</em></span>
+      `).join("")}</div>` : ""}
     </section>
   `;
 }
@@ -754,17 +809,18 @@ function streamerCandidateCount(streamerId) {
 }
 
 function isStreamerLive(streamer) {
-  return streamer?.liveStatus === "live";
+  return streamer?.liveStatus === "live" || streamer?.liveStatus === "demo_live";
 }
 
 function isStreamerConfirmedOffline(streamer) {
-  return streamer?.liveStatus === "offline" || streamer?.liveStatus === "offline_or_demo";
+  return streamer?.liveStatus === "offline" || streamer?.liveStatus === "offline_or_demo" || streamer?.liveStatus === "demo_offline";
 }
 
 function liveStatusMeta(streamer) {
   const status = streamer?.liveStatus || "unknown";
   if (status === "live") return { label: "LIVE", className: "is-live" };
-  if (status === "offline" || status === "offline_or_demo") return { label: "OFFLINE", className: "is-offline" };
+  if (status === "demo_live") return { label: "DEMO LIVE", className: "is-live" };
+  if (status === "offline" || status === "offline_or_demo" || status === "demo_offline") return { label: "OFFLINE", className: "is-offline" };
   if (status === "api_not_configured") return { label: "API NEEDED", className: "needs-api" };
   if (status === "api_error") return { label: "CHECK FAILED", className: "has-error" };
   if (status === "blocked") return { label: "BLOCKED", className: "is-blocked" };
@@ -810,7 +866,7 @@ function renderStreamerInspector(streamer) {
       <div class="inspector-kv">
         <span>Channel ID</span><b>${esc(streamer.channelId || "not set")}</b>
         <span>Platform</span><b>${esc(streamer.platform)}</b>
-        <span>Partner Status</span><b>${streamer.permissionStatus === "approved" ? "Approved" : "Needs review"}</b>
+        <span>Partner Status</span><b>${isPermissionReady(streamer) ? "Ready" : "Needs review"}</b>
         <span>Language</span><b>English</b>
         <span>Live source</span><b>${esc(liveSourceLabel(streamer))}</b>
         <span>Last check</span><b>${esc(fmtDate(streamer.lastCheckedAt))}</b>
@@ -842,6 +898,7 @@ function renderStreamerInspector(streamer) {
 
 function permissionBadge(status) {
   if (status === "approved") return badge("approved", "good");
+  if (status === "demo_approved") return badge("demo approved", "info");
   if (status === "blocked") return badge("blocked", "bad");
   return badge("pending", "warn");
 }
@@ -2434,7 +2491,7 @@ function renderAnalytics() {
 
 function analyticsStats() {
   const monitoredStreamers = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
-  const approvedStreamers = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "approved");
+  const approvedStreamers = countWhere(state.streamers, isPermissionReady);
   const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
   const approvedApprovals = countWhere(state.approvals, (approval) => approval.status === "approved");
   const blockedApprovals = countWhere(state.approvals, (approval) => ["blocked", "rejected", "sent_back"].includes(approval.status));
@@ -2490,7 +2547,7 @@ function analyticsStreamerRows() {
         candidates: candidates.length,
         avgScore,
         approvals: approvals.length,
-        approved: streamer.permissionStatus === "approved",
+        approved: isPermissionReady(streamer),
         monitored: streamer.monitorEnabled,
         lastCheckedAt: streamer.lastCheckedAt
       };
@@ -3104,6 +3161,62 @@ async function seedDemo() {
   await refresh();
 }
 
+const agent101Goals = {
+  "agent101-demo-workflow": "Run the full supervised demo clipping workflow for the Clips Office. Add demo streamers, run a watch cycle, create 12 candidates, score them, package the top 3, create CapCut briefs, create draft posting packages, and send every risky external step to Human Gate.",
+  "agent101-add-demo-streamers": "Add 5 demo streamers for internal StreamClipper sandbox testing.",
+  "agent101-watch-cycle": "Run a safe watch cycle across demo-approved streamers and create live demo sessions.",
+  "agent101-create-candidates": "Generate and score clip candidates from the demo watch cycle.",
+  "agent101-package-top3": "Package the top 3 clip candidates, create CapCut handoffs, and create draft posting packages.",
+  "agent101-human-gate": "Send current draft posting packages and clip package approvals to Human Gate without publishing anything."
+};
+
+async function runAgent101(goal, mode = "demo") {
+  state.agentRunBusy = true;
+  state.agentRun = {
+    status: "running",
+    goal,
+    currentStep: "Starting Agent 101",
+    progress: 8,
+    steps: [],
+    counts: {}
+  };
+  render();
+  try {
+    const result = await api("/api/agent101/run", {
+      method: "POST",
+      body: JSON.stringify({ goal, mode, maxSteps: 10 })
+    });
+    state.agentRun = result;
+    state.agentRunBusy = false;
+    await loadCore();
+    toast(result.status === "blocked" ? result.summary : result.summary || "Agent 101 run complete", result.status === "completed" ? "good" : result.status === "blocked" ? "info" : "bad");
+    renderNav();
+    render();
+  } catch (error) {
+    state.agentRunBusy = false;
+    state.agentRun = {
+      status: "error",
+      goal,
+      currentStep: "Run failed",
+      progress: 100,
+      summary: error.message,
+      steps: [],
+      counts: {}
+    };
+    toast(error.message, "bad");
+    render();
+  }
+}
+
+async function runAgentCommand(form) {
+  const goal = cleanCommand(form.elements.goal?.value) || agent101Goals["agent101-demo-workflow"];
+  await runAgent101(goal, "demo");
+}
+
+function cleanCommand(value) {
+  return String(value || "").trim();
+}
+
 async function scoutStreamers() {
   const platform = document.querySelector("#scout-platform")?.value || "all";
   const result = await api(`/api/streamers/recommendations?platform=${encodeURIComponent(platform)}&limit=8`);
@@ -3219,10 +3332,15 @@ async function gate(path, id) {
 }
 
 document.addEventListener("submit", async (event) => {
-  event.preventDefault();
+  const agentForm = event.target.closest("#agent101-command-form");
   const form = event.target.closest("#streamer-form");
-  if (!form) return;
+  if (!agentForm && !form) return;
+  event.preventDefault();
   try {
+    if (agentForm) {
+      await runAgentCommand(agentForm);
+      return;
+    }
     await submitStreamer(form);
   } catch (error) {
     toast(error.message, "bad");
@@ -3268,6 +3386,7 @@ document.addEventListener("click", async (event) => {
     if (action === "run-watch") await runWatch();
     if (action === "scout-streamers") await scoutStreamers();
     if (action === "seed-demo") await seedDemo();
+    if (agent101Goals[action]) await runAgent101(agent101Goals[action], "demo");
     if (action === "create-capcut") await createCapCut();
     if (action === "create-captions") await createCaptions();
     if (action === "test-openai") {

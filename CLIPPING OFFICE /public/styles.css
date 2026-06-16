@@ -775,39 +775,55 @@ button.primary {
   gap: 12px;
 }
 
-.sidebar-health-card {
+.sidebar-return-card {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 34px 18px;
+  grid-template-columns: 44px minmax(0, 1fr) 34px;
   align-items: center;
   gap: 12px;
   min-height: 96px;
-  border: 1px solid rgba(34, 197, 94, 0.28);
+  border: 1px solid rgba(125, 211, 252, 0.24);
   border-radius: 20px;
   background:
-    radial-gradient(circle at 18% 25%, rgba(34, 197, 94, 0.2), transparent 32%),
-    linear-gradient(135deg, rgba(6, 78, 59, 0.38), rgba(5, 18, 28, 0.82));
+    radial-gradient(circle at 18% 25%, rgba(34, 211, 238, 0.2), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(168, 85, 247, 0.22), transparent 36%),
+    linear-gradient(135deg, rgba(12, 28, 48, 0.78), rgba(5, 18, 28, 0.9));
   padding: 17px 16px;
+  color: var(--text);
+  text-decoration: none;
   box-shadow:
     inset 0 1px rgba(255, 255, 255, 0.08),
-    0 0 36px rgba(34, 197, 94, 0.12);
+    0 0 36px rgba(34, 211, 238, 0.12);
 }
 
-.health-light {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 22px rgba(34, 197, 94, 0.84);
+.sidebar-return-card:hover {
+  border-color: rgba(34, 211, 238, 0.42);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.1),
+    0 0 42px rgba(34, 211, 238, 0.16);
 }
 
-.sidebar-health-card strong {
+.return-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  background: rgba(8, 20, 34, 0.76);
+  color: var(--cyan);
+  font-weight: 950;
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.14);
+}
+
+.sidebar-return-card strong {
   display: block;
-  color: #4ade80;
+  color: #f8fbff;
   font-size: 1.08rem;
   line-height: 1.15;
 }
 
-.sidebar-health-card small {
+.sidebar-return-card small {
   display: block;
   margin-top: 6px;
   color: #a8b4c7;
@@ -815,16 +831,17 @@ button.primary {
   font-weight: 760;
 }
 
-.health-wave {
-  color: #4ade80;
-  font-size: 2rem;
-  font-weight: 900;
-}
-
-.health-arrow {
-  color: #a8b4c7;
-  font-size: 2rem;
-  font-weight: 900;
+.return-arrow {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 30px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 999px;
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
 }
 
 .limit-card,
@@ -6080,31 +6097,33 @@ h1 {
     gap: 9px;
   }
 
-  .sidebar-health-card {
-    grid-template-columns: 24px minmax(0, 1fr) 28px 14px;
+  .sidebar-return-card {
+    grid-template-columns: 34px minmax(0, 1fr) 30px;
     gap: 9px;
     min-height: 74px;
     padding: 11px;
     border-radius: 16px;
   }
 
-  .health-light {
-    width: 16px;
-    height: 16px;
+  .return-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 11px;
   }
 
-  .sidebar-health-card strong {
+  .sidebar-return-card strong {
     font-size: 0.91rem;
   }
 
-  .sidebar-health-card small {
+  .sidebar-return-card small {
     margin-top: 3px;
     font-size: 0.72rem;
   }
 
-  .health-wave,
-  .health-arrow {
-    font-size: 1.45rem;
+  .return-arrow {
+    min-width: 30px;
+    min-height: 26px;
+    font-size: 0.64rem;
   }
 
   .limit-card,

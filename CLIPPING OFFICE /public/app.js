@@ -120,15 +120,14 @@ function miniThumb(label, index = 0) {
 
 function renderSidebarOps() {
   $("#sidebar-ops").innerHTML = `
-    <section class="sidebar-health-card">
-      <span class="health-light"></span>
+    <a class="sidebar-return-card" href="/" aria-label="Back to Argentum">
+      <span class="return-mark">A</span>
       <div>
-        <strong>System Operational</strong>
-        <small>All systems running smoothly</small>
+        <strong>Back to Argentum</strong>
+        <small>Return to Control Floor</small>
       </div>
-      <span class="health-wave" aria-hidden="true">⌁</span>
-      <span class="health-arrow" aria-hidden="true">›</span>
-    </section>
+      <span class="return-arrow" aria-hidden="true">Go</span>
+    </a>
   `;
 }
 

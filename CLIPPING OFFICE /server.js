@@ -59,6 +59,42 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function twitchApiConfigured() {
+  return Boolean(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken));
+}
+
+function normalizeTwitchLogin(value) {
+  const raw = cleanText(value).replace(/^@/, "");
+  if (!raw) return "";
+  try {
+    const parsed = raw.startsWith("http") ? new URL(raw) : new URL(`https://${raw}`);
+    if (parsed.hostname.includes("twitch.tv")) {
+      return cleanText(parsed.pathname.split("/").filter(Boolean)[0] || "").replace(/^@/, "").toLowerCase();
+    }
+  } catch {
+    // Fall through to plain login cleanup.
+  }
+  return raw
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/^twitch\.tv\//i, "")
+    .split(/[/?#]/)[0]
+    .replace(/^@/, "")
+    .toLowerCase();
+}
+
+function normalizeStreamerInput(body = {}) {
+  const channelUrl = cleanText(body.channelUrl);
+  const login = normalizeTwitchLogin(body.channelId || body.displayName || body.streamerName || channelUrl);
+  const rawDisplay = cleanText(body.displayName || body.streamerName);
+  const displayName = rawDisplay && !rawDisplay.includes("twitch.tv") ? rawDisplay : login || "Untitled streamer";
+  return {
+    displayName,
+    channelId: login,
+    channelUrl: channelUrl || (login ? `https://www.twitch.tv/${login}` : "")
+  };
+}
+
 function normalizeStatus(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
@@ -126,7 +162,7 @@ function publicConfig() {
     openaiModel: config.openaiModel,
     openaiConfigured: Boolean(config.openaiApiKey),
     openaiTestBudgetUsd: config.openaiTestBudgetUsd,
-    twitchConfigured: Boolean(config.twitchClientId && config.twitchClientSecret),
+    twitchConfigured: twitchApiConfigured(),
     twitchRedirectConfigured: Boolean(config.twitchRedirectUri),
     twitchOAuthTokenConfigured: Boolean(config.twitchOAuthToken),
     twitchAllowedChannels: config.twitchAllowedChannels,
@@ -146,7 +182,7 @@ function isApprovedStreamer(streamer) {
 
 function channelAllowed(streamer) {
   if (!config.twitchAllowedChannels.length) return true;
-  const identities = [streamer.channelId, streamer.displayName, streamer.channelUrl]
+  const identities = [streamer.channelId, streamer.displayName, streamer.channelUrl, normalizeTwitchLogin(streamer.channelUrl)]
     .map((value) => cleanText(value).toLowerCase())
     .filter(Boolean);
   return identities.some((identity) => config.twitchAllowedChannels.includes(identity));
@@ -366,13 +402,54 @@ async function twitchFetch(endpoint) {
 }
 
 async function fetchTwitchStream(streamer) {
-  const channelId = cleanText(streamer.channelId || streamer.displayName);
+  const channelId = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName);
   if (!channelId) return null;
   const params = new URLSearchParams();
   if (/^\d+$/.test(channelId)) params.set("user_id", channelId);
   else params.set("user_login", channelId.toLowerCase());
   const json = await twitchFetch(`/streams?${params}`);
   return json.data?.[0] || null;
+}
+
+async function checkStreamerLive(streamer) {
+  streamer.lastCheckedAt = now();
+  streamer.channelId = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName) || streamer.channelId;
+  if (streamer.platform === "twitch" && streamer.channelId && !streamer.channelUrl) {
+    streamer.channelUrl = `https://www.twitch.tv/${streamer.channelId}`;
+  }
+
+  if (!isApprovedStreamer(streamer)) {
+    streamer.liveStatus = "blocked";
+    streamer.liveStatusReason = "Streamer permission is not approved";
+    return { streamerId: streamer.id, live: false, skipped: true, official: false, reason: streamer.liveStatusReason };
+  }
+
+  if (!channelAllowed(streamer)) {
+    streamer.liveStatus = "blocked";
+    streamer.liveStatusReason = "Streamer is not in TWITCH_ALLOWED_CHANNELS";
+    return { streamerId: streamer.id, live: false, skipped: true, official: false, reason: streamer.liveStatusReason };
+  }
+
+  if (streamer.platform !== "twitch") {
+    streamer.liveStatus = "unsupported";
+    streamer.liveStatusReason = "Only Twitch live checks are wired in v1";
+    return { streamerId: streamer.id, live: null, skipped: true, official: false, reason: streamer.liveStatusReason };
+  }
+
+  if (!twitchApiConfigured()) {
+    streamer.liveStatus = "api_not_configured";
+    streamer.liveStatusReason = "Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET for official live checks";
+    return { streamerId: streamer.id, live: null, skipped: true, official: false, reason: streamer.liveStatusReason };
+  }
+
+  const stream = await fetchTwitchStream(streamer);
+  streamer.liveStatus = stream ? "live" : "offline";
+  streamer.liveStatusReason = stream ? "Official Twitch Helix stream is live" : "Official Twitch Helix stream returned no active stream";
+  streamer.liveTitle = stream?.title || "";
+  streamer.liveCategory = stream?.game_name || "";
+  streamer.liveViewerCount = stream?.viewer_count || 0;
+  streamer.lastLiveAt = stream ? now() : streamer.lastLiveAt;
+  return { streamerId: streamer.id, live: Boolean(stream), official: true, stream };
 }
 
 async function testOpenAI() {
@@ -568,7 +645,7 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "GET" && pathname === "/api/twitch/status") {
     return sendJson(res, 200, {
-      configured: Boolean(config.twitchClientId && config.twitchClientSecret),
+      configured: twitchApiConfigured(),
       clientIdConfigured: Boolean(config.twitchClientId),
       clientSecretConfigured: Boolean(config.twitchClientSecret),
       redirectUriConfigured: Boolean(config.twitchRedirectUri),
@@ -580,7 +657,7 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "POST" && pathname === "/api/twitch/test") {
     try {
-      if (!(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken))) {
+      if (!twitchApiConfigured()) {
         return sendJson(res, 200, {
           configured: false,
           live: false,
@@ -607,17 +684,15 @@ async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "GET" && pathname === "/api/twitch/streams") {
     const rows = [];
     for (const streamer of state.streamers.filter((item) => item.platform === "twitch")) {
-      if (!isApprovedStreamer(streamer) || !channelAllowed(streamer)) {
-        rows.push({ streamerId: streamer.id, live: false, blocked: true, reason: "Permission or allowlist gate" });
-        continue;
-      }
       try {
-        const stream = config.twitchClientId ? await fetchTwitchStream(streamer) : null;
-        rows.push({ streamerId: streamer.id, live: Boolean(stream), stream });
+        rows.push(await checkStreamerLive(streamer));
       } catch (error) {
-        rows.push({ streamerId: streamer.id, live: false, error: error.message });
+        streamer.liveStatus = "api_error";
+        streamer.liveStatusReason = error.message;
+        rows.push({ streamerId: streamer.id, live: null, official: false, error: error.message });
       }
     }
+    await saveState();
     return sendJson(res, 200, { streams: rows });
   }
 
@@ -627,17 +702,19 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "POST" && pathname === "/api/twitch/streamers") {
     const body = await readJsonBody(req);
+    const identity = normalizeStreamerInput(body);
     const streamer = {
       id: newId("streamer"),
       platform: normalizeStatus(body.platform || "twitch", ["twitch", "youtube_live", "kick", "other"], "twitch"),
-      displayName: cleanText(body.displayName || body.streamerName || body.channelId || "Untitled streamer"),
-      channelId: cleanText(body.channelId),
-      channelUrl: cleanText(body.channelUrl),
+      displayName: identity.displayName,
+      channelId: identity.channelId,
+      channelUrl: identity.channelUrl,
       permissionStatus: normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], "pending"),
       allowedUse: Array.isArray(body.allowedUse) ? body.allowedUse : ["clips"],
       monitorEnabled: Boolean(body.monitorEnabled ?? true),
       lastCheckedAt: null,
       liveStatus: "unknown",
+      liveStatusReason: "Not checked yet",
       notes: cleanText(body.notes),
       createdAt: now(),
       updatedAt: now()
@@ -656,8 +733,44 @@ async function handleApi(req, res, pathname, searchParams) {
       streamerId: streamer.id,
       permissionStatus: streamer.permissionStatus
     });
+    if (streamer.permissionStatus === "approved" && streamer.monitorEnabled) {
+      try {
+        await checkStreamerLive(streamer);
+        await logEvent("stream_live_checked", "Streamer live status checked", {
+          streamerId: streamer.id,
+          liveStatus: streamer.liveStatus,
+          official: twitchApiConfigured()
+        });
+      } catch (error) {
+        streamer.liveStatus = "api_error";
+        streamer.liveStatusReason = error.message;
+        await logEvent("api_error", "Twitch live check failed after streamer add", { streamerId: streamer.id, error: error.message });
+      }
+    }
     await saveState();
     return sendJson(res, 201, { streamer });
+  }
+
+  const streamerCheckMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)\/check$/);
+  if (streamerCheckMatch && req.method === "POST") {
+    const streamer = findStreamer(streamerCheckMatch[1]);
+    if (!streamer) return sendError(res, 404, "Streamer not found");
+    try {
+      const result = await checkStreamerLive(streamer);
+      await logEvent("stream_live_checked", "Streamer live status checked", {
+        streamerId: streamer.id,
+        liveStatus: streamer.liveStatus,
+        official: result.official
+      });
+      await saveState();
+      return sendJson(res, 200, { streamer, result });
+    } catch (error) {
+      streamer.liveStatus = "api_error";
+      streamer.liveStatusReason = error.message;
+      await logEvent("api_error", "Twitch live check failed", { streamerId: streamer.id, error: error.message });
+      await saveState();
+      return sendError(res, 502, error.message, { streamerId: streamer.id });
+    }
   }
 
   const streamerMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)$/);
@@ -666,11 +779,16 @@ async function handleApi(req, res, pathname, searchParams) {
     if (!streamer) return sendError(res, 404, "Streamer not found");
     const body = await readJsonBody(req);
     const before = streamer.permissionStatus;
+    const identity = normalizeStreamerInput({
+      displayName: body.displayName !== undefined ? body.displayName : streamer.displayName,
+      channelId: body.channelId !== undefined ? body.channelId : streamer.channelId,
+      channelUrl: body.channelUrl !== undefined ? body.channelUrl : streamer.channelUrl
+    });
     Object.assign(streamer, {
       platform: body.platform ? normalizeStatus(body.platform, ["twitch", "youtube_live", "kick", "other"], streamer.platform) : streamer.platform,
-      displayName: body.displayName !== undefined ? cleanText(body.displayName) : streamer.displayName,
-      channelId: body.channelId !== undefined ? cleanText(body.channelId) : streamer.channelId,
-      channelUrl: body.channelUrl !== undefined ? cleanText(body.channelUrl) : streamer.channelUrl,
+      displayName: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.displayName : streamer.displayName,
+      channelId: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.channelId : streamer.channelId,
+      channelUrl: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.channelUrl : streamer.channelUrl,
       permissionStatus: body.permissionStatus
         ? normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], streamer.permissionStatus)
         : streamer.permissionStatus,
@@ -698,31 +816,29 @@ async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "POST" && pathname === "/api/watch/run") {
     const results = [];
     for (const streamer of state.streamers.filter((item) => item.monitorEnabled)) {
-      streamer.lastCheckedAt = now();
-      if (!isApprovedStreamer(streamer)) {
-        streamer.liveStatus = "blocked";
-        results.push({ streamerId: streamer.id, skipped: true, reason: "Streamer permission is not approved" });
-        await logEvent("permission_blocked", "Watch skipped for unapproved streamer", { streamerId: streamer.id });
-        continue;
-      }
-      if (!channelAllowed(streamer)) {
-        streamer.liveStatus = "blocked";
-        results.push({ streamerId: streamer.id, skipped: true, reason: "Streamer is not in TWITCH_ALLOWED_CHANNELS" });
-        await logEvent("permission_blocked", "Watch skipped by Twitch allowlist", { streamerId: streamer.id });
-        continue;
-      }
-
       let stream = null;
+      let liveCheck = null;
       try {
-        stream = streamer.platform === "twitch" && config.twitchClientId ? await fetchTwitchStream(streamer) : null;
+        liveCheck = await checkStreamerLive(streamer);
+        stream = liveCheck.stream || null;
       } catch (error) {
+        streamer.liveStatus = "api_error";
+        streamer.liveStatusReason = error.message;
         await logEvent("api_error", "Twitch stream metadata fetch failed", {
           streamerId: streamer.id,
           error: error.message
         });
       }
 
-      streamer.liveStatus = stream ? "live" : "offline_or_demo";
+      if (liveCheck?.skipped && streamer.liveStatus !== "api_not_configured") {
+        results.push(liveCheck);
+        await logEvent("permission_blocked", "Watch skipped before live scan", {
+          streamerId: streamer.id,
+          reason: liveCheck.reason
+        });
+        continue;
+      }
+
       const session = {
         id: newId("session"),
         streamerId: streamer.id,
@@ -761,7 +877,7 @@ async function handleApi(req, res, pathname, searchParams) {
       const score = scoreClipMoment(candidateBase);
       const candidate = { ...candidateBase, ...score };
       state.clipCandidates.unshift(candidate);
-      results.push({ streamerId: streamer.id, session, candidate });
+      results.push({ ...(liveCheck || { streamerId: streamer.id, live: Boolean(stream), official: twitchApiConfigured() }), session, candidate });
       await logEvent("candidate_detected", "Clip candidate detected", {
         streamerId: streamer.id,
         candidateId: candidate.id,
@@ -1104,7 +1220,10 @@ function streamFile(res, filePath) {
   };
   const stream = createReadStream(filePath);
   stream.on("open", () => {
-    res.writeHead(200, { "content-type": types[ext] || "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": types[ext] || "application/octet-stream",
+      "cache-control": "no-store"
+    });
     stream.pipe(res);
   });
   stream.on("error", () => {

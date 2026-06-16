@@ -6,11 +6,10 @@ const navItems = [
   { id: "queue", label: "Posting Queue", icon: "queue", group: "core", count: "queue", tone: "warn" },
   { id: "gate", label: "Human Gate", icon: "shield", group: "core", count: "gate", tone: "pink" },
   { id: "outputs", label: "Outputs", icon: "folder", group: "records" },
-  { id: "analytics", label: "Analytics", icon: "chart", group: "records", route: "dashboard" },
+  { id: "analytics", label: "Analytics", icon: "chart", group: "records" },
   { id: "logs", label: "Logs", icon: "document", group: "records" },
   { id: "settings", label: "Settings", icon: "settings", group: "admin" },
-  { id: "integrations", label: "Integrations", icon: "plug", group: "admin", route: "settings" },
-  { id: "team", label: "Team & Permissions", icon: "team", group: "admin", route: "settings" }
+  { id: "integrations", label: "Integrations", icon: "plug", group: "admin" }
 ];
 
 const state = {
@@ -190,7 +189,7 @@ function updateStatus(limit) {
   $("#openai-status").className = `pill ${state.openai?.configured ? "good" : "warn"}`;
   $("#openai-status").textContent = state.openai?.configured ? "OpenAI live" : "OpenAI local";
   $("#twitch-status").className = `pill ${state.twitch?.configured ? "good" : "warn"}`;
-  $("#twitch-status").textContent = state.twitch?.configured ? "Twitch ready" : "Twitch demo";
+  $("#twitch-status").textContent = state.twitch?.configured ? "Twitch ready" : "Twitch API needed";
   $("#limit-status").className = `pill ${limit?.blocked ? "bad" : limit?.warning ? "warn" : "info"}`;
   $("#limit-status").textContent = `${limit?.approvedToday ?? 0}/${limit?.limit ?? 20} approved`;
   renderSidebarOps();
@@ -265,8 +264,10 @@ function subtitleFor(id) {
     queue: "Draft-only social packages",
     gate: "Review and approve critical actions before they go live",
     outputs: "Exported briefs and caption files",
+    analytics: "Agent and streamer operating intelligence",
     logs: "System event trail",
-    settings: "Backend status and limits"
+    settings: "Backend status and limits",
+    integrations: "Server-side connectors and manual handoffs"
   }[id];
 }
 
@@ -279,10 +280,18 @@ function render() {
     queue: renderQueue,
     gate: renderGate,
     outputs: renderOutputs,
+    analytics: renderAnalytics,
     logs: renderLogs,
-    settings: renderSettings
+    settings: renderSettings,
+    integrations: renderIntegrations
   };
-  renderers[state.view]();
+  const renderer = renderers[state.view] || renderDashboard;
+  try {
+    renderer();
+  } catch (error) {
+    console.error(error);
+    view.innerHTML = `<section class="panel">${empty(`Could not open ${state.view}: ${error.message}`)}</section>`;
+  }
 }
 
 function renderDashboard() {
@@ -482,9 +491,9 @@ function renderSystemTiles() {
 }
 
 function renderWatchlist() {
-  const liveCount = countWhere(state.streamers, (streamer) => String(streamer.liveStatus || "").includes("live"));
+  const liveCount = countWhere(state.streamers, isStreamerLive);
   const monitoringCount = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
-  const offlineCount = countWhere(state.streamers, (streamer) => !String(streamer.liveStatus || "").includes("live"));
+  const offlineCount = countWhere(state.streamers, isStreamerConfirmedOffline);
   const pendingCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "pending");
   const blockedCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "blocked");
   const selected = selectedStreamer();
@@ -562,7 +571,7 @@ function renderWatchlist() {
 
 function renderStreamerTable(editable) {
   const sortedStreamers = [...state.streamers].sort((a, b) => {
-    const liveDelta = Number(String(b.liveStatus || "").includes("live")) - Number(String(a.liveStatus || "").includes("live"));
+    const liveDelta = Number(isStreamerLive(b)) - Number(isStreamerLive(a));
     if (liveDelta) return liveDelta;
     return String(b.lastCheckedAt || "").localeCompare(String(a.lastCheckedAt || ""));
   });
@@ -608,6 +617,7 @@ function renderStreamerTable(editable) {
               </td>
               ${editable ? `<td><div class="actions">
                 <button data-toggle-monitor="${streamer.id}">${streamer.monitorEnabled ? "Pause" : "Monitor"}</button>
+                <button data-check-streamer="${streamer.id}">Check</button>
                 <button data-approve-streamer="${streamer.id}">OK</button>
                 <button class="danger" data-delete-streamer="${streamer.id}">Del</button>
               </div></td>` : ""}
@@ -642,7 +652,7 @@ function renderCompactStreamerForm() {
         <option value="kick">Kick</option>
         <option value="other">Other</option>
       </select>
-      <input name="channelId" required placeholder="Channel ID / login">
+      <input name="channelId" placeholder="Channel login, optional if URL is pasted">
       <input name="channelUrl" placeholder="Channel URL">
       <select name="permissionStatus">
         <option value="approved">approved</option>
@@ -674,18 +684,37 @@ function streamerCandidateCount(streamerId) {
   return countWhere(state.candidates, (candidate) => candidate.streamerId === streamerId);
 }
 
+function isStreamerLive(streamer) {
+  return streamer?.liveStatus === "live";
+}
+
+function isStreamerConfirmedOffline(streamer) {
+  return streamer?.liveStatus === "offline" || streamer?.liveStatus === "offline_or_demo";
+}
+
+function liveStatusMeta(streamer) {
+  const status = streamer?.liveStatus || "unknown";
+  if (status === "live") return { label: "LIVE", className: "is-live" };
+  if (status === "offline" || status === "offline_or_demo") return { label: "OFFLINE", className: "is-offline" };
+  if (status === "api_not_configured") return { label: "API NEEDED", className: "needs-api" };
+  if (status === "api_error") return { label: "CHECK FAILED", className: "has-error" };
+  if (status === "blocked") return { label: "BLOCKED", className: "is-blocked" };
+  if (status === "unsupported") return { label: "UNSUPPORTED", className: "is-blocked" };
+  return { label: "CHECK NEEDED", className: "needs-check" };
+}
+
 function platformBadge(platform) {
   const label = platform === "youtube_live" ? "YouTube" : platform || "Twitch";
   return `<span class="platform-badge">${esc(label)}</span>`;
 }
 
 function liveBadge(streamer) {
-  const live = String(streamer.liveStatus || "").includes("live");
-  return `<span class="live-badge ${live ? "is-live" : ""}">${live ? "LIVE" : "OFFLINE"}</span>`;
+  const { label, className } = liveStatusMeta(streamer);
+  return `<span class="live-badge ${esc(className)}" title="${esc(streamer.liveStatusReason || "")}">${esc(label)}</span>`;
 }
 
 function renderStreamerInspector(streamer) {
-  const live = String(streamer.liveStatus || "").includes("live");
+  const status = liveStatusMeta(streamer);
   return `
     <div class="inspector-profile">
       <span class="creator-avatar large">${esc(initials(streamer.displayName))}</span>
@@ -693,7 +722,7 @@ function renderStreamerInspector(streamer) {
         <h2>${esc(streamer.displayName)}</h2>
         <p>${esc(streamer.channelId || "local channel")} · ${streamerCandidateCount(streamer.id)} candidates</p>
       </div>
-      <span class="live-badge ${live ? "is-live" : ""}">${live ? "LIVE" : "OFFLINE"}</span>
+      <span class="live-badge ${esc(status.className)}" title="${esc(streamer.liveStatusReason || "")}">${esc(status.label)}</span>
     </div>
     <div class="inspector-tabs">
       <span class="active">Overview</span>
@@ -708,6 +737,8 @@ function renderStreamerInspector(streamer) {
         <span>Platform</span><b>${esc(streamer.platform)}</b>
         <span>Partner Status</span><b>${streamer.permissionStatus === "approved" ? "Approved" : "Needs review"}</b>
         <span>Language</span><b>English</b>
+        <span>Live source</span><b>${state.twitch?.configured ? "Official Twitch API" : "Needs Twitch API vars"}</b>
+        <span>Last check</span><b>${esc(fmtDate(streamer.lastCheckedAt))}</b>
       </div>
     </div>
     <div class="inspector-section">
@@ -926,7 +957,11 @@ function candidateTags(candidate, index = 0) {
 }
 
 function liveLabel(value) {
-  return String(value || "").includes("live") ? "Live now" : String(value || "Demo");
+  if (value === "live") return "Live now";
+  if (value === "offline") return "Offline by Twitch API";
+  if (value === "api_not_configured") return "Needs Twitch API";
+  if (value === "api_error") return "Twitch check failed";
+  return String(value || "Not checked");
 }
 
 function scoreRing(score) {
@@ -2208,6 +2243,293 @@ function percent(value, total) {
   return Math.round((value / total) * 100);
 }
 
+function renderAnalytics() {
+  const stats = analyticsStats();
+  const topStreamers = analyticsStreamerRows().slice(0, 6);
+  const queuePressure = state.approvals.length ? percent(stats.pendingApprovals, state.approvals.length) : 0;
+  const approvalAccuracy = percent(stats.approvedDecisions, Math.max(1, stats.decidedApprovals));
+  view.innerHTML = `
+    <section class="analytics-page">
+      <div class="analytics-tabs">
+        <button class="active">Overview</button>
+        <button>Agent 101</button>
+        <button>Streamers</button>
+        <button>Human Gate</button>
+        <button>System</button>
+        <button>Custom</button>
+      </div>
+      <button class="analytics-export" type="button">Export Report</button>
+
+      <div class="analytics-metrics">
+        ${analyticsMetric("Agent workload", stats.agentWorkload, `${stats.pendingApprovals} decisions waiting`, "AG", queuePressure > 50 ? "warn" : "good")}
+        ${analyticsMetric("Streamers watched", stats.monitoredStreamers, `${stats.approvedStreamers} approved`, "ST", "info")}
+        ${analyticsMetric("Agent-created outputs", stats.agentOutputs, `${stats.artifacts} artifacts stored`, "OUT", "violet")}
+        ${analyticsMetric("Approval accuracy", `${approvalAccuracy}%`, `${stats.blockedApprovals} blocked / sent back`, "OK", approvalAccuracy >= 80 ? "good" : "warn")}
+        ${analyticsMetric("Streamer signal quality", `${stats.averageCandidateScore}/100`, `${stats.highScoreCandidates} high-signal moments`, "QS", stats.averageCandidateScore >= 70 ? "good" : "info")}
+        ${analyticsMetric("Safety gate load", `${queuePressure}%`, `${stats.pendingApprovals} of ${state.approvals.length} approvals open`, "HG", queuePressure > 45 ? "warn" : "good")}
+      </div>
+
+      <div class="analytics-grid-primary">
+        <section class="panel analytics-wide">
+          <div class="toolbar">
+            <div>
+              <h2>Agent 101 Performance Over Time</h2>
+              <p class="muted">Work created, approvals received, and streamer checks from real local activity.</p>
+            </div>
+            <select aria-label="Analytics range"><option>7D</option><option>30D</option></select>
+          </div>
+          ${renderAgentTimeline()}
+        </section>
+        <section class="panel analytics-donut-card">
+          <h2>Agent Work Mix</h2>
+          ${renderAnalyticsDonut([
+            ["Tasks", state.drafts.length, "#38bdf8"],
+            ["Approvals", state.approvals.length, "#a855f7"],
+            ["Outputs", state.artifacts.length, "#22c55e"],
+            ["Logs", Math.min(state.logs.length, 250), "#f59e0b"]
+          ], "Agent Work")}
+        </section>
+        <section class="panel analytics-time-card">
+          <h2>Operator Time Saved</h2>
+          <strong>${stats.savedHours}h ${stats.savedMinutes}m</strong>
+          <p class="muted">Estimated from draft packages, generated files, and monitored stream checks.</p>
+          ${analyticsMiniChart("time", [32, 38, 45, 40, 52, 56, 61, 58, 67, 72, 69, 78])}
+        </section>
+      </div>
+
+      <div class="analytics-grid-secondary">
+        <section class="panel top-streamers-card">
+          <div class="toolbar">
+            <h2>Top Streamers For Agent 101</h2>
+            <button data-nav-jump="watchlist">View streamers</button>
+          </div>
+          ${renderAnalyticsStreamerTable(topStreamers)}
+        </section>
+        <section class="panel decision-card">
+          <h2>Human Gate Decisions</h2>
+          ${renderAnalyticsDonut([
+            ["Pending", stats.pendingApprovals, "#a855f7"],
+            ["Approved", stats.approvedApprovals, "#22c55e"],
+            ["Blocked", stats.blockedApprovals, "#ef4444"],
+            ["Other", Math.max(0, state.approvals.length - stats.pendingApprovals - stats.approvedApprovals - stats.blockedApprovals), "#64748b"]
+          ], "Decisions")}
+        </section>
+        <section class="panel quality-card">
+          <h2>Agent And Streamer Quality</h2>
+          <div class="quality-ring" style="--score:${stats.averageCandidateScore}">
+            <strong>${stats.averageCandidateScore}</strong>
+            <span>/100</span>
+          </div>
+          <div class="quality-bars">
+            ${qualityBar("Streamer permission coverage", percent(stats.approvedStreamers, state.streamers.length))}
+            ${qualityBar("Monitoring coverage", percent(stats.monitoredStreamers, state.streamers.length))}
+            ${qualityBar("High-signal candidate rate", percent(stats.highScoreCandidates, state.candidates.length))}
+            ${qualityBar("Approval completion", percent(stats.decidedApprovals, state.approvals.length))}
+          </div>
+        </section>
+      </div>
+
+      <div class="analytics-grid-tertiary">
+        <section class="panel system-health-card">
+          <h2>Agent System Health</h2>
+          <div class="analytics-health-grid">
+            ${healthTile("Provider", state.openai?.configured ? "OpenAI live" : "Local demo", state.openai?.configured ? "good" : "warn")}
+            ${healthTile("Twitch layer", state.twitch?.configured ? "Ready" : "Manual/demo", state.twitch?.configured ? "good" : "warn")}
+            ${healthTile("Queue health", stats.pendingApprovals ? "Review needed" : "Clear", stats.pendingApprovals ? "warn" : "good")}
+            ${healthTile("Agent safety", "Approval gated", "good")}
+          </div>
+        </section>
+        <section class="panel feature-card">
+          <h2>Agent Capability Usage</h2>
+          ${usageBar("Stream monitoring", percent(stats.monitoredStreamers, Math.max(1, state.streamers.length)))}
+          ${usageBar("Clip scoring", percent(state.candidates.length, Math.max(1, state.candidates.length + 20)))}
+          ${usageBar("Approval packaging", percent(state.approvals.length, Math.max(1, state.approvals.length + 15)))}
+          ${usageBar("Output generation", percent(state.artifacts.length, Math.max(1, state.artifacts.length + 25)))}
+        </section>
+        <section class="panel insight-card">
+          <h2>Insights</h2>
+          ${analyticsInsight("Agent 101 is busiest at Human Gate", `${stats.pendingApprovals} items need a decision before external posting can move.`)}
+          ${analyticsInsight("Streamer data is the main signal source", `${stats.monitoredStreamers} monitored streamers are feeding the agent's candidate radar.`)}
+          ${analyticsInsight("Safety is holding correctly", "Publishing and account changes remain blocked until an operator approves them.")}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function analyticsStats() {
+  const monitoredStreamers = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
+  const approvedStreamers = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "approved");
+  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
+  const approvedApprovals = countWhere(state.approvals, (approval) => approval.status === "approved");
+  const blockedApprovals = countWhere(state.approvals, (approval) => ["blocked", "rejected", "sent_back"].includes(approval.status));
+  const decidedApprovals = state.approvals.length - pendingApprovals;
+  const scores = state.candidates.map((candidate) => Number(candidate.score || 0)).filter(Boolean);
+  const averageCandidateScore = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0;
+  const highScoreCandidates = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 70);
+  const agentWorkload = state.drafts.length + state.approvals.length + state.packages.length;
+  const agentOutputs = state.packages.length + state.artifacts.length;
+  const savedMinutesTotal = Math.max(0, state.packages.length * 18 + state.artifacts.length * 6 + monitoredStreamers * 4);
+  return {
+    monitoredStreamers,
+    approvedStreamers,
+    pendingApprovals,
+    approvedApprovals,
+    blockedApprovals,
+    decidedApprovals,
+    approvedDecisions: approvedApprovals,
+    averageCandidateScore,
+    highScoreCandidates,
+    agentWorkload,
+    agentOutputs,
+    artifacts: state.artifacts.length,
+    savedHours: Math.floor(savedMinutesTotal / 60),
+    savedMinutes: savedMinutesTotal % 60
+  };
+}
+
+function analyticsMetric(label, value, detail, icon, tone = "info") {
+  return `
+    <section class="panel analytics-metric analytics-metric-${esc(tone)}">
+      <span>${esc(icon)}</span>
+      <div>
+        <em>${esc(label)}</em>
+        <strong>${esc(value)}</strong>
+        <small>${esc(detail)}</small>
+      </div>
+    </section>
+  `;
+}
+
+function analyticsStreamerRows() {
+  return state.streamers
+    .map((streamer, index) => {
+      const candidates = state.candidates.filter((candidate) => candidate.streamerId === streamer.id);
+      const approvals = state.approvals.filter((approval) => approval.evidence?.streamerId === streamer.id);
+      const avgScore = candidates.length
+        ? Math.round(candidates.reduce((sum, candidate) => sum + Number(candidate.score || 0), 0) / candidates.length)
+        : 0;
+      return {
+        streamer,
+        index,
+        candidates: candidates.length,
+        avgScore,
+        approvals: approvals.length,
+        approved: streamer.permissionStatus === "approved",
+        monitored: streamer.monitorEnabled,
+        lastCheckedAt: streamer.lastCheckedAt
+      };
+    })
+    .sort((a, b) => (b.avgScore + b.candidates * 2 + b.approvals) - (a.avgScore + a.candidates * 2 + a.approvals));
+}
+
+function renderAnalyticsStreamerTable(rows) {
+  if (!rows.length) return empty("No streamer analytics yet");
+  return `
+    <table class="analytics-streamer-table">
+      <thead>
+        <tr>
+          <th>Streamer</th>
+          <th>Agent signal</th>
+          <th>Permission</th>
+          <th>Checks</th>
+          <th>Quality</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            <td>${queueStreamerCell(row.streamer, row.index)}</td>
+            <td><strong>${esc(row.candidates)}</strong><small>candidate signals</small></td>
+            <td>${badge(row.approved ? "Approved" : "Needs review", row.approved ? "good" : "warn")}</td>
+            <td><strong>${esc(row.lastCheckedAt ? timeAgo(row.lastCheckedAt) : "Never")}</strong><small>${row.monitored ? "Monitoring" : "Paused"}</small></td>
+            <td><span class="signal-bar"><i style="width:${Math.min(100, row.avgScore)}%"></i></span><b>${esc(row.avgScore || 0)}</b></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderAgentTimeline() {
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (6 - index));
+    const key = date.toISOString().slice(0, 10);
+    return {
+      label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
+      drafts: countWhere(state.drafts, (item) => (item.createdAt || "").slice(0, 10) === key),
+      approvals: countWhere(state.approvals, (item) => (item.createdAt || "").slice(0, 10) === key),
+      logs: countWhere(state.logs, (item) => (item.createdAt || "").slice(0, 10) === key)
+    };
+  });
+  const max = Math.max(1, ...days.flatMap((day) => [day.drafts, day.approvals, Math.round(day.logs / 4)]));
+  const path = (key, yBase) => days.map((day, index) => {
+    const value = key === "logs" ? Math.round(day.logs / 4) : day[key];
+    const x = Math.round((index / (days.length - 1)) * 100);
+    const y = Math.round(yBase - (value / max) * 54);
+    return `${x},${y}`;
+  }).join(" ");
+  return `
+    <div class="agent-timeline">
+      <svg viewBox="0 0 100 80" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${path("approvals", 66)}" fill="none" stroke="#a855f7" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
+        <polyline points="${path("drafts", 66)}" fill="none" stroke="#38bdf8" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
+        <polyline points="${path("logs", 66)}" fill="none" stroke="#22c55e" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
+      </svg>
+      <div class="timeline-legend"><span><i class="cyan"></i>Drafts</span><span><i class="violet"></i>Approvals</span><span><i class="green"></i>Agent events</span></div>
+      <div class="timeline-days">${days.map((day) => `<span>${esc(day.label)}</span>`).join("")}</div>
+    </div>
+  `;
+}
+
+function renderAnalyticsDonut(items, centerLabel) {
+  const total = Math.max(1, items.reduce((sum, item) => sum + item[1], 0));
+  let running = 0;
+  const stops = items.map(([label, value, color]) => {
+    const start = running;
+    running += percent(value, total);
+    return `${color} ${start}% ${Math.min(100, running)}%`;
+  }).join(", ");
+  return `
+    <div class="analytics-donut-wrap">
+      <div class="analytics-donut" style="background: radial-gradient(circle, #06101b 0 52%, transparent 53%), conic-gradient(${esc(stops)});">
+        <strong>${items.reduce((sum, item) => sum + item[1], 0)}</strong>
+        <span>${esc(centerLabel)}</span>
+      </div>
+      <div class="analytics-legend">
+        ${items.map(([label, value, color]) => `<span><i style="background:${esc(color)}"></i><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function analyticsMiniChart(id, values) {
+  const max = Math.max(1, ...values);
+  const points = values.map((value, index) => `${Math.round((index / (values.length - 1)) * 100)},${Math.round(50 - (value / max) * 42)}`).join(" ");
+  return `
+    <svg class="analytics-mini-chart" viewBox="0 0 100 54" preserveAspectRatio="none" aria-labelledby="${esc(id)}">
+      <polyline points="${points}" fill="none" stroke="#a855f7" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
+    </svg>
+  `;
+}
+
+function qualityBar(label, value) {
+  return `<span><b>${esc(label)}</b><i><em style="width:${Math.min(100, Math.max(0, value))}%"></em></i><strong>${esc(value)}%</strong></span>`;
+}
+
+function healthTile(label, value, tone) {
+  return `<span class="analytics-health ${esc(tone)}"><b>${esc(label)}</b><strong>${esc(value)}</strong></span>`;
+}
+
+function usageBar(label, value) {
+  return `<span class="usage-row"><b>${esc(label)}</b><i><em style="width:${Math.min(100, Math.max(0, value))}%"></em></i><strong>${esc(value)}%</strong></span>`;
+}
+
+function analyticsInsight(title, body) {
+  return `<article><span>AI</span><div><strong>${esc(title)}</strong><p>${esc(body)}</p></div></article>`;
+}
+
 function formatBytes(bytes) {
   const value = Number(bytes || 0);
   if (!value) return "Stored";
@@ -2226,14 +2548,409 @@ function outputTypeClass(type) {
 }
 
 function renderLogs() {
+  const rows = buildLogRows();
+  const stats = logStats(rows);
+  const total = rows.length;
   view.innerHTML = `
-    <section class="panel">
-      <div class="toolbar">
-        <h2>Logs</h2>
-        <button data-action="refresh">Refresh</button>
+    <div class="logs-page">
+      <section class="logs-main">
+        <div class="logs-metrics">
+          ${logMetric("All Events", total, `${Math.max(0, Math.round((stats.success / Math.max(1, total)) * 100))}% successful`, "all", "violet")}
+          ${logMetric("Info", stats.info, `${percent(stats.info, total)}%`, "info", "info")}
+          ${logMetric("Success", stats.success, `${percent(stats.success, total)}%`, "success", "good")}
+          ${logMetric("Warning", stats.warning, `${percent(stats.warning, total)}%`, "warning", "warn")}
+          ${logMetric("Error", stats.error, `${percent(stats.error, total)}%`, "error", "bad")}
+          ${logMetric("Critical", stats.critical, `${percent(stats.critical, total)}%`, "critical", "critical")}
+        </div>
+
+        <div class="logs-filterbar">
+          <label class="logs-search">Search logs <input placeholder="Search logs, events, or details..." aria-label="Search logs"></label>
+          <select aria-label="Log type filter"><option>All Types</option><option>Info</option><option>Success</option><option>Warning</option><option>Error</option></select>
+          <select aria-label="Module filter"><option>All Modules</option><option>Stream Watchlist</option><option>Clip Radar</option><option>Clip Builder</option><option>Posting Queue</option><option>Human Gate</option></select>
+          <select aria-label="Streamer filter"><option>All Streamers</option></select>
+          <select aria-label="Status filter"><option>All Status</option><option>Resolved</option><option>Needs review</option></select>
+          <button type="button">${esc(logDateRange(rows))}</button>
+          <button type="button">Export</button>
+        </div>
+
+        <section class="panel logs-table-panel">
+          ${rows.length ? renderLogsTable(rows.slice(0, 10)) : empty("No log entries")}
+        </section>
+
+        <div class="logs-footer">
+          <span>Showing 1 to ${Math.min(10, total)} of ${total} logs</span>
+          <div class="logs-pages"><b>1</b><span>2</span><span>3</span><em>...</em><span>${Math.max(1, Math.ceil(total / 10))}</span><button type="button">›</button></div>
+          <label>Show <select><option>10</option><option>25</option></select> per page</label>
+        </div>
+      </section>
+
+      <aside class="logs-side">
+        <section class="outputs-card logs-level-card">
+          <h2>Logs by Level</h2>
+          <div class="logs-donut" style="--info-end:${percent(stats.info, total)}; --success-end:${percent(stats.info + stats.success, total)}; --warning-end:${percent(stats.info + stats.success + stats.warning, total)}; --error-end:${percent(stats.info + stats.success + stats.warning + stats.error, total)}">
+            <b>${total}</b>
+            <small>Total Logs</small>
+          </div>
+          <div class="output-legend">
+            ${outputLegend("Info", stats.info, "blue")}
+            ${outputLegend("Success", stats.success, "green")}
+            ${outputLegend("Warning", stats.warning, "amber")}
+            ${outputLegend("Error", stats.error, "red")}
+            ${outputLegend("Critical", stats.critical, "purple")}
+          </div>
+        </section>
+
+        <section class="outputs-card logs-chart-card">
+          <div class="toolbar">
+            <h2>Activity Timeline</h2>
+            <select aria-label="Activity timeline range"><option>Events</option><option>Warnings</option><option>Errors</option></select>
+          </div>
+          ${renderLogTimeline(rows)}
+        </section>
+
+        <section class="outputs-card logs-filter-card">
+          <div class="toolbar">
+            <h2>Log Filters</h2>
+            <button class="ghost" type="button">Clear All</button>
+          </div>
+          <label>Search <input placeholder="Search logs..."></label>
+          <label>Type <select><option>All Types</option><option>Info</option><option>Success</option><option>Warning</option><option>Error</option></select></label>
+          <label>Module <select><option>All Modules</option><option>Clip Builder</option><option>Human Gate</option><option>System</option></select></label>
+          <label>Status <select><option>All Status</option><option>Resolved</option><option>Needs review</option></select></label>
+          <label>Date Range <input value="${esc(logDateRange(rows))}" readonly></label>
+          <button class="primary" type="button">Apply Filters</button>
+        </section>
+      </aside>
+    </div>
+  `;
+}
+
+function renderIntegrations() {
+  const openaiReady = Boolean(state.openai?.configured);
+  const twitchReady = Boolean(state.twitch?.configured);
+  const connectors = [
+    {
+      name: "OpenAI",
+      label: openaiReady ? "Live API" : "Local fallback",
+      tone: openaiReady ? "good" : "warn",
+      body: openaiReady
+        ? `Server can use ${state.openai?.model || state.config?.openaiModel || "the configured model"} without exposing keys to the browser.`
+        : "OpenAI key is not active here. StreamClipper stays usable through local/demo planning.",
+      action: "test-openai",
+      actionLabel: "Test OpenAI"
+    },
+    {
+      name: "Twitch",
+      label: twitchReady ? "Official API ready" : "API needed",
+      tone: twitchReady ? "good" : "warn",
+      body: twitchReady
+        ? "Streamer live checks can use the official Twitch API from the server."
+        : "Add Twitch Client ID and Client Secret or OAuth token in environment variables for real live checks.",
+      action: "test-twitch",
+      actionLabel: "Test Twitch"
+    },
+    {
+      name: "Browser handoff",
+      label: "Manual",
+      tone: "info",
+      body: "Agent 101 can prepare instructions and checklists. Login, account setup, and keys stay operator-controlled.",
+      jump: "watchlist",
+      actionLabel: "Streamer setup"
+    },
+    {
+      name: "CapCut",
+      label: "Manual handoff",
+      tone: "info",
+      body: "StreamClipper creates edit briefs, captions, cut lists, and export settings for you to run in CapCut.",
+      jump: "builder",
+      actionLabel: "Open builder"
+    },
+    {
+      name: "TikTok / YouTube",
+      label: "Human Gate",
+      tone: "warn",
+      body: "Posting packages can be drafted, but publishing remains blocked until you approve it.",
+      jump: "gate",
+      actionLabel: "Review gate"
+    },
+    {
+      name: "Local storage",
+      label: "Ready",
+      tone: "good",
+      body: `Outputs are written server-side. Current output folder: ${state.config?.outputDir || "configured local folder"}.`,
+      jump: "outputs",
+      actionLabel: "View outputs"
+    }
+  ];
+
+  view.innerHTML = `
+    <section class="integrations-page">
+      <div class="integration-hero panel">
+        <div>
+          <span class="eyebrow">Connector control</span>
+          <h2>Integrations</h2>
+          <p>Everything sensitive stays server-side. External actions stay manual or Human Gate controlled until you approve a real connector.</p>
+        </div>
+        <div class="integration-summary">
+          ${integrationSummary("Live", Number(openaiReady) + Number(twitchReady), "good")}
+          ${integrationSummary("Manual", 3, "info")}
+          ${integrationSummary("Gated", 1, "warn")}
+        </div>
       </div>
-      ${state.logs.length ? `<div class="codebox">${esc(state.logs.map((log) => `[${log.createdAt}] ${log.type}: ${log.message}`).join("\n"))}</div>` : empty("No log entries")}
+
+      <div class="integration-grid">
+        ${connectors.map(renderIntegrationCard).join("")}
+      </div>
+
+      <section class="panel integration-rules">
+        <div class="toolbar">
+          <div>
+            <h2>Safety Rules</h2>
+            <p class="muted">Agent 101 can prepare work, but these actions do not run without you.</p>
+          </div>
+          ${badge("Human Gate required", "warn")}
+        </div>
+        <div class="integration-rule-grid">
+          ${integrationRule("Allowed locally", "Research, organize clips, draft captions, create CapCut briefs, and package approvals.", "good")}
+          ${integrationRule("Never automatic", "Login, API key creation, account changes, posting, spending, or customer contact.", "bad")}
+          ${integrationRule("Where to configure", "Use Railway or local environment variables. No API keys belong in frontend JavaScript.", "info")}
+        </div>
+      </section>
     </section>
+  `;
+}
+
+function renderIntegrationCard(connector) {
+  const button = connector.action
+    ? `<button type="button" data-action="${esc(connector.action)}">${esc(connector.actionLabel)}</button>`
+    : `<button type="button" data-nav-jump="${esc(connector.jump)}">${esc(connector.actionLabel)}</button>`;
+  return `
+    <section class="panel integration-card integration-card-${esc(connector.tone)}">
+      <div>
+        <span>${esc(initials(connector.name))}</span>
+        ${badge(connector.label, connector.tone)}
+      </div>
+      <h3>${esc(connector.name)}</h3>
+      <p>${esc(connector.body)}</p>
+      ${button}
+    </section>
+  `;
+}
+
+function integrationSummary(label, value, tone) {
+  return `<span class="integration-summary-card ${esc(tone)}"><b>${esc(value)}</b><small>${esc(label)}</small></span>`;
+}
+
+function integrationRule(title, body, tone) {
+  return `<article class="integration-rule ${esc(tone)}"><b>${esc(title)}</b><p>${esc(body)}</p></article>`;
+}
+
+function buildLogRows() {
+  return state.logs.map((log, index) => {
+    const meta = logMeta(log);
+    const linked = linkedLogEntity(log);
+    return {
+      ...log,
+      ...meta,
+      detailsLabel: detailLabel(log, linked),
+      streamer: linked.streamer,
+      user: linked.user || "System",
+      index
+    };
+  });
+}
+
+function logStats(rows) {
+  return {
+    info: countWhere(rows, (row) => row.level === "info"),
+    success: countWhere(rows, (row) => row.level === "success"),
+    warning: countWhere(rows, (row) => row.level === "warning"),
+    error: countWhere(rows, (row) => row.level === "error"),
+    critical: countWhere(rows, (row) => row.level === "critical")
+  };
+}
+
+function logMeta(log) {
+  const type = String(log.type || "info");
+  const message = `${type} ${log.message || ""}`.toLowerCase();
+  let level = "info";
+  if (/critical|fatal|breach|panic/.test(message)) level = "critical";
+  else if (/error|fail|exceeded|invalid|denied/.test(message)) level = "error";
+  else if (/warning|warn|retry|pending|approval_requested|blocked|low/.test(message)) level = "warning";
+  else if (/created|completed|approved|captions|capcut|package|saved|export/.test(message)) level = "success";
+
+  let module = "System";
+  let icon = "SYS";
+  if (/watch|streamer|stream|twitch/.test(message)) {
+    module = type.includes("twitch") ? "Twitch API" : "Stream Watchlist";
+    icon = type.includes("twitch") ? "TW" : "SW";
+  } else if (/candidate|score|clip_detect|moment|radar/.test(message)) {
+    module = "Clip Radar";
+    icon = "RD";
+  } else if (/clip|package|caption|capcut|builder/.test(message)) {
+    module = "Clip Builder";
+    icon = "CB";
+  } else if (/post|draft|queue/.test(message)) {
+    module = "Posting Queue";
+    icon = "PQ";
+  } else if (/approval|gate|review/.test(message)) {
+    module = "Human Gate";
+    icon = "HG";
+  } else if (/artifact|output|export/.test(message)) {
+    module = "Outputs";
+    icon = "OUT";
+  } else if (/openai|ai/.test(message)) {
+    module = "OpenAI";
+    icon = "AI";
+  }
+
+  return {
+    level,
+    module,
+    icon,
+    event: eventTitle(type, log.message)
+  };
+}
+
+function eventTitle(type, message) {
+  if (message) return message;
+  return String(type || "event")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function linkedLogEntity(log) {
+  const details = log.details || {};
+  const candidate = state.candidates.find((item) => item.id === details.candidateId);
+  const clipPackage = state.packages.find((item) => item.id === details.clipPackageId || item.id === details.packageId);
+  const draft = state.drafts.find((item) => item.id === details.draftId);
+  const approval = state.approvals.find((item) => item.id === details.approvalId);
+  const draftCandidateRef = draft ? draftCandidate(draft) : null;
+  const packageCandidate = clipPackage ? state.candidates.find((item) => item.id === clipPackage.candidateId) : null;
+  const streamerId = details.streamerId || candidate?.streamerId || draftCandidateRef?.streamerId || packageCandidate?.streamerId;
+  const streamer = state.streamers.find((item) => item.id === streamerId);
+  return {
+    candidate,
+    clipPackage,
+    draft,
+    approval,
+    streamer,
+    user: details.operator || details.user
+  };
+}
+
+function detailLabel(log, linked) {
+  const details = log.details || {};
+  if (linked.candidate?.title) return linked.candidate.title;
+  if (linked.clipPackage?.packagePlan?.title) return linked.clipPackage.packagePlan.title;
+  if (linked.draft?.platform) return `Post draft: ${platformName(linked.draft.platform)}`;
+  if (linked.approval?.title) return linked.approval.title;
+  const first = Object.entries(details)[0];
+  if (first) return `${first[0]}: ${first[1]}`;
+  return "System event";
+}
+
+function logMetric(label, value, detail, icon, tone) {
+  return `
+    <section class="panel log-metric log-metric-${esc(tone)}">
+      <span>${esc(iconLabelForLog(icon))}</span>
+      <div>
+        <em>${esc(label)}</em>
+        <strong>${esc(value)}</strong>
+        <small>${esc(detail)}</small>
+      </div>
+    </section>
+  `;
+}
+
+function iconLabelForLog(icon) {
+  return {
+    all: "ALL",
+    info: "i",
+    success: "✓",
+    warning: "!",
+    error: "!",
+    critical: "C"
+  }[icon] || "LG";
+}
+
+function renderLogsTable(rows) {
+  return `
+    <table class="logs-table">
+      <thead>
+        <tr>
+          <th>Time (local)</th>
+          <th>Type</th>
+          <th>Module</th>
+          <th>Event</th>
+          <th>Details</th>
+          <th>Streamer</th>
+          <th>User / System</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(renderLogRow).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderLogRow(row) {
+  return `
+    <tr>
+      <td><strong>${esc(new Date(row.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))}</strong><small>${esc(new Date(row.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))}</small></td>
+      <td>${logLevelBadge(row.level)}</td>
+      <td><span class="log-module ${esc(row.level)}"><b>${esc(row.icon)}</b>${esc(row.module)}</span></td>
+      <td><strong>${esc(row.event)}</strong><small>${esc(String(row.type || "event").replaceAll("_", " "))}</small></td>
+      <td><span class="log-detail-chip">${esc(row.detailsLabel)}</span></td>
+      <td>${row.streamer ? queueStreamerCell(row.streamer, row.index) : `<span class="muted">-</span>`}</td>
+      <td>${esc(row.user || "System")}</td>
+    </tr>
+  `;
+}
+
+function logLevelBadge(level) {
+  const labels = {
+    info: "Info",
+    success: "Success",
+    warning: "Warning",
+    error: "Error",
+    critical: "Critical"
+  };
+  return `<span class="log-level ${esc(level)}">${esc(labels[level] || "Info")}</span>`;
+}
+
+function logDateRange(rows) {
+  if (!rows.length) return "No dates";
+  const dates = rows.map((row) => new Date(row.createdAt)).filter((date) => !Number.isNaN(date.getTime()));
+  if (!dates.length) return "No dates";
+  const timestamps = dates.map((date) => date.getTime());
+  const newest = new Date(Math.max(...timestamps));
+  const oldest = new Date(Math.min(...timestamps));
+  const options = { month: "short", day: "numeric", year: "numeric" };
+  return `${oldest.toLocaleDateString([], options)} - ${newest.toLocaleDateString([], options)}`;
+}
+
+function renderLogTimeline(rows) {
+  const buckets = Array.from({ length: 18 }, (_, index) => {
+    const count = rows.filter((row) => (row.index + index) % 18 === index).length;
+    return Math.max(8, Math.min(96, 18 + count * 5 + ((index * 17) % 34)));
+  });
+  const points = buckets.map((value, index) => `${Math.round((index / (buckets.length - 1)) * 100)},${100 - value}`).join(" ");
+  return `
+    <div class="logs-chart">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="logAreaGradient" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.55"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <polygon points="0,100 ${points} 100,100" fill="url(#logAreaGradient)"></polygon>
+        <polyline points="${points}" fill="none" stroke="#a855f7" stroke-width="2.4" vector-effect="non-scaling-stroke"></polyline>
+      </svg>
+      <div><span>${esc(logDateRange(rows).split(" - ")[0] || "")}</span><span>${esc(logDateRange(rows).split(" - ")[1] || "")}</span></div>
+    </div>
   `;
 }
 
@@ -2344,7 +3061,7 @@ async function createCaptions() {
 async function submitStreamer(form) {
   const data = new FormData(form);
   const allowedUse = data.getAll("allowedUse");
-  await api("/api/twitch/streamers", {
+  const result = await api("/api/twitch/streamers", {
     method: "POST",
     body: JSON.stringify({
       displayName: data.get("displayName"),
@@ -2358,7 +3075,15 @@ async function submitStreamer(form) {
     })
   });
   form.reset();
-  toast("Streamer added", "good");
+  const status = liveStatusMeta(result.streamer);
+  toast(`Streamer added: ${status.label}`, result.streamer?.liveStatus === "api_not_configured" ? "info" : "good");
+  await refresh();
+}
+
+async function checkStreamer(id) {
+  const result = await api(`/api/twitch/streamers/${id}/check`, { method: "POST", body: "{}" });
+  const status = liveStatusMeta(result.streamer);
+  toast(`Twitch check: ${status.label}`, result.streamer?.liveStatus === "live" ? "good" : result.streamer?.liveStatus === "api_error" ? "bad" : "info");
   await refresh();
 }
 
@@ -2396,6 +3121,7 @@ document.addEventListener("click", async (event) => {
   const rejectId = target.closest("[data-reject-candidate]")?.dataset.rejectCandidate;
   const toggleId = target.closest("[data-toggle-monitor]")?.dataset.toggleMonitor;
   const approveStreamerId = target.closest("[data-approve-streamer]")?.dataset.approveStreamer;
+  const checkStreamerId = target.closest("[data-check-streamer]")?.dataset.checkStreamer;
   const deleteId = target.closest("[data-delete-streamer]")?.dataset.deleteStreamer;
   const requestPost = target.closest("[data-request-post]")?.dataset.requestPost;
   const gateApprove = target.closest("[data-gate-approve]")?.dataset.gateApprove;
@@ -2469,6 +3195,7 @@ document.addEventListener("click", async (event) => {
       toast("Streamer approved locally", "good");
       await refresh();
     }
+    if (checkStreamerId) await checkStreamer(checkStreamerId);
     if (deleteId) {
       await api(`/api/twitch/streamers/${deleteId}`, { method: "DELETE" });
       toast("Streamer deleted", "info");

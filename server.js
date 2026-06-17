@@ -1738,6 +1738,32 @@ function isClipsOfficeIntakeRequest(text) {
   return clipsTerms.some((term) => value.includes(term));
 }
 
+function normalizedAgent101ChatHistory(context = {}) {
+  const incoming = Array.isArray(context.chatHistory) ? context.chatHistory : [];
+  return incoming
+    .map((message) => ({
+      speaker: ["operator", "depo", "agent"].includes(message?.speaker) ? message.speaker : "depo",
+      text: String(message?.text || "").trim().slice(0, 1000),
+      roomId: String(message?.roomId || context.roomId || context.officeId || "").slice(0, 80),
+      createdAt: message?.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : undefined,
+    }))
+    .filter((message) => message.text)
+    .slice(-18);
+}
+
+function hasClipsOfficeChatContext(context = {}) {
+  return normalizedAgent101ChatHistory(context).some((message) => {
+    const text = message.text.toLowerCase();
+    return text.includes("clips office")
+      || text.includes("auto-clipping")
+      || text.includes("auto clipping")
+      || text.includes("streamer scoring")
+      || text.includes("capcut")
+      || text.includes("clip radar")
+      || text.includes("clipping");
+  });
+}
+
 function buildClipsOfficeIntakeResponse(message) {
   return {
     message: [
@@ -1776,8 +1802,51 @@ function buildClipsOfficeIntakeResponse(message) {
   };
 }
 
-function shouldUseClipsOfficeIntake(message, response = null) {
-  if (!isClipsOfficeIntakeRequest(message)) return false;
+function buildClipsOfficeFollowupResponse(message, context = {}) {
+  const history = normalizedAgent101ChatHistory(context);
+  const answered = String(message || "").trim();
+  const priorOperatorAnswers = history
+    .filter((item) => item.speaker === "operator")
+    .map((item) => item.text)
+    .slice(-4);
+  return {
+    message: [
+      "Got it. I kept this inside the Clips Office thread and added it to the working setup context.",
+      "",
+      answered ? `Latest answer: ${answered}` : "Latest answer captured.",
+      priorOperatorAnswers.length ? `Current thread context: ${priorOperatorAnswers.join(" | ").slice(0, 700)}` : "",
+      "",
+      "Next safe build step:",
+      "1. Turn this into a Clips Office intake record.",
+      "2. Build a streamer discovery rubric for approved/public discovery only.",
+      "3. Create a permission checklist before any creator outreach or posting.",
+      "4. Draft the first CapCut/posting package for Human Gate review.",
+      "",
+      "Still blocked without approval: logging in, claiming ownership, posting, spending, account changes, API key changes, or contacting people as if permission already exists.",
+    ].filter(Boolean).join("\n"),
+    taskType: "clips",
+    suggestedActions: [
+      { label: "Create Clips Office intake", action: "create_task_plan", requiresApproval: false },
+      { label: "Draft discovery rubric", action: "create_clips_plan", requiresApproval: false },
+      { label: "Package permissions", action: "package_for_approval", requiresApproval: true },
+    ],
+    artifacts: [
+      {
+        type: "working_context",
+        title: "Clips Office setup context",
+        content: `Latest operator answer: ${answered}\n\nRecent thread:\n${history.map((item) => `${item.speaker}: ${item.text}`).join("\n").slice(0, 4000)}`,
+      },
+    ],
+    requiresApproval: false,
+    riskLevel: "medium",
+    blockedAction: null,
+    logs: ["Agent 101 used recent Clips Office chat context instead of starting over."],
+  };
+}
+
+function shouldUseClipsOfficeIntake(message, context = {}, response = null) {
+  const hasClipsContext = isClipsOfficeIntakeRequest(message) || hasClipsOfficeChatContext(context);
+  if (!hasClipsContext) return false;
   if (detectRiskyAction(message)) return false;
   if (!response) return true;
   const responseText = [
@@ -1931,12 +2000,15 @@ function agent101SystemInstructions() {
 }
 
 function agent101UserInput(message, context = {}) {
+  const chatHistory = normalizedAgent101ChatHistory(context);
   return [
     `Message: ${message}`,
     `Room ID: ${context.roomId || context.office || "agent-office"}`,
     `Current stage: ${context.currentStage || "Agent 101"}`,
     `Context: ${JSON.stringify(context.context || {}, null, 2).slice(0, 2000)}`,
+    `Recent room chat: ${JSON.stringify(chatHistory, null, 2).slice(0, 5000)}`,
     "Allowed task types: general, code_plan, content, clips, agent_blueprint, approval_request.",
+    "Use the recent room chat as memory for this conversation. Do not restart as if the user is asking from zero.",
     "If key details are missing, ask follow-up questions in the message and keep requiresApproval false.",
     "If the request is about Clips Office, streamer discovery, clipping, Twitch, Kick, CapCut, or TikTok and does not explicitly request a blocked external action, return a helpful Clips Office intake/workflow response.",
     "If risky, return taskType approval_request, requiresApproval true, riskLevel high, blockedAction as an exact blocked action ID only, and a Send to Human Gate suggested action.",
@@ -3024,10 +3096,13 @@ function handleAgent101Action(payload = {}) {
   throw guardedError("Agent 101 action is not supported yet.", 400);
 }
 
-function localAgent101ChatResponse(message) {
+function localAgent101ChatResponse(message, context = {}) {
   const text = String(message || "").toLowerCase();
   const risky = detectRiskyAction(text);
   if (risky) return blockedDepoResponse(risky);
+  if (hasClipsOfficeChatContext(context)) {
+    return buildClipsOfficeFollowupResponse(message, context);
+  }
   if (isClipsOfficeIntakeRequest(text)) {
     return buildClipsOfficeIntakeResponse(message);
   }
@@ -3170,13 +3245,16 @@ async function handleAgent101Chat(payload = {}) {
   const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
   const canUseOpenAi = provider === "openai" && mode === "live" && Boolean(keyFromConfig(config, "openai"));
   if (!canUseOpenAi) {
-    return { ...localAgent101ChatResponse(message), provider: "local_demo", mode: "demo" };
+    return { ...localAgent101ChatResponse(message, payload), provider: "local_demo", mode: "demo" };
   }
 
   try {
     const live = await callOpenAiAgent101(config, message, payload);
-    if (shouldUseClipsOfficeIntake(message, live)) {
-      return { ...buildClipsOfficeIntakeResponse(message, payload), provider, mode };
+    if (shouldUseClipsOfficeIntake(message, payload, live)) {
+      const contextualResponse = hasClipsOfficeChatContext(payload)
+        ? buildClipsOfficeFollowupResponse(message, payload)
+        : buildClipsOfficeIntakeResponse(message);
+      return { ...contextualResponse, provider, mode };
     }
     const riskyResponse = detectRiskyAction(
       [
@@ -3217,7 +3295,7 @@ async function handleAgent101Chat(payload = {}) {
     audit(state, "Agent 101 provider fallback", friendly);
     writeState(state);
     return {
-      ...localAgent101ChatResponse(message),
+      ...localAgent101ChatResponse(message, payload),
       logs: [friendly, "Provider error fallback used."],
       fallback: true,
       provider: "local_demo",

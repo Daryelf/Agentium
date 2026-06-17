@@ -1775,18 +1775,33 @@ function normalizeClientChatMessages(messages = []) {
       seen.add(message.id);
       return true;
     })
-    .slice(-120);
+    .slice(-240);
 }
 
 function appendDepoChatMessages(messages = [], options = {}) {
   const incoming = normalizeClientChatMessages(Array.isArray(messages) ? messages : [messages]);
   if (!incoming.length) return [];
-  depoChatMessages = normalizeClientChatMessages([...depoChatMessages, ...incoming]).slice(-120);
-  state.chatMessages = normalizeClientChatMessages([...(state.chatMessages || []), ...incoming.filter((message) => !message.pending)]).slice(-120);
+  depoChatMessages = normalizeClientChatMessages([...depoChatMessages, ...incoming]).slice(-240);
+  state.chatMessages = normalizeClientChatMessages([...(state.chatMessages || []), ...incoming.filter((message) => !message.pending)]).slice(-240);
   if (options.persist !== false && apiAvailable) {
     persistChatMessages(incoming.filter((message) => !message.pending));
   }
   return incoming;
+}
+
+function chatHistoryForRoom(roomKey, limit = 18) {
+  const resolved = resolveRoomKey(roomKey);
+  return depoChatMessages
+    .filter((message) => message.roomId === resolved && !message.pending)
+    .slice(-limit)
+    .map((message) => ({
+      id: message.id,
+      roomId: message.roomId,
+      speaker: message.speaker,
+      text: message.text,
+      source: message.source,
+      createdAt: message.createdAt,
+    }));
 }
 
 async function persistChatMessages(messages = []) {
@@ -3295,7 +3310,7 @@ function depoChatResponse(question, roomKey) {
 
 function depoChatMessagesFor(roomKey) {
   const resolved = resolveRoomKey(roomKey);
-  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-6);
+  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-30);
   if (messages.length) return messages;
   return depoStarterMessages(moduleCardData(resolved));
 }
@@ -3949,7 +3964,7 @@ function humanGateOfficeQueueMarkup(runtime) {
 
 function humanGateChatMarkup(card, runtime) {
   const resolved = resolveRoomKey(card.id);
-  const chatMessages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-8);
+  const chatMessages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-24);
   const approvals = runtime.pending.slice(0, 5);
   const feedItems = [
     ...chatMessages.map((message) => ({ type: "message", message })),
@@ -6367,7 +6382,7 @@ function approvalReturnRoom(approval = {}) {
   return "depo-habitat";
 }
 
-function recordApprovalChatDecision(approval = {}, action, source = "Human Gate") {
+function recordApprovalChatDecision(approval = {}, action, source = "Human Gate", options = {}) {
   const label = approvalActionTitle(action);
   const title = approval.title || "approval package";
   const nextRoom = approvalReturnRoom(approval);
@@ -6399,7 +6414,8 @@ function recordApprovalChatDecision(approval = {}, action, source = "Human Gate"
       source,
     });
   }
-  appendDepoChatMessages(messages);
+  const appended = appendDepoChatMessages(messages, { persist: options.persist !== false });
+  return { messages: appended, returnRoom: nextRoom };
 }
 
 function changeApprovalStatusLocally(id, action, source = "Human Gate") {
@@ -6419,26 +6435,35 @@ function changeApprovalStatusLocally(id, action, source = "Human Gate") {
     riskLevel: approval.risk || "medium",
     roomId: "human-gate",
   });
-  recordApprovalChatDecision(approval, action, source);
+  const decision = recordApprovalChatDecision(approval, action, source);
   render();
-  openModuleInfoCard("human-gate");
+  selectedRoomKey = decision.returnRoom || "human-gate";
+  openModuleInfoCard(selectedRoomKey, { scrollChat: true, focusInput: true });
   return true;
 }
 
 function changeApprovalStatus(id, action, source = "Human Gate") {
   const approvalBeforeChange = stateList("approvals").find((item) => item.id === id);
-  mutate(`/api/approvals/${encodeURIComponent(id)}/${action}`).then((changed) => {
-    if (changed) {
-      selectedAgentKey = null;
-      selectedRoomKey = "human-gate";
-      if (approvalBeforeChange) {
-        recordApprovalChatDecision(approvalBeforeChange, action, source);
-      }
-      openModuleInfoCard("human-gate");
-      requestAnimationFrame(scrollAgentChatToLatest);
+  if (!apiAvailable) {
+    changeApprovalStatusLocally(id, action, source);
+    return;
+  }
+  postJson(`/api/approvals/${encodeURIComponent(id)}/${action}`).then(async (changedState) => {
+    if (!changedState) {
+      changeApprovalStatusLocally(id, action, source);
       return;
     }
-    changeApprovalStatusLocally(id, action, source);
+    state = changedState;
+    selectedAgentKey = null;
+    let returnRoom = "human-gate";
+    if (approvalBeforeChange) {
+      const decision = recordApprovalChatDecision(approvalBeforeChange, action, source, { persist: false });
+      returnRoom = decision.returnRoom || returnRoom;
+      await persistChatMessages(decision.messages);
+    }
+    selectedRoomKey = returnRoom;
+    await loadState();
+    openModuleInfoCard(returnRoom, { scrollChat: true, focusInput: true });
   }).catch((error) => {
     if (!changeApprovalStatusLocally(id, action, source)) {
       addLocalAudit("Approval unavailable", error.message);
@@ -6713,6 +6738,7 @@ async function submitDepoChat(roomKey, message) {
   if (!trimmed) return;
   const [operatorMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "operator", text: trimmed }, { persist: false });
   const [pendingMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "depo", text: "Thinking...", pending: true }, { persist: false });
+  const chatHistory = chatHistoryForRoom(resolved, 18);
   renderShellData();
   requestAnimationFrame(scrollAgentChatToLatest);
   let responseText = depoChatResponse(trimmed, resolved);
@@ -6723,7 +6749,7 @@ async function submitDepoChat(roomKey, message) {
   const command = serverAction ? null : handleOfficeChatCommand(resolved, trimmed);
   if (apiAvailable && serverAction) {
     try {
-      const payload = await postJson("/api/agent101/actions", serverAction);
+      const payload = await postJson("/api/agent101/actions", { ...serverAction, chatHistory });
       responseText = payload.message || responseText;
       responseMeta = payload;
       aiProviderNotice = "";
@@ -6757,6 +6783,7 @@ async function submitDepoChat(roomKey, message) {
         roomId: resolved,
         currentStage: depoAgent.currentStage,
         selectedRoom: selectedRoomKey,
+        chatHistory,
       });
       responseText = payload.message || responseText;
       responseMeta = payload;

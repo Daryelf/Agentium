@@ -1748,6 +1748,15 @@ const workspaceProfiles = {
 let selectedRoomKey = null;
 let selectedAgentKey = null;
 let depoChatMessages = [];
+let agent101ChatThreads = [];
+let agent101ChatSending = false;
+let activeAgent101ThreadByRoom = (() => {
+  try {
+    return JSON.parse(localStorage.getItem("agent101ActiveThreads") || "{}") || {};
+  } catch {
+    return {};
+  }
+})();
 
 function normalizeClientChatMessage(message = {}) {
   const text = String(message.text || "").trim();
@@ -1776,6 +1785,193 @@ function normalizeClientChatMessages(messages = []) {
       return true;
     })
     .slice(-240);
+}
+
+function normalizeClientAgentMessage(message = {}, threadId = "", fallbackRoom = "depo-habitat") {
+  const content = String(message.content ?? message.text ?? "").trim();
+  if (!content) return null;
+  const role = ["user", "agent", "system", "tool"].includes(message.role)
+    ? message.role
+    : message.speaker === "operator"
+      ? "user"
+      : "agent";
+  const status = ["sent", "thinking", "running", "complete", "error"].includes(message.status)
+    ? message.status
+    : role === "tool"
+      ? "complete"
+      : "sent";
+  const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+  const roomId = resolveRoomKey(message.roomId || metadata.roomId || fallbackRoom);
+  return {
+    id: message.id || `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    threadId,
+    role,
+    content,
+    createdAt: message.createdAt || new Date().toISOString(),
+    status,
+    metadata: { ...metadata, roomId },
+  };
+}
+
+function createLocalAgentThread(roomId = "depo-habitat") {
+  const resolved = resolveRoomKey(roomId);
+  const id = `local-thread-${resolved}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const message = normalizeClientAgentMessage(
+    {
+      role: "agent",
+      content: "I'm ready. Ask me to plan, research, draft, package, or run a safe internal workflow here.",
+      status: "complete",
+      metadata: { roomId: resolved },
+    },
+    id,
+    resolved,
+  );
+  return {
+    id,
+    title: "Agent 101 Session",
+    agentId: "agent-101",
+    roomId: resolved,
+    createdAt: message.createdAt,
+    updatedAt: message.createdAt,
+    lastMessage: message.content,
+    archived: false,
+    messages: [message],
+  };
+}
+
+function normalizeClientAgentThread(thread = {}, fallbackRoom = "depo-habitat") {
+  const id = String(thread.id || `thread-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const roomId = resolveRoomKey(thread.roomId || fallbackRoom);
+  const messages = (Array.isArray(thread.messages) ? thread.messages : [])
+    .map((message) => normalizeClientAgentMessage(message, id, roomId))
+    .filter(Boolean)
+    .slice(-160);
+  const createdAt = thread.createdAt || messages[0]?.createdAt || new Date().toISOString();
+  const updatedAt = thread.updatedAt || messages.at(-1)?.createdAt || createdAt;
+  return {
+    id,
+    title: String(thread.title || "Agent 101 Session").slice(0, 80),
+    agentId: "agent-101",
+    roomId,
+    createdAt,
+    updatedAt,
+    lastMessage: String(thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work.").slice(0, 140),
+    archived: Boolean(thread.archived),
+    messageCount: Number(thread.messageCount || messages.length || 0),
+    messages,
+  };
+}
+
+function normalizeClientAgentThreads(threads = []) {
+  const seen = new Set();
+  return (Array.isArray(threads) ? threads : [])
+    .map((thread) => normalizeClientAgentThread(thread))
+    .filter((thread) => {
+      if (!thread.id || seen.has(thread.id)) return false;
+      seen.add(thread.id);
+      return !thread.archived;
+    })
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 50);
+}
+
+function syncAgent101Threads(nextThreads = []) {
+  agent101ChatThreads = normalizeClientAgentThreads(nextThreads);
+  state.agent101ChatThreads = agent101ChatThreads;
+}
+
+function mergeAgent101ThreadPayload(payload = {}) {
+  const existing = new Map(agent101ChatThreads.map((thread) => [thread.id, thread]));
+  (payload.threads || []).forEach((summary) => {
+    const current = existing.get(summary.id);
+    existing.set(summary.id, normalizeClientAgentThread({ ...(current || {}), ...summary, messages: current?.messages || summary.messages || [] }, summary.roomId));
+  });
+  if (payload.thread) {
+    const full = normalizeClientAgentThread(payload.thread);
+    existing.set(full.id, full);
+  }
+  syncAgent101Threads(Array.from(existing.values()));
+}
+
+function persistActiveAgentThreads() {
+  try {
+    localStorage.setItem("agent101ActiveThreads", JSON.stringify(activeAgent101ThreadByRoom));
+  } catch {
+    // Local storage can fail in private contexts; chat still works from backend state.
+  }
+}
+
+function setActiveAgent101Thread(roomId, threadId) {
+  const resolved = resolveRoomKey(roomId);
+  if (threadId) {
+    activeAgent101ThreadByRoom[resolved] = threadId;
+  } else {
+    delete activeAgent101ThreadByRoom[resolved];
+  }
+  persistActiveAgentThreads();
+}
+
+function agent101ThreadsForRoom(roomId) {
+  const resolved = resolveRoomKey(roomId);
+  return agent101ChatThreads.filter((thread) => !thread.archived && thread.roomId === resolved);
+}
+
+function activeAgent101Thread(roomId) {
+  const resolved = resolveRoomKey(roomId);
+  const threads = agent101ThreadsForRoom(resolved);
+  const savedId = activeAgent101ThreadByRoom[resolved];
+  const selected = threads.find((thread) => thread.id === savedId) || threads[0];
+  if (selected) {
+    setActiveAgent101Thread(resolved, selected.id);
+    return selected;
+  }
+  const localThread = createLocalAgentThread(resolved);
+  syncAgent101Threads([localThread, ...agent101ChatThreads]);
+  setActiveAgent101Thread(resolved, localThread.id);
+  return localThread;
+}
+
+function clientChatTitleFromContent(content = "") {
+  const text = String(content || "").replace(/\s+/g, " ").trim();
+  if (!text) return "Agent 101 Session";
+  if (text.toLowerCase().includes("practice") || text.toLowerCase().includes("clip candidates")) return "Find 5 practice streams";
+  return text.split(" ").slice(0, 5).join(" ").slice(0, 70) || "Agent 101 Session";
+}
+
+function refreshClientAgentThread(thread) {
+  const last = thread.messages?.at(-1);
+  if (last) {
+    thread.updatedAt = last.createdAt || new Date().toISOString();
+    thread.lastMessage = last.content.slice(0, 140);
+  } else {
+    thread.updatedAt = new Date().toISOString();
+  }
+  if ((!thread.title || thread.title === "Agent 101 Session") && thread.messages?.some((message) => message.role === "user")) {
+    thread.title = clientChatTitleFromContent(thread.messages.find((message) => message.role === "user").content);
+  }
+  thread.messageCount = thread.messages?.length || 0;
+  return thread;
+}
+
+function appendClientAgentThreadMessages(thread, messages = []) {
+  const incoming = (Array.isArray(messages) ? messages : [messages])
+    .map((message) => normalizeClientAgentMessage(message, thread.id, thread.roomId))
+    .filter(Boolean);
+  if (!incoming.length) return [];
+  thread.messages = [...(thread.messages || []), ...incoming].slice(-160);
+  refreshClientAgentThread(thread);
+  syncAgent101Threads([thread, ...agent101ChatThreads.filter((item) => item.id !== thread.id)]);
+  return incoming;
+}
+
+async function ensureServerAgent101Thread(roomId, title = "Agent 101 Session") {
+  const resolved = resolveRoomKey(roomId);
+  const current = activeAgent101Thread(resolved);
+  if (!String(current.id).startsWith("local-thread-")) return current;
+  const payload = await postJson("/api/agent101/chats", { roomId: resolved, title });
+  mergeAgent101ThreadPayload(payload);
+  setActiveAgent101Thread(resolved, payload.thread?.id);
+  return activeAgent101Thread(resolved);
 }
 
 function appendDepoChatMessages(messages = [], options = {}) {
@@ -1909,10 +2105,12 @@ async function loadState() {
   try {
     state = await api("/api/state");
     depoChatMessages = normalizeClientChatMessages(state.chatMessages || []);
+    syncAgent101Threads(state.agent101ChatThreads || []);
     apiAvailable = true;
   } catch (error) {
     state = fallbackState;
     depoChatMessages = normalizeClientChatMessages(state.chatMessages || []);
+    syncAgent101Threads(state.agent101ChatThreads || []);
     apiAvailable = false;
   }
   await loadAiProviderSettings();
@@ -3791,31 +3989,97 @@ function officeNotesMarkup(runtime) {
   `;
 }
 
+function formatChatTime(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return "";
+  return new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function agent101MessageLabel(message = {}) {
+  if (message.role === "user") return "You";
+  if (message.role === "tool") return message.metadata?.stepTitle || message.metadata?.tool || "Tool update";
+  if (message.role === "system") return "System";
+  return "Agent 101";
+}
+
+function agent101ChatMessageMarkup(message = {}) {
+  const roleClass = message.role === "user" ? "operator" : message.role || "agent";
+  const statusClass = ["thinking", "running", "error"].includes(message.status) ? message.status : "";
+  const artifacts = Array.isArray(message.metadata?.artifacts) ? message.metadata.artifacts : [];
+  return `
+    <article class="${escapeHtml(roleClass)} ${escapeHtml(statusClass)}">
+      <div class="chat-bubble-head">
+        <strong>${escapeHtml(agent101MessageLabel(message))}</strong>
+        <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+      </div>
+      <p>${escapeHtml(message.content)}</p>
+      ${
+        artifacts.length
+          ? `<small>${escapeHtml(pluralize(artifacts.length, "artifact"))} created</small>`
+          : message.metadata?.requiresApproval
+            ? `<small>Human Gate required</small>`
+            : ""
+      }
+    </article>
+  `;
+}
+
+function agent101ThreadListMarkup(roomId, activeThreadId) {
+  const threads = agent101ThreadsForRoom(roomId).slice(0, 5);
+  if (!threads.length) return "";
+  return `
+    <div class="office-thread-list" aria-label="Agent 101 chat threads">
+      ${threads
+        .map(
+          (thread) => `
+            <button class="office-thread-item ${thread.id === activeThreadId ? "active" : ""}" type="button" data-agent-chat-thread="${escapeHtml(thread.id)}">
+              <strong>${escapeHtml(thread.title || "Agent 101 Session")}</strong>
+              <span>${escapeHtml(thread.lastMessage || "Ready")}</span>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function agent101QuickPromptsMarkup(roomId) {
+  const resolved = resolveRoomKey(roomId);
+  const prompts =
+    resolved === "human-gate"
+      ? ["View pending approvals", "Run local check", "View full feed"]
+      : resolved === "clips-office"
+        ? ["Find 5 practice streams and make clip candidates", "Create clips plan", "Package for approval"]
+        : ["Create task plan", "Run office check", "Package for approval"];
+  return `
+    <div class="office-chat-quick" aria-label="Agent 101 quick commands">
+      ${prompts.map((prompt) => `<button type="button" data-agent-chat-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`).join("")}
+    </div>
+  `;
+}
+
 function officeChatMarkup(card) {
   const resolved = resolveRoomKey(card.id);
-  const messages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-12);
-  const visibleMessages = messages.length
-    ? messages
-    : [{ speaker: "depo", text: "I'm ready. Tell me what to check, plan, draft, or package in this office." }];
+  const thread = activeAgent101Thread(resolved);
+  const visibleMessages = thread.messages?.length ? thread.messages : createLocalAgentThread(resolved).messages;
   return `
-    <section class="office-chat">
-      <div class="office-section-head">
-        <h4>Agent 101 Command Chat</h4>
+    <section class="office-chat agent-thread-chat" data-agent-chat-room="${escapeHtml(resolved)}" data-agent-chat-thread-id="${escapeHtml(thread.id)}">
+      <div class="office-chat-toolbar">
+        <div>
+          <h4>Agent 101 Command Chat</h4>
+          <span>${escapeHtml(thread.title || "Agent 101 Session")}</span>
+        </div>
+        <div>
+          <em>${agent101ChatSending ? "Running" : "Saved"}</em>
+          <button type="button" data-agent-chat-new>New chat</button>
+        </div>
       </div>
+      ${agent101ThreadListMarkup(resolved, thread.id)}
       <div class="office-chat-log" aria-live="polite">
-        ${visibleMessages
-          .map(
-            (message) => `
-              <article class="${message.speaker === "operator" ? "operator" : ""} ${message.pending ? "pending" : ""}">
-                <strong>${message.speaker === "operator" ? "You" : "Agent 101"}</strong>
-                <p>${escapeHtml(message.text)}</p>
-              </article>
-            `,
-          )
-          .join("")}
+        ${visibleMessages.map(agent101ChatMessageMarkup).join("")}
       </div>
+      ${agent101QuickPromptsMarkup(resolved)}
       <form class="agent-chat-form office-chat-form" data-depo-chat-form>
-        <input name="message" type="text" autocomplete="off" placeholder="Tell Agent 101 what to check, plan, or package in this office..." />
+        <textarea name="message" autocomplete="off" rows="1" placeholder="Message Agent 101..."></textarea>
         <button type="submit">Send</button>
       </form>
     </section>
@@ -3964,7 +4228,8 @@ function humanGateOfficeQueueMarkup(runtime) {
 
 function humanGateChatMarkup(card, runtime) {
   const resolved = resolveRoomKey(card.id);
-  const chatMessages = depoChatMessages.filter((message) => message.roomId === resolved).slice(-24);
+  const thread = activeAgent101Thread(resolved);
+  const chatMessages = thread.messages || [];
   const approvals = runtime.pending.slice(0, 5);
   const feedItems = [
     ...chatMessages.map((message) => ({ type: "message", message })),
@@ -3972,24 +4237,25 @@ function humanGateChatMarkup(card, runtime) {
   ];
   const visibleItems = feedItems.length
     ? feedItems
-    : [{ type: "message", message: { speaker: "depo", text: "Human Gate is clear. Risky work will appear here as approval cards inside this chat." } }];
+    : [{ type: "message", message: normalizeClientAgentMessage({ role: "agent", content: "Human Gate is clear. Risky work will appear here as approval cards inside this chat." }, thread.id, resolved) }];
   return `
-    <section class="office-chat human-gate-chat">
-      <div class="office-section-head">
-        <h4>Approval Chat</h4>
-        <span>${escapeHtml(pluralize(runtime.pending.length, "pending"))}</span>
+    <section class="office-chat human-gate-chat agent-thread-chat" data-agent-chat-room="${escapeHtml(resolved)}" data-agent-chat-thread-id="${escapeHtml(thread.id)}">
+      <div class="office-chat-toolbar">
+        <div>
+          <h4>Approval Chat</h4>
+          <span>${escapeHtml(thread.title || "Human Gate Session")}</span>
+        </div>
+        <div>
+          <em>${escapeHtml(pluralize(runtime.pending.length, "pending"))}</em>
+          <button type="button" data-agent-chat-new>New chat</button>
+        </div>
       </div>
+      ${agent101ThreadListMarkup(resolved, thread.id)}
       <div class="office-chat-log approval-chat-log" aria-live="polite">
         ${visibleItems
           .map((item) => {
             if (item.type === "message") {
-              const message = item.message;
-              return `
-                <article class="${message.speaker === "operator" ? "operator" : ""} ${message.pending ? "pending" : ""}">
-                  <strong>${message.speaker === "operator" ? "You" : "Agent 101"}</strong>
-                  <p>${escapeHtml(message.text)}</p>
-                </article>
-              `;
+              return agent101ChatMessageMarkup(item.message);
             }
             const approval = item.approval;
             return `
@@ -4011,8 +4277,9 @@ function humanGateChatMarkup(card, runtime) {
           })
           .join("")}
       </div>
+      ${agent101QuickPromptsMarkup(resolved)}
       <form class="agent-chat-form office-chat-form" data-depo-chat-form>
-        <input name="message" type="text" autocomplete="off" placeholder="Ask Agent 101 about approvals, evidence, or next decision..." />
+        <textarea name="message" autocomplete="off" rows="1" placeholder="Ask Agent 101 about approvals, evidence, or next decision..."></textarea>
         <button type="submit">Send</button>
       </form>
     </section>
@@ -4104,7 +4371,7 @@ function shouldAutoScrollChat() {
 }
 
 function focusAgentChatInput() {
-  const input = moduleInfoCard?.querySelector('.agent-chat-form input[name="message"]');
+  const input = moduleInfoCard?.querySelector('.agent-chat-form textarea[name="message"], .agent-chat-form input[name="message"]');
   input?.focus({ preventScroll: true });
 }
 
@@ -4143,13 +4410,15 @@ function renderShellData() {
   renderAgentRoster();
   renderOrbitScene();
   if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
-    const activeInput = moduleInfoCard.contains(document.activeElement) ? moduleInfoCard.querySelector('.agent-chat-form input[name="message"]') : null;
+    const activeInput = moduleInfoCard.contains(document.activeElement)
+      ? moduleInfoCard.querySelector('.agent-chat-form textarea[name="message"], .agent-chat-form input[name="message"]')
+      : null;
     const activeInputValue = activeInput?.value || "";
     const autoScrollChat = shouldAutoScrollChat();
     moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
     positionModuleInfoCard(selectedRoomKey);
     if (activeInput) {
-      const nextInput = moduleInfoCard.querySelector('.agent-chat-form input[name="message"]');
+      const nextInput = moduleInfoCard.querySelector('.agent-chat-form textarea[name="message"], .agent-chat-form input[name="message"]');
       if (nextInput) {
         nextInput.value = activeInputValue;
         nextInput.focus({ preventScroll: true });
@@ -6736,6 +7005,74 @@ async function submitDepoChat(roomKey, message) {
   const resolved = resolveRoomKey(roomKey);
   const trimmed = String(message || "").trim();
   if (!trimmed) return;
+  if (apiAvailable) {
+    let thread = null;
+    let pendingMessage = null;
+    agent101ChatSending = true;
+    try {
+      thread = await ensureServerAgent101Thread(resolved, clientChatTitleFromContent(trimmed));
+      appendClientAgentThreadMessages(thread, {
+        role: "user",
+        content: trimmed,
+        status: "sent",
+        metadata: { roomId: resolved },
+      });
+      [pendingMessage] = appendClientAgentThreadMessages(thread, {
+        role: "agent",
+        content: "Thinking...",
+        status: "thinking",
+        metadata: { roomId: resolved },
+      });
+      renderShellData();
+      requestAnimationFrame(scrollAgentChatToLatest);
+      const payload = await postJson(`/api/agent101/chats/${encodeURIComponent(thread.id)}/messages`, {
+        content: trimmed,
+        roomId: resolved,
+        mode: "demo",
+        maxSteps: 10,
+      });
+      mergeAgent101ThreadPayload(payload);
+      if (payload.thread?.id) setActiveAgent101Thread(resolved, payload.thread.id);
+      if (payload.run || payload.response?.task || payload.response?.artifact || payload.response?.approval || payload.response?.memory) {
+        await loadState();
+        await loadAgent101ToolStatus();
+      } else {
+        renderShellData();
+      }
+      addSystemLogEntry({
+        type: "agent101_chat",
+        message: `Asked Agent 101 about ${moduleDisplayName(resolved)}.`,
+        riskLevel: payload.run?.status === "needs_approval" ? "high" : payload.response?.riskLevel || "low",
+        roomId: resolved,
+        actor: "Operator",
+      });
+    } catch (error) {
+      aiProviderNotice = error.message;
+      if (thread) {
+        if (pendingMessage) {
+          thread.messages = (thread.messages || []).filter((item) => item.id !== pendingMessage.id);
+        }
+        appendClientAgentThreadMessages(thread, {
+          role: "agent",
+          content: "I could not save or run that chat message from the backend. Nothing external happened. Try again after the server connection is healthy.",
+          status: "error",
+          metadata: { roomId: resolved },
+        });
+      }
+      addSystemLogEntry({
+        type: "agent101_thread_error",
+        message: `Agent 101 threaded chat failed cleanly: ${error.message}`,
+        riskLevel: "medium",
+        roomId: resolved,
+      });
+      renderShellData();
+    } finally {
+      agent101ChatSending = false;
+      renderShellData();
+      requestAnimationFrame(scrollAgentChatToLatest);
+    }
+    return;
+  }
   const [operatorMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "operator", text: trimmed }, { persist: false });
   const [pendingMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "depo", text: "Thinking...", pending: true }, { persist: false });
   const chatHistory = chatHistoryForRoom(resolved, 18);
@@ -6803,6 +7140,23 @@ async function submitDepoChat(roomKey, message) {
   }
   depoChatMessages = depoChatMessages.filter((item) => item !== pendingMessage);
   const [responseMessage] = appendDepoChatMessages({ roomId: resolved, speaker: "depo", text: responseText }, { persist: false });
+  if (!apiAvailable) {
+    const localThread = activeAgent101Thread(resolved);
+    appendClientAgentThreadMessages(localThread, [
+      {
+        role: "user",
+        content: trimmed,
+        status: "sent",
+        metadata: { roomId: resolved },
+      },
+      {
+        role: "agent",
+        content: responseText,
+        status: "complete",
+        metadata: { roomId: resolved, riskLevel: responseMeta.riskLevel || "low" },
+      },
+    ]);
+  }
   await persistChatMessages([operatorMessage, responseMessage].filter(Boolean));
   if (shouldRefreshState) {
     await loadState();
@@ -7472,16 +7826,48 @@ stationMap.addEventListener("click", (event) => {
   resetHabitatView();
 });
 
-moduleInfoCard?.addEventListener("click", (event) => {
+moduleInfoCard?.addEventListener("click", async (event) => {
   event.stopPropagation();
   const closeButton = event.target.closest(".module-info-close");
   if (closeButton) {
     resetHabitatView();
     return;
   }
+  const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
+  const threadButton = event.target.closest("[data-agent-chat-thread]");
+  if (threadButton) {
+    setActiveAgent101Thread(stationId, threadButton.dataset.agentChatThread);
+    openModuleInfoCard(stationId, { preservePosition: true, scrollChat: true });
+    return;
+  }
+  const newChatButton = event.target.closest("[data-agent-chat-new]");
+  if (newChatButton) {
+    if (apiAvailable) {
+      try {
+        const payload = await postJson("/api/agent101/chats", { roomId: stationId, title: "Agent 101 Session" });
+        mergeAgent101ThreadPayload(payload);
+        setActiveAgent101Thread(stationId, payload.thread?.id);
+      } catch (error) {
+        aiProviderNotice = error.message;
+        const localThread = createLocalAgentThread(stationId);
+        syncAgent101Threads([localThread, ...agent101ChatThreads]);
+        setActiveAgent101Thread(stationId, localThread.id);
+      }
+    } else {
+      const localThread = createLocalAgentThread(stationId);
+      syncAgent101Threads([localThread, ...agent101ChatThreads]);
+      setActiveAgent101Thread(stationId, localThread.id);
+    }
+    openModuleInfoCard(stationId, { preservePosition: true, scrollChat: true, focusInput: true });
+    return;
+  }
+  const agentPrompt = event.target.closest("[data-agent-chat-prompt]");
+  if (agentPrompt) {
+    submitDepoChat(stationId, agentPrompt.dataset.agentChatPrompt);
+    return;
+  }
   const chatPrompt = event.target.closest("[data-chat-prompt]");
   if (chatPrompt) {
-    const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
     handleDepoPromptAction(chatPrompt.dataset.chatPrompt, stationId);
     return;
   }
@@ -7493,7 +7879,6 @@ moduleInfoCard?.addEventListener("click", (event) => {
   const actionButton = event.target.closest("[data-module-action]");
   if (!actionButton) return;
   const action = actionButton.dataset.moduleAction;
-  const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "argentum-core";
   handleModuleAction(action, stationId);
 });
 
@@ -7502,7 +7887,7 @@ moduleInfoCard?.addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
-  const input = form.querySelector('input[name="message"]');
+  const input = form.querySelector('textarea[name="message"], input[name="message"]');
   const button = form.querySelector('button[type="submit"]');
   const message = input?.value || "";
   const originalButtonText = button?.textContent || "Send";
@@ -7517,6 +7902,14 @@ moduleInfoCard?.addEventListener("submit", (event) => {
       button.textContent = originalButtonText;
     }
   });
+});
+
+moduleInfoCard?.addEventListener("keydown", (event) => {
+  const input = event.target.closest?.('textarea[name="message"]');
+  if (!input || event.key !== "Enter" || event.shiftKey) return;
+  event.preventDefault();
+  const form = input.closest("[data-depo-chat-form]");
+  form?.requestSubmit();
 });
 
 moduleInfoCard?.addEventListener("focusin", () => {

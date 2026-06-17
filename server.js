@@ -1091,6 +1091,7 @@ function defaultState() {
       ],
     },
     chatMessages: [],
+    agent101ChatThreads: [],
     audit: [
       {
         id: "audit-system-created",
@@ -1141,6 +1142,7 @@ function normalizeState(state) {
   state.approvals = Array.isArray(state.approvals) ? state.approvals : fresh.approvals;
   state.approvals = state.approvals.filter((approval) => !["approval-pod-lane-v0", "approval-stock-readonly-v0"].includes(approval?.id));
   state.chatMessages = normalizeChatMessages(Array.isArray(state.chatMessages) ? state.chatMessages : fresh.chatMessages);
+  state.agent101ChatThreads = normalizeAgent101ChatThreads(state.agent101ChatThreads, state.chatMessages);
   state.memory = {
     working: mergeById(normalizeMemoryEntries(state.memory?.working || []), fresh.memory.working),
     shared: mergeById(normalizeMemoryEntries(state.memory?.shared || []), fresh.memory.shared),
@@ -1206,8 +1208,454 @@ function appendChatMessages(payload = {}) {
   if (!incoming.length) throw guardedError("Chat message text is required.", 400);
   const combined = normalizeChatMessages([...(state.chatMessages || []), ...incoming]);
   state.chatMessages = combined.slice(-240);
+  state.agent101ChatThreads = normalizeAgent101ChatThreads(state.agent101ChatThreads, state.chatMessages);
   writeState(state);
   return { messages: state.chatMessages };
+}
+
+function agentChatId(prefix = "agent_chat") {
+  return `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+}
+
+function chatTitleFromMessage(content = "") {
+  const text = String(content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "Agent 101 Session";
+  const lower = text.toLowerCase();
+  if (lower.includes("practice") || lower.includes("demo") || lower.includes("clip candidates")) return "Find 5 practice streams";
+  if (lower.includes("capcut")) return "CapCut handoff setup";
+  if (lower.includes("posting") || lower.includes("human gate")) return "Posting draft review";
+  if (lower.includes("what can you do") || lower.includes("blocked")) return "Agent permissions question";
+  const words = text.split(" ").slice(0, 5).join(" ");
+  return words.length > 42 ? `${words.slice(0, 39).trim()}...` : words;
+}
+
+function chatPreview(content = "") {
+  const text = String(content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 94 ? `${text.slice(0, 91).trim()}...` : text;
+}
+
+function normalizeAgent101ChatMessage(message = {}, threadId = "", fallbackRoom = "depo-habitat") {
+  const rawContent = message.content ?? message.text ?? "";
+  const content = String(rawContent || "").trim().slice(0, 4000);
+  if (!content) return null;
+  const validRoles = new Set(["user", "agent", "system", "tool"]);
+  const roleFromSpeaker = message.speaker === "operator" ? "user" : message.speaker === "depo" || message.speaker === "agent" ? "agent" : "";
+  const role = validRoles.has(message.role) ? message.role : roleFromSpeaker || "agent";
+  const validStatuses = new Set(["sent", "thinking", "running", "complete", "error"]);
+  const rawRoom = String(message.roomId || message.metadata?.roomId || fallbackRoom || "depo-habitat").trim();
+  const roomId = BUSINESS_OFFICES[rawRoom] ? rawRoom : "depo-habitat";
+  const createdAt = message.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : now();
+  return {
+    id: String(message.id || agentChatId("msg")),
+    threadId: String(message.threadId || threadId || ""),
+    role,
+    content,
+    createdAt,
+    status: validStatuses.has(message.status) ? message.status : role === "tool" ? "complete" : "sent",
+    metadata: {
+      ...(message.metadata && typeof message.metadata === "object" ? message.metadata : {}),
+      roomId,
+    },
+  };
+}
+
+function seedThreadFromFlatMessages(roomId, flatMessages = []) {
+  const messages = normalizeChatMessages(flatMessages)
+    .filter((message) => message.roomId === roomId)
+    .map((message) =>
+      normalizeAgent101ChatMessage(
+        {
+          id: message.id,
+          role: message.speaker === "operator" ? "user" : "agent",
+          content: message.text,
+          createdAt: message.createdAt,
+          metadata: { roomId: message.roomId, source: message.source },
+        },
+        "",
+        roomId,
+      ),
+    )
+    .filter(Boolean);
+  return {
+    id: agentChatId("thread"),
+    title: messages.find((message) => message.role === "user") ? chatTitleFromMessage(messages.find((message) => message.role === "user").content) : "Agent 101 Session",
+    agentId: "agent-101",
+    roomId,
+    createdAt: messages[0]?.createdAt || now(),
+    updatedAt: messages.at(-1)?.createdAt || now(),
+    lastMessage: chatPreview(messages.at(-1)?.content || "Ready for supervised work."),
+    archived: false,
+    threadSummary: {
+      threadId: "",
+      summary: "Agent 101 supervised office chat.",
+      updatedAt: now(),
+    },
+    messages: messages.map((message) => ({ ...message, threadId: "" })),
+  };
+}
+
+function defaultAgentThread(roomId = "depo-habitat", flatMessages = []) {
+  const thread = seedThreadFromFlatMessages(roomId, flatMessages);
+  if (!thread.messages.length) {
+    thread.messages.push(
+      normalizeAgent101ChatMessage(
+        {
+          role: "agent",
+          content: "I'm ready. Ask me to plan, research, draft, or run a safe clipping workflow. Anything external stays behind Human Gate.",
+          status: "complete",
+          metadata: { roomId },
+        },
+        thread.id,
+        roomId,
+      ),
+    );
+  }
+  thread.messages = thread.messages.map((message) => ({ ...message, threadId: thread.id }));
+  thread.threadSummary.threadId = thread.id;
+  thread.updatedAt = thread.messages.at(-1)?.createdAt || thread.updatedAt;
+  thread.lastMessage = chatPreview(thread.messages.at(-1)?.content || "");
+  return thread;
+}
+
+function normalizeAgent101ChatThread(thread = {}, fallbackRoom = "depo-habitat") {
+  const id = String(thread.id || agentChatId("thread"));
+  const rawRoom = String(thread.roomId || fallbackRoom || "depo-habitat").trim();
+  const roomId = BUSINESS_OFFICES[rawRoom] ? rawRoom : "depo-habitat";
+  const messages = (Array.isArray(thread.messages) ? thread.messages : [])
+    .map((message) => normalizeAgent101ChatMessage(message, id, roomId))
+    .filter(Boolean)
+    .slice(-160);
+  const createdAt = thread.createdAt && !Number.isNaN(Date.parse(thread.createdAt)) ? thread.createdAt : messages[0]?.createdAt || now();
+  const updatedAt = thread.updatedAt && !Number.isNaN(Date.parse(thread.updatedAt)) ? thread.updatedAt : messages.at(-1)?.createdAt || createdAt;
+  return {
+    id,
+    title: String(thread.title || chatTitleFromMessage(messages.find((message) => message.role === "user")?.content || "")).slice(0, 80),
+    agentId: "agent-101",
+    roomId,
+    createdAt,
+    updatedAt,
+    lastMessage: chatPreview(thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work."),
+    archived: Boolean(thread.archived),
+    threadSummary: {
+      threadId: id,
+      summary: String(thread.threadSummary?.summary || thread.summary || "Agent 101 supervised office chat.").slice(0, 600),
+      updatedAt: thread.threadSummary?.updatedAt || updatedAt,
+    },
+    messages: messages.map((message) => ({ ...message, threadId: id })),
+  };
+}
+
+function normalizeAgent101ChatThreads(threads = [], flatMessages = []) {
+  const normalized = (Array.isArray(threads) ? threads : [])
+    .map((thread) => normalizeAgent101ChatThread(thread))
+    .filter(Boolean);
+  const existingIds = new Set(normalized.map((thread) => thread.id));
+  const activeRooms = new Set(normalized.map((thread) => thread.roomId));
+  const roomsWithFlatMessages = new Set(normalizeChatMessages(flatMessages).map((message) => message.roomId));
+  const seedRooms = roomsWithFlatMessages.size ? roomsWithFlatMessages : new Set(["depo-habitat"]);
+  seedRooms.forEach((roomId) => {
+    if (activeRooms.has(roomId)) return;
+    const thread = defaultAgentThread(roomId, flatMessages);
+    if (!existingIds.has(thread.id)) normalized.push(thread);
+  });
+  if (!normalized.length) normalized.push(defaultAgentThread("depo-habitat", flatMessages));
+  return normalized
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 50);
+}
+
+function publicAgent101ChatThreads(state) {
+  return (state.agent101ChatThreads || []).map((thread) => ({
+    id: thread.id,
+    title: thread.title,
+    agentId: thread.agentId,
+    roomId: thread.roomId,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    lastMessage: thread.lastMessage,
+    archived: Boolean(thread.archived),
+    messageCount: thread.messages?.length || 0,
+  }));
+}
+
+function findAgent101Thread(state, threadId) {
+  return (state.agent101ChatThreads || []).find((thread) => thread.id === threadId);
+}
+
+function refreshThreadPreview(thread) {
+  const lastMessage = thread.messages?.at(-1);
+  thread.updatedAt = lastMessage?.createdAt || now();
+  thread.lastMessage = chatPreview(lastMessage?.content || thread.lastMessage || "");
+  if ((!thread.title || thread.title === "Agent 101 Session") && thread.messages?.some((message) => message.role === "user")) {
+    thread.title = chatTitleFromMessage(thread.messages.find((message) => message.role === "user").content);
+  }
+  thread.threadSummary = {
+    threadId: thread.id,
+    summary: `Recent Agent 101 context: ${thread.messages
+      .slice(-6)
+      .map((message) => `${message.role}: ${chatPreview(message.content)}`)
+      .join(" | ")
+      .slice(0, 560)}`,
+    updatedAt: now(),
+  };
+  return thread;
+}
+
+function appendAgent101ThreadMessages(thread, messages = []) {
+  const incoming = (Array.isArray(messages) ? messages : [messages])
+    .map((message) => normalizeAgent101ChatMessage(message, thread.id, thread.roomId))
+    .filter(Boolean);
+  if (!incoming.length) return [];
+  const seen = new Set();
+  thread.messages = [...(thread.messages || []), ...incoming]
+    .filter((message) => {
+      if (seen.has(message.id)) return false;
+      seen.add(message.id);
+      return true;
+    })
+    .slice(-160);
+  refreshThreadPreview(thread);
+  return incoming;
+}
+
+function createAgent101ChatThread(payload = {}) {
+  const state = readState();
+  const roomId = BUSINESS_OFFICES[payload.roomId] ? payload.roomId : "depo-habitat";
+  const thread = normalizeAgent101ChatThread({
+    id: agentChatId("thread"),
+    title: payload.title || "Agent 101 Session",
+    roomId,
+    createdAt: now(),
+    updatedAt: now(),
+    messages: [
+      {
+        role: "agent",
+        content: "New chat started. Tell me what you want Agent 101 to plan, draft, check, or run safely.",
+        status: "complete",
+        metadata: { roomId },
+      },
+    ],
+  });
+  state.agent101ChatThreads.unshift(thread);
+  writeState(state);
+  return { thread, threads: publicAgent101ChatThreads(state) };
+}
+
+function updateAgent101ChatThread(threadId, payload = {}) {
+  const state = readState();
+  const thread = findAgent101Thread(state, threadId);
+  if (!thread) throw guardedError("Chat thread not found.", 404);
+  if (payload.title !== undefined) thread.title = String(payload.title || "Agent 101 Session").trim().slice(0, 80);
+  if (payload.archived !== undefined) thread.archived = Boolean(payload.archived);
+  thread.updatedAt = now();
+  refreshThreadPreview(thread);
+  writeState(state);
+  return { thread, threads: publicAgent101ChatThreads(state) };
+}
+
+function deleteAgent101ChatThread(threadId) {
+  const state = readState();
+  const before = state.agent101ChatThreads?.length || 0;
+  state.agent101ChatThreads = (state.agent101ChatThreads || []).filter((thread) => thread.id !== threadId);
+  if ((state.agent101ChatThreads?.length || 0) === before) throw guardedError("Chat thread not found.", 404);
+  writeState(state);
+  return { deleted: true, threads: publicAgent101ChatThreads(state) };
+}
+
+function shouldTriggerAgentRunner(message = "") {
+  const text = String(message || "").toLowerCase();
+  const workflowPhrases = [
+    "find 5 practice streams",
+    "practice streams",
+    "demo clipping workflow",
+    "run the demo",
+    "run clipping workflow",
+    "make clips",
+    "create candidates",
+    "clip candidates",
+    "package top clips",
+    "package the top",
+    "go ahead",
+    "run it",
+    "test the agent",
+    "fully automate internally",
+  ];
+  return workflowPhrases.some((phrase) => text.includes(phrase));
+}
+
+function runnerStepTitle(step = {}) {
+  const label = String(step.tool || step.name || "tool").replace(/_/g, " ");
+  return label.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function runToolSummary(step = {}) {
+  const details = step.details || {};
+  if (Number.isFinite(details.added) || Number.isFinite(details.updated)) {
+    return `${details.added || 0} added, ${details.updated || 0} updated.`;
+  }
+  if (Number.isFinite(details.sessions)) return `${details.sessions} sessions created.`;
+  if (Number.isFinite(details.candidates)) return `${details.candidates} clip candidates created.`;
+  if (Number.isFinite(details.packages)) return `${details.packages} packages created.`;
+  if (Number.isFinite(details.briefs)) return `${details.briefs} CapCut briefs generated.`;
+  if (Number.isFinite(details.drafts)) return `${details.drafts} posting drafts created.`;
+  if (Number.isFinite(details.approvals)) return `${details.approvals} approval requests sent to Human Gate.`;
+  if (Number.isFinite(details.artifacts)) return `${details.artifacts} artifacts saved.`;
+  return step.message || `${runnerStepTitle(step)} complete.`;
+}
+
+function appendRunMessagesToThread(thread, result = {}) {
+  const toolMessages = (result.steps || [])
+    .filter((step) => step.tool !== "planner")
+    .map((step) => ({
+      role: "tool",
+      content: runToolSummary(step),
+      status: step.status === "error" ? "error" : "complete",
+      metadata: {
+        taskType: "agent_run_step",
+        runId: result.runId,
+        tool: step.tool,
+        stepTitle: runnerStepTitle(step),
+        riskLevel: "low",
+        roomId: thread.roomId,
+      },
+    }));
+  appendAgent101ThreadMessages(thread, toolMessages);
+  appendAgent101ThreadMessages(thread, {
+    role: "agent",
+    content:
+      result.status === "completed"
+        ? result.summary || "Done. The safe internal clipping workflow completed and any external posting remains behind Human Gate."
+        : result.summary || "This action needs Human Gate approval. I can prepare the package, but I cannot execute it externally.",
+    status: result.status === "error" ? "error" : "complete",
+    metadata: {
+      taskType: "agent_run_summary",
+      runId: result.runId,
+      artifacts: result.artifacts || [],
+      requiresApproval: result.status === "needs_approval",
+      riskLevel: result.status === "needs_approval" ? "high" : "low",
+      roomId: thread.roomId,
+    },
+  });
+}
+
+async function clippingOfficeModule() {
+  if (!clippingOfficeModulePromise) {
+    clippingOfficeModulePromise = import(pathToFileURL(CLIPPING_OFFICE_SERVER).href);
+  }
+  return clippingOfficeModulePromise;
+}
+
+async function runClippingOfficeAgent101(payload = {}) {
+  const clippingOffice = await clippingOfficeModule();
+  if (typeof clippingOffice.runAgent101Workflow !== "function") {
+    throw guardedError("StreamClipper Agent runner is not available.", 503);
+  }
+  return clippingOffice.runAgent101Workflow(payload);
+}
+
+async function runAgent101FromRoot(payload = {}) {
+  const result = await runClippingOfficeAgent101({
+    goal: payload.goal || payload.message,
+    mode: payload.mode || "demo",
+    maxSteps: payload.maxSteps || 10,
+  });
+  if (payload.threadId) {
+    const state = readState();
+    const thread = findAgent101Thread(state, payload.threadId);
+    if (thread) {
+      appendRunMessagesToThread(thread, result);
+      writeState(state);
+      return { ...result, thread, threads: publicAgent101ChatThreads(state) };
+    }
+  }
+  return result;
+}
+
+async function addAgent101ChatMessage(threadId, payload = {}) {
+  const state = readState();
+  const thread = findAgent101Thread(state, threadId);
+  if (!thread || thread.archived) throw guardedError("Chat thread not found.", 404);
+  const content = String(payload.content || payload.message || "").trim();
+  if (!content) throw guardedError("Message is required.", 400);
+  appendAgent101ThreadMessages(thread, {
+    role: "user",
+    content,
+    status: "sent",
+    metadata: { roomId: payload.roomId || thread.roomId },
+  });
+  if (!thread.title || thread.title === "Agent 101 Session") thread.title = chatTitleFromMessage(content);
+
+  const recentMessages = thread.messages.slice(-20);
+  if (shouldTriggerAgentRunner(content)) {
+    appendAgent101ThreadMessages(thread, {
+      role: "agent",
+      content: "I can run that as a safe internal draft workflow. Posting and uploads stay blocked by Human Gate. Starting now.",
+      status: "running",
+      metadata: { taskType: "agent_run", roomId: thread.roomId, riskLevel: "low" },
+    });
+    writeState(state);
+    const result = await runClippingOfficeAgent101({
+      goal: content,
+      mode: payload.mode || "demo",
+      maxSteps: payload.maxSteps || 10,
+      threadId,
+    });
+    const refreshedState = readState();
+    const refreshedThread = findAgent101Thread(refreshedState, threadId) || thread;
+    const runningNotice = refreshedThread.messages
+      ?.slice()
+      .reverse()
+      .find((message) => message.status === "running" && message.metadata?.taskType === "agent_run");
+    if (runningNotice) runningNotice.status = "complete";
+    appendRunMessagesToThread(refreshedThread, result);
+    writeState(refreshedState);
+    return { thread: refreshedThread, threads: publicAgent101ChatThreads(refreshedState), run: result };
+  }
+
+  const response = await handleAgent101Chat({
+    message: content,
+    office: payload.roomId || thread.roomId,
+    officeId: payload.roomId || thread.roomId,
+    roomId: payload.roomId || thread.roomId,
+    chatHistory: recentMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      metadata: message.metadata,
+    })),
+    threadSummary: thread.threadSummary,
+  });
+  appendAgent101ThreadMessages(thread, {
+    role: response.approval ? "system" : "agent",
+    content:
+      response.message ||
+      (response.approval
+        ? "This action needs Human Gate approval. I can prepare a draft package, but I cannot execute it."
+        : "I can help with safe internal draft work."),
+    status: "complete",
+    metadata: {
+      taskType: response.taskType,
+      artifacts: response.artifacts || [],
+      requiresApproval: Boolean(response.requiresApproval || response.approval),
+      riskLevel: response.riskLevel || "low",
+      approvalId: response.approval?.id,
+      roomId: payload.roomId || thread.roomId,
+    },
+  });
+  (response.logs || []).slice(0, 4).forEach((log) => {
+    appendAgent101ThreadMessages(thread, {
+      role: "tool",
+      content: String(log),
+      status: "complete",
+      metadata: { taskType: "agent_log", roomId: payload.roomId || thread.roomId },
+    });
+  });
+  writeState(state);
+  return { thread, threads: publicAgent101ChatThreads(state), response };
 }
 
 function mergeById(existing, seeded) {
@@ -4273,6 +4721,73 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/agent101/openai-test") {
     sendJson(res, 200, await testAgent101OpenAi());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/chats") {
+    try {
+      sendJson(res, 200, { threads: publicAgent101ChatThreads(readState()).filter((thread) => !thread.archived) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/chats") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 201, createAgent101ChatThread(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agent101ChatMatch = url.pathname.match(/^\/api\/agent101\/chats\/([^/]+)$/);
+  if (agent101ChatMatch) {
+    const threadId = decodeURIComponent(agent101ChatMatch[1]);
+    try {
+      if (req.method === "GET") {
+        const state = readState();
+        const thread = findAgent101Thread(state, threadId);
+        if (!thread) throw guardedError("Chat thread not found.", 404);
+        sendJson(res, 200, { thread, threads: publicAgent101ChatThreads(state) });
+        return;
+      }
+      if (req.method === "PATCH") {
+        const payload = await readBody(req);
+        sendJson(res, 200, updateAgent101ChatThread(threadId, payload));
+        return;
+      }
+      if (req.method === "DELETE") {
+        sendJson(res, 200, deleteAgent101ChatThread(threadId));
+        return;
+      }
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+      return;
+    }
+  }
+
+  const agent101ChatMessageMatch = url.pathname.match(/^\/api\/agent101\/chats\/([^/]+)\/messages$/);
+  if (req.method === "POST" && agent101ChatMessageMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, await addAgent101ChatMessage(decodeURIComponent(agent101ChatMessageMatch[1]), payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/run") {
+    try {
+      const payload = await readBody(req);
+      const result = await runAgent101FromRoot(payload);
+      sendJson(res, result.status === "error" ? 500 : 200, result);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
     return;
   }
 

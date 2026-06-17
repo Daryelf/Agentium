@@ -247,7 +247,7 @@ function dailyLimitStatus() {
   };
 }
 
-function createApprovalRequest({ type, title, riskLevel = "medium", evidence = {}, linkedId }) {
+function createApprovalRequest({ type, actionType, title, riskLevel = "medium", evidence = {}, linkedId, createdBy = "agent101" }) {
   const existing = state.approvalRequests.find(
     (request) => request.linkedId === linkedId && request.type === type && request.status === "pending"
   );
@@ -255,11 +255,14 @@ function createApprovalRequest({ type, title, riskLevel = "medium", evidence = {
   const request = {
     id: newId("approval"),
     type,
+    actionType: actionType || type,
     title,
     riskLevel,
     evidence,
     linkedId,
     status: "pending",
+    createdBy,
+    actor: createdBy === "agent101" ? "Agent 101" : createdBy,
     createdAt: now(),
     decidedAt: null,
     decisionNotes: ""
@@ -396,9 +399,15 @@ async function writeArtifact(kind, name, payload, extension = "json") {
   const artifact = {
     id: newId("artifact"),
     kind,
+    type: kind,
+    title: name,
+    content: payload,
+    status: "ready",
     filename,
     path: filePath,
     url: `/outputs/${encodeURIComponent(filename)}`,
+    fileRefs: [{ filename, path: filePath, url: `/outputs/${encodeURIComponent(filename)}` }],
+    createdBy: "agent101",
     createdAt: now()
   };
   state.artifacts.unshift(artifact);
@@ -797,11 +806,7 @@ function createPostingDraftsForPackage(clipPackage, packagePlan) {
   });
 }
 
-const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a supervised clipping workflow agent inside StreamClipper.
-You can safely perform internal draft work: plan, analyze, score candidates, generate hooks, create captions, make CapCut briefs, create draft posting packages, and log actions.
-You cannot publish, upload, spend money, change accounts, or use real external accounts without Human Gate approval.
-If the user asks to test automation, you may run demo/local workflows using demo streamers and synthetic candidates.
-Return useful structured outputs. Do not refuse safe internal draft work.`;
+const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a supervised clipping workflow agent inside StreamClipper. You can perform safe internal draft work: plan, analyze, score candidates, generate hooks, create captions, make CapCut briefs, create draft posting packages, and log actions. You cannot publish, upload, spend money, change accounts, connect social accounts, or use real external accounts without Human Gate approval. If the user asks to test automation, you may run local/demo workflows using demo streamers and synthetic candidates. Do not refuse safe internal draft work. Return useful structured JSON.`;
 
 const AGENT101_DEMO_STREAMERS = [
   {
@@ -853,7 +858,7 @@ const AGENT101_CLIP_IDEAS = [
 
 const AGENT101_BLOCKED_ACTIONS = [
   {
-    pattern: /\b(publish|upload|auto[- ]?post|post publicly|go live|push live|release externally)\b/i,
+    pattern: /\b(publish|upload|direct[- ]?post|auto[- ]?post|post publicly|post this video|go live|push live|release externally)\b/i,
     reason: "Publishing or uploading externally requires Human Gate approval."
   },
   {
@@ -861,14 +866,61 @@ const AGENT101_BLOCKED_ACTIONS = [
     reason: "Money movement and purchases require Human Gate approval."
   },
   {
-    pattern: /\b(change account|modify account|connect account|log in|login|create api key|rotate api key|set credential)\b/i,
+    pattern: /\b(change account|modify account|connect account|connect social|log in|login|create api key|rotate api key|set credential)\b/i,
     reason: "Account, login, and credential changes require Human Gate approval."
+  },
+  {
+    pattern: /\b(delete|remove live content|use real streamer content|claim permission|impersonat)/i,
+    reason: "Deleting content, claiming permission, or using unapproved real streamer content requires Human Gate approval."
   },
   {
     pattern: /\b(bypass human gate|skip approval|ignore daily limit|disable approval)\b/i,
     reason: "Approval gates and daily limits cannot be bypassed."
   }
 ];
+
+const AGENT101_RISKY_ACTION_TYPES = new Set([
+  "publish",
+  "publish_video",
+  "upload_to_tiktok",
+  "upload_to_instagram",
+  "upload_to_youtube",
+  "direct_post",
+  "spend_money",
+  "move_money",
+  "change_account",
+  "connect_social_account",
+  "delete_content",
+  "use_unapproved_streamer_content",
+  "external_api_action"
+]);
+
+const AGENT101_SAFE_INTERNAL_ACTION_TYPES = new Set([
+  "add_demo_streamers",
+  "run_demo_watch_cycle",
+  "create_demo_candidates",
+  "score_candidates",
+  "create_clip_package",
+  "create_capcut_brief",
+  "create_posting_draft",
+  "create_approval_request",
+  "save_artifact",
+  "add_log"
+]);
+
+function requiresHumanGate(actionType) {
+  const normalized = cleanText(actionType).toLowerCase();
+  if (!normalized) return false;
+  if (AGENT101_SAFE_INTERNAL_ACTION_TYPES.has(normalized)) return false;
+  return AGENT101_RISKY_ACTION_TYPES.has(normalized);
+}
+
+function agentToolLabel(name) {
+  return cleanText(name)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replaceAll("_", " ")
+    .toLowerCase();
+}
 
 function agentCountsSnapshot() {
   return {
@@ -960,46 +1012,140 @@ Return a compact JSON object with keys: summary, riskLevel, suggestedActions, fo
   }
 }
 
+function parseJsonObject(text) {
+  const raw = cleanText(text);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+async function agentOpenAIScoreCandidates(run, candidates) {
+  if (!config.openaiApiKey || !candidates.length) {
+    return { used: false, scores: [], reason: "OpenAI unavailable; local scoring fallback used." };
+  }
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: config.openaiModel,
+        input: `${AGENT101_SYSTEM_PROMPT}
+
+Score these safe internal demo clip candidates as one batch. Return only JSON:
+{
+  "scores": [
+    {
+      "id": "candidate id",
+      "score": 0-100,
+      "hookScore": 0-100,
+      "engagementPotential": 0-100,
+      "retentionPotential": 0-100,
+      "riskScore": 0-100,
+      "reason": "short reason",
+      "suggestedHook": "short hook",
+      "suggestedTitle": "short title"
+    }
+  ]
+}
+
+Candidates:
+${JSON.stringify(candidates.map((candidate) => ({
+  id: candidate.id,
+  streamerName: candidate.streamerName,
+  title: candidate.title,
+  category: candidate.category,
+  duration: candidate.duration,
+  transcriptSnippet: candidate.transcriptSnippet,
+  chatSignals: candidate.chatSignals,
+  reason: candidate.reason
+})), null, 2)}`
+      })
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`OpenAI candidate scoring failed: ${response.status} ${text.slice(0, 160)}`);
+    }
+    const json = await response.json();
+    const parsed = parseJsonObject(json.output_text || "");
+    const scores = Array.isArray(parsed?.scores) ? parsed.scores : [];
+    if (!scores.length) throw new Error("OpenAI scoring response did not include scores array");
+    addAgentLog(run, "openai_call", "OpenAI scored clip candidates in one batch", {
+      count: scores.length,
+      model: config.openaiModel
+    });
+    return { used: true, scores };
+  } catch (error) {
+    addAgentLog(run, "openai_fallback", "OpenAI scoring failed; local scoring fallback used", { error: error.message });
+    return { used: false, scores: [], reason: error.message };
+  }
+}
+
+function shouldRunFullInternalWorkflow(goal) {
+  const lower = cleanText(goal).toLowerCase();
+  return (
+    /full.*workflow|full supervised|clipping workflow|demo clipping|test.*clips office|test.*clipping|fully automate internally|run it|go ahead/.test(lower) ||
+    /practice stream|demo stream|find\s+\d+\s+practice|find\s+\d+\s+demo|make clips|package top|top 3/.test(lower) ||
+    (/clip candidates/.test(lower) && /find|practice|demo|stream|make|create|generate/.test(lower))
+  );
+}
+
 function agentToolPlan(goal, mode = "demo") {
   const lower = cleanText(goal).toLowerCase();
-  if (/full.*workflow|full supervised|clipping workflow|demo clipping|test.*clips office|test.*clipping|fully automate internally/.test(lower)) {
+  if (shouldRunFullInternalWorkflow(goal)) {
     return [
-      "add_demo_streamers",
-      "run_watch_cycle",
-      "create_clip_candidates",
-      "score_clip_candidates",
-      "create_clip_package",
-      "create_capcut_brief",
-      "create_posting_draft",
-      "save_artifact",
-      "add_log"
+      "addDemoStreamers",
+      "runWatchCycle",
+      "createClipCandidates",
+      "scoreClipCandidates",
+      "createClipPackage",
+      "createCapCutBrief",
+      "createPostingDraft",
+      "createApprovalRequest",
+      "saveArtifact",
+      "addLog"
     ];
   }
   if (/^add.*demo.*streamer|^seed.*demo.*streamer/.test(lower)) {
-    return ["add_demo_streamers", "add_log"];
+    return ["addDemoStreamers", "addLog"];
   }
   if (/candidate|make clips|find clips|score clips|clip radar/.test(lower) && !/package|capcut|posting|draft/.test(lower)) {
-    return ["add_demo_streamers", "run_watch_cycle", "create_clip_candidates", "score_clip_candidates", "add_log"];
+    return ["addDemoStreamers", "runWatchCycle", "createClipCandidates", "scoreClipCandidates", "addLog"];
   }
   if (/package|capcut|posting draft|top 3|human gate/.test(lower) && !/full|workflow|demo/.test(lower)) {
-    return ["score_clip_candidates", "create_clip_package", "create_capcut_brief", "create_posting_draft", "save_artifact", "add_log"];
+    return ["scoreClipCandidates", "createClipPackage", "createCapCutBrief", "createPostingDraft", "createApprovalRequest", "saveArtifact", "addLog"];
   }
   if (/run.*watch|watch.*cycle|check.*stream/.test(lower) && !/candidate|package|workflow|capcut|draft/.test(lower)) {
-    return ["add_demo_streamers", "run_watch_cycle", "add_log"];
+    return ["addDemoStreamers", "runWatchCycle", "addLog"];
   }
   if (mode === "live" && /recommend|scout/.test(lower)) {
-    return ["add_log"];
+    return ["addLog"];
   }
   return [
-    "add_demo_streamers",
-    "run_watch_cycle",
-    "create_clip_candidates",
-    "score_clip_candidates",
-    "create_clip_package",
-    "create_capcut_brief",
-    "create_posting_draft",
-    "save_artifact",
-    "add_log"
+    "addDemoStreamers",
+    "runWatchCycle",
+    "createClipCandidates",
+    "scoreClipCandidates",
+    "createClipPackage",
+    "createCapCutBrief",
+    "createPostingDraft",
+    "createApprovalRequest",
+    "saveArtifact",
+    "addLog"
   ];
 }
 
@@ -1018,39 +1164,45 @@ function formatClipTimestamp(totalSeconds) {
 }
 
 function demoApprovedStreamers() {
-  return state.streamers.filter((streamer) => streamer.monitorEnabled && isApprovedStreamer(streamer)).slice(0, 5);
+  return state.streamers
+    .filter((streamer) => streamer.monitorEnabled && (streamer.isDemo || streamer.permissionStatus === "demo_approved"))
+    .slice(0, 5);
 }
 
-function createSinglePostingDraft(clipPackage, packagePlan, platform = "tiktok") {
-  const existing = state.postingDrafts.find((draft) => draft.clipPackageId === clipPackage.id && draft.platform === platform);
+function createSinglePostingDraft(clipPackage, packagePlan) {
+  const existing = state.postingDrafts.find((draft) => draft.clipPackageId === clipPackage.id && draft.createdBy === "Agent 101");
   if (existing) return existing;
+  const platforms = ["tiktok", "instagram_reels", "youtube_shorts"];
   const draft = {
     id: newId("post"),
     clipPackageId: clipPackage.id,
-    platform,
+    platform: "multi_platform",
+    platforms,
     videoRef: clipPackage.artifacts?.[0]?.url || "",
     caption: packagePlan.captions?.tiktok || `${packagePlan.hook}. ${packagePlan.title}`,
+    tiktokCaption: packagePlan.captions?.tiktok || `${packagePlan.hook}. ${packagePlan.title}`,
+    instagramCaption: packagePlan.captions?.reels || `${packagePlan.title}. ${packagePlan.hook}`,
+    youtubeShortsCaption: packagePlan.captions?.shorts || `${packagePlan.hook} | ${packagePlan.title}`,
     hashtags: packagePlan.hashtags || [],
     thumbnailText: packagePlan.thumbnailText || packagePlan.hook,
+    postingNotes: [
+      "Draft package only.",
+      "Manual handoff after Human Gate approval.",
+      "No upload or public post has been attempted."
+    ],
     scheduledFor: "",
     status: "draft",
     platformStatus: "not_uploaded",
     approvalStatus: "pending",
     requiresApproval: true,
     riskNotes: ["Draft only. Human Gate approval is required before any external upload or publish."],
+    createdBy: "Agent 101",
     createdAt: now(),
     updatedAt: now(),
     approvedAt: null
   };
   state.postingDrafts.unshift(draft);
   clipPackage.postingDrafts = Array.from(new Set([...(clipPackage.postingDrafts || []), draft.id]));
-  createApprovalRequest({
-    type: "posting_draft",
-    title: `TikTok draft approval: ${packagePlan.title}`,
-    riskLevel: "medium",
-    linkedId: draft.id,
-    evidence: { clipPackageId: clipPackage.id, platform, source: "Agent 101 runner" }
-  });
   return draft;
 }
 
@@ -1059,15 +1211,25 @@ async function createAgentCapCutBrief(clipPackage) {
   if (existing) return { brief: null, artifacts: [existing], reused: true };
   const plan = clipPackage.packagePlan || {};
   const brief = {
+    id: newId("capcut_brief"),
+    packageId: clipPackage.id,
     projectTitle: plan.title || "StreamClipper CapCut Project",
     aspectRatio: "9:16",
     resolution: "1080x1920",
+    exportFormat: "mp4",
     targetLength: `${clipPackage.targetDuration || 30}s`,
+    timelineInstructions: plan.cutInstructions || clipPackage.cutInstructions || [],
     cutInstructions: plan.cutInstructions || clipPackage.cutInstructions || [],
+    captionStyle: "Bold, high-contrast, 1-6 words per line, kept out of platform safe zones.",
     captionOverlayInstructions: plan.captionOverlays || clipPackage.captionOverlays || [],
+    cropZoomGuidance: plan.cropGuidance || [],
     zoomCropInstructions: plan.cropGuidance || [],
+    transitions: ["Hard cuts on action beats", "Subtle punch-in on reaction payoff"],
+    effects: ["Clean glow highlight on key moment", "No copyrighted music or branded overlays without review"],
+    musicNotes: ["Manual handoff only. Use cleared audio or platform-safe sound after approval."],
     soundEffectsNotes: ["Use subtle beat hits only where they support the reaction.", "Avoid copyrighted music unless cleared."],
     exportChecklist: plan.approvalChecklist || [],
+    status: "ready",
     createdAt: now(),
     createdBy: "Agent 101"
   };
@@ -1116,6 +1278,7 @@ async function agentToolAddDemoStreamers(run) {
         permissionStatus: "demo_approved",
         allowedUse: ["demo_clips", "internal_testing"],
         monitorEnabled: true,
+        isDemo: true,
         liveStatus: existing.liveStatus || "demo_ready",
         liveStatusReason: "Demo-approved for internal Agent 101 workflow testing.",
         notes: "Demo-approved local streamer. Internal drafts only; no external posting permission.",
@@ -1133,6 +1296,7 @@ async function agentToolAddDemoStreamers(run) {
       permissionStatus: "demo_approved",
       allowedUse: ["demo_clips", "internal_testing"],
       monitorEnabled: true,
+      isDemo: true,
       lastCheckedAt: null,
       liveStatus: "demo_ready",
       liveStatusReason: "Demo-approved for internal Agent 101 workflow testing.",
@@ -1150,6 +1314,65 @@ async function agentToolAddDemoStreamers(run) {
 }
 
 async function agentToolRunWatchCycle(run) {
+  if (run.mode === "live") {
+    const approvedLiveStreamers = state.streamers
+      .filter((streamer) => streamer.monitorEnabled && streamer.permissionStatus === "approved" && ["twitch", "kick"].includes(streamer.platform))
+      .slice(0, 10);
+    const missingProvider = !twitchApiConfigured() && !kickApiConfigured();
+    if (approvedLiveStreamers.length && !missingProvider) {
+      const liveResults = [];
+      for (const streamer of approvedLiveStreamers) {
+        try {
+          const result = await checkStreamerLive(streamer);
+          liveResults.push(result);
+          addAgentLog(run, "stream_checked", "Agent 101 checked an approved live streamer", {
+            streamerId: streamer.id,
+            displayName: streamer.displayName,
+            liveStatus: streamer.liveStatus,
+            official: result.official
+          });
+          if (!result.stream) continue;
+          const session = {
+            id: newId("session"),
+            streamerId: streamer.id,
+            platform: streamer.platform,
+            title: result.stream.title || `${streamer.displayName} live stream`,
+            category: result.stream.game_name || streamer.liveCategory || "Live stream",
+            startedAt: result.stream.started_at || now(),
+            endedAt: null,
+            vodId: null,
+            status: "live",
+            createdBy: "Agent 101"
+          };
+          state.streamSessions.unshift(session);
+        } catch (error) {
+          streamer.liveStatus = "api_error";
+          streamer.liveStatusReason = error.message;
+          addAgentLog(run, "api_error", "Agent 101 live watch check failed", {
+            streamerId: streamer.id,
+            provider: streamer.platform,
+            error: error.message
+          });
+        }
+      }
+      const liveSessions = state.streamSessions.filter((session) => session.status === "live").length;
+      if (liveSessions) {
+        addAgentLog(run, "watch_cycle", "Agent 101 ran an official approved live watch cycle", {
+          streamersChecked: liveResults.length,
+          liveSessions
+        });
+        return { checked: liveResults.length, liveSessions, mode: "live" };
+      }
+    }
+    addAgentLog(run, "provider_fallback", "Live watch cycle fell back to demo mode", {
+      reason: missingProvider
+        ? "Twitch/Kick provider is not configured"
+        : approvedLiveStreamers.length
+          ? "No approved live sessions were available"
+          : "No approved real streamers are available"
+    });
+  }
+
   let streamers = demoApprovedStreamers();
   if (!streamers.length) {
     await agentToolAddDemoStreamers(run);
@@ -1203,6 +1426,16 @@ async function agentToolCreateClipCandidates(run) {
     .filter((session) => session.status === "demo_live" || session.status === "live")
     .filter((session) => isApprovedStreamer(findStreamer(session.streamerId)))
     .slice(0, 5);
+  if (!availableSessions.length) {
+    await agentToolRunWatchCycle(run);
+    availableSessions.push(
+      ...state.streamSessions
+        .filter((session) => session.status === "demo_live" || session.status === "live")
+        .filter((session) => isApprovedStreamer(findStreamer(session.streamerId)))
+        .slice(0, 5)
+    );
+  }
+  if (!availableSessions.length) throw new Error("No approved demo or live sessions were available for candidate generation");
   const candidates = AGENT101_CLIP_IDEAS.map(([title, snippet, duration, baseScore], index) => {
     const session = availableSessions[index % availableSessions.length];
     const streamer = findStreamer(session.streamerId);
@@ -1211,6 +1444,7 @@ async function agentToolCreateClipCandidates(run) {
     const candidateBase = {
       id: newId("candidate"),
       streamerId: streamer.id,
+      streamerName: streamer.displayName,
       sessionId: session.id,
       sourceType: "agent101_demo",
       sourceId: session.id,
@@ -1218,7 +1452,7 @@ async function agentToolCreateClipCandidates(run) {
       timestampEnd: formatClipTimestamp(startAt + duration),
       duration,
       title,
-      category: session.category,
+      category: session.category || profile.category,
       transcriptSnippet: snippet,
       chatSignals: { spike: Math.max(30, baseScore - 38), messagesPerMinute: Math.max(40, baseScore - 20), source: "agent101_demo" },
       reason: "Agent 101 generated this safe demo candidate from the internal clipping workflow.",
@@ -1241,8 +1475,26 @@ async function agentToolScoreClipCandidates(run) {
   const candidates = run.context.candidateIds?.length
     ? state.clipCandidates.filter((candidate) => run.context.candidateIds.includes(candidate.id))
     : newestAgentCandidates(15);
+  const openaiScoring = await agentOpenAIScoreCandidates(run, candidates);
+  const scoreById = new Map((openaiScoring.scores || []).map((score) => [score.id, score]));
   candidates.forEach((candidate) => {
-    Object.assign(candidate, scoreClipMoment(candidate), {
+    const localScore = scoreClipMoment(candidate);
+    const aiScore = scoreById.get(candidate.id);
+    Object.assign(candidate, localScore, aiScore ? {
+      score: Math.max(0, Math.min(100, Number(aiScore.score || localScore.score))),
+      hookScore: Math.max(0, Math.min(100, Number(aiScore.hookScore || localScore.hookScore))),
+      engagementPotential: Math.max(0, Math.min(100, Number(aiScore.engagementPotential || aiScore.score || localScore.score))),
+      retentionPotential: Math.max(0, Math.min(100, Number(aiScore.retentionPotential || aiScore.score || localScore.score))),
+      riskScore: Math.max(0, Math.min(100, Number(aiScore.riskScore || localScore.riskScore))),
+      reason: cleanText(aiScore.reason) || localScore.reason,
+      suggestedHook: cleanText(aiScore.suggestedHook) || localScore.suggestedHook,
+      suggestedTitle: cleanText(aiScore.suggestedTitle) || localScore.suggestedTitle,
+      scoringProvider: "openai"
+    } : {
+      engagementPotential: localScore.score,
+      retentionPotential: Math.min(100, localScore.score + 3),
+      scoringProvider: "local_fallback"
+    }, {
       reviewedBy: "Agent 101",
       updatedAt: now()
     });
@@ -1250,7 +1502,8 @@ async function agentToolScoreClipCandidates(run) {
   run.context.candidateIds = candidates.map((candidate) => candidate.id);
   addAgentLog(run, "clip_scored", "Agent 101 scored clip candidates", {
     count: candidates.length,
-    topScore: Math.max(0, ...candidates.map((candidate) => Number(candidate.score || 0)))
+    topScore: Math.max(0, ...candidates.map((candidate) => Number(candidate.score || 0))),
+    provider: openaiScoring.used ? "openai" : "local_fallback"
   });
   return { scored: candidates.length, topCandidates: newestAgentCandidates(3).map((candidate) => candidate.id) };
 }
@@ -1278,18 +1531,28 @@ async function agentToolCreateClipPackages(run) {
       createdAt: now(),
       createdBy: "Agent 101"
     });
+    run.artifacts.push(packageArtifact);
     const clipPackage = {
       id: newId("package"),
       candidateId: candidate.id,
+      title: packagePlan.title,
       format: "9:16",
       resolution: "1080x1920",
       targetDuration: Number(candidate.duration || 30),
       hook: packagePlan.hook,
       captionOverlays: packagePlan.captionOverlays,
+      scenePlan: [
+        "Open on the strongest action frame.",
+        "Hold the face/game reaction through the payoff.",
+        "End immediately after the clearest chat/reaction beat."
+      ],
       cutInstructions: packagePlan.cutInstructions,
+      thumbnailText: packagePlan.thumbnailText,
+      riskNotes: packagePlan.approvalChecklist,
+      status: "draft",
       capcutBriefId: null,
       postingDrafts: [],
-      approvalStatus: "pending",
+      approvalStatus: "draft",
       artifacts: [packageArtifact],
       packagePlan,
       createdAt: now(),
@@ -1299,13 +1562,6 @@ async function agentToolCreateClipPackages(run) {
     state.clipPackages.unshift(clipPackage);
     candidate.status = "packaged";
     candidate.updatedAt = now();
-    createApprovalRequest({
-      type: "clip_package",
-      title: `Clip package: ${packagePlan.title}`,
-      riskLevel: "medium",
-      linkedId: clipPackage.id,
-      evidence: { candidateId: candidate.id, streamerId: streamer.id, source: "Agent 101 runner" }
-    });
     packages.push(clipPackage);
   }
   run.context.packageIds = packages.map((clipPackage) => clipPackage.id);
@@ -1322,6 +1578,7 @@ async function agentToolCreateCapCutBriefs(run) {
     const result = await createAgentCapCutBrief(clipPackage);
     artifacts.push(...result.artifacts);
   }
+  run.artifacts.push(...artifacts);
   addAgentLog(run, "capcut_brief_created", "Agent 101 created CapCut handoff briefs", { count: packages.length });
   return { briefs: packages.length, artifacts: artifacts.map((artifact) => artifact.id) };
 }
@@ -1330,12 +1587,77 @@ async function agentToolCreatePostingDrafts(run) {
   const packages = run.context.packageIds?.length
     ? state.clipPackages.filter((clipPackage) => run.context.packageIds.includes(clipPackage.id))
     : state.clipPackages.slice(0, 3);
-  const drafts = packages.map((clipPackage) => createSinglePostingDraft(clipPackage, clipPackage.packagePlan || buildPackage(state.clipCandidates.find((candidate) => candidate.id === clipPackage.candidateId))));
-  addAgentLog(run, "post_queued", "Agent 101 created draft posting packages for Human Gate", {
+  const drafts = [];
+  const artifacts = [];
+  for (const clipPackage of packages) {
+    const draft = createSinglePostingDraft(
+      clipPackage,
+      clipPackage.packagePlan || buildPackage(state.clipCandidates.find((candidate) => candidate.id === clipPackage.candidateId))
+    );
+    const artifact = await writeArtifact("posting_draft", draft.thumbnailText || clipPackage.packagePlan?.title || "posting-draft", {
+      draft,
+      clipPackage,
+      createdAt: now(),
+      createdBy: "Agent 101"
+    });
+    draft.artifactId = artifact.id;
+    drafts.push(draft);
+    artifacts.push(artifact);
+  }
+  run.artifacts.push(...artifacts);
+  run.context.draftIds = drafts.map((draft) => draft.id);
+  addAgentLog(run, "posting_draft_created", "Agent 101 created draft posting packages", {
     drafts: drafts.length,
-    approvals: drafts.length
+    requiresApproval: drafts.every((draft) => draft.requiresApproval)
   });
   return { drafts: drafts.length, draftIds: drafts.map((draft) => draft.id) };
+}
+
+async function agentToolCreateApprovalRequests(run) {
+  const drafts = run.context.draftIds?.length
+    ? state.postingDrafts.filter((draft) => run.context.draftIds.includes(draft.id))
+    : state.postingDrafts.filter((draft) => draft.approvalStatus === "pending").slice(0, 3);
+  const approvals = [];
+  const artifacts = [];
+  for (const draft of drafts) {
+    if (!requiresHumanGate("publish_video")) continue;
+    const clipPackage = state.clipPackages.find((item) => item.id === draft.clipPackageId);
+    const candidate = state.clipCandidates.find((item) => item.id === clipPackage?.candidateId);
+    const request = createApprovalRequest({
+      type: "posting_draft",
+      actionType: "publish_video",
+      title: `Review draft post: ${clipPackage?.packagePlan?.title || draft.thumbnailText || "StreamClipper package"}`,
+      riskLevel: Number(candidate?.riskScore || 20) >= 50 ? "high" : "medium",
+      linkedId: draft.id,
+      createdBy: "agent101",
+      evidence: {
+        draftId: draft.id,
+        clipPackageId: draft.clipPackageId,
+        candidateId: candidate?.id,
+        platforms: draft.platforms,
+        source: "Agent 101 runner",
+        safeInternalWorkComplete: true,
+        externalPostingBlocked: true
+      }
+    });
+    const artifact = await writeArtifact("approval_package", request.title, {
+      approvalRequest: request,
+      draft,
+      clipPackage,
+      candidate,
+      createdAt: now(),
+      createdBy: "Agent 101"
+    });
+    request.artifactId = artifact.id;
+    approvals.push(request);
+    artifacts.push(artifact);
+  }
+  run.artifacts.push(...artifacts);
+  addAgentLog(run, "approval_requested", "Agent 101 sent posting drafts to Human Gate", {
+    approvals: approvals.length,
+    actionType: "publish_video"
+  });
+  return { approvals: approvals.length, approvalIds: approvals.map((approval) => approval.id) };
 }
 
 async function agentToolSaveArtifact(run) {
@@ -1361,6 +1683,16 @@ async function agentToolAddLog(run) {
 }
 
 const AGENT101_TOOL_REGISTRY = {
+  addDemoStreamers: agentToolAddDemoStreamers,
+  runWatchCycle: agentToolRunWatchCycle,
+  createClipCandidates: agentToolCreateClipCandidates,
+  scoreClipCandidates: agentToolScoreClipCandidates,
+  createClipPackage: agentToolCreateClipPackages,
+  createCapCutBrief: agentToolCreateCapCutBriefs,
+  createPostingDraft: agentToolCreatePostingDrafts,
+  createApprovalRequest: agentToolCreateApprovalRequests,
+  saveArtifact: agentToolSaveArtifact,
+  addLog: agentToolAddLog,
   add_demo_streamers: agentToolAddDemoStreamers,
   run_watch_cycle: agentToolRunWatchCycle,
   create_clip_candidates: agentToolCreateClipCandidates,
@@ -1368,6 +1700,7 @@ const AGENT101_TOOL_REGISTRY = {
   create_clip_package: agentToolCreateClipPackages,
   create_capcut_brief: agentToolCreateCapCutBriefs,
   create_posting_draft: agentToolCreatePostingDrafts,
+  create_approval_request: agentToolCreateApprovalRequests,
   save_artifact: agentToolSaveArtifact,
   add_log: agentToolAddLog
 };
@@ -1403,6 +1736,7 @@ async function runAgent101(body = {}) {
   if (blocked) {
     const request = createApprovalRequest({
       type: "agent_external_action",
+      actionType: "external_api_action",
       title: `Agent 101 blocked request: ${goal.slice(0, 80)}`,
       riskLevel: "high",
       linkedId: run.runId,
@@ -1416,7 +1750,7 @@ async function runAgent101(body = {}) {
       approvalId: request.id,
       reason: blocked.reason
     });
-    run.status = "blocked";
+    run.status = "needs_approval";
     run.progress = 100;
     run.currentStep = "Human Gate approval required";
     run.summary = blocked.reason;
@@ -1434,22 +1768,28 @@ async function runAgent101(body = {}) {
     error: openaiPlan.error || ""
   };
   addAgentStep(run, "planner", "completed", openaiPlan.message, { provider: run.provider.active });
+  addAgentLog(run, openaiPlan.used ? "openai_call" : "openai_fallback", openaiPlan.message, {
+    model: config.openaiModel,
+    error: openaiPlan.error || ""
+  });
+  addAgentLog(run, "agent_run", "Agent 101 accepted safe internal draft workflow", { goal, mode });
 
   const tools = agentToolPlan(goal, mode).slice(0, maxSteps);
   for (const toolName of tools) {
     const tool = AGENT101_TOOL_REGISTRY[toolName];
     if (!tool) continue;
-    addAgentStep(run, toolName, "running", `Running ${toolName.replaceAll("_", " ")}`);
+    const label = agentToolLabel(toolName);
+    addAgentStep(run, toolName, "running", `Running ${label}`);
     try {
       const result = await tool(run);
       const step = run.steps[run.steps.length - 1];
       step.status = "completed";
-      step.message = `${toolName.replaceAll("_", " ")} completed`;
+      step.message = `${label} completed`;
       step.details = result;
     } catch (error) {
       const step = run.steps[run.steps.length - 1];
       step.status = "error";
-      step.message = `${toolName.replaceAll("_", " ")} failed`;
+      step.message = `${label} failed`;
       step.details = { error: error.message };
       addAgentLog(run, "api_error", "Agent 101 tool failed", { toolName, error: error.message });
       run.status = "error";
@@ -2271,4 +2611,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   });
 }
 
-export { handleRequest };
+async function runAgent101Workflow(body = {}) {
+  await readyPromise;
+  return runAgent101(body);
+}
+
+export { handleRequest, runAgent101Workflow };

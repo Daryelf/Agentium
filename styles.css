@@ -2525,6 +2525,128 @@ main {
   padding: 12px;
 }
 
+.agent-thread-chat {
+  min-height: clamp(360px, 42vh, 520px);
+  gap: 9px;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(34, 211, 238, 0.12), transparent 40%),
+    linear-gradient(180deg, rgba(9, 17, 34, 0.88), rgba(2, 6, 23, 0.72));
+}
+
+.office-chat-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.office-chat-toolbar h4,
+.office-chat-toolbar span {
+  margin: 0;
+}
+
+.office-chat-toolbar h4 {
+  color: rgba(203, 213, 225, 0.74);
+  font-size: 0.62rem;
+  font-weight: 920;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.office-chat-toolbar span {
+  display: block;
+  max-width: 300px;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-chat-toolbar > div:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.office-chat-toolbar em {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #86efac;
+  background: rgba(16, 185, 129, 0.09);
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.office-chat-toolbar button,
+.office-thread-item,
+.office-chat-quick button {
+  border: 1px solid rgba(125, 211, 252, 0.15);
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.58);
+  cursor: pointer;
+}
+
+.office-chat-toolbar button {
+  min-height: 29px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.office-thread-list {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 4px;
+  scrollbar-width: none;
+}
+
+.office-thread-list::-webkit-scrollbar {
+  display: none;
+}
+
+.office-thread-item {
+  flex: 0 0 min(190px, 48%);
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.office-thread-item.active {
+  border-color: rgba(34, 211, 238, 0.34);
+  background:
+    linear-gradient(135deg, rgba(34, 211, 238, 0.13), rgba(124, 58, 237, 0.12)),
+    rgba(15, 23, 42, 0.72);
+}
+
+.office-thread-item strong,
+.office-thread-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-thread-item strong {
+  color: #f8fafc;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.office-thread-item span {
+  color: rgba(203, 213, 225, 0.64);
+  font-size: 0.56rem;
+}
+
 .office-capabilities ul,
 .office-notes ul {
   display: grid;
@@ -2802,6 +2924,28 @@ main {
   font-size: 0.66rem;
 }
 
+.chat-bubble-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chat-bubble-head time {
+  color: rgba(148, 163, 184, 0.62);
+  font-size: 0.54rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.office-chat article small {
+  display: inline-block;
+  margin-top: 7px;
+  color: #67e8f9;
+  font-size: 0.56rem;
+  font-weight: 850;
+}
+
 .office-chat article.operator {
   align-self: flex-end;
   border-radius: 16px 16px 5px 16px;
@@ -2816,6 +2960,36 @@ main {
 .office-chat article.operator p,
 .office-chat article.operator strong {
   color: #ffffff;
+}
+
+.office-chat article.tool,
+.office-chat article.system {
+  max-width: min(92%, 620px);
+  border-radius: 13px;
+  background:
+    linear-gradient(135deg, rgba(34, 211, 238, 0.09), rgba(59, 130, 246, 0.06)),
+    rgba(2, 6, 23, 0.66);
+}
+
+.office-chat article.tool {
+  border-color: rgba(34, 211, 238, 0.2);
+}
+
+.office-chat article.system {
+  border-color: rgba(251, 191, 36, 0.26);
+}
+
+.office-chat article.error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background:
+    linear-gradient(135deg, rgba(127, 29, 29, 0.2), rgba(15, 23, 42, 0.76));
+}
+
+.office-chat article.running {
+  border-color: rgba(34, 211, 238, 0.3);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.04),
+    0 12px 28px rgba(34, 211, 238, 0.1);
 }
 
 .office-chat .approval-chat-card {
@@ -2935,9 +3109,49 @@ main {
   outline: none;
 }
 
+.office-chat .office-chat-form textarea {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  min-height: 44px;
+  max-height: 112px;
+  resize: vertical;
+  border: 1px solid rgba(34, 211, 238, 0.26);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--text);
+  font-size: 0.68rem;
+  line-height: 1.32;
+  background: rgba(2, 6, 23, 0.82);
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.08);
+  outline: none;
+}
+
+.office-chat .office-chat-form textarea:focus {
+  border-color: rgba(103, 232, 249, 0.5);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08), 0 0 18px rgba(34, 211, 238, 0.14);
+}
+
 .office-chat .office-chat-form button {
   min-height: 40px;
   border-radius: 12px;
+}
+
+.office-chat-quick {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.office-chat-quick button {
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 0.58rem;
+  font-weight: 850;
 }
 
 @keyframes thinkingDots {

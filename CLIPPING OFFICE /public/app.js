@@ -413,7 +413,7 @@ function renderAgentRunPanel() {
   const counts = run.counts || {};
   const steps = run.steps || [];
   const recentSteps = steps.slice(-5);
-  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "running" ? "info" : "neutral";
+  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "needs_approval" ? "warn" : status === "running" ? "info" : "neutral";
   return `
     <section class="panel agent-run-panel">
       <div class="agent-run-head">
@@ -1946,6 +1946,7 @@ function platformName(platform) {
   if (platform === "instagram_reels") return "Instagram Reels";
   if (platform === "youtube_shorts") return "YouTube Shorts";
   if (platform === "tiktok") return "TikTok";
+  if (platform === "multi_platform") return "TikTok/Reels/Shorts";
   if (platform === "package") return "Posting Queue";
   return platform || "manual handoff";
 }
@@ -3162,12 +3163,12 @@ async function seedDemo() {
 }
 
 const agent101Goals = {
-  "agent101-demo-workflow": "Run the full supervised demo clipping workflow for the Clips Office. Add demo streamers, run a watch cycle, create 12 candidates, score them, package the top 3, create CapCut briefs, create draft posting packages, and send every risky external step to Human Gate.",
+  "agent101-demo-workflow": "Add 5 demo streamers, run a watch cycle, generate clip candidates, score them, create packages for the top 3, create CapCut briefs, create draft posting packages, and send them to Human Gate.",
   "agent101-add-demo-streamers": "Add 5 demo streamers for internal StreamClipper sandbox testing.",
   "agent101-watch-cycle": "Run a safe watch cycle across demo-approved streamers and create live demo sessions.",
-  "agent101-create-candidates": "Generate and score clip candidates from the demo watch cycle.",
+  "agent101-create-candidates": "Find 5 practice streams and make clip candidates.",
   "agent101-package-top3": "Package the top 3 clip candidates, create CapCut handoffs, and create draft posting packages.",
-  "agent101-human-gate": "Send current draft posting packages and clip package approvals to Human Gate without publishing anything."
+  "agent101-human-gate": "Send current draft posting packages to Human Gate without publishing anything."
 };
 
 async function runAgent101(goal, mode = "demo") {
@@ -3189,7 +3190,7 @@ async function runAgent101(goal, mode = "demo") {
     state.agentRun = result;
     state.agentRunBusy = false;
     await loadCore();
-    toast(result.status === "blocked" ? result.summary : result.summary || "Agent 101 run complete", result.status === "completed" ? "good" : result.status === "blocked" ? "info" : "bad");
+    toast(result.status === "blocked" || result.status === "needs_approval" ? result.summary : result.summary || "Agent 101 run complete", result.status === "completed" ? "good" : result.status === "blocked" || result.status === "needs_approval" ? "info" : "bad");
     renderNav();
     render();
   } catch (error) {

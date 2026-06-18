@@ -4,6 +4,8 @@
   "private": true,
   "description": "Argentum supervised AI operating company prototype with Depo as the first visible agent.",
   "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
     "playwright": "1.61.0"
   },
   "scripts": {

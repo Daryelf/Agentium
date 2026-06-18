@@ -3713,7 +3713,13 @@ const agent101Goals = {
   "agent101-human-gate": "Send current draft posting packages to Human Gate without publishing anything."
 };
 
-async function runAgent101(goal, mode = "demo") {
+function inferAgentRunMode(goal, mode = "auto") {
+  if (mode && mode !== "auto") return mode;
+  return /\b(demo|practice|sample|synthetic|local)\b/i.test(goal) ? "demo" : "real";
+}
+
+async function runAgent101(goal, mode = "auto") {
+  const runMode = inferAgentRunMode(goal, mode);
   state.agentRunBusy = true;
   state.agentRun = {
     status: "running",
@@ -3727,12 +3733,16 @@ async function runAgent101(goal, mode = "demo") {
   try {
     const result = await api("/api/agent101/run", {
       method: "POST",
-      body: JSON.stringify({ goal, mode, maxSteps: 10 })
+      body: JSON.stringify({ goal, mode: runMode, maxSteps: 10 })
     });
     state.agentRun = result;
     state.agentRunBusy = false;
     await loadCore();
-    toast(result.status === "blocked" || result.status === "needs_approval" ? result.summary : result.summary || "Agent 101 run complete", result.status === "completed" ? "good" : result.status === "blocked" || result.status === "needs_approval" ? "info" : "bad");
+    const externalStatus = result.externalStatus || String(result.status || "").toLowerCase();
+    toast(
+      externalStatus === "blocked" || externalStatus === "needs_approval" ? result.summary : result.summary || "Agent 101 run complete",
+      externalStatus === "completed" ? "good" : externalStatus === "blocked" || externalStatus === "needs_approval" ? "info" : "bad"
+    );
     renderNav();
     render();
   } catch (error) {
@@ -3755,7 +3765,7 @@ async function runAgentCommand(form) {
   const goal = cleanCommand(form.elements.goal?.value) || agent101Goals["agent101-demo-workflow"];
   state.agentChatOpen = true;
   form.reset();
-  await runAgent101(goal, "demo");
+  await runAgent101(goal, "auto");
 }
 
 function cleanCommand(value) {

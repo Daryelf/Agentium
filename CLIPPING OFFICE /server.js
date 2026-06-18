@@ -44,6 +44,9 @@ const config = {
   twitchClientSecret: process.env.TWITCH_CLIENT_SECRET || "",
   twitchRedirectUri: process.env.TWITCH_REDIRECT_URI || "",
   twitchOAuthToken: process.env.TWITCH_OAUTH_TOKEN || "",
+  twitchAppAccessToken: process.env.TWITCH_APP_ACCESS_TOKEN || "",
+  twitchUserAccessToken: process.env.TWITCH_USER_ACCESS_TOKEN || "",
+  twitchRefreshToken: process.env.TWITCH_REFRESH_TOKEN || "",
   twitchAllowedChannels: (process.env.TWITCH_ALLOWED_CHANNELS || "")
     .split(",")
     .map((value) => value.trim().toLowerCase())
@@ -79,6 +82,10 @@ const stateDefaults = {
   mediaSources: [],
   mediaProjects: [],
   mediaJobs: [],
+  discoveredStreamers: [],
+  executionContracts: [],
+  agentRuns: [],
+  twitchValidation: null,
   logs: [],
   browser: {
     profile: null,
@@ -111,7 +118,7 @@ function cleanText(value) {
 }
 
 function twitchApiConfigured() {
-  return Boolean(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken));
+  return Boolean(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken || config.twitchAppAccessToken || config.twitchUserAccessToken));
 }
 
 function kickApiConfigured() {
@@ -296,6 +303,14 @@ function isApprovedStreamer(streamer) {
   return ["approved", "demo_approved"].includes(streamer?.permissionStatus);
 }
 
+function isRealApprovedStreamer(streamer) {
+  if (!streamer || streamer.isDemo || streamer.permissionStatus !== "approved") return false;
+  if (!["twitch", "kick"].includes(streamer.platform)) return false;
+  const allowed = streamer.allowedUse;
+  if (Array.isArray(allowed)) return allowed.includes("clips") || allowed.includes("createOfficialClip") || allowed.includes("editClip");
+  return Boolean(allowed?.createOfficialClip || allowed?.downloadClip || allowed?.editClip || allowed?.repostClip);
+}
+
 function channelAllowed(streamer) {
   if (streamer?.platform !== "twitch") return true;
   if (!config.twitchAllowedChannels.length) return true;
@@ -346,6 +361,318 @@ function createApprovalRequest({ type, actionType, title, riskLevel = "medium", 
   };
   state.approvalRequests.unshift(request);
   return request;
+}
+
+const RUN_STAGES = [
+  "REQUEST_RECEIVED",
+  "CONTRACT_CONFIRMED",
+  "INTEGRATION_CHECK",
+  "STREAM_DISCOVERY",
+  "RESULTS_VALIDATED",
+  "RIGHTS_VERIFICATION",
+  "SOURCE_ACQUISITION",
+  "SOURCE_VERIFICATION",
+  "TRANSCRIPTION",
+  "CANDIDATE_ANALYSIS",
+  "CANDIDATE_SELECTION",
+  "CLIP_CREATION",
+  "RENDER_VERIFICATION",
+  "CAPTION_GENERATION",
+  "CAPCUT_HANDOFF",
+  "POSTING_DRAFT",
+  "HUMAN_GATE",
+  "READY_FOR_PUBLISHING",
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED"
+];
+
+function safeHash(payload) {
+  return crypto.createHash("sha256").update(JSON.stringify(payload || {})).digest("hex");
+}
+
+async function fileSha256(filePath) {
+  const hash = crypto.createHash("sha256");
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
+}
+
+function parseRequestedCount(goal, explicit) {
+  const direct = Number(explicit);
+  if (Number.isFinite(direct) && direct > 0) return Math.min(50, Math.floor(direct));
+  const text = cleanText(goal).toLowerCase();
+  const match = text.match(/\b(?:top|find|get|return|show|give)\s+(\d{1,2})\b/) || text.match(/\b(\d{1,2})\s+(?:streamers|streams|clips|candidates)\b/);
+  if (match) return Math.min(50, Math.max(1, Number(match[1])));
+  return 2;
+}
+
+function inferRunMode(body = {}, goal = "") {
+  const requested = cleanText(body.mode || body.sourceMode).toLowerCase();
+  if (requested === "demo" || requested === "local_demo") return "demo";
+  if (/\b(demo|practice|sample|synthetic)\b/i.test(goal)) return "demo";
+  return "real";
+}
+
+function inferExecutionContract(body = {}) {
+  const goal = cleanText(body.goal || body.message || "Find the top 2 streamers.");
+  const sourceMode = inferRunMode(body, goal);
+  const requestedCount = parseRequestedCount(goal, body.requestedCount || body.count);
+  const lowered = goal.toLowerCase();
+  const wantsClip = /\b(clip|clips|candidate|candidates|package|render|caption|posting)\b/.test(lowered);
+  const wantsApproved = /\bapproved|watchlist|permission\b/.test(lowered);
+  const operation = wantsClip ? "discover_and_clip" : "discover_streamers";
+  const sourceScope = cleanText(body.scope) || (wantsApproved || wantsClip ? "approved_watchlist" : "twitch_live_global");
+  return {
+    id: newId("contract"),
+    threadId: cleanText(body.threadId || body.chatId || "agent101-main"),
+    runId: "",
+    originalUserRequest: goal,
+    operation,
+    requestedCount,
+    sourceScope,
+    sourceMode,
+    clippingMode: wantsClip ? (sourceMode === "demo" ? "demo" : "real") : "none",
+    postingMode: "none",
+    approvalMode: "human_gate_for_external_actions",
+    constraints: [
+      "Honor requestedCount exactly.",
+      "Real mode never uses demo or synthetic records.",
+      "Discovery does not create clips, posting drafts, or approvals.",
+      "Posting drafts require verified rendered clip artifacts."
+    ],
+    createdAt: now()
+  };
+}
+
+function contractSummary(contract) {
+  if (contract.operation === "discover_streamers") {
+    return `I interpreted this as ${contract.requestedCount} ${contract.sourceMode === "real" ? "real currently-live Twitch" : "DEMO / SYNTHETIC"} stream${contract.requestedCount === 1 ? "" : "s"}. This is discovery only; no clipping or posting will occur.`;
+  }
+  if (contract.sourceScope === "approved_watchlist") {
+    return `I will check the approved watchlist for up to ${contract.requestedCount} eligible live streamer${contract.requestedCount === 1 ? "" : "s"}, then continue only if rights and playable source media are verified.`;
+  }
+  return `I interpreted this as a ${contract.sourceMode} StreamClipper run for ${contract.requestedCount} item${contract.requestedCount === 1 ? "" : "s"}.`;
+}
+
+function toExternalRunStatus(status) {
+  if (status === "COMPLETED") return "completed";
+  if (status === "FAILED") return "error";
+  if (status === "CANCELLED") return "cancelled";
+  if (status === "NEEDS_APPROVAL") return "needs_approval";
+  if (status === "BLOCKED") return "blocked";
+  return "running";
+}
+
+function persistAgentRun(run) {
+  state.agentRuns ||= [];
+  const index = state.agentRuns.findIndex((item) => item.runId === run.runId);
+  if (index >= 0) state.agentRuns[index] = run;
+  else state.agentRuns.unshift(run);
+  state.agentRuns = state.agentRuns.slice(0, 80);
+}
+
+function addRunEvent(run, stage, status, message, details = {}) {
+  if (!RUN_STAGES.includes(stage)) throw new Error(`Unknown Agent 101 stage: ${stage}`);
+  const entry = {
+    id: newId("stage"),
+    runId: run.runId,
+    contractId: run.contract?.id,
+    stage,
+    status,
+    message,
+    details,
+    startedAt: details.startedAt || now(),
+    completedAt: status === "running" ? null : now()
+  };
+  run.events.push(entry);
+  run.steps.push({
+    id: entry.id,
+    name: stage.toLowerCase(),
+    status: status === "succeeded" || status === "not_required" ? "completed" : status === "failed" ? "error" : status,
+    message,
+    details
+  });
+  run.currentStage = stage;
+  run.currentStep = message;
+  const completeCount = run.events.filter((event) => ["succeeded", "not_required"].includes(event.status)).length;
+  run.progress = Math.min(99, Math.round((completeCount / 18) * 100));
+  addStateLog("agent_stage", message, {
+    runId: run.runId,
+    contractId: run.contract?.id,
+    stage,
+    status,
+    operation: run.contract?.operation,
+    requestedCount: run.contract?.requestedCount,
+    returnedCount: details.returnedCount,
+    mode: run.contract?.sourceMode,
+    providerIds: details.providerIds,
+    error: details.error
+  });
+  run.logs.unshift(state.logs[0]);
+  persistAgentRun(run);
+  return entry;
+}
+
+async function saveRunState(run) {
+  persistAgentRun(run);
+  await saveState();
+}
+
+async function failAgentRun(run, stage, message, details = {}) {
+  addRunEvent(run, stage, "failed", message, details);
+  run.status = "FAILED";
+  run.externalStatus = "error";
+  run.progress = 100;
+  run.completedAt = now();
+  run.summary = message;
+  addRunEvent(run, "FAILED", "failed", message, details);
+  await saveRunState(run);
+  return run;
+}
+
+function assertRequestedCount(run) {
+  const count = Number(run.contract?.requestedCount || 0);
+  const records = run.results?.streamers || [];
+  if (records.length > count) throw new Error(`Requested ${count} streamer${count === 1 ? "" : "s"} but run produced ${records.length}.`);
+}
+
+function assertStreamerHasProviderId(streamer) {
+  if (!streamer?.providerUserId) throw new Error("Real streamer record is missing Twitch broadcaster/provider ID.");
+}
+
+function assertRealModeContainsNoDemoData(run) {
+  if (run.contract?.sourceMode !== "real") return;
+  const payload = JSON.stringify(run.results || {});
+  if (/DEMO_SOURCE|demo_approved|synthetic|practice/i.test(payload)) {
+    throw new Error("Real mode output contains demo/synthetic data.");
+  }
+}
+
+function assertStreamerResultCountDoesNotExceedRequested(run) {
+  assertRequestedCount(run);
+}
+
+function assertClippingPermission(streamer) {
+  if (!isRealApprovedStreamer(streamer)) throw new Error("Clipping blocked: permission has not been approved.");
+}
+
+async function assertSourceExists(source) {
+  if (!source?.filePath) throw new Error("Source data unavailable. No verified media source exists.");
+  await fs.stat(source.filePath);
+}
+
+async function assertSourceIsPlayable(source) {
+  await assertSourceExists(source);
+  const metadata = await ffprobeMetadata(source.filePath);
+  if (!metadata.duration || !metadata.width || !metadata.height) throw new Error("Source verification failed. FFprobe did not find a playable video stream.");
+  return metadata;
+}
+
+function assertCandidateReferencesSource(candidate, source) {
+  if (!candidate?.sourceId || candidate.sourceId !== source?.id) throw new Error("Candidate generation blocked: no verified playable media.");
+}
+
+function assertCandidateTimesValid(candidate, source) {
+  const start = Number(candidate?.timestampStartSeconds ?? 0);
+  const end = Number(candidate?.timestampEndSeconds ?? start + Number(candidate?.duration || 0));
+  const sourceDuration = Number(source?.duration || 0);
+  if (!(end > start)) throw new Error("Candidate timestamps are invalid.");
+  if (sourceDuration && end > sourceDuration + 0.5) throw new Error("Candidate timestamps exceed source duration.");
+}
+
+async function assertClipFileExists(clip) {
+  if (!clip?.path) throw new Error("Clip file path is missing.");
+  const stat = await fs.stat(clip.path);
+  if (!stat.isFile() || stat.size <= 0) throw new Error("Clip file is missing or empty.");
+  return stat;
+}
+
+function assertClipChecksumExists(clip) {
+  if (!clip?.content?.sha256 && !clip?.sha256) throw new Error("Clip checksum is missing.");
+}
+
+function assertClipProbePassed(clip) {
+  const content = clip?.content || clip || {};
+  if (content.probeStatus !== "passed" && content.probeStatus !== "verified") throw new Error("Clip FFprobe verification did not pass.");
+}
+
+function verifiedClipArtifactForDraftInput(body = {}) {
+  const byId = cleanText(body.clipArtifactId || body.artifactId);
+  const byVideoRef = cleanText(body.videoRef);
+  return state.artifacts.find((artifact) => {
+    if (byId && artifact.id === byId) return true;
+    if (byVideoRef && [artifact.id, artifact.url, artifact.playbackUrl, artifact.filename].includes(byVideoRef)) return true;
+    return false;
+  });
+}
+
+async function createVerifiedPostingDraft(body = {}) {
+  if (body.approvalStatus === "approved" && dailyLimitStatus().blocked) {
+    const error = new Error("Daily approved post limit reached");
+    error.statusCode = 429;
+    error.details = dailyLimitStatus();
+    throw error;
+  }
+  const clipArtifact = verifiedClipArtifactForDraftInput(body);
+  if (!artifactIsVerifiedClip(clipArtifact)) {
+    await logEvent("posting_blocked", "Posting draft blocked without verified rendered clip", {
+      clipArtifactId: cleanText(body.clipArtifactId || body.artifactId || body.videoRef),
+      clipPackageId: cleanText(body.clipPackageId)
+    });
+    const error = new Error("Posting preparation stopped because no verified clip was produced.");
+    error.statusCode = 422;
+    throw error;
+  }
+  const draft = {
+    id: newId("post"),
+    clipPackageId: cleanText(body.clipPackageId),
+    clipArtifactId: clipArtifact.id,
+    platform: normalizeStatus(body.platform, ["tiktok", "instagram_reels", "youtube_shorts"], "tiktok"),
+    videoRef: clipArtifact.playbackUrl || clipArtifact.url || clipArtifact.id,
+    caption: cleanText(body.caption),
+    hashtags: Array.isArray(body.hashtags) ? body.hashtags : [],
+    thumbnailText: cleanText(body.thumbnailText),
+    scheduledFor: cleanText(body.scheduledFor),
+    status: "draft",
+    platformStatus: "not_uploaded",
+    approvalStatus: normalizeStatus(body.approvalStatus, ["pending", "approved", "rejected", "send_back"], "pending"),
+    requiresApproval: true,
+    riskNotes: Array.isArray(body.riskNotes) ? body.riskNotes : ["Human Gate approval required."],
+    provenance: {
+      clipArtifactId: clipArtifact.id,
+      clipSha256: clipArtifact.content?.sha256,
+      source: "verified_rendered_clip"
+    },
+    createdAt: now(),
+    updatedAt: now(),
+    approvedAt: body.approvalStatus === "approved" ? now() : null
+  };
+  state.postingDrafts.unshift(draft);
+  await logEvent("post_queued", "Posting draft queued", { draftId: draft.id, platform: draft.platform });
+  await saveState();
+  return { draft, dailyLimit: dailyLimitStatus() };
+}
+
+function artifactIsVerifiedClip(artifact) {
+  if (!artifact || artifact.type !== "rendered_clip") return false;
+  const content = artifact.content || {};
+  return Boolean(artifact.path && content.sha256 && ["passed", "verified"].includes(content.probeStatus));
+}
+
+function assertPostingDraftHasRealClip(draft) {
+  const artifact = state.artifacts.find((item) => item.id === draft?.clipArtifactId || item.id === draft?.videoRef);
+  if (!artifactIsVerifiedClip(artifact)) throw new Error("Posting draft blocked: verified rendered clip artifact is required.");
+}
+
+function assertApprovalHasPostingDraft(approval) {
+  if (!state.postingDrafts.some((draft) => draft.id === approval?.linkedId)) {
+    throw new Error("Approval request blocked: posting draft is missing.");
+  }
 }
 
 function scoreClipMoment(input = {}) {
@@ -527,6 +854,10 @@ function publicMediaSource(source) {
 function findMediaSource(id) {
   ensureClippingStudioProject();
   return state.mediaSources.find((source) => source.id === id);
+}
+
+function findExistingMediaSource(id) {
+  return (state.mediaSources || []).find((source) => source.id === id);
 }
 
 function demoFrameUrl(index) {
@@ -827,6 +1158,14 @@ async function createRenderJob(body = {}) {
       outputPath
     ], { timeout: 120000, maxBuffer: 1024 * 1024 * 4 });
 
+    const [probe, stat, sha256] = await Promise.all([
+      ffprobeMetadata(outputPath),
+      fs.stat(outputPath),
+      fileSha256(outputPath)
+    ]);
+    if (!stat.isFile() || stat.size <= 0 || !probe.width || !probe.height || !probe.duration) {
+      throw new Error("Render verification failed. Output file did not pass size/probe checks.");
+    }
     const artifact = outputArtifactForFile("rendered_clip", `${candidate.title} 9:16 Draft`, outputPath, {
       projectId: payload.project.id,
       sourceId: source.id,
@@ -836,15 +1175,33 @@ async function createRenderJob(body = {}) {
       format: "9:16",
       resolution: "1080x1920",
       duration,
+      fileSizeBytes: stat.size,
+      sha256,
+      durationSeconds: probe.duration,
+      width: probe.width,
+      height: probe.height,
+      frameRate: probe.fps,
+      hasAudio: probe.hasAudio,
+      probeStatus: "passed",
+      renderStatus: "completed",
       note: source.provenance === PROVENANCE.DEMO_SOURCE
         ? "Rendered from bundled demo media. Not a real live stream."
         : "Rendered from selected playable source media."
     });
+    artifact.fileSizeBytes = stat.size;
+    artifact.sha256 = sha256;
+    artifact.durationSeconds = probe.duration;
+    artifact.width = probe.width;
+    artifact.height = probe.height;
+    artifact.probeStatus = "passed";
     job.status = "completed";
     job.progress = 100;
     job.currentStep = "Rendered draft saved";
     job.artifactId = artifact.id;
     job.playbackUrl = artifact.playbackUrl;
+    job.fileSizeBytes = stat.size;
+    job.sha256 = sha256;
+    job.probeStatus = "passed";
     job.steps[2].status = "completed";
     job.steps[3].status = "completed";
     job.updatedAt = now();
@@ -869,6 +1226,13 @@ async function createRenderJob(body = {}) {
 
 async function getTwitchAppToken() {
   if (twitchAppToken?.expiresAt > Date.now() + 60_000) return twitchAppToken.accessToken;
+  if (config.twitchAppAccessToken) {
+    twitchAppToken = {
+      accessToken: config.twitchAppAccessToken,
+      expiresAt: Date.now() + 55 * 60 * 1000
+    };
+    return twitchAppToken.accessToken;
+  }
   if (!(config.twitchClientId && config.twitchClientSecret)) {
     throw new Error("Twitch client credentials are not configured");
   }
@@ -887,8 +1251,106 @@ async function getTwitchAppToken() {
   return twitchAppToken.accessToken;
 }
 
+function twitchUserToken() {
+  return config.twitchUserAccessToken || config.twitchOAuthToken || "";
+}
+
+async function validateTwitchToken(token) {
+  if (!token) {
+    return {
+      valid: false,
+      status: "not_configured",
+      scopes: [],
+      userId: null,
+      expiresAt: null,
+      message: "No Twitch OAuth token is configured."
+    };
+  }
+  const response = await fetch("https://id.twitch.tv/oauth2/validate", {
+    headers: { Authorization: `OAuth ${token}` }
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      valid: false,
+      status: response.status === 401 ? "invalid" : "error",
+      scopes: [],
+      userId: null,
+      expiresAt: null,
+      message: json.message || `Twitch token validation failed with HTTP ${response.status}`
+    };
+  }
+  const expiresIn = Number(json.expires_in || 0);
+  return {
+    valid: true,
+    status: "valid",
+    clientId: json.client_id || null,
+    login: json.login || null,
+    userId: json.user_id || null,
+    scopes: Array.isArray(json.scopes) ? json.scopes : [],
+    expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null,
+    message: "Twitch token validated."
+  };
+}
+
+async function twitchIntegrationStatus({ validate = true } = {}) {
+  const status = {
+    configured: twitchApiConfigured(),
+    clientIdConfigured: Boolean(config.twitchClientId),
+    clientSecretConfigured: Boolean(config.twitchClientSecret),
+    redirectUriConfigured: Boolean(config.twitchRedirectUri),
+    appTokenConfigured: Boolean(config.twitchAppAccessToken || (config.twitchClientId && config.twitchClientSecret)),
+    userTokenConfigured: Boolean(twitchUserToken()),
+    appTokenValid: false,
+    userTokenValid: false,
+    scopes: [],
+    userId: null,
+    expiresAt: null,
+    lastValidatedAt: null,
+    officialApiOnly: true,
+    status: "not_configured",
+    message: "Twitch credentials are not configured."
+  };
+  if (!status.configured) {
+    state.twitchValidation = status;
+    return status;
+  }
+  try {
+    const appToken = await getTwitchAppToken();
+    let appValidation = { valid: Boolean(appToken), scopes: [] };
+    if (validate && appToken) appValidation = await validateTwitchToken(appToken);
+    status.appTokenValid = Boolean(appToken && appValidation.valid);
+    status.status = status.appTokenValid ? "ready" : "error";
+    status.message = status.appTokenValid
+      ? "Twitch app access is ready for official Helix discovery."
+      : appValidation.message || "Twitch app token validation failed.";
+  } catch (error) {
+    status.status = "error";
+    status.message = error.message;
+  }
+  if (validate && twitchUserToken()) {
+    try {
+      const userValidation = await validateTwitchToken(twitchUserToken());
+      status.userTokenValid = userValidation.valid;
+      status.scopes = userValidation.scopes || [];
+      status.userId = userValidation.userId || null;
+      status.expiresAt = userValidation.expiresAt || null;
+      if (!userValidation.valid && status.status === "ready") {
+        status.message = "Twitch app access works, but the user token is not valid.";
+      }
+    } catch (error) {
+      if (status.status === "ready") status.message = "Twitch app access works, but user token validation failed.";
+      status.userTokenValid = false;
+      status.userTokenError = error.message;
+    }
+  }
+  status.lastValidatedAt = now();
+  state.twitchValidation = status;
+  return status;
+}
+
 async function twitchFetch(endpoint) {
-  const token = config.twitchOAuthToken || (await getTwitchAppToken());
+  const token = twitchUserToken() || (await getTwitchAppToken());
   const response = await fetch(`https://api.twitch.tv/helix${endpoint}`, {
     headers: {
       "Client-Id": config.twitchClientId,
@@ -901,6 +1363,85 @@ async function twitchFetch(endpoint) {
   }
   if (!response.ok) throw new Error(`Twitch API failed: ${response.status}`);
   return response.json();
+}
+
+function mapTwitchSourceRecord(stream, run, contract) {
+  const rawResponseHash = safeHash(stream);
+  return {
+    id: `twitch_${stream.user_id || stream.id || newId("stream")}_${run.runId}`,
+    runId: run.runId,
+    contractId: contract.id,
+    provider: "twitch",
+    providerUserId: cleanText(stream.user_id),
+    streamId: cleanText(stream.id),
+    userLogin: cleanText(stream.user_login),
+    displayName: cleanText(stream.user_name || stream.user_login),
+    title: cleanText(stream.title),
+    gameId: cleanText(stream.game_id),
+    gameName: cleanText(stream.game_name),
+    viewerCount: Number(stream.viewer_count || 0),
+    startedAt: cleanText(stream.started_at),
+    thumbnailUrl: cleanText(stream.thumbnail_url),
+    language: cleanText(stream.language),
+    tags: Array.isArray(stream.tags) ? stream.tags : [],
+    sourceMode: "real",
+    apiEndpoint: "helix/streams",
+    fetchedAt: now(),
+    rawResponseHash,
+    rightsStatus: "unknown",
+    permissionStatus: "unknown",
+    clippingEligibility: "not_verified"
+  };
+}
+
+function assertTwitchRecordReal(record) {
+  if (record.provider !== "twitch" || record.sourceMode !== "real") throw new Error("Real mode may only return real Twitch records.");
+  assertStreamerHasProviderId(record);
+  if (!record.fetchedAt || !record.rawResponseHash) throw new Error("Real Twitch record is missing fetchedAt or response hash.");
+}
+
+async function fetchTopTwitchLiveStreams(count, run, contract) {
+  const requestedCount = Math.max(1, Math.min(100, Number(count) || 1));
+  const params = new URLSearchParams({ first: String(requestedCount) });
+  const json = await twitchFetch(`/streams?${params}`);
+  return (json.data || [])
+    .slice(0, requestedCount)
+    .map((stream) => mapTwitchSourceRecord(stream, run, contract));
+}
+
+function approvedTwitchWatchlist() {
+  return state.streamers.filter((streamer) => {
+    if (!isRealApprovedStreamer(streamer)) return false;
+    if (streamer.platform !== "twitch") return false;
+    return Boolean(normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName) || streamer.providerUserId);
+  });
+}
+
+async function fetchApprovedTwitchLiveStreams(count, run, contract) {
+  const requestedCount = Math.max(1, Math.min(100, Number(count) || 1));
+  const approved = approvedTwitchWatchlist();
+  if (!approved.length) return [];
+  const params = new URLSearchParams();
+  for (const streamer of approved.slice(0, 100)) {
+    const providerId = cleanText(streamer.providerUserId);
+    const login = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName);
+    if (providerId && /^\d+$/.test(providerId)) params.append("user_id", providerId);
+    else if (login) params.append("user_login", login);
+  }
+  if (!params.toString()) return [];
+  const json = await twitchFetch(`/streams?${params}`);
+  const byLogin = new Map(approved.map((streamer) => [normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName), streamer]));
+  const byId = new Map(approved.map((streamer) => [cleanText(streamer.providerUserId), streamer]));
+  return (json.data || []).slice(0, requestedCount).map((stream) => {
+    const record = mapTwitchSourceRecord(stream, run, contract);
+    const approvedRecord = byId.get(record.providerUserId) || byLogin.get(record.userLogin);
+    record.permissionStatus = approvedRecord?.permissionStatus || "unknown";
+    record.allowedUse = approvedRecord?.allowedUse || [];
+    record.watchlistStreamerId = approvedRecord?.id || "";
+    record.rightsStatus = approvedRecord?.rightsStatus || "permission_recorded";
+    record.clippingEligibility = "permission_recorded_source_not_verified";
+    return record;
+  });
 }
 
 async function getKickAppToken() {
@@ -1116,13 +1657,6 @@ async function recommendStreamers({ platform = "all", limit = 12 } = {}) {
     .sort((a, b) => b.score - a.score || b.viewerCount - a.viewerCount)
     .slice(0, max);
 
-  if (!recommendations.length) {
-    recommendations = fallbackStreamerRecommendations(max * 2)
-      .filter((row) => providers.includes(row.platform))
-      .filter((row) => !existing.has(streamerIdentityKey(row)))
-      .slice(0, max);
-  }
-
   return {
     recommendations,
     errors,
@@ -1133,7 +1667,7 @@ async function recommendStreamers({ platform = "all", limit = 12 } = {}) {
     generatedBy: "Agent 101 Streamer Scout",
     message: recommendations.some((row) => row.source?.includes("Official"))
       ? "Agent 101 found live streamer recommendations from configured provider APIs."
-      : "Agent 101 is using a safe fallback shortlist until provider live directories return results."
+      : "No live provider recommendations were returned. No synthetic streamer recommendations were substituted."
   };
 }
 
@@ -1224,13 +1758,18 @@ async function testOpenAI() {
 }
 
 function createPostingDraftsForPackage(clipPackage, packagePlan) {
+  const renderedArtifact = state.artifacts.find((artifact) => artifact.id === clipPackage.renderedArtifactId);
+  if (!artifactIsVerifiedClip(renderedArtifact)) {
+    throw new Error("Posting preparation stopped because no verified clip was produced.");
+  }
   const platforms = ["tiktok", "instagram_reels", "youtube_shorts"];
   return platforms.map((platform) => {
     const draft = {
       id: newId("post"),
       clipPackageId: clipPackage.id,
+      clipArtifactId: renderedArtifact.id,
       platform,
-      videoRef: clipPackage.artifacts?.[0]?.url || "",
+      videoRef: renderedArtifact.playbackUrl || renderedArtifact.url || renderedArtifact.id,
       caption:
         platform === "tiktok"
           ? packagePlan.captions.tiktok
@@ -1260,7 +1799,7 @@ function createPostingDraftsForPackage(clipPackage, packagePlan) {
   });
 }
 
-const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a supervised clipping workflow agent inside StreamClipper. You can perform safe internal draft work: plan, analyze, score candidates, generate hooks, create captions, make CapCut briefs, create draft posting packages, and log actions. You cannot publish, upload, spend money, change accounts, connect social accounts, or use real external accounts without Human Gate approval. If the user asks to test automation, you may run local/demo workflows using demo streamers and synthetic candidates. Do not refuse safe internal draft work. Return useful structured JSON.`;
+const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a truthful supervised clipping agent inside StreamClipper. Never claim you found, watched, clipped, rendered, queued, or posted media unless the corresponding verified record or file exists. Honor requested quantities exactly. If the user requests two streamers, return no more than two. Do not silently expand scope. Real mode may only use real Twitch records from official APIs with provider IDs, fetch timestamps, and response hashes. Demo mode must be explicitly requested and clearly labeled DEMO / SYNTHETIC — NOT REAL TWITCH DATA. Follow the workflow in order: discovery, validation, rights, source, analysis, candidate, clip, verify, posting draft, approval. Do not create downstream artifacts before prerequisites are complete. If a real integration, right, or media source is unavailable, explain the exact blocker and stop. Do not replace a failed real action with a simulation.`;
 
 const AGENT101_DEMO_STREAMERS = [
   {
@@ -1637,13 +2176,18 @@ function demoApprovedStreamers() {
 function createSinglePostingDraft(clipPackage, packagePlan) {
   const existing = state.postingDrafts.find((draft) => draft.clipPackageId === clipPackage.id && draft.createdBy === "Agent 101");
   if (existing) return existing;
+  const renderedArtifact = state.artifacts.find((artifact) => artifact.id === clipPackage.renderedArtifactId);
+  if (!artifactIsVerifiedClip(renderedArtifact)) {
+    throw new Error("Posting preparation stopped because no verified clip was produced.");
+  }
   const platforms = ["tiktok", "instagram_reels", "youtube_shorts"];
   const draft = {
     id: newId("post"),
     clipPackageId: clipPackage.id,
+    clipArtifactId: renderedArtifact.id,
     platform: "multi_platform",
     platforms,
-    videoRef: clipPackage.artifacts?.[0]?.url || "",
+    videoRef: renderedArtifact.playbackUrl || renderedArtifact.url || renderedArtifact.id,
     caption: packagePlan.captions?.tiktok || `${packagePlan.hook}. ${packagePlan.title}`,
     tiktokCaption: packagePlan.captions?.tiktok || `${packagePlan.hook}. ${packagePlan.title}`,
     instagramCaption: packagePlan.captions?.reels || `${packagePlan.title}. ${packagePlan.hook}`,
@@ -2171,115 +2715,248 @@ const AGENT101_TOOL_REGISTRY = {
 };
 
 async function runAgent101(body = {}) {
-  const goal = cleanText(body.goal || body.message || "Run the supervised demo clipping workflow");
-  const mode = normalizeStatus(body.mode || "demo", ["demo", "live"], "demo");
-  const maxSteps = Math.max(1, Math.min(12, Number(body.maxSteps || 10)));
-  const before = agentCountsSnapshot();
+  const contract = inferExecutionContract(body);
+  const runId = newId("agent101_run");
+  contract.runId = runId;
+  const idempotencyKey = cleanText(body.idempotencyKey) || safeHash({
+    threadId: contract.threadId,
+    request: contract.originalUserRequest,
+    operation: contract.operation,
+    requestedCount: contract.requestedCount,
+    sourceMode: contract.sourceMode,
+    sourceScope: contract.sourceScope,
+    clippingMode: contract.clippingMode
+  });
+  state.agentRuns ||= [];
+  const existing = state.agentRuns.find(
+    (item) => item.idempotencyKey === idempotencyKey && !["FAILED", "CANCELLED"].includes(item.status)
+  );
+  if (existing) return { ...existing, externalStatus: toExternalRunStatus(existing.status), reused: true };
+
   const run = {
-    runId: newId("agent101_run"),
+    runId,
     agent: "Agent 101",
-    status: "running",
-    mode,
-    goal,
-    currentStep: "Starting",
+    status: "RUNNING",
+    externalStatus: "running",
+    mode: contract.sourceMode,
+    goal: contract.originalUserRequest,
+    contract,
+    idempotencyKey,
+    currentStage: "REQUEST_RECEIVED",
+    currentStep: "Request received",
     progress: 0,
     steps: [],
+    events: [],
     artifacts: [],
     logs: [],
-    context: {},
+    context: {
+      demoLabel: contract.sourceMode === "demo" ? "DEMO / SYNTHETIC — NOT REAL TWITCH DATA" : "",
+      sourceTruth: contract.sourceMode === "real" ? "Official provider data only. No synthetic fallback." : "Explicit demo mode only."
+    },
+    results: {
+      streamers: [],
+      eligibleStreamers: [],
+      candidates: [],
+      clipArtifacts: [],
+      postingDrafts: [],
+      approvals: []
+    },
     provider: {
       configured: Boolean(config.openaiApiKey),
-      mode: config.openaiApiKey ? "openai_or_fallback" : "local_demo",
+      mode: config.openaiApiKey ? "openai_available" : "local_demo",
       model: config.openaiModel
     },
     startedAt: now(),
     completedAt: null,
-    summary: ""
+    summary: contractSummary(contract)
   };
+  state.executionContracts ||= [];
+  state.executionContracts.unshift(contract);
+  state.executionContracts = state.executionContracts.slice(0, 120);
+  persistAgentRun(run);
 
-  const blocked = blockedAgentAction(goal);
-  if (blocked) {
-    const request = createApprovalRequest({
-      type: "agent_external_action",
-      actionType: "external_api_action",
-      title: `Agent 101 blocked request: ${goal.slice(0, 80)}`,
-      riskLevel: "high",
-      linkedId: run.runId,
-      evidence: { goal, reason: blocked.reason }
+  try {
+    addRunEvent(run, "REQUEST_RECEIVED", "succeeded", `Agent 101 received: ${contract.originalUserRequest}`, {
+      originalUserRequest: contract.originalUserRequest
     });
-    addAgentStep(run, "human_gate", "blocked", "Routed risky action to Human Gate", {
-      reason: blocked.reason,
-      approvalId: request.id
-    });
-    addAgentLog(run, "approval_requested", "Agent 101 routed a risky action to Human Gate", {
-      approvalId: request.id,
-      reason: blocked.reason
-    });
-    run.status = "needs_approval";
-    run.progress = 100;
-    run.currentStep = "Human Gate approval required";
-    run.summary = blocked.reason;
-    run.counts = { ...agentCountsDelta(before), logs: run.logs.length };
-    run.completedAt = now();
-    await saveState();
-    return run;
-  }
+    addRunEvent(run, "CONTRACT_CONFIRMED", "succeeded", contractSummary(contract), { contract });
+    await saveRunState(run);
 
-  const openaiPlan = await agentOpenAIPlan(goal);
-  run.provider = {
-    ...run.provider,
-    active: openaiPlan.used ? "openai" : "local_demo",
-    message: openaiPlan.message,
-    error: openaiPlan.error || ""
-  };
-  addAgentStep(run, "planner", "completed", openaiPlan.message, { provider: run.provider.active });
-  addAgentLog(run, openaiPlan.used ? "openai_call" : "openai_fallback", openaiPlan.message, {
-    model: config.openaiModel,
-    error: openaiPlan.error || ""
-  });
-  addAgentLog(run, "agent_run", "Agent 101 accepted safe internal draft workflow", { goal, mode });
-
-  const tools = agentToolPlan(goal, mode).slice(0, maxSteps);
-  for (const toolName of tools) {
-    const tool = AGENT101_TOOL_REGISTRY[toolName];
-    if (!tool) continue;
-    const label = agentToolLabel(toolName);
-    addAgentStep(run, toolName, "running", `Running ${label}`);
-    try {
-      const result = await tool(run);
-      const step = run.steps[run.steps.length - 1];
-      step.status = "completed";
-      step.message = `${label} completed`;
-      step.details = result;
-    } catch (error) {
-      const step = run.steps[run.steps.length - 1];
-      step.status = "error";
-      step.message = `${label} failed`;
-      step.details = { error: error.message };
-      addAgentLog(run, "api_error", "Agent 101 tool failed", { toolName, error: error.message });
-      run.status = "error";
-      run.summary = `Agent 101 stopped at ${toolName}: ${error.message}`;
-      run.progress = Math.round((run.steps.filter((stepItem) => stepItem.status === "completed").length / Math.max(1, tools.length + 1)) * 100);
-      run.counts = { ...agentCountsDelta(before), logs: run.logs.length };
+    const blocked = blockedAgentAction(contract.originalUserRequest);
+    if (blocked && !/clip|stream|candidate|package|caption|watch|discover|find/i.test(contract.originalUserRequest)) {
+      const request = createApprovalRequest({
+        type: "agent_external_action",
+        actionType: "external_api_action",
+        title: `Agent 101 blocked request: ${contract.originalUserRequest.slice(0, 80)}`,
+        riskLevel: "high",
+        linkedId: run.runId,
+        evidence: { goal: contract.originalUserRequest, reason: blocked.reason, contract }
+      });
+      run.status = "NEEDS_APPROVAL";
+      run.externalStatus = "needs_approval";
+      run.results.approvals.push(request);
+      addRunEvent(run, "HUMAN_GATE", "succeeded", "Routed risky external action to Human Gate.", { approvalId: request.id, reason: blocked.reason });
+      run.summary = blocked.reason;
       run.completedAt = now();
-      await saveState();
-      return run;
+      run.progress = 100;
+      await saveRunState(run);
+      return { ...run, externalStatus: toExternalRunStatus(run.status) };
     }
-    run.progress = Math.round((run.steps.filter((step) => step.status === "completed").length / Math.max(1, tools.length + 1)) * 100);
-  }
 
-  run.status = "completed";
-  run.progress = 100;
-  run.currentStep = "Completed";
-  run.counts = { ...agentCountsDelta(before), logs: run.logs.length };
-  run.summary =
-    `Agent 101 completed internal draft work: ${run.counts.streamers} streamers, ` +
-    `${run.counts.sessions} sessions, ${run.counts.candidates} candidates, ` +
-    `${run.counts.packages} packages, ${run.counts.drafts} posting drafts, ` +
-    `${run.counts.approvals} approvals, ${run.counts.artifacts} artifacts.`;
-  run.completedAt = now();
-  await saveState();
-  return run;
+    if (contract.sourceMode === "demo") {
+      addRunEvent(run, "INTEGRATION_CHECK", "not_required", "DEMO / SYNTHETIC mode selected; official provider data is not required.", {
+        demoLabel: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA"
+      });
+      ensureClippingStudioProject();
+      run.results.candidates = state.clipCandidates
+        .filter((candidate) => candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE)
+        .slice(0, contract.requestedCount);
+      run.counts = {
+        requestedStreamers: contract.requestedCount,
+        realStreamersFound: 0,
+        demoCandidates: run.results.candidates.length,
+        postingDraftsCreated: 0,
+        approvalsCreated: 0
+      };
+      addRunEvent(run, "STREAM_DISCOVERY", "not_required", "Demo workspace is available. No real Twitch discovery was performed.", run.counts);
+      addRunEvent(run, "COMPLETED", "succeeded", "Demo mode prepared the local practice workspace only. It did not create real Twitch records or external posting drafts.", run.counts);
+      run.status = "COMPLETED";
+      run.externalStatus = "completed";
+      run.progress = 100;
+      run.completedAt = now();
+      run.summary = "DEMO / SYNTHETIC — NOT REAL TWITCH DATA. Local practice media is ready; no real streams, clips, posts, or approvals were fabricated.";
+      await saveRunState(run);
+      return { ...run, externalStatus: toExternalRunStatus(run.status) };
+    }
+
+    const twitchStatus = await twitchIntegrationStatus({ validate: true });
+    if (!twitchStatus.configured || !twitchStatus.appTokenValid || twitchStatus.status === "error") {
+      return await failAgentRun(run, "INTEGRATION_CHECK", "Twitch authentication failed. I did not create streamers, clips, or posting drafts.", {
+        twitchStatus: {
+          configured: twitchStatus.configured,
+          appTokenValid: twitchStatus.appTokenValid,
+          userTokenValid: twitchStatus.userTokenValid,
+          status: twitchStatus.status,
+          message: twitchStatus.message
+        }
+      });
+    }
+    addRunEvent(run, "INTEGRATION_CHECK", "succeeded", "Twitch Helix integration is ready for real discovery.", {
+      configured: twitchStatus.configured,
+      appTokenValid: twitchStatus.appTokenValid,
+      userTokenValid: twitchStatus.userTokenValid,
+      scopes: twitchStatus.scopes,
+      lastValidatedAt: twitchStatus.lastValidatedAt
+    });
+
+    const records = contract.sourceScope === "approved_watchlist"
+      ? await fetchApprovedTwitchLiveStreams(contract.requestedCount, run, contract)
+      : await fetchTopTwitchLiveStreams(contract.requestedCount, run, contract);
+    run.results.streamers = records;
+    state.discoveredStreamers ||= [];
+    for (const record of records) {
+      const existingIndex = state.discoveredStreamers.findIndex((item) => item.runId === run.runId && item.providerUserId === record.providerUserId);
+      if (existingIndex >= 0) state.discoveredStreamers[existingIndex] = record;
+      else state.discoveredStreamers.unshift(record);
+    }
+    state.discoveredStreamers = state.discoveredStreamers.slice(0, 200);
+    addRunEvent(run, "STREAM_DISCOVERY", "succeeded", `Twitch returned ${records.length} real stream${records.length === 1 ? "" : "s"} for a request of ${contract.requestedCount}.`, {
+      requestedCount: contract.requestedCount,
+      returnedCount: records.length,
+      providerIds: records.map((record) => record.providerUserId),
+      apiEndpoint: "helix/streams"
+    });
+
+    try {
+      records.forEach(assertTwitchRecordReal);
+      assertStreamerResultCountDoesNotExceedRequested(run);
+      assertRealModeContainsNoDemoData(run);
+    } catch (error) {
+      return await failAgentRun(run, "RESULTS_VALIDATED", error.message, { error: error.message });
+    }
+    addRunEvent(run, "RESULTS_VALIDATED", "succeeded", "Real Twitch results were validated with provider IDs, fetch timestamps, and response hashes.", {
+      requestedCount: contract.requestedCount,
+      returnedCount: records.length
+    });
+
+    if (contract.operation === "discover_streamers") {
+      addRunEvent(run, "RIGHTS_VERIFICATION", "not_required", "Discovery-only run. Rights were not claimed and no clipping was attempted.", {
+        rightsStatus: "unknown",
+        clippingEligibility: "not_verified"
+      });
+      addRunEvent(run, "COMPLETED", "succeeded", "Run completed with discovery-only results. No clip candidates, posting drafts, or Human Gate requests were created.", {
+        requestedCount: contract.requestedCount,
+        returnedCount: records.length,
+        candidatesCreated: 0,
+        postingDraftsCreated: 0,
+        approvalsCreated: 0
+      });
+      run.status = "COMPLETED";
+      run.externalStatus = "completed";
+      run.progress = 100;
+      run.completedAt = now();
+      run.counts = {
+        requestedStreamers: contract.requestedCount,
+        realStreamersFound: records.length,
+        eligibleStreamers: 0,
+        sourcesAcquired: 0,
+        candidatesCreated: 0,
+        clipFilesCreated: 0,
+        postingDraftsCreated: 0,
+        approvalsCreated: 0
+      };
+      run.summary = `I found ${records.length} real Twitch live stream${records.length === 1 ? "" : "s"} for a request of ${contract.requestedCount}. This was discovery only; no clips, posts, or approvals were created.`;
+      await saveRunState(run);
+      return { ...run, externalStatus: toExternalRunStatus(run.status) };
+    }
+
+    const eligible = records.filter((record) => {
+      const streamer = findStreamer(record.watchlistStreamerId);
+      try {
+        assertClippingPermission(streamer);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    run.results.eligibleStreamers = eligible;
+    if (!eligible.length) {
+      addRunEvent(run, "RIGHTS_VERIFICATION", "failed", `Requested ${contract.requestedCount} approved live streamer${contract.requestedCount === 1 ? "" : "s"} but found ${records.length}; 0 have verified clipping permission.`, {
+        requestedCount: contract.requestedCount,
+        returnedCount: records.length,
+        eligibleCount: 0
+      });
+      run.status = "BLOCKED";
+      run.externalStatus = "blocked";
+      run.progress = 100;
+      run.completedAt = now();
+      run.summary = "Clipping blocked: no approved live watchlist streamer with recorded clipping permission was found. No candidates, clips, posting drafts, or approvals were created.";
+      addRunEvent(run, "FAILED", "failed", run.summary, { blockedStage: "RIGHTS_VERIFICATION" });
+      await saveRunState(run);
+      return { ...run, externalStatus: toExternalRunStatus(run.status) };
+    }
+    addRunEvent(run, "RIGHTS_VERIFICATION", "succeeded", `${eligible.length} approved live streamer${eligible.length === 1 ? "" : "s"} passed permission lookup.`, {
+      requestedCount: contract.requestedCount,
+      eligibleCount: eligible.length
+    });
+
+    addRunEvent(run, "SOURCE_ACQUISITION", "failed", "Approved clipping still needs a real playable source or confirmed official Twitch clip. I stopped before creating candidates.", {
+      reason: "Twitch source acquisition/official clip creation is not yet authorized for this server run.",
+      candidatesCreated: 0,
+      postingDraftsCreated: 0,
+      approvalsCreated: 0
+    });
+    run.status = "BLOCKED";
+    run.externalStatus = "blocked";
+    run.progress = 100;
+    run.completedAt = now();
+    run.summary = "I found approved live streamers, but source acquisition is not verified yet. No clip candidates, rendered clips, posting drafts, or Human Gate publishing requests were created.";
+    addRunEvent(run, "FAILED", "failed", run.summary, { blockedStage: "SOURCE_ACQUISITION" });
+    await saveRunState(run);
+    return { ...run, externalStatus: toExternalRunStatus(run.status) };
+  } catch (error) {
+    return await failAgentRun(run, RUN_STAGES.includes(run.currentStage) ? run.currentStage : "FAILED", error.message, { error: error.message });
+  }
 }
 
 function demoStreamerProfiles() {
@@ -2504,10 +3181,29 @@ async function runAgent101Browser(body = {}) {
 
 async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "GET" && pathname === "/api/health") {
+    const [media, twitch] = await Promise.all([
+      mediaToolStatus().catch((error) => ({ mode: "blocked", error: error.message })),
+      twitchIntegrationStatus({ validate: false }).catch((error) => ({ configured: false, status: "error", message: error.message }))
+    ]);
+    const outputWritable = await fs.access(config.outputDir).then(() => true).catch(() => false);
+    const uploadWritable = await fs.access(config.uploadDir).then(() => true).catch(() => false);
+    const criticalBlocked = !outputWritable || !uploadWritable || media.mode === "blocked";
+    const readiness = criticalBlocked ? "BLOCKED" : twitch.status === "ready" ? "READY" : "DEGRADED";
     return sendJson(res, 200, {
       ok: true,
       app: "StreamClipper Agent",
       time: now(),
+      readiness,
+      systems: {
+        database: "READY",
+        twitch: twitch.status || "not_configured",
+        openai: config.openaiApiKey ? "READY" : "DEGRADED",
+        ffmpeg: media.ffmpeg?.configured ? "READY" : "BLOCKED",
+        ffprobe: media.ffprobe?.configured ? "READY" : "BLOCKED",
+        uploadDirWritable: uploadWritable,
+        outputDirWritable: outputWritable,
+        humanGate: "READY"
+      },
       status: {
         streamers: state.streamers.length,
         candidates: state.clipCandidates.length,
@@ -2701,6 +3397,124 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, { source: publicMediaSource(source) });
   }
 
+  const mediaSourceVerifyMatch = pathname.match(/^\/api\/media\/sources\/([^/]+)\/verify$/);
+  if (mediaSourceVerifyMatch && req.method === "POST") {
+    const source = findExistingMediaSource(decodeURIComponent(mediaSourceVerifyMatch[1]));
+    if (!source) return sendError(res, 404, "Media source not found");
+    try {
+      const metadata = await assertSourceIsPlayable(source);
+      const sha256 = await fileSha256(source.filePath);
+      Object.assign(source, {
+        duration: metadata.duration,
+        width: metadata.width,
+        height: metadata.height,
+        fps: metadata.fps,
+        hasAudio: metadata.hasAudio,
+        sha256,
+        probeStatus: "passed",
+        verifiedAt: now(),
+        playable: true,
+        updatedAt: now()
+      });
+      await logEvent("source_verified", "Media source verified by FFprobe", { sourceId: source.id, sha256 });
+      await saveState();
+      return sendJson(res, 200, { source: publicMediaSource(source), metadata: { ...metadata, sha256, probeStatus: "passed" } });
+    } catch (error) {
+      source.probeStatus = "failed";
+      source.updatedAt = now();
+      await logEvent("source_verify_failed", "Media source verification failed", { sourceId: source.id, error: error.message });
+      await saveState();
+      return sendError(res, 422, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/media/candidates") {
+    const body = await readJsonBody(req);
+    const source = findExistingMediaSource(cleanText(body.sourceId));
+    if (!source) return sendError(res, 422, "Candidate generation blocked: no verified playable media.");
+    try {
+      await assertSourceIsPlayable(source);
+      const start = Math.max(0, Number(body.startSeconds ?? body.timestampStartSeconds ?? 0));
+      const end = Number(body.endSeconds ?? body.timestampEndSeconds ?? start + Number(body.durationSeconds || body.duration || 0));
+      const candidate = {
+        id: cleanText(body.id) || newId("candidate"),
+        runId: cleanText(body.runId),
+        streamerId: cleanText(body.streamerId || source.streamerId || DEMO_STREAMER_ID),
+        sourceId: source.id,
+        sourceClipId: cleanText(body.sourceClipId),
+        sourceType: source.sourceKind || source.provenance || PROVENANCE.VERIFIED_MEDIA,
+        sourceProvenance: source.provenance,
+        startSeconds: start,
+        endSeconds: end,
+        timestampStartSeconds: start,
+        timestampEndSeconds: end,
+        timestampStart: secondsToTimestamp(start),
+        timestampEnd: secondsToTimestamp(end),
+        duration: Math.max(0, end - start),
+        durationSeconds: Math.max(0, end - start),
+        thumbnailArtifactId: cleanText(body.thumbnailArtifactId),
+        transcriptSegmentIds: Array.isArray(body.transcriptSegmentIds) ? body.transcriptSegmentIds : [],
+        transcriptSnippet: cleanText(body.transcriptSnippet) || "Source transcript unavailable unless uploaded or extracted.",
+        transcriptProvenance: body.transcriptSnippet ? PROVENANCE.USER_ENTERED : PROVENANCE.UNAVAILABLE,
+        evidence: body.evidence || {},
+        title: cleanText(body.title) || "Verified media candidate",
+        category: cleanText(body.category || source.category || "Media"),
+        score: Number(body.score || 0),
+        scoreComponents: body.scoreComponents || {},
+        status: "candidate",
+        provenance: source.provenance,
+        creativeProvenance: PROVENANCE.USER_ENTERED,
+        createdAt: now(),
+        updatedAt: now()
+      };
+      assertCandidateReferencesSource(candidate, source);
+      assertCandidateTimesValid(candidate, source);
+      state.clipCandidates.unshift(candidate);
+      await logEvent("candidate_created", "Clip candidate created from verified media source", {
+        candidateId: candidate.id,
+        sourceId: source.id
+      });
+      await saveState();
+      return sendJson(res, 201, { candidate });
+    } catch (error) {
+      await logEvent("candidate_blocked", "Candidate creation blocked", { sourceId: source.id, error: error.message });
+      return sendError(res, 422, error.message);
+    }
+  }
+
+  const mediaCandidateRenderMatch = pathname.match(/^\/api\/media\/candidates\/([^/]+)\/render$/);
+  if (mediaCandidateRenderMatch && req.method === "POST") {
+    const body = await readJsonBody(req);
+    try {
+      const result = await createRenderJob({ ...body, candidateId: mediaCandidateRenderMatch[1] });
+      return sendJson(res, 201, result);
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.statusCode ? error.message : "Render job failed", {
+        message: error.message
+      });
+    }
+  }
+
+  const mediaRenderJobAliasMatch = pathname.match(/^\/api\/media\/render-jobs\/([^/]+)$/);
+  if (mediaRenderJobAliasMatch && req.method === "GET") {
+    const job = (state.mediaJobs || []).find((item) => item.id === mediaRenderJobAliasMatch[1]);
+    if (!job) return sendError(res, 404, "Media render job not found");
+    return sendJson(res, 200, { job });
+  }
+
+  const mediaArtifactMatch = pathname.match(/^\/api\/media\/artifacts\/([^/]+)$/);
+  if (mediaArtifactMatch && req.method === "GET") {
+    const artifact = state.artifacts.find((item) => item.id === mediaArtifactMatch[1]);
+    if (!artifact) return sendError(res, 404, "Media artifact not found");
+    return sendJson(res, 200, {
+      artifact: {
+        ...artifact,
+        path: undefined,
+        fileRefs: (artifact.fileRefs || []).map((fileRef) => ({ ...fileRef, path: undefined }))
+      }
+    });
+  }
+
   if (req.method === "POST" && pathname === "/api/media/jobs") {
     const body = await readJsonBody(req);
     try {
@@ -2752,16 +3566,106 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
-  if (req.method === "GET" && pathname === "/api/twitch/status") {
+  if (req.method === "GET" && (pathname === "/api/twitch/status" || pathname === "/api/integrations/twitch/status")) {
+    const status = await twitchIntegrationStatus({ validate: searchParams.get("validate") !== "false" });
+    await saveState();
     return sendJson(res, 200, {
-      configured: twitchApiConfigured(),
-      clientIdConfigured: Boolean(config.twitchClientId),
-      clientSecretConfigured: Boolean(config.twitchClientSecret),
-      redirectUriConfigured: Boolean(config.twitchRedirectUri),
-      oauthTokenConfigured: Boolean(config.twitchOAuthToken),
+      ...status,
       allowedChannels: config.twitchAllowedChannels,
-      officialApiOnly: true
+      rawTokensExposed: false
     });
+  }
+
+  if (req.method === "POST" && pathname === "/api/twitch/validate") {
+    const status = await twitchIntegrationStatus({ validate: true });
+    await logEvent("twitch_validate", "Twitch integration validated", {
+      configured: status.configured,
+      appTokenValid: status.appTokenValid,
+      userTokenValid: status.userTokenValid,
+      status: status.status
+    });
+    await saveState();
+    return sendJson(res, 200, {
+      ...status,
+      rawTokensExposed: false
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/api/twitch/live-streams") {
+    const requestedCount = Math.max(1, Math.min(100, Number(searchParams.get("count") || 2)));
+    const contract = inferExecutionContract({
+      goal: `Find the top ${requestedCount} streamers.`,
+      requestedCount,
+      mode: "real",
+      scope: "twitch_live_global"
+    });
+    const run = { runId: newId("twitch_live_lookup") };
+    contract.runId = run.runId;
+    try {
+      const streams = await fetchTopTwitchLiveStreams(requestedCount, run, contract);
+      streams.forEach(assertTwitchRecordReal);
+      return sendJson(res, 200, {
+        requestedCount,
+        returnedCount: streams.length,
+        streams,
+        sourceMode: "real",
+        apiEndpoint: "helix/streams",
+        rawTokensExposed: false
+      });
+    } catch (error) {
+      await logEvent("api_error", "Twitch live stream discovery failed", { requestedCount, error: error.message });
+      return sendError(res, 502, error.message);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/twitch/approved-live-streams") {
+    const requestedCount = Math.max(1, Math.min(100, Number(searchParams.get("count") || 2)));
+    const contract = inferExecutionContract({
+      goal: `Find the top ${requestedCount} approved streamers and create clips.`,
+      requestedCount,
+      mode: "real",
+      scope: "approved_watchlist"
+    });
+    const run = { runId: newId("twitch_approved_lookup") };
+    contract.runId = run.runId;
+    try {
+      const streams = await fetchApprovedTwitchLiveStreams(requestedCount, run, contract);
+      streams.forEach(assertTwitchRecordReal);
+      return sendJson(res, 200, {
+        requestedCount,
+        returnedCount: streams.length,
+        streams,
+        sourceMode: "real",
+        sourceScope: "approved_watchlist",
+        rawTokensExposed: false
+      });
+    } catch (error) {
+      await logEvent("api_error", "Twitch approved live stream discovery failed", { requestedCount, error: error.message });
+      return sendError(res, 502, error.message);
+    }
+  }
+
+  if (req.method === "POST" && [
+    "/api/twitch/clips/live",
+    "/api/twitch/clips/vod"
+  ].includes(pathname)) {
+    await logEvent("clip_creation_blocked", "Twitch clip creation blocked until user token/scopes and rights evidence are verified", {
+      route: pathname
+    });
+    return sendError(res, 501, "Real Twitch clip creation is not enabled yet. It requires a valid user access token, required scopes, channel rights evidence, and async Twitch clip confirmation.");
+  }
+
+  const twitchClipActionMatch = pathname.match(/^\/api\/twitch\/clips\/([^/]+)\/(status|download)$/);
+  if (twitchClipActionMatch) {
+    if (req.method === "GET" && twitchClipActionMatch[2] === "status") {
+      return sendError(res, 404, "No verified Twitch clip record exists for this clip ID.");
+    }
+    if (req.method === "POST" && twitchClipActionMatch[2] === "download") {
+      await logEvent("clip_download_blocked", "Twitch clip download blocked until rights and official download support are verified", {
+        clipId: twitchClipActionMatch[1]
+      });
+      return sendError(res, 501, "Real Twitch clip download is not enabled yet. No local file was created.");
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/twitch/test") {
@@ -2770,7 +3674,7 @@ async function handleApi(req, res, pathname, searchParams) {
         return sendJson(res, 200, {
           configured: false,
           live: false,
-          message: "Twitch credentials are not configured. Watch cycles will use approved demo candidates."
+          message: "Twitch credentials are not configured. Real mode will stop instead of using demo data."
         });
       }
       const token = config.twitchOAuthToken || (await getTwitchAppToken());
@@ -2810,10 +3714,50 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  if (req.method === "POST" && pathname === "/api/agent101/runs") {
+    const body = await readJsonBody(req);
+    const result = await runAgent101(body);
+    return sendJson(res, 200, result);
+  }
+
+  const agentRunMatch = pathname.match(/^\/api\/agent101\/runs\/([^/]+)(?:\/(events|cancel|retry-stage))?$/);
+  if (agentRunMatch) {
+    const run = (state.agentRuns || []).find((item) => item.runId === agentRunMatch[1]);
+    if (!run) return sendError(res, 404, "Agent 101 run not found");
+    const action = agentRunMatch[2] || "";
+    if (req.method === "GET" && !action) return sendJson(res, 200, { run, externalStatus: toExternalRunStatus(run.status) });
+    if (req.method === "GET" && action === "events") return sendJson(res, 200, { runId: run.runId, events: run.events || [] });
+    if (req.method === "POST" && action === "cancel") {
+      if (!["COMPLETED", "FAILED", "CANCELLED", "BLOCKED"].includes(run.status)) {
+        run.status = "CANCELLED";
+        run.externalStatus = "cancelled";
+        run.currentStage = "CANCELLED";
+        run.completedAt = now();
+        run.summary = "Run cancelled by operator.";
+        addRunEvent(run, "CANCELLED", "succeeded", "Run cancelled by operator.");
+        await saveRunState(run);
+      }
+      return sendJson(res, 200, { run, externalStatus: toExternalRunStatus(run.status) });
+    }
+    if (req.method === "POST" && action === "retry-stage") {
+      const body = await readJsonBody(req);
+      const retryBody = {
+        threadId: run.contract?.threadId,
+        goal: run.contract?.originalUserRequest || run.goal,
+        mode: run.contract?.sourceMode || run.mode,
+        requestedCount: run.contract?.requestedCount,
+        scope: run.contract?.sourceScope,
+        idempotencyKey: `${run.idempotencyKey || run.runId}:retry:${cleanText(body.stage || run.currentStage)}:${Date.now()}`
+      };
+      const retry = await runAgent101(retryBody);
+      return sendJson(res, 200, retry);
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/agent101/run") {
     const body = await readJsonBody(req);
     const result = await runAgent101(body);
-    return sendJson(res, result.status === "error" ? 500 : 200, result);
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "POST" && pathname === "/api/demo/seed") {
@@ -2822,6 +3766,31 @@ async function handleApi(req, res, pathname, searchParams) {
       seeded,
       message: "Demo mission loaded. StreamClipper is ready to run a supervised clipping cycle."
     });
+  }
+
+  if (req.method === "POST" && pathname === "/api/demo/clear") {
+    const before = {
+      streamers: state.streamers.length,
+      sessions: state.streamSessions.length,
+      candidates: state.clipCandidates.length,
+      sources: state.mediaSources.length,
+      projects: state.mediaProjects.length
+    };
+    state.streamers = state.streamers.filter((streamer) => !(streamer.isDemo || streamer.permissionStatus === "demo_approved" || streamer.platform === "demo"));
+    state.streamSessions = state.streamSessions.filter((session) => !String(session.status || "").startsWith("demo"));
+    state.clipCandidates = state.clipCandidates.filter((candidate) => !(candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE || /demo/i.test(candidate.sourceType || "")));
+    state.mediaSources = state.mediaSources.filter((source) => source.provenance !== PROVENANCE.DEMO_SOURCE);
+    state.mediaProjects = state.mediaProjects.filter((project) => project.id !== DEMO_PROJECT_ID);
+    const cleared = {
+      streamers: before.streamers - state.streamers.length,
+      sessions: before.sessions - state.streamSessions.length,
+      candidates: before.candidates - state.clipCandidates.length,
+      sources: before.sources - state.mediaSources.length,
+      projects: before.projects - state.mediaProjects.length
+    };
+    await logEvent("demo_cleared", "Demo data cleared from StreamClipper state", cleared);
+    await saveState();
+    return sendJson(res, 200, { cleared, message: "Demo rows cleared. Real data was left untouched." });
   }
 
   if (req.method === "GET" && (pathname === "/api/twitch/streams" || pathname === "/api/streams")) {
@@ -2980,8 +3949,35 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 
   if (req.method === "POST" && pathname === "/api/watch/run") {
+    const body = await readJsonBody(req);
+    const runMode = normalizeStatus(body.mode || "real", ["real", "demo"], "real");
+    if (runMode === "demo") {
+      ensureClippingStudioProject();
+      await logEvent("demo_watch_cycle", "Explicit demo watch cycle used bundled practice media", {
+        label: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA"
+      });
+      await saveState();
+      return sendJson(res, 200, {
+        mode: "demo",
+        label: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA",
+        results: state.clipCandidates
+          .filter((candidate) => candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE)
+          .map((candidate) => ({ candidate, demo: true })),
+        dailyLimit: dailyLimitStatus()
+      });
+    }
     const results = [];
     for (const streamer of state.streamers.filter((item) => item.monitorEnabled)) {
+      if (streamer.isDemo || streamer.permissionStatus === "demo_approved" || streamer.platform === "demo") {
+        results.push({
+          streamerId: streamer.id,
+          live: null,
+          skipped: true,
+          official: false,
+          reason: "Demo streamer hidden from real watch cycle."
+        });
+        continue;
+      }
       let stream = null;
       let liveCheck = null;
       try {
@@ -3006,53 +4002,45 @@ async function handleApi(req, res, pathname, searchParams) {
         continue;
       }
 
+      if (!stream) {
+        results.push({
+          ...(liveCheck || { streamerId: streamer.id, live: false, official: true }),
+          session: null,
+          candidate: null,
+          reason: "Official API returned no active stream. No candidate was created."
+        });
+        continue;
+      }
+
       const session = {
         id: newId("session"),
         streamerId: streamer.id,
         platform: streamer.platform,
-        title: stream?.title || `${streamer.displayName} approved demo watch`,
-        category: stream?.game_name || "Demo / manual review",
-        startedAt: stream?.started_at || now(),
+        title: stream.title || `${streamer.displayName} live stream`,
+        category: stream.game_name || "Unknown category",
+        startedAt: stream.started_at || now(),
         endedAt: null,
         vodId: null,
-        status: stream ? "live" : "demo"
+        status: "live",
+        providerStreamId: stream.id || "",
+        sourceMode: "real",
+        provenance: PROVENANCE.VERIFIED_API
       };
       state.streamSessions.unshift(session);
-
-      const candidateBase = {
-        id: newId("candidate"),
+      results.push({
+        ...(liveCheck || { streamerId: streamer.id, live: true, official: true }),
+        session,
+        candidate: null,
+        reason: "Candidate generation blocked: no verified playable media."
+      });
+      await logEvent("candidate_blocked", "Candidate generation blocked: no verified playable media", {
         streamerId: streamer.id,
         sessionId: session.id,
-        sourceType: stream ? `${streamer.platform}_live` : "demo",
-        sourceId: stream?.id || session.id,
-        timestampStart: "00:00:15",
-        timestampEnd: "00:00:45",
-        duration: 30,
-        title: stream?.title || `${streamer.displayName} reaction moment`,
-        category: session.category,
-        transcriptSnippet: stream ? "" : "Manual demo candidate. Add transcript, chat spike, or visual notes before final approval.",
-        chatSignals: stream ? { spike: 0, source: "not_connected" } : { spike: 12, source: "demo" },
-        reason: stream
-          ? "Live stream metadata found. Candidate needs transcript/chat context before packaging."
-          : "Safe demo candidate for workflow testing. No download or external post has occurred.",
-        hookScore: stream ? 12 : 14,
-        riskScore: 15,
-        status: "candidate",
-        createdAt: now(),
-        updatedAt: now()
-      };
-      const score = scoreClipMoment(candidateBase);
-      const candidate = { ...candidateBase, ...score };
-      state.clipCandidates.unshift(candidate);
-      results.push({ ...(liveCheck || { streamerId: streamer.id, live: Boolean(stream), official: false }), session, candidate });
-      await logEvent("candidate_detected", "Clip candidate detected", {
-        streamerId: streamer.id,
-        candidateId: candidate.id,
-        sourceType: candidate.sourceType
+        sourceMode: "real"
       });
     }
     await saveState();
-    return sendJson(res, 200, { results, dailyLimit: dailyLimitStatus() });
+    return sendJson(res, 200, { mode: "real", results, dailyLimit: dailyLimitStatus() });
   }
 
   if (req.method === "GET" && pathname === "/api/clips/candidates") {
@@ -3101,7 +4089,27 @@ async function handleApi(req, res, pathname, searchParams) {
     const candidate = state.clipCandidates.find((item) => item.id === body.candidateId);
     if (!candidate) return sendError(res, 404, "Candidate not found");
     const streamer = findStreamer(candidate.streamerId);
-    if (!isApprovedStreamer(streamer)) {
+    const source = findExistingMediaSource(candidate.sourceId);
+    if (!source) {
+      await logEvent("candidate_blocked", "Package blocked because candidate has no verified media source", {
+        candidateId: candidate.id,
+        sourceId: candidate.sourceId || ""
+      });
+      return sendError(res, 422, "Candidate generation blocked: no verified playable media.");
+    }
+    try {
+      await assertSourceIsPlayable(source);
+      assertCandidateReferencesSource(candidate, source);
+      assertCandidateTimesValid(candidate, source);
+    } catch (error) {
+      await logEvent("candidate_blocked", "Package blocked by source verification", {
+        candidateId: candidate.id,
+        sourceId: candidate.sourceId,
+        error: error.message
+      });
+      return sendError(res, 422, error.message);
+    }
+    if (source.provenance !== PROVENANCE.DEMO_SOURCE && !isRealApprovedStreamer(streamer)) {
       await logEvent("permission_blocked", "Package blocked for unapproved streamer", { candidateId: candidate.id });
       return sendError(res, 403, "Streamer permission is not approved");
     }
@@ -3125,6 +4133,9 @@ async function handleApi(req, res, pathname, searchParams) {
       postingDrafts: [],
       approvalStatus: "pending",
       artifacts: [packageArtifact],
+      sourceId: source.id,
+      sourceProvenance: source.provenance,
+      renderedArtifactId: candidate.renderedArtifactId || null,
       packagePlan,
       createdAt: now(),
       updatedAt: now()
@@ -3132,21 +4143,20 @@ async function handleApi(req, res, pathname, searchParams) {
     state.clipPackages.unshift(clipPackage);
     candidate.status = "packaged";
     candidate.updatedAt = now();
-    const drafts = createPostingDraftsForPackage(clipPackage, packagePlan);
-    clipPackage.postingDrafts = drafts.map((draft) => draft.id);
-    createApprovalRequest({
-      type: "clip_package",
-      title: `Clip package: ${packagePlan.title}`,
-      riskLevel: "medium",
-      linkedId: clipPackage.id,
-      evidence: { candidateId: candidate.id, streamerId: streamer.id }
-    });
     await logEvent("package_created", "Clip package created", {
       candidateId: candidate.id,
-      clipPackageId: clipPackage.id
+      clipPackageId: clipPackage.id,
+      sourceId: source.id,
+      postingDraftsCreated: 0,
+      approvalRequestsCreated: 0
     });
     await saveState();
-    return sendJson(res, 201, { clipPackage, packagePlan, postingDrafts: drafts });
+    return sendJson(res, 201, {
+      clipPackage,
+      packagePlan,
+      postingDrafts: [],
+      message: "Clip package created from verified source. Posting drafts are blocked until a rendered clip artifact passes verification."
+    });
   }
 
   if (req.method === "POST" && pathname === "/api/clips/capcut-brief") {
@@ -3232,33 +4242,20 @@ async function handleApi(req, res, pathname, searchParams) {
     });
   }
 
-  if (req.method === "POST" && pathname === "/api/posts/queue") {
+  if (req.method === "GET" && pathname === "/api/posting-drafts") {
+    return sendJson(res, 200, {
+      drafts: state.postingDrafts,
+      dailyLimit: dailyLimitStatus()
+    });
+  }
+
+  if (req.method === "POST" && (pathname === "/api/posts/queue" || pathname === "/api/posting-drafts")) {
     const body = await readJsonBody(req);
-    if (body.approvalStatus === "approved" && dailyLimitStatus().blocked) {
-      return sendError(res, 429, "Daily approved post limit reached", dailyLimitStatus());
+    try {
+      return sendJson(res, 201, await createVerifiedPostingDraft(body));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details);
     }
-    const draft = {
-      id: newId("post"),
-      clipPackageId: cleanText(body.clipPackageId),
-      platform: normalizeStatus(body.platform, ["tiktok", "instagram_reels", "youtube_shorts"], "tiktok"),
-      videoRef: cleanText(body.videoRef),
-      caption: cleanText(body.caption),
-      hashtags: Array.isArray(body.hashtags) ? body.hashtags : [],
-      thumbnailText: cleanText(body.thumbnailText),
-      scheduledFor: cleanText(body.scheduledFor),
-      status: "draft",
-      platformStatus: "not_uploaded",
-      approvalStatus: normalizeStatus(body.approvalStatus, ["pending", "approved", "rejected", "send_back"], "pending"),
-      requiresApproval: true,
-      riskNotes: Array.isArray(body.riskNotes) ? body.riskNotes : ["Human Gate approval required."],
-      createdAt: now(),
-      updatedAt: now(),
-      approvedAt: body.approvalStatus === "approved" ? now() : null
-    };
-    state.postingDrafts.unshift(draft);
-    await logEvent("post_queued", "Posting draft queued", { draftId: draft.id, platform: draft.platform });
-    await saveState();
-    return sendJson(res, 201, { draft, dailyLimit: dailyLimitStatus() });
   }
 
   const postMatch = pathname.match(/^\/api\/posts\/([^/]+)$/);
@@ -3289,6 +4286,15 @@ async function handleApi(req, res, pathname, searchParams) {
   if (requestApprovalMatch && req.method === "POST") {
     const draft = state.postingDrafts.find((item) => item.id === requestApprovalMatch[1]);
     if (!draft) return sendError(res, 404, "Posting draft not found");
+    try {
+      assertPostingDraftHasRealClip(draft);
+    } catch (error) {
+      await logEvent("approval_blocked", "Approval request blocked without verified posting draft clip", {
+        draftId: draft.id,
+        error: error.message
+      });
+      return sendError(res, 422, error.message);
+    }
     const request = createApprovalRequest({
       type: "posting_draft",
       title: `Post approval: ${draft.platform}`,
@@ -3297,6 +4303,37 @@ async function handleApi(req, res, pathname, searchParams) {
       evidence: { draft }
     });
     await logEvent("approval_requested", "Posting draft approval requested", { draftId: draft.id });
+    await saveState();
+    return sendJson(res, 201, { request });
+  }
+
+  if (req.method === "POST" && pathname === "/api/human-gate/requests") {
+    const body = await readJsonBody(req);
+    const draftId = cleanText(body.postingDraftId || body.draftId || body.linkedId);
+    const draft = state.postingDrafts.find((item) => item.id === draftId);
+    if (!draft) return sendError(res, 404, "Posting draft not found");
+    try {
+      assertPostingDraftHasRealClip(draft);
+    } catch (error) {
+      await logEvent("approval_blocked", "Human Gate request blocked without verified posting draft clip", {
+        draftId,
+        error: error.message
+      });
+      return sendError(res, 422, error.message);
+    }
+    const request = createApprovalRequest({
+      type: "posting_draft",
+      actionType: cleanText(body.actionType) || "publish_video",
+      title: cleanText(body.title) || `Post approval: ${draft.platform}`,
+      riskLevel: cleanText(body.riskLevel) || "medium",
+      linkedId: draft.id,
+      evidence: {
+        draft,
+        clipArtifactId: draft.clipArtifactId,
+        rightsEvidence: cleanText(body.rightsEvidence) || "Operator must verify rights before publishing."
+      }
+    });
+    await logEvent("approval_requested", "Human Gate approval request created", { draftId: draft.id, requestId: request.id });
     await saveState();
     return sendJson(res, 201, { request });
   }
@@ -3312,6 +4349,16 @@ async function handleApi(req, res, pathname, searchParams) {
     const action = pathname.endsWith("approve") ? "approved" : pathname.endsWith("reject") ? "rejected" : "send_back";
     if (action === "approved" && request.type === "posting_draft") {
       const draft = state.postingDrafts.find((item) => item.id === request.linkedId);
+      try {
+        assertPostingDraftHasRealClip(draft);
+      } catch (error) {
+        await logEvent("approval_blocked", "Human Gate approval blocked without verified clip artifact", {
+          approvalId: request.id,
+          draftId: draft?.id,
+          error: error.message
+        });
+        return sendError(res, 422, error.message);
+      }
       if (draft?.approvalStatus !== "approved" && dailyLimitStatus().blocked) {
         return sendError(res, 429, "Daily approved post limit reached", dailyLimitStatus());
       }

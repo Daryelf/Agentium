@@ -1,0 +1,21 @@
+{
+  "name": "launch-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A supervised OpenAI Agents SDK launch-planning workspace.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "NODE_ENV=production node server.js",
+    "check": "node --check server.js && node --check src/server/config.js && node --check src/server/routes/agentRoutes.js && node --check src/server/agent/launchAgent.js && node --check src/server/agent/tools.js && node --check src/server/observability/tracing.js && node --check src/server/stream/sse.js && node --check src/client/main.js && node --check tests/tool-contract.test.mjs && node --check tests/e2e-stream.mjs",
+    "test": "node tests/tool-contract.test.mjs",
+    "verify:e2e": "node tests/e2e-stream.mjs"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.11.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^4.1.13"
+  }
+}

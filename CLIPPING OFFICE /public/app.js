@@ -31,6 +31,7 @@ const state = {
   agentRun: null,
   agentRunBusy: false,
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
+  previewCandidateId: "",
   selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
   selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
 };
@@ -114,14 +115,77 @@ function sparkline(seed = 0) {
   }).join("");
 }
 
-function miniThumb(label, index = 0) {
+function resolvedThumbnailUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  return url.replaceAll("{width}", "640").replaceAll("{height}", "360");
+}
+
+function candidateById(id) {
+  return state.candidates.find((candidate) => candidate.id === id) || null;
+}
+
+function bestCandidateForStreamer(streamerId) {
+  return state.candidates
+    .filter((candidate) => candidate.streamerId === streamerId)
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+}
+
+function candidateThumbnailUrl(candidate) {
+  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+  return resolvedThumbnailUrl(candidate?.thumbnailUrl || candidate?.thumbnail || streamer?.liveThumbnailUrl || streamer?.thumbnailUrl || streamer?.thumbnail);
+}
+
+function streamThumbnailUrl(streamer) {
+  return resolvedThumbnailUrl(streamer?.liveThumbnailUrl || streamer?.thumbnailUrl || streamer?.thumbnail);
+}
+
+function mediaTitle(value, fallback = "Stream preview") {
+  return esc(String(value || fallback).slice(0, 42));
+}
+
+function previewFrame({
+  label = "LIVE",
+  title = "Clip preview",
+  subtitle = "",
+  timestamp = "00:00",
+  end = "00:30",
+  index = 0,
+  imageUrl = "",
+  candidateId = "",
+  className = "",
+  score = 0
+} = {}) {
+  const progress = Math.max(14, Math.min(88, Number(score || 0)));
   return `
-    <div class="clip-thumb thumb-${index % 5}">
-      <span>LIVE</span>
-      <strong>${esc(initials(label))}</strong>
-      <em>${(index + 1) * 3}.${index + 7}K</em>
+    <div class="media-frame ${esc(className)} thumb-${index % 5}">
+      ${imageUrl ? `<img src="${esc(imageUrl)}" alt="" loading="lazy">` : ""}
+      <span class="media-badge">${esc(label)}</span>
+      ${candidateId
+        ? `<button class="media-play" type="button" data-preview-candidate="${esc(candidateId)}" aria-label="Play ${mediaTitle(title)}">Play</button>`
+        : `<span class="media-play locked" aria-hidden="true">Preview</span>`}
+      <div class="media-copy">
+        <strong>${mediaTitle(title)}</strong>
+        ${subtitle ? `<small>${esc(subtitle).slice(0, 58)}</small>` : ""}
+      </div>
+      <div class="media-timeline">
+        <b>${esc(timestamp)}</b>
+        <i><span style="width:${progress}%"></span></i>
+        <em>${esc(end)}</em>
+      </div>
+      <div class="media-bars">${sparkline(index * 11 + Number(score || 0))}</div>
     </div>
   `;
+}
+
+function miniThumb(label, index = 0) {
+  return previewFrame({
+    label: "LIVE",
+    title: label,
+    subtitle: `${(index + 1) * 3}.${index + 7}K watching`,
+    index,
+    className: "clip-thumb"
+  });
 }
 
 function renderSidebarOps() {
@@ -308,6 +372,7 @@ function render() {
   const renderer = renderers[state.view] || renderDashboard;
   try {
     renderer();
+    view.insertAdjacentHTML("beforeend", renderClipPreviewModal());
   } catch (error) {
     console.error(error);
     view.innerHTML = `<section class="panel">${empty(`Could not open ${state.view}: ${error.message}`)}</section>`;
@@ -476,20 +541,35 @@ function renderLiveDesk() {
       </div>
     `;
   }
-  const cards = state.streamers.slice(0, 4).map((streamer, index) => `
-    <article class="stream-card">
-      ${miniThumb(streamer.displayName, index)}
+  const cards = state.streamers.slice(0, 5).map((streamer, index) => {
+    const relatedCandidate = bestCandidateForStreamer(streamer.id);
+    const status = liveStatusMeta(streamer);
+    return `
+    <article class="stream-card" data-select-streamer="${esc(streamer.id)}">
+      ${previewFrame({
+        label: streamer.liveStatus === "live" ? "LIVE" : status.label,
+        title: streamer.liveTitle || `${streamer.displayName} stream`,
+        subtitle: streamer.liveCategory || streamer.notes || "Local monitored source",
+        timestamp: relatedCandidate?.timestampStart || "00:00:00",
+        end: relatedCandidate?.timestampEnd || `${relatedCandidate?.duration || 30}s`,
+        index,
+        imageUrl: streamThumbnailUrl(streamer),
+        candidateId: relatedCandidate?.id || "",
+        className: "clip-thumb stream-thumb",
+        score: relatedCandidate?.score || streamer.liveViewerCount || index * 8
+      })}
       <div class="stream-meta">
         <strong>${esc(streamer.displayName)}</strong>
         ${permissionBadge(streamer.permissionStatus)}
       </div>
-      <p>${esc(streamer.liveStatus || "unknown")} · ${esc(streamer.platform)}</p>
+      <p>${esc(status.label)} · ${esc(streamer.platform)}${streamer.liveViewerCount ? ` · ${Number(streamer.liveViewerCount).toLocaleString()} viewers` : ""}</p>
       <div class="stream-foot">
         <span>${fmtDate(streamer.lastCheckedAt)}</span>
         <span class="spark">${sparkline(index * 7)}</span>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
   return `
     <div class="stream-grid">
       ${cards}
@@ -502,8 +582,8 @@ function renderTopCandidates() {
   const candidates = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0)).slice(0, 5);
   if (!candidates.length) return empty("No candidates yet. Run a watch cycle after adding approved streamers.");
   return `<div class="candidate-list">${candidates.map((candidate, index) => `
-    <article class="candidate-row">
-      ${miniThumb(candidate.title, index + 2)}
+    <article class="candidate-row" data-select-candidate="${candidate.id}">
+      ${radarThumb(candidate, index + 2)}
       <span class="candidate-score ${candidateTone(Number(candidate.score || 0))}">${Number(candidate.score || 0)}</span>
       <div>
         <strong>${esc(candidate.title)}</strong>
@@ -1025,7 +1105,7 @@ function renderRadarRow(candidate, index) {
       <td>${candidateStatusBadge(candidate.status)}</td>
       <td>
         <div class="radar-row-actions">
-          <button data-select-candidate="${candidate.id}">Play</button>
+          <button data-preview-candidate="${candidate.id}">Play</button>
           <button data-package-candidate="${candidate.id}">Box</button>
           <button data-reject-candidate="${candidate.id}">...</button>
         </div>
@@ -1070,14 +1150,19 @@ function selectedCandidate() {
 function radarThumb(candidate, index = 0) {
   const start = candidate.timestampStart || "00:00";
   const end = candidate.timestampEnd || "00:30";
-  return `
-    <div class="radar-thumb thumb-${index % 5}">
-      <span>LIVE</span>
-      <button type="button" data-select-candidate="${candidate.id}">▶</button>
-      <small>${esc(start)}</small>
-      <em>${esc(end)}</em>
-    </div>
-  `;
+  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
+  return previewFrame({
+    label: candidate.sourceType === "demo" ? "DEMO" : "LIVE",
+    title: candidate.title || "Clip preview",
+    subtitle: `${streamer?.displayName || "Stream"} · ${candidate.category || "Clip"}`,
+    timestamp: start,
+    end,
+    index,
+    imageUrl: candidateThumbnailUrl(candidate),
+    candidateId: candidate.id,
+    className: "radar-thumb",
+    score: candidate.score
+  });
 }
 
 function candidateTags(candidate, index = 0) {
@@ -1192,6 +1277,79 @@ function renderCandidateInspector(candidate) {
         <span>Duration</span><b>${candidate.duration || 30}s</b>
         <span>Risk</span><b>${candidate.riskScore || 0}/100</b>
       </div>
+    </div>
+  `;
+}
+
+function renderClipPreviewModal() {
+  const candidate = candidateById(state.previewCandidateId);
+  if (!candidate) return "";
+  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
+  const plan = selectedClipPackage(candidate)?.packagePlan || fallbackPackagePlan(candidate);
+  const score = Number(candidate.score || 0);
+  const hook = Number(candidate.hookScore || 0);
+  return `
+    <div class="clip-preview-overlay" role="dialog" aria-modal="true" aria-label="Clip preview">
+      <section class="clip-preview-modal">
+        <div class="preview-head">
+          <div>
+            <span class="eyebrow">Local draft preview</span>
+            <h2>${esc(candidate.title || "Clip preview")}</h2>
+            <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || "Demo stream")} · ${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || `${candidate.duration || 30}s`)}</p>
+          </div>
+          <button class="icon-button" data-close-preview aria-label="Close preview">×</button>
+        </div>
+        <div class="preview-body">
+          <div class="preview-player">
+            ${previewFrame({
+              label: candidate.sourceType === "demo" ? "DEMO CLIP" : "LIVE CLIP",
+              title: plan.thumbnailText || plan.hook || candidate.title,
+              subtitle: candidate.transcriptSnippet || candidate.reason || "Draft preview generated from safe local metadata.",
+              timestamp: candidate.timestampStart || "00:00",
+              end: candidate.timestampEnd || `${candidate.duration || 30}s`,
+              index: score,
+              imageUrl: candidateThumbnailUrl(candidate),
+              candidateId: "",
+              className: "clip-preview-frame",
+              score
+            })}
+            <div class="preview-transport">
+              <button type="button" disabled>Play</button>
+              <span>${esc(candidate.timestampStart || "00:00")} / ${candidate.duration || 30}s</span>
+              <i><b style="width:${Math.max(20, Math.min(92, score))}%"></b></i>
+            </div>
+          </div>
+          <aside class="preview-detail">
+            <div class="preview-score-row">
+              ${scoreRing(score)}
+              <span><b>${hook}</b><em>Hook strength</em></span>
+              <span><b>${formatEngagement(candidate, 3)}</b><em>Chat signal</em></span>
+            </div>
+            <section>
+              <h3>What Agent 101 sees</h3>
+              <p>${esc(candidate.reason || "This candidate is evaluated from hook strength, chat spike, duration, category fit, title potential, retention potential, and safety risk.")}</p>
+            </section>
+            <section>
+              <h3>Transcript and chat context</h3>
+              <p class="transcript-box">${esc(candidate.transcriptSnippet || "No transcript captured yet. Run another watch cycle or add source notes to improve this preview.")}</p>
+            </section>
+            <section>
+              <h3>Draft package target</h3>
+              <ul class="preview-checklist">
+                <li>9:16 vertical clip</li>
+                <li>1080x1920 export handoff</li>
+                <li>${candidate.duration || 30}s target duration</li>
+                <li>Human Gate before posting</li>
+              </ul>
+            </section>
+            <div class="preview-actions">
+              <button class="primary" data-preview-open-builder="${esc(candidate.id)}">Open in Builder</button>
+              <button data-package-candidate="${esc(candidate.id)}">Create Package</button>
+              <button data-close-preview>Close</button>
+            </div>
+          </aside>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -1431,12 +1589,15 @@ function renderHookSuggestions(plan, candidate) {
 }
 
 function renderPhonePreview(candidate, plan, size = "") {
+  const title = plan.thumbnailText || plan.hook || candidate.title || "Clip draft";
+  const imageUrl = candidateThumbnailUrl(candidate);
   return `
     <div class="phone-preview ${size}">
       <div class="phone-video thumb-${Math.abs(String(candidate.id || "").length) % 5}">
+        ${imageUrl ? `<img src="${esc(imageUrl)}" alt="" loading="lazy">` : ""}
         <span>ACE</span>
-        <strong>${esc((plan.thumbnailText || plan.hook || "WHAT A CLUTCH").toUpperCase().slice(0, 18))}</strong>
-        <button type="button">▶</button>
+        <strong>${esc(title.toUpperCase().slice(0, 22))}</strong>
+        <button type="button" data-preview-candidate="${esc(candidate.id)}" aria-label="Play ${esc(candidate.title || "clip")}">Play</button>
       </div>
       <div class="phone-controls">
         <span>▶</span>
@@ -3354,6 +3515,9 @@ document.addEventListener("click", async (event) => {
   if (navJump) return setView(navJump.dataset.navJump);
 
   const action = target.closest("[data-action]")?.dataset.action;
+  const previewCandidate = target.closest("[data-preview-candidate]")?.dataset.previewCandidate;
+  const closePreview = target.closest("[data-close-preview]");
+  const previewOpenBuilder = target.closest("[data-preview-open-builder]")?.dataset.previewOpenBuilder;
   const selectCandidate = target.closest("[data-select-candidate]")?.dataset.selectCandidate;
   const packageId = target.closest("[data-package-candidate]")?.dataset.packageCandidate;
   const saveDraftId = target.closest("[data-save-builder-draft]")?.dataset.saveBuilderDraft;
@@ -3373,6 +3537,25 @@ document.addEventListener("click", async (event) => {
   const focusAddStreamer = target.closest("[data-focus-add-streamer]");
 
   try {
+    if (closePreview) {
+      state.previewCandidateId = "";
+      render();
+      return;
+    }
+    if (previewOpenBuilder) {
+      state.selectedCandidateId = previewOpenBuilder;
+      state.previewCandidateId = "";
+      localStorage.setItem("selectedCandidateId", previewOpenBuilder);
+      setView("builder");
+      return;
+    }
+    if (previewCandidate) {
+      state.selectedCandidateId = previewCandidate;
+      state.previewCandidateId = previewCandidate;
+      localStorage.setItem("selectedCandidateId", previewCandidate);
+      render();
+      return;
+    }
     if (focusAddStreamer) {
       document.querySelector("#add-streamer-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
       document.querySelector("#add-streamer-panel input[name='displayName']")?.focus();

@@ -1240,21 +1240,25 @@ function chatPreview(content = "") {
 
 function normalizeAgent101ChatMessage(message = {}, threadId = "", fallbackRoom = "depo-habitat") {
   const rawContent = message.content ?? message.text ?? "";
-  const content = String(rawContent || "").trim().slice(0, 4000);
+  const content = String(rawContent || "").trim().slice(0, 6000);
   if (!content) return null;
-  const validRoles = new Set(["user", "agent", "system", "tool"]);
+  const validRoles = new Set(["user", "agent", "system", "tool", "approval", "artifact"]);
   const roleFromSpeaker = message.speaker === "operator" ? "user" : message.speaker === "depo" || message.speaker === "agent" ? "agent" : "";
   const role = validRoles.has(message.role) ? message.role : roleFromSpeaker || "agent";
-  const validStatuses = new Set(["sent", "thinking", "running", "complete", "error"]);
+  const validStatuses = new Set(["queued", "sending", "sent", "thinking", "running", "waiting_approval", "complete", "failed", "cancelled", "error"]);
   const rawRoom = String(message.roomId || message.metadata?.roomId || fallbackRoom || "depo-habitat").trim();
   const roomId = BUSINESS_OFFICES[rawRoom] ? rawRoom : "depo-habitat";
   const createdAt = message.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : now();
+  const updatedAt = message.updatedAt && !Number.isNaN(Date.parse(message.updatedAt)) ? message.updatedAt : createdAt;
+  const sequence = Number.isFinite(Number(message.sequence)) ? Number(message.sequence) : 0;
   return {
     id: String(message.id || agentChatId("msg")),
     threadId: String(message.threadId || threadId || ""),
+    sequence,
     role,
     content,
     createdAt,
+    updatedAt,
     status: validStatuses.has(message.status) ? message.status : role === "tool" ? "complete" : "sent",
     metadata: {
       ...(message.metadata && typeof message.metadata === "object" ? message.metadata : {}),
@@ -1300,6 +1304,7 @@ function seedThreadFromFlatMessages(roomId, flatMessages = []) {
 
 function defaultAgentThread(roomId = "depo-habitat", flatMessages = []) {
   const thread = seedThreadFromFlatMessages(roomId, flatMessages);
+  thread.title = roomId === "depo-habitat" ? "Main command thread" : thread.title;
   if (!thread.messages.length) {
     thread.messages.push(
       normalizeAgent101ChatMessage(
@@ -1314,10 +1319,15 @@ function defaultAgentThread(roomId = "depo-habitat", flatMessages = []) {
       ),
     );
   }
-  thread.messages = thread.messages.map((message) => ({ ...message, threadId: thread.id }));
+  thread.messages = thread.messages.map((message, index) => ({ ...message, threadId: thread.id, sequence: index + 1 }));
   thread.threadSummary.threadId = thread.id;
   thread.updatedAt = thread.messages.at(-1)?.createdAt || thread.updatedAt;
   thread.lastMessage = chatPreview(thread.messages.at(-1)?.content || "");
+  thread.lastMessagePreview = thread.lastMessage;
+  thread.lastOpenedAt = thread.updatedAt;
+  thread.messageCount = thread.messages.length;
+  thread.status = "idle";
+  thread.version = 1;
   return thread;
 }
 
@@ -1325,12 +1335,27 @@ function normalizeAgent101ChatThread(thread = {}, fallbackRoom = "depo-habitat")
   const id = String(thread.id || agentChatId("thread"));
   const rawRoom = String(thread.roomId || fallbackRoom || "depo-habitat").trim();
   const roomId = BUSINESS_OFFICES[rawRoom] ? rawRoom : "depo-habitat";
+  const seenMessageIds = new Set();
+  const seenClientIds = new Set();
   const messages = (Array.isArray(thread.messages) ? thread.messages : [])
     .map((message) => normalizeAgent101ChatMessage(message, id, roomId))
     .filter(Boolean)
-    .slice(-160);
+    .filter((message) => {
+      const clientMessageId = message.metadata?.clientMessageId;
+      if (seenMessageIds.has(message.id)) return false;
+      if (clientMessageId && seenClientIds.has(clientMessageId)) return false;
+      seenMessageIds.add(message.id);
+      if (clientMessageId) seenClientIds.add(clientMessageId);
+      return true;
+    })
+    .map((message, index) => ({ ...message, sequence: message.sequence || index + 1 }))
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+    .slice(-220)
+    .map((message, index) => ({ ...message, sequence: index + 1 }));
   const createdAt = thread.createdAt && !Number.isNaN(Date.parse(thread.createdAt)) ? thread.createdAt : messages[0]?.createdAt || now();
   const updatedAt = thread.updatedAt && !Number.isNaN(Date.parse(thread.updatedAt)) ? thread.updatedAt : messages.at(-1)?.createdAt || createdAt;
+  const lastMessage = chatPreview(thread.lastMessagePreview || thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work.");
+  const validStatuses = new Set(["idle", "thinking", "running", "waiting_approval", "complete", "error"]);
   return {
     id,
     title: String(thread.title || chatTitleFromMessage(messages.find((message) => message.role === "user")?.content || "")).slice(0, 80),
@@ -1338,8 +1363,16 @@ function normalizeAgent101ChatThread(thread = {}, fallbackRoom = "depo-habitat")
     roomId,
     createdAt,
     updatedAt,
-    lastMessage: chatPreview(thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work."),
+    lastOpenedAt: thread.lastOpenedAt && !Number.isNaN(Date.parse(thread.lastOpenedAt)) ? thread.lastOpenedAt : updatedAt,
+    lastMessage,
+    lastMessagePreview: lastMessage,
+    messageCount: Number.isFinite(Number(thread.messageCount)) ? Number(thread.messageCount) : messages.length,
     archived: Boolean(thread.archived),
+    activeTaskId: thread.activeTaskId || null,
+    activeRunId: thread.activeRunId || null,
+    activeApprovalId: thread.activeApprovalId || null,
+    status: validStatuses.has(thread.status) ? thread.status : "idle",
+    version: Number.isFinite(Number(thread.version)) ? Number(thread.version) : 1,
     threadSummary: {
       threadId: id,
       summary: String(thread.threadSummary?.summary || thread.summary || "Agent 101 supervised office chat.").slice(0, 600),
@@ -1353,16 +1386,10 @@ function normalizeAgent101ChatThreads(threads = [], flatMessages = []) {
   const normalized = (Array.isArray(threads) ? threads : [])
     .map((thread) => normalizeAgent101ChatThread(thread))
     .filter(Boolean);
-  const existingIds = new Set(normalized.map((thread) => thread.id));
-  const activeRooms = new Set(normalized.map((thread) => thread.roomId));
-  const roomsWithFlatMessages = new Set(normalizeChatMessages(flatMessages).map((message) => message.roomId));
-  const seedRooms = roomsWithFlatMessages.size ? roomsWithFlatMessages : new Set(["depo-habitat"]);
-  seedRooms.forEach((roomId) => {
-    if (activeRooms.has(roomId)) return;
-    const thread = defaultAgentThread(roomId, flatMessages);
-    if (!existingIds.has(thread.id)) normalized.push(thread);
-  });
-  if (!normalized.length) normalized.push(defaultAgentThread("depo-habitat", flatMessages));
+  // Chat threads are the single source of truth. Legacy flat chatMessages are
+  // intentionally not re-seeded into threads because that was the source of
+  // messages disappearing, then coming back duplicated after reload/approval.
+  if (!normalized.length) normalized.push(defaultAgentThread("depo-habitat", []));
   return normalized
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 50);
@@ -1376,8 +1403,14 @@ function publicAgent101ChatThreads(state) {
     roomId: thread.roomId,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
-    lastMessage: thread.lastMessage,
+    lastOpenedAt: thread.lastOpenedAt,
+    lastMessage: thread.lastMessagePreview || thread.lastMessage,
+    lastMessagePreview: thread.lastMessagePreview || thread.lastMessage,
     archived: Boolean(thread.archived),
+    status: thread.status || "idle",
+    activeTaskId: thread.activeTaskId || null,
+    activeRunId: thread.activeRunId || null,
+    activeApprovalId: thread.activeApprovalId || null,
     messageCount: thread.messages?.length || 0,
   }));
 }
@@ -1388,11 +1421,16 @@ function findAgent101Thread(state, threadId) {
 
 function refreshThreadPreview(thread) {
   const lastMessage = thread.messages?.at(-1);
-  thread.updatedAt = lastMessage?.createdAt || now();
+  thread.updatedAt = lastMessage?.updatedAt || lastMessage?.createdAt || now();
   thread.lastMessage = chatPreview(lastMessage?.content || thread.lastMessage || "");
+  thread.lastMessagePreview = thread.lastMessage;
+  thread.messageCount = thread.messages?.length || 0;
+  thread.version = Number(thread.version || 0) + 1;
   if ((!thread.title || thread.title === "Agent 101 Session") && thread.messages?.some((message) => message.role === "user")) {
     thread.title = chatTitleFromMessage(thread.messages.find((message) => message.role === "user").content);
   }
+  const active = (thread.messages || []).slice().reverse().find((message) => ["thinking", "running", "waiting_approval"].includes(message.status));
+  thread.status = active?.status === "waiting_approval" ? "waiting_approval" : active?.status === "running" ? "running" : active?.status === "thinking" ? "thinking" : thread.status === "error" ? "error" : "idle";
   thread.threadSummary = {
     threadId: thread.id,
     summary: `Recent Agent 101 context: ${thread.messages
@@ -1410,14 +1448,25 @@ function appendAgent101ThreadMessages(thread, messages = []) {
     .map((message) => normalizeAgent101ChatMessage(message, thread.id, thread.roomId))
     .filter(Boolean);
   if (!incoming.length) return [];
-  const seen = new Set();
+  const seenIds = new Set();
+  const seenClientIds = new Set();
+  let nextSequence = Math.max(0, ...(thread.messages || []).map((message) => Number(message.sequence || 0)));
   thread.messages = [...(thread.messages || []), ...incoming]
     .filter((message) => {
-      if (seen.has(message.id)) return false;
-      seen.add(message.id);
+      const clientMessageId = message.metadata?.clientMessageId;
+      if (seenIds.has(message.id)) return false;
+      if (clientMessageId && seenClientIds.has(clientMessageId)) return false;
+      seenIds.add(message.id);
+      if (clientMessageId) seenClientIds.add(clientMessageId);
       return true;
     })
-    .slice(-160);
+    .map((message) => {
+      if (message.sequence) return message;
+      nextSequence += 1;
+      return { ...message, sequence: nextSequence, updatedAt: message.updatedAt || now() };
+    })
+    .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0))
+    .slice(-220);
   refreshThreadPreview(thread);
   return incoming;
 }
@@ -1427,10 +1476,12 @@ function createAgent101ChatThread(payload = {}) {
   const roomId = BUSINESS_OFFICES[payload.roomId] ? payload.roomId : "depo-habitat";
   const thread = normalizeAgent101ChatThread({
     id: agentChatId("thread"),
-    title: payload.title || "Agent 101 Session",
+    title: payload.title || "New Agent 101 chat",
     roomId,
     createdAt: now(),
     updatedAt: now(),
+    lastOpenedAt: now(),
+    status: "idle",
     messages: [
       {
         role: "agent",
@@ -1451,6 +1502,8 @@ function updateAgent101ChatThread(threadId, payload = {}) {
   if (!thread) throw guardedError("Chat thread not found.", 404);
   if (payload.title !== undefined) thread.title = String(payload.title || "Agent 101 Session").trim().slice(0, 80);
   if (payload.archived !== undefined) thread.archived = Boolean(payload.archived);
+  if (payload.lastOpenedAt !== undefined) thread.lastOpenedAt = payload.lastOpenedAt && !Number.isNaN(Date.parse(payload.lastOpenedAt)) ? payload.lastOpenedAt : now();
+  if (payload.status !== undefined && ["idle", "thinking", "running", "waiting_approval", "complete", "error"].includes(payload.status)) thread.status = payload.status;
   thread.updatedAt = now();
   refreshThreadPreview(thread);
   writeState(state);
@@ -1471,6 +1524,15 @@ function appendAgent101ChatThreadMessagesDirect(threadId, payload = {}) {
   const thread = findAgent101Thread(state, threadId);
   if (!thread || thread.archived) throw guardedError("Chat thread not found.", 404);
   const messages = Array.isArray(payload.messages) ? payload.messages : [payload.message || payload];
+  messages.forEach((message) => {
+    const approvalId = message?.metadata?.approvalId;
+    if (!approvalId || message?.metadata?.taskType !== "human_gate_decision") return;
+    const approvalMessage = (thread.messages || []).find((item) => item.role === "approval" && item.metadata?.approvalId === approvalId);
+    if (!approvalMessage) return;
+    const content = String(message.content || "").toLowerCase();
+    approvalMessage.status = content.includes("blocked") || content.includes("rejected") ? "failed" : "complete";
+    approvalMessage.updatedAt = now();
+  });
   appendAgent101ThreadMessages(thread, messages);
   writeState(state);
   return { thread, threads: publicAgent101ChatThreads(state) };
@@ -1540,6 +1602,31 @@ function appendRunMessagesToThread(thread, result = {}) {
       },
     }));
   appendAgent101ThreadMessages(thread, toolMessages);
+  const approvalIds = Array.from(
+    new Set(
+      (result.steps || [])
+        .flatMap((step) => step.details?.approvalIds || (step.details?.approvalId ? [step.details.approvalId] : []))
+        .filter(Boolean),
+    ),
+  );
+  approvalIds.forEach((approvalId, index) => {
+    appendAgent101ThreadMessages(thread, {
+      id: `approval-message-${approvalId}`,
+      role: "approval",
+      content: "Human Gate review is waiting for this draft-only external step. Agent 101 will not publish or upload anything unless you approve it.",
+      status: "waiting_approval",
+      metadata: {
+        taskType: "human_gate_request",
+        runId: result.runId,
+        approvalId,
+        actionType: "publish_video",
+        riskLevel: "medium",
+        requiresApproval: true,
+        roomId: "human-gate",
+        approvalIndex: index + 1,
+      },
+    });
+  });
   appendAgent101ThreadMessages(thread, {
     role: "agent",
     content:
@@ -1556,6 +1643,9 @@ function appendRunMessagesToThread(thread, result = {}) {
       roomId: thread.roomId,
     },
   });
+  thread.activeRunId = result.runId || thread.activeRunId || null;
+  thread.activeApprovalId = approvalIds[0] || null;
+  thread.status = approvalIds.length ? "waiting_approval" : result.status === "error" ? "error" : "complete";
 }
 
 async function clippingOfficeModule() {
@@ -1597,11 +1687,15 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
   if (!thread || thread.archived) throw guardedError("Chat thread not found.", 404);
   const content = String(payload.content || payload.message || "").trim();
   if (!content) throw guardedError("Message is required.", 400);
+  const clientMessageId = payload.clientMessageId || payload.idempotencyKey || payload.idempotency || "";
+  if (clientMessageId && (thread.messages || []).some((message) => message.metadata?.clientMessageId === clientMessageId)) {
+    return { thread, threads: publicAgent101ChatThreads(state), duplicate: true };
+  }
   appendAgent101ThreadMessages(thread, {
     role: "user",
     content,
     status: "sent",
-    metadata: { roomId: payload.roomId || thread.roomId },
+    metadata: { roomId: payload.roomId || thread.roomId, clientMessageId },
   });
   if (!thread.title || thread.title === "Agent 101 Session") thread.title = chatTitleFromMessage(content);
 
@@ -1611,25 +1705,43 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
       role: "agent",
       content: "I can run that as a safe internal draft workflow. Posting and uploads stay blocked by Human Gate. Starting now.",
       status: "running",
-      metadata: { taskType: "agent_run", roomId: thread.roomId, riskLevel: "low" },
+      metadata: { taskType: "agent_run", roomId: thread.roomId, riskLevel: "low", clientMessageId },
     });
+    thread.status = "running";
     writeState(state);
-    const result = await runClippingOfficeAgent101({
-      goal: content,
-      mode: payload.mode || "demo",
-      maxSteps: payload.maxSteps || 10,
-      threadId,
-    });
-    const refreshedState = readState();
-    const refreshedThread = findAgent101Thread(refreshedState, threadId) || thread;
-    const runningNotice = refreshedThread.messages
-      ?.slice()
-      .reverse()
-      .find((message) => message.status === "running" && message.metadata?.taskType === "agent_run");
-    if (runningNotice) runningNotice.status = "complete";
-    appendRunMessagesToThread(refreshedThread, result);
-    writeState(refreshedState);
-    return { thread: refreshedThread, threads: publicAgent101ChatThreads(refreshedState), run: result };
+    try {
+      const result = await runClippingOfficeAgent101({
+        goal: content,
+        mode: payload.mode || "demo",
+        maxSteps: payload.maxSteps || 10,
+        threadId,
+      });
+      const refreshedState = readState();
+      const refreshedThread = findAgent101Thread(refreshedState, threadId) || thread;
+      const runningNotice = refreshedThread.messages
+        ?.slice()
+        .reverse()
+        .find((message) => message.status === "running" && message.metadata?.taskType === "agent_run");
+      if (runningNotice) {
+        runningNotice.status = "complete";
+        runningNotice.updatedAt = now();
+      }
+      appendRunMessagesToThread(refreshedThread, result);
+      writeState(refreshedState);
+      return { thread: refreshedThread, threads: publicAgent101ChatThreads(refreshedState), run: result };
+    } catch (error) {
+      const erroredState = readState();
+      const erroredThread = findAgent101Thread(erroredState, threadId) || thread;
+      appendAgent101ThreadMessages(erroredThread, {
+        role: "agent",
+        content: `I could not finish that run: ${error.message}. Your request is saved in this thread and nothing external happened.`,
+        status: "failed",
+        metadata: { taskType: "agent_run_error", roomId: thread.roomId, clientMessageId, riskLevel: "medium" },
+      });
+      erroredThread.status = "error";
+      writeState(erroredState);
+      return { thread: erroredThread, threads: publicAgent101ChatThreads(erroredState), error: error.message };
+    }
   }
 
   const response = await handleAgent101Chat({
@@ -1660,6 +1772,7 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
       riskLevel: response.riskLevel || "low",
       approvalId: response.approval?.id,
       roomId: payload.roomId || thread.roomId,
+      clientMessageId,
     },
   });
   (response.logs || []).slice(0, 4).forEach((log) => {
@@ -4742,7 +4855,24 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/agent101/chats") {
     try {
-      sendJson(res, 200, { threads: publicAgent101ChatThreads(readState()).filter((thread) => !thread.archived) });
+      const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
+      const includeArchived = url.searchParams.get("archived") === "1" || url.searchParams.get("archived") === "true";
+      const state = readState();
+      let threads = publicAgent101ChatThreads(state).filter((thread) => includeArchived || !thread.archived);
+      if (query) {
+        threads = threads.filter((thread) => {
+          const full = findAgent101Thread(state, thread.id);
+          const searchable = [
+            thread.title,
+            thread.lastMessage,
+            ...(full?.messages || []).map((message) => message.content),
+          ]
+            .join(" ")
+            .toLowerCase();
+          return searchable.includes(query);
+        });
+      }
+      sendJson(res, 200, { threads });
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
     }
@@ -4778,6 +4908,8 @@ async function handleApi(req, res, url) {
         const state = readState();
         const thread = findAgent101Thread(state, threadId);
         if (!thread) throw guardedError("Chat thread not found.", 404);
+        thread.lastOpenedAt = now();
+        writeState(state);
         sendJson(res, 200, { thread, threads: publicAgent101ChatThreads(state) });
         return;
       }
@@ -4794,6 +4926,24 @@ async function handleApi(req, res, url) {
       sendJson(res, error.status || 500, { error: error.message });
       return;
     }
+  }
+
+  const agent101ChatMessagesMatch = url.pathname.match(/^\/api\/agent101\/chats\/([^/]+)\/messages$/);
+  if (req.method === "GET" && agent101ChatMessagesMatch) {
+    try {
+      const state = readState();
+      const thread = findAgent101Thread(state, decodeURIComponent(agent101ChatMessagesMatch[1]));
+      if (!thread) throw guardedError("Chat thread not found.", 404);
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 80)));
+      const before = Number(url.searchParams.get("before") || 0);
+      const messages = (thread.messages || [])
+        .filter((message) => (before ? Number(message.sequence || 0) < before : true))
+        .slice(-limit);
+      sendJson(res, 200, { thread: publicAgent101ChatThreads(state).find((item) => item.id === thread.id), messages });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
   }
 
   const agent101ChatMessageMatch = url.pathname.match(/^\/api\/agent101\/chats\/([^/]+)\/messages$/);

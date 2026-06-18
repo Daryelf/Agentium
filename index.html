@@ -78,16 +78,16 @@
               <span class="sidebar-chat-avatar">A</span>
               <div>
                 <p class="eyebrow">Agent 101</p>
-                <strong>Command console</strong>
+                <strong id="sidebarAgentChatTitle">Main command thread</strong>
               </div>
             </div>
             <span id="sidebarAgentChatStatus">Saved</span>
           </div>
           <div class="sidebar-chat-log" id="sidebarAgentChatLog" aria-live="polite"></div>
-          <form class="sidebar-chat-form" id="sidebarAgentChatForm">
-            <textarea id="sidebarAgentChatInput" name="message" autocomplete="off" rows="1" placeholder="Tell Agent 101 what to plan, draft, check, or run safely..."></textarea>
-            <button id="sidebarAgentChatSubmit" type="submit">Send</button>
-          </form>
+          <div class="sidebar-chat-actions">
+            <button id="openAgentChatBtn" type="button">Open Chat</button>
+            <button id="newAgentChatBtn" type="button">New Chat</button>
+          </div>
         </section>
       </aside>
 
@@ -1823,6 +1823,70 @@
           </div>
         </section>
 
+        <section class="agent-chat-workspace" id="agentChatWorkspace" aria-hidden="true" hidden>
+          <div class="agent-chat-shell" role="dialog" aria-modal="true" aria-labelledby="agentChatWorkspaceTitle">
+            <aside class="agent-chat-history" aria-label="Agent 101 conversations">
+              <div class="agent-chat-history-top">
+                <div>
+                  <p class="eyebrow">Agent 101</p>
+                  <h3>Chats</h3>
+                </div>
+                <button id="agentChatNewThreadBtn" type="button">New</button>
+              </div>
+              <label class="agent-chat-search">
+                <span>Search conversations</span>
+                <input id="agentChatSearchInput" type="search" autocomplete="off" placeholder="Search chats..." />
+              </label>
+              <div class="agent-chat-thread-list" id="agentChatThreadList"></div>
+            </aside>
+
+            <section class="agent-chat-main" aria-label="Agent 101 active conversation">
+              <header class="agent-chat-main-head">
+                <div>
+                  <p class="eyebrow">Persistent Worker Chat</p>
+                  <h3 id="agentChatWorkspaceTitle">Main command thread</h3>
+                  <span id="agentChatWorkspaceMeta">Saved thread</span>
+                </div>
+                <div class="agent-chat-main-actions">
+                  <button id="agentChatRenameBtn" type="button">Rename</button>
+                  <button id="agentChatArchiveBtn" type="button">Archive</button>
+                  <button id="agentChatDeleteBtn" type="button">Delete</button>
+                  <button id="agentChatCloseBtn" type="button" aria-label="Close Agent 101 chat">Close</button>
+                </div>
+              </header>
+              <div class="agent-chat-messages" id="agentChatMessages" aria-live="polite"></div>
+              <button class="agent-chat-jump" id="agentChatJumpBtn" type="button" hidden>Jump to latest</button>
+              <div class="agent-chat-quick-row" id="agentChatQuickPrompts"></div>
+              <form class="agent-chat-composer" id="agentChatComposer">
+                <textarea id="agentChatComposerInput" rows="1" autocomplete="off" placeholder="Ask Agent 101 to plan, run, draft, package, or inspect work..."></textarea>
+                <button id="agentChatSendBtn" type="submit">Send</button>
+              </form>
+            </section>
+
+            <aside class="agent-chat-side" aria-label="Agent 101 run status">
+              <div class="agent-chat-side-card">
+                <p class="eyebrow">Status</p>
+                <strong id="agentChatRunStatus">Idle</strong>
+                <span id="agentChatRunDetail">Waiting for a safe internal command.</span>
+              </div>
+              <div class="agent-chat-side-card">
+                <p class="eyebrow">Human Gate</p>
+                <strong id="agentChatApprovalStatus">Clear</strong>
+                <span>External posting, uploads, accounts, keys, spending, and deletion stay approval-gated.</span>
+              </div>
+              <div class="agent-chat-side-card">
+                <p class="eyebrow">Thread Rules</p>
+                <ul>
+                  <li>Saved server-side.</li>
+                  <li>One thread at a time.</li>
+                  <li>Safe draft work runs internally.</li>
+                  <li>Risky external work becomes a permission card.</li>
+                </ul>
+              </div>
+            </aside>
+          </div>
+        </section>
+
         <section class="feed-modal-overlay" id="systemFeedModal" aria-hidden="true">
           <div class="feed-modal-card" role="dialog" aria-modal="true" aria-labelledby="systemFeedModalTitle">
             <div class="feed-modal-head">
@@ -1840,6 +1904,6 @@
       </main>
     </div>
 
-    <script src="./script.js?v=memory-center-1"></script>
+    <script src="./script.js?v=agent-chat-workspace-2"></script>
   </body>
 </html>

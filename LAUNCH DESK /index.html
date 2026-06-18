@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Launch Desk</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="launch-desk-app">
+      <aside class="sidebar">
+        <div class="brand-mark">LD</div>
+        <div>
+          <p class="eyebrow">OpenAI Agents SDK</p>
+          <h1>Launch Desk</h1>
+          <p class="subcopy">Turn a rough product idea into a launch plan your team can actually run.</p>
+        </div>
+        <div class="status-stack">
+          <div class="status-pill" id="providerStatus">Checking provider...</div>
+          <div class="status-card">
+            <span>Model</span>
+            <strong id="modelName">...</strong>
+          </div>
+          <div class="status-card">
+            <span>Trace</span>
+            <strong id="traceStatus">Enabled</strong>
+          </div>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Release planning agent</p>
+            <h2>Plan the launch</h2>
+          </div>
+          <button class="ghost-button" id="loadSampleButton" type="button">Load sample</button>
+        </header>
+
+        <div class="grid">
+          <form class="brief-panel" id="launchForm">
+            <label>
+              <span>Product brief</span>
+              <textarea id="brief" name="brief" rows="7" required placeholder="What are you launching? What problem does it solve?"></textarea>
+            </label>
+            <div class="field-row">
+              <label>
+                <span>Audience</span>
+                <input id="audience" name="audience" placeholder="Primary users or segment" />
+              </label>
+              <label>
+                <span>Launch date</span>
+                <input id="launchDate" name="launchDate" type="date" />
+              </label>
+            </div>
+            <label>
+              <span>Constraints</span>
+              <textarea id="constraints" name="constraints" rows="3" placeholder="Budget, legal, platform, staffing, migration, timing, or non-goals"></textarea>
+            </label>
+            <label>
+              <span>Available assets</span>
+              <textarea id="assets" name="assets" rows="3" placeholder="Screenshots, demo video, docs, changelog, customer quotes, analytics, mocks"></textarea>
+            </label>
+            <div class="field-row">
+              <label>
+                <span>Channels</span>
+                <input id="channels" name="channels" placeholder="Email, blog, social, sales, in-app" />
+              </label>
+              <label>
+                <span>Owners</span>
+                <input id="owners" name="owners" placeholder="Engineering, Product, Design..." />
+              </label>
+            </div>
+            <div class="action-row">
+              <button class="primary-button" id="runButton" type="submit">Run Launch Desk</button>
+              <button class="ghost-button" id="clearButton" type="button">Clear</button>
+            </div>
+          </form>
+
+          <section class="response-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Live run</p>
+                <h3>Progressive response</h3>
+              </div>
+              <div class="run-light" id="runLight">Idle</div>
+            </div>
+
+            <div class="run-feed">
+              <ol class="event-list" id="eventList"></ol>
+              <article class="stream-card">
+                <p class="eyebrow">Agent output</p>
+                <pre id="streamText">Submit a launch brief to see tool progress and streamed model text here.</pre>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <section class="output-grid" aria-label="Launch plan sections">
+          <article class="output-card">
+            <p class="eyebrow">Plan</p>
+            <h3>Prioritized plan</h3>
+            <p>Tool-backed steps appear in the streamed answer after the agent run completes.</p>
+          </article>
+          <article class="output-card">
+            <p class="eyebrow">Risk</p>
+            <h3>Risk register</h3>
+            <p>Readiness checks flag missing dates, vague audiences, absent assets, and high-trust surfaces.</p>
+          </article>
+          <article class="output-card">
+            <p class="eyebrow">Owners</p>
+            <h3>Owner checklist</h3>
+            <p>Engineering, product, design, marketing, and support get explicit launch jobs.</p>
+          </article>
+          <article class="output-card">
+            <p class="eyebrow">Copy</p>
+            <h3>Launch copy</h3>
+            <p>Channel-specific copy is drafted for the launch surfaces inferred from the brief.</p>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

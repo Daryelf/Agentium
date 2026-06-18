@@ -733,6 +733,7 @@ async function checkStreamerLive(streamer) {
   streamer.liveTitle = stream?.title || "";
   streamer.liveCategory = stream?.game_name || "";
   streamer.liveViewerCount = stream?.viewer_count || 0;
+  streamer.liveThumbnailUrl = stream?.thumbnail_url || stream?.thumbnail || "";
   streamer.lastLiveAt = stream ? now() : streamer.lastLiveAt;
   return { streamerId: streamer.id, live: Boolean(stream), official: true, provider: streamer.platform, stream };
 }

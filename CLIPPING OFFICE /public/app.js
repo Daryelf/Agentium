@@ -30,6 +30,7 @@ const state = {
   recommendationsMessage: "",
   agentRun: null,
   agentRunBusy: false,
+  agentChatOpen: false,
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
   previewCandidateId: "",
   selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
@@ -190,6 +191,14 @@ function miniThumb(label, index = 0) {
 
 function renderSidebarOps() {
   $("#sidebar-ops").innerHTML = `
+    <button class="sidebar-agent-chat-card" type="button" data-open-agent-chat aria-label="Open Agent 101 chat">
+      <span class="agent-chat-mark">A</span>
+      <div>
+        <strong>Open Agent 101</strong>
+        <small>Ask, run, and track work</small>
+      </div>
+      <span class="agent-chat-arrow" aria-hidden="true">Chat</span>
+    </button>
     <a class="sidebar-return-card" href="/" aria-label="Back to Argentum">
       <span class="return-mark">A</span>
       <div>
@@ -373,10 +382,71 @@ function render() {
   try {
     renderer();
     view.insertAdjacentHTML("beforeend", renderClipPreviewModal());
+    view.insertAdjacentHTML("beforeend", renderAgentChatDrawer());
   } catch (error) {
     console.error(error);
     view.innerHTML = `<section class="panel">${empty(`Could not open ${state.view}: ${error.message}`)}</section>`;
   }
+}
+
+function renderAgentChatDrawer() {
+  if (!state.agentChatOpen) return "";
+  const run = state.agentRun || {};
+  const status = state.agentRunBusy ? "running" : run.status || "ready";
+  const progress = state.agentRunBusy ? Math.max(8, Number(run.progress || 8)) : Number(run.progress || 0);
+  const counts = run.counts || {};
+  const recentSteps = (run.steps || []).slice(-5);
+  const recentLogs = state.logs.slice(0, 5);
+  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "needs_approval" ? "warn" : status === "running" ? "info" : "neutral";
+  return `
+    <div class="agent-chat-overlay" role="dialog" aria-modal="true" aria-label="Agent 101 chat">
+      <section class="agent-chat-drawer">
+        <header class="agent-chat-header">
+          <div>
+            <span class="eyebrow">Agent 101 command chat</span>
+            <h2>Ask Agent 101 to run safe work</h2>
+            <p>Drafts, clip candidates, packages, CapCut briefs, posting drafts, logs, and Human Gate requests.</p>
+          </div>
+          <button class="icon-button" type="button" data-close-agent-chat aria-label="Close Agent 101 chat">×</button>
+        </header>
+
+        <div class="agent-chat-status">
+          ${badge(status, statusTone)}
+          <span><b>${esc(run.currentStep || "Ready")}</b><small>Current step</small></span>
+          <span><b>${esc(counts.candidates || 0)}</b><small>Candidates</small></span>
+          <span><b>${esc(counts.artifacts || 0)}</b><small>Artifacts</small></span>
+        </div>
+        <div class="agent-chat-progress"><span style="width:${Math.min(100, Math.max(0, progress))}%"></span></div>
+
+        <div class="agent-chat-thread" aria-live="polite">
+          <article class="chat-bubble agent">
+            <b>Agent 101</b>
+            <p>${esc(run.summary || "I am ready. Tell me what clipping work to run. Safe internal draft work can run now; posting and uploads stay behind Human Gate.")}</p>
+          </article>
+          ${recentSteps.length ? recentSteps.map((step) => `
+            <article class="chat-bubble system ${esc(step.status || "")}">
+              <b>${esc(step.tool || "Step")}</b>
+              <p>${esc(step.message || step.status || "Updated")}</p>
+            </article>
+          `).join("") : ""}
+          ${recentLogs.length ? `
+            <div class="agent-chat-log">
+              <span>Latest activity</span>
+              ${recentLogs.map((log) => `<p><b>${esc(log.module || "System")}</b> ${esc(log.event || log.details || "Updated")}</p>`).join("")}
+            </div>
+          ` : ""}
+        </div>
+
+        <form id="global-agent101-command-form" class="agent-chat-form">
+          <textarea name="goal" rows="3" placeholder="Tell Agent 101 what to run, e.g. find 5 practice streams and make clip candidates"></textarea>
+          <div>
+            <button type="button" data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run demo workflow</button>
+            <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Send</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
 }
 
 function renderDashboard() {
@@ -3372,6 +3442,8 @@ async function runAgent101(goal, mode = "demo") {
 
 async function runAgentCommand(form) {
   const goal = cleanCommand(form.elements.goal?.value) || agent101Goals["agent101-demo-workflow"];
+  state.agentChatOpen = true;
+  form.reset();
   await runAgent101(goal, "demo");
 }
 
@@ -3494,7 +3566,7 @@ async function gate(path, id) {
 }
 
 document.addEventListener("submit", async (event) => {
-  const agentForm = event.target.closest("#agent101-command-form");
+  const agentForm = event.target.closest("#agent101-command-form, #global-agent101-command-form");
   const form = event.target.closest("#streamer-form");
   if (!agentForm && !form) return;
   event.preventDefault();
@@ -3514,6 +3586,8 @@ document.addEventListener("click", async (event) => {
   const navJump = target.closest("[data-nav-jump]");
   if (navJump) return setView(navJump.dataset.navJump);
 
+  const openAgentChat = target.closest("[data-open-agent-chat]");
+  const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
   const previewCandidate = target.closest("[data-preview-candidate]")?.dataset.previewCandidate;
   const closePreview = target.closest("[data-close-preview]");
@@ -3537,6 +3611,16 @@ document.addEventListener("click", async (event) => {
   const focusAddStreamer = target.closest("[data-focus-add-streamer]");
 
   try {
+    if (openAgentChat) {
+      state.agentChatOpen = true;
+      render();
+      return;
+    }
+    if (closeAgentChat) {
+      state.agentChatOpen = false;
+      render();
+      return;
+    }
     if (closePreview) {
       state.previewCandidateId = "";
       render();

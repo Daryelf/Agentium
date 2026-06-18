@@ -2,6 +2,8 @@ node_modules/
 .env
 .DS_Store
 data/state.json
+data/browser-profile/
+downloads/
 uploads/*
 outputs/*
 !uploads/.gitkeep

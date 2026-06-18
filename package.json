@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Argentum supervised AI operating company prototype with Depo as the first visible agent.",
+  "dependencies": {
+    "playwright": "1.61.0"
+  },
   "scripts": {
+    "postinstall": "npx playwright install chromium",
     "start": "node server.js",
     "check": "node --check server.js && node --check script.js"
   },

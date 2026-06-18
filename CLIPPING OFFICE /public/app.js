@@ -3,6 +3,7 @@ const navItems = [
   { id: "watchlist", label: "Stream Watchlist", icon: "broadcast", group: "core", count: "streamers", tone: "neutral" },
   { id: "radar", label: "Clip Radar", icon: "radar", group: "core", count: "candidates", tone: "info" },
   { id: "builder", label: "Clip Builder", icon: "scissors", group: "core" },
+  { id: "browser", label: "Browser Workspace", icon: "browser", group: "core" },
   { id: "queue", label: "Posting Queue", icon: "queue", group: "core", count: "queue", tone: "warn" },
   { id: "gate", label: "Human Gate", icon: "shield", group: "core", count: "gate", tone: "pink" },
   { id: "outputs", label: "Outputs", icon: "folder", group: "records" },
@@ -26,6 +27,11 @@ const state = {
   approvals: [],
   artifacts: [],
   logs: [],
+  browser: null,
+  capcut: null,
+  media: null,
+  browserBusy: false,
+  browserScreenshotStamp: 0,
   recommendations: [],
   recommendationsMessage: "",
   agentRun: null,
@@ -235,12 +241,15 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, kick, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, browser, capcut, media, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
     api("/api/twitch/status"),
     api("/api/kick/status"),
+    api("/api/browser/profile"),
+    api("/api/capcut/status"),
+    api("/api/media/status"),
     api("/api/twitch/streamers"),
     api("/api/clips/candidates"),
     api("/api/clips/packages"),
@@ -255,6 +264,9 @@ async function loadCore() {
     openai,
     twitch,
     kick,
+    browser,
+    capcut,
+    media,
     streamers: streamers.streamers,
     candidates: candidates.candidates,
     packages: packages.packages,
@@ -334,6 +346,7 @@ function navIcon(icon) {
     document: `<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"/><path d="M14 3v4h4"/><path d="M9 12h6"/><path d="M9 16h5"/></svg>`,
     settings: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.8 4.8 2.1 2.1"/><path d="m17.1 17.1 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.8 19.2 2.1-2.1"/><path d="m17.1 6.9 2.1-2.1"/></svg>`,
     plug: `<svg viewBox="0 0 24 24"><path d="M9 3v6"/><path d="M15 3v6"/><path d="M7 9h10v3a5 5 0 0 1-10 0Z"/><path d="M12 17v4"/></svg>`,
+    browser: `<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/><path d="M7 7h.01"/><path d="M10 7h.01"/><path d="M7 13h5"/><path d="M7 16h8"/></svg>`,
     team: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="10" r="2"/><path d="M15 16a5 5 0 0 1 6 4"/></svg>`
   };
   return icons[icon] || icons.grid;
@@ -354,6 +367,7 @@ function subtitleFor(id) {
     watchlist: "Streamer permissions and monitoring",
     radar: "Detected moments and scoring",
     builder: "9:16 packages and CapCut handoffs",
+    browser: "Supervised browser and manual tool handoffs",
     queue: "Draft-only social packages",
     gate: "Review and approve critical actions before they go live",
     outputs: "Exported briefs and caption files",
@@ -370,6 +384,7 @@ function render() {
     watchlist: renderWatchlist,
     radar: renderRadar,
     builder: renderBuilder,
+    browser: renderBrowserWorkspace,
     queue: renderQueue,
     gate: renderGate,
     outputs: renderOutputs,
@@ -533,6 +548,7 @@ function renderDashboard() {
         <button data-nav-jump="watchlist"><span>A</span><b>Add Streamer</b><small>Monitor a channel</small></button>
         <button data-action="run-watch"><span>R</span><b>Run Watch Cycle</b><small>Scan approved streams</small></button>
         <button data-nav-jump="builder"><span>P</span><b>Create Clip Package</b><small>Build new package</small></button>
+        <button data-nav-jump="browser"><span>B</span><b>Browser Workspace</b><small>Open supervised tools</small></button>
         <button data-nav-jump="gate"><span>G</span><b>Open Human Gate</b><small>Review approvals</small></button>
         <button data-nav-jump="queue"><span>Q</span><b>Posting Queue</b><small>Manage drafts</small></button>
         <button data-nav-jump="outputs"><span>O</span><b>View Outputs</b><small>Browse exports</small></button>
@@ -3341,6 +3357,10 @@ function renderSettings() {
     kickConfigured: state.config?.kickConfigured,
     kickOAuthTokenConfigured: state.config?.kickOAuthTokenConfigured,
     postDailyLimit: state.config?.postDailyLimit,
+    browserEnabled: state.config?.browserEnabled,
+    browserMode: state.config?.browserMode,
+    browserViewport: state.config?.browserViewport,
+    capcutManualHandoff: state.config?.capcutManualHandoff,
     outputDir: state.config?.outputDir
   };
   view.innerHTML = `
@@ -3358,8 +3378,25 @@ function renderSettings() {
           <span>OpenAI</span><span>${state.openai?.configured ? "configured" : "not configured"}</span>
           <span>Twitch</span><span>${state.twitch?.configured ? "configured" : "not configured"}</span>
           <span>Kick</span><span>${state.kick?.configured ? "configured" : "not configured"}</span>
+          <span>Browser</span><span>${state.browser?.enabled ? "enabled" : "disabled"}</span>
           <span>Official API</span><span>${state.twitch?.officialApiOnly ? "yes" : "no"}</span>
           <span>Secrets</span><span>server-side only</span>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="toolbar">
+          <h2>Browser & Tools</h2>
+          <div class="actions">
+            <button data-nav-jump="browser">Open Browser Workspace</button>
+            <button data-browser-action="reset-profile">Reset Browser Profile</button>
+          </div>
+        </div>
+        <div class="kv">
+          <span>Browser mode</span><span>${esc(state.browser?.mode || "headless_screenshot")}</span>
+          <span>CapCut</span><span>${esc(state.capcut?.status || "manual_handoff")}</span>
+          <span>FFmpeg</span><span>${state.media?.ffmpeg?.configured ? "available" : "not available"}</span>
+          <span>FFprobe</span><span>${state.media?.ffprobe?.configured ? "available" : "not available"}</span>
+          <span>Policy</span><span>${esc((state.browser?.policies || []).length)} allowlisted domains</span>
         </div>
       </section>
       <section class="panel">
@@ -3367,6 +3404,130 @@ function renderSettings() {
         <pre class="codebox">${esc(JSON.stringify(safeConfig, null, 2))}</pre>
       </section>
     </div>
+  `;
+}
+
+function renderBrowserWorkspace() {
+  const browser = state.browser || {};
+  const active = browser.activeSession || (browser.sessions || []).find((session) => session.status !== "closed") || null;
+  const policies = browser.policies || [];
+  const downloads = browser.downloads || [];
+  const screenshotUrl = active
+    ? appUrl(`/api/browser/sessions/${active.id}/screenshot?stamp=${state.browserScreenshotStamp || Date.now()}`)
+    : "";
+  const controlTone = active?.controlMode === "agent_assisted" ? "info" : active?.controlMode === "paused" ? "warn" : "good";
+  const mediaReady = state.media?.ffmpeg?.configured && state.media?.ffprobe?.configured;
+  view.innerHTML = `
+    <section class="browser-workspace">
+      <div class="browser-command">
+        <div>
+          <span class="eyebrow">Supervised browser workspace</span>
+          <h2>Agent 101 Tool Browser</h2>
+          <p>Persistent server-side browser profile. The operator sees the screen; secrets and cookies stay on the backend.</p>
+        </div>
+        <div class="browser-command-actions">
+          <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>Start browser</button>
+          <button data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut handoff</button>
+          <button data-browser-action="test-example" ${state.browserBusy ? "disabled" : ""}>Smoke test</button>
+        </div>
+      </div>
+
+      <div class="browser-layout">
+        <section class="panel browser-stage">
+          <form id="browser-url-form" class="browser-toolbar">
+            <button type="button" data-browser-action="back" ${active ? "" : "disabled"}>Back</button>
+            <button type="button" data-browser-action="forward" ${active ? "" : "disabled"}>Forward</button>
+            <button type="button" data-browser-action="refresh" ${active ? "" : "disabled"}>Refresh</button>
+            <input name="url" value="${esc(active?.currentUrl || "")}" placeholder="https://www.twitch.tv/directory or https://kick.com">
+            <button class="primary" type="submit" ${active ? "" : "disabled"}>Go</button>
+          </form>
+
+          <div class="browser-viewport ${active ? "" : "empty"}">
+            ${active ? `
+              <img src="${esc(screenshotUrl)}" alt="Live browser screenshot for ${esc(active.title || "workspace")}" data-browser-shot>
+              ${active.privacyShield?.active ? `
+                <div class="browser-privacy-shield">
+                  <strong>Human control active</strong>
+                  <p>${esc(active.privacyShield.reason || "Sensitive screen detected.")}</p>
+                </div>
+              ` : ""}
+            ` : `
+              <div class="browser-empty-state">
+                <strong>No browser session yet</strong>
+                <p>Start a supervised browser session, then open approved tools like Twitch, Kick, YouTube, or CapCut handoff.</p>
+              </div>
+            `}
+          </div>
+
+          <div class="browser-control-strip">
+            ${active ? badge(active.controlMode || "human_control", controlTone) : badge("idle", "neutral")}
+            <span><b>${esc(active?.policyMode || "none")}</b><small>Policy mode</small></span>
+            <span><b>${esc(active?.title || "No page")}</b><small>Current page</small></span>
+            <div class="browser-control-buttons">
+              <button data-browser-action="refresh-shot" ${active ? "" : "disabled"}>Refresh screen</button>
+              <button data-browser-action="take-control" ${active ? "" : "disabled"}>Human control</button>
+              <button data-browser-action="give-agent-control" ${active && !active.privacyShield?.active ? "" : "disabled"}>Agent assisted</button>
+              <button data-browser-action="pause" ${active ? "" : "disabled"}>Pause</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="browser-side">
+          <section class="panel browser-card">
+            <h2>Session</h2>
+            <div class="kv">
+              <span>Status</span><span>${esc(active?.status || "Not started")}</span>
+              <span>Mode</span><span>${esc(browser.mode || "screenshot")}</span>
+              <span>Viewport</span><span>${esc(active?.viewport ? `${active.viewport.width}x${active.viewport.height}` : `${state.config?.browserViewport?.width || 1440}x${state.config?.browserViewport?.height || 900}`)}</span>
+              <span>Secrets</span><span>server-side only</span>
+            </div>
+            ${active?.lastError ? `<p class="browser-error">${esc(active.lastError)}</p>` : ""}
+          </section>
+
+          <section class="panel browser-card">
+            <h2>CapCut & Media</h2>
+            <div class="browser-status-list">
+              <span><b>CapCut</b><em>${esc(state.capcut?.status || "manual_handoff")}</em></span>
+              <span><b>FFmpeg</b><em>${mediaReady ? "ready" : "manual handoff"}</em></span>
+              <span><b>Posting</b><em>Human Gate required</em></span>
+            </div>
+            <button class="primary stretch" data-browser-action="open-capcut">Open CapCut handoff</button>
+          </section>
+
+          <section class="panel browser-card">
+            <h2>Allowed Domains</h2>
+            <div class="browser-policy-list">
+              ${policies.slice(0, 8).map((policy) => `
+                <span>
+                  <b>${esc(policy.domain)}</b>
+                  <em>${esc(policy.mode)}</em>
+                </span>
+              `).join("") || empty("No browser policies loaded")}
+            </div>
+          </section>
+
+          <section class="panel browser-card">
+            <h2>Recent Activity</h2>
+            <div class="activity-list browser-activity-list">
+              ${(browser.actions || []).slice(0, 5).map((action) => `
+                <article>
+                  <span>BR</span>
+                  <p>${esc(action.action.replaceAll("_", " "))}</p>
+                  <time>${fmtDate(action.createdAt)}</time>
+                </article>
+              `).join("") || empty("No browser actions yet")}
+            </div>
+          </section>
+
+          <section class="panel browser-card">
+            <h2>Downloads</h2>
+            <div class="browser-download-list">
+              ${downloads.slice(0, 4).map((download) => `<span><b>${esc(download.suggestedFilename || download.filename)}</b><em>${fmtDate(download.createdAt)}</em></span>`).join("") || empty("No browser downloads")}
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
   `;
 }
 
@@ -3449,6 +3610,94 @@ async function runAgentCommand(form) {
 
 function cleanCommand(value) {
   return String(value || "").trim();
+}
+
+async function loadBrowserState() {
+  const [browser, capcut, media] = await Promise.all([
+    api("/api/browser/profile"),
+    api("/api/capcut/status"),
+    api("/api/media/status")
+  ]);
+  Object.assign(state, { browser, capcut, media });
+}
+
+async function ensureBrowserSession() {
+  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
+  if (active?.id) return active.id;
+  const result = await api("/api/browser/sessions", {
+    method: "POST",
+    body: JSON.stringify({ purpose: "Operator browser workspace" })
+  });
+  await loadBrowserState();
+  return result.session.id;
+}
+
+async function navigateBrowser(form) {
+  const url = cleanCommand(form.elements.url?.value);
+  if (!url) return;
+  state.browserBusy = true;
+  render();
+  try {
+    const sessionId = await ensureBrowserSession();
+    const result = await api(`/api/browser/sessions/${sessionId}/navigate`, {
+      method: "POST",
+      body: JSON.stringify({ url })
+    });
+    state.browserScreenshotStamp = Date.now();
+    await loadBrowserState();
+    toast(result.allowed ? "Browser loaded" : result.reason || "Navigation blocked", result.allowed ? "good" : "bad");
+  } finally {
+    state.browserBusy = false;
+    renderNav();
+    render();
+  }
+}
+
+async function handleBrowserAction(action) {
+  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
+  state.browserBusy = true;
+  render();
+  try {
+    if (action === "start-session") {
+      await api("/api/browser/sessions", {
+        method: "POST",
+        body: JSON.stringify({ purpose: "StreamClipper supervised browser" })
+      });
+      toast("Browser session started", "good");
+    } else if (action === "test-example") {
+      const sessionId = await ensureBrowserSession();
+      await api(`/api/browser/sessions/${sessionId}/navigate`, {
+        method: "POST",
+        body: JSON.stringify({ url: "https://example.com" })
+      });
+      state.browserScreenshotStamp = Date.now();
+      toast("Browser smoke test loaded", "good");
+    } else if (action === "open-capcut") {
+      const body = active?.id ? { sessionId: active.id } : {};
+      await api("/api/capcut/open", { method: "POST", body: JSON.stringify(body) });
+      state.browserScreenshotStamp = Date.now();
+      toast("CapCut handoff opened in human-control mode", "good");
+    } else if (action === "refresh-shot") {
+      state.browserScreenshotStamp = Date.now();
+      toast("Browser screen refreshed", "info");
+    } else if (action === "reset-profile") {
+      if (!window.confirm("Reset the browser profile and close active sessions?")) return;
+      await api("/api/browser/profile", { method: "DELETE" });
+      toast("Browser profile reset", "info");
+    } else if (["back", "forward", "refresh", "take-control", "give-agent-control", "pause"].includes(action)) {
+      if (!active?.id) return;
+      await api(`/api/browser/sessions/${active.id}/${action}`, { method: "POST", body: "{}" });
+      state.browserScreenshotStamp = Date.now();
+      toast("Browser control updated", "good");
+    }
+    await loadBrowserState();
+  } catch (error) {
+    toast(error.message, "bad");
+  } finally {
+    state.browserBusy = false;
+    renderNav();
+    render();
+  }
 }
 
 async function scoutStreamers() {
@@ -3567,12 +3816,17 @@ async function gate(path, id) {
 
 document.addEventListener("submit", async (event) => {
   const agentForm = event.target.closest("#agent101-command-form, #global-agent101-command-form");
+  const browserForm = event.target.closest("#browser-url-form");
   const form = event.target.closest("#streamer-form");
-  if (!agentForm && !form) return;
+  if (!agentForm && !browserForm && !form) return;
   event.preventDefault();
   try {
     if (agentForm) {
       await runAgentCommand(agentForm);
+      return;
+    }
+    if (browserForm) {
+      await navigateBrowser(browserForm);
       return;
     }
     await submitStreamer(form);
@@ -3589,6 +3843,7 @@ document.addEventListener("click", async (event) => {
   const openAgentChat = target.closest("[data-open-agent-chat]");
   const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
+  const browserAction = target.closest("[data-browser-action]")?.dataset.browserAction;
   const previewCandidate = target.closest("[data-preview-candidate]")?.dataset.previewCandidate;
   const closePreview = target.closest("[data-close-preview]");
   const previewOpenBuilder = target.closest("[data-preview-open-builder]")?.dataset.previewOpenBuilder;
@@ -3624,6 +3879,10 @@ document.addEventListener("click", async (event) => {
     if (closePreview) {
       state.previewCandidateId = "";
       render();
+      return;
+    }
+    if (browserAction) {
+      await handleBrowserAction(browserAction);
       return;
     }
     if (previewOpenBuilder) {

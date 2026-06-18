@@ -14,6 +14,312 @@
   --shadow: rgba(0, 0, 0, 0.28);
 }
 
+/* Supervised browser workspace */
+.browser-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.browser-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid rgba(99, 179, 237, 0.24);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(34, 211, 238, 0.16), transparent 34%),
+    radial-gradient(circle at 82% 10%, rgba(139, 92, 246, 0.2), transparent 34%),
+    linear-gradient(135deg, rgba(12, 25, 41, 0.94), rgba(5, 11, 22, 0.96));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+}
+
+.browser-command h2 {
+  margin: 4px 0 4px;
+  font-size: clamp(1.5rem, 2vw, 2.2rem);
+}
+
+.browser-command p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.browser-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.browser-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  align-items: start;
+}
+
+.browser-stage {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, auto) minmax(220px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.browser-toolbar input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 14px;
+  color: var(--text);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 12px;
+  background: rgba(3, 8, 18, 0.74);
+  outline: none;
+}
+
+.browser-toolbar input:focus {
+  border-color: rgba(34, 211, 238, 0.8);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+
+.browser-viewport {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(125, 211, 252, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at 50% 30%, rgba(56, 189, 248, 0.16), transparent 42%),
+    #030914;
+  background-size: 44px 44px, 44px 44px, auto, auto;
+  box-shadow: inset 0 0 42px rgba(0, 0, 0, 0.56);
+}
+
+.browser-viewport img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 560px;
+  object-fit: contain;
+  background: #020610;
+}
+
+.browser-viewport.empty {
+  display: grid;
+  place-items: center;
+}
+
+.browser-empty-state {
+  max-width: 460px;
+  padding: 28px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed rgba(125, 211, 252, 0.24);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.browser-empty-state strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
+.browser-privacy-shield {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 28px;
+  text-align: center;
+  background:
+    radial-gradient(circle, rgba(124, 58, 237, 0.26), transparent 34%),
+    rgba(1, 5, 13, 0.86);
+  backdrop-filter: blur(14px);
+}
+
+.browser-privacy-shield strong {
+  font-size: 1.4rem;
+}
+
+.browser-privacy-shield p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.browser-control-strip {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 0.45fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 16px;
+  background: rgba(4, 10, 24, 0.8);
+}
+
+.browser-control-strip > span:not(.status-pill) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.browser-control-strip b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-control-strip small {
+  color: var(--muted);
+}
+
+.browser-control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.browser-side {
+  display: grid;
+  gap: 12px;
+}
+
+.browser-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.browser-card h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.browser-status-list,
+.browser-policy-list,
+.browser-download-list {
+  display: grid;
+  gap: 8px;
+}
+
+.browser-status-list span,
+.browser-policy-list span,
+.browser-download-list span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 12px;
+  background: rgba(2, 8, 23, 0.55);
+}
+
+.browser-status-list b,
+.browser-policy-list b,
+.browser-download-list b {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-status-list em,
+.browser-policy-list em,
+.browser-download-list em {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.browser-activity-list article {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+}
+
+.browser-error {
+  margin: 0;
+  padding: 10px;
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 12px;
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.stretch {
+  width: 100%;
+}
+
+@media (max-width: 1320px) {
+  .browser-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .browser-command {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .browser-command-actions,
+  .browser-control-buttons {
+    justify-content: stretch;
+  }
+
+  .browser-command-actions button,
+  .browser-control-buttons button {
+    flex: 1;
+  }
+
+  .browser-toolbar {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .browser-toolbar input {
+    grid-column: 1 / -1;
+  }
+
+  .browser-toolbar .primary {
+    grid-column: 1 / -1;
+  }
+
+  .browser-control-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-side {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-viewport,
+  .browser-viewport img {
+    min-height: 420px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

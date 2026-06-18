@@ -4,10 +4,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createBrowserWorkspace } from "./services/browser-workspace.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, "data", "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
+const execFileAsync = promisify(execFile);
 
 const config = {
   port: Number(process.env.PORT || 4177),
@@ -28,6 +32,17 @@ const config = {
   kickOAuthToken: process.env.KICK_OAUTH_TOKEN || "",
   uploadDir: path.resolve(__dirname, process.env.CLIPPER_UPLOAD_DIR || "./uploads"),
   outputDir: path.resolve(__dirname, process.env.CLIPPER_OUTPUT_DIR || "./outputs"),
+  browserEnabled: process.env.BROWSER_ENABLED !== "false",
+  browserHeadless: process.env.BROWSER_HEADLESS !== "false",
+  browserAllowLocalhost: process.env.BROWSER_ALLOW_LOCALHOST !== "false",
+  browserProfileDir: path.resolve(__dirname, process.env.BROWSER_PROFILE_DIR || "./data/browser-profile"),
+  browserDownloadsDir: path.resolve(__dirname, process.env.BROWSER_DOWNLOAD_DIR || "./downloads/browser"),
+  browserViewport: {
+    width: Number(process.env.BROWSER_VIEWPORT_WIDTH || 1440),
+    height: Number(process.env.BROWSER_VIEWPORT_HEIGHT || 900)
+  },
+  browserNavigationTimeoutMs: Number(process.env.BROWSER_NAVIGATION_TIMEOUT_MS || 30000),
+  capcutHandoffUrl: process.env.CAPCUT_HANDOFF_URL || "https://www.capcut.com/editor",
   postDailyLimit: Number(process.env.POST_DAILY_LIMIT || 20),
   openaiTestBudgetUsd: Number(process.env.OPENAI_TEST_BUDGET_USD || 10)
 };
@@ -40,12 +55,20 @@ const stateDefaults = {
   postingDrafts: [],
   approvalRequests: [],
   artifacts: [],
-  logs: []
+  logs: [],
+  browser: {
+    profile: null,
+    sessions: [],
+    actions: [],
+    downloads: [],
+    policies: []
+  }
 };
 
 let state = structuredClone(stateDefaults);
 let twitchAppToken = null;
 let kickAppToken = null;
+let browserWorkspaceInstance = null;
 
 function now() {
   return new Date().toISOString();
@@ -134,6 +157,8 @@ async function ensureStorage() {
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
   await fs.mkdir(config.uploadDir, { recursive: true });
   await fs.mkdir(config.outputDir, { recursive: true });
+  await fs.mkdir(config.browserProfileDir, { recursive: true });
+  await fs.mkdir(config.browserDownloadsDir, { recursive: true });
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
     state = { ...structuredClone(stateDefaults), ...JSON.parse(raw) };
@@ -165,6 +190,22 @@ async function logEvent(type, message, details = {}) {
   await saveState();
 }
 
+function browserWorkspace() {
+  if (!browserWorkspaceInstance) {
+    browserWorkspaceInstance = createBrowserWorkspace({
+      config,
+      state,
+      helpers: {
+        newId,
+        saveState,
+        addStateLog,
+        logEvent
+      }
+    });
+  }
+  return browserWorkspaceInstance;
+}
+
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(statusCode, {
@@ -176,6 +217,14 @@ function sendJson(res, statusCode, payload) {
 
 function sendError(res, statusCode, message, details = {}) {
   sendJson(res, statusCode, { error: message, details });
+}
+
+function sendPng(res, buffer) {
+  res.writeHead(200, {
+    "content-type": "image/png",
+    "cache-control": "no-store"
+  });
+  res.end(buffer);
 }
 
 async function readJsonBody(req) {
@@ -206,6 +255,10 @@ function publicConfig() {
     kickConfigured: kickApiConfigured(),
     kickOAuthTokenConfigured: Boolean(config.kickOAuthToken),
     postDailyLimit: config.postDailyLimit,
+    browserEnabled: config.browserEnabled,
+    browserMode: config.browserHeadless ? "headless_screenshot" : "headed_local",
+    browserViewport: config.browserViewport,
+    capcutManualHandoff: Boolean(config.capcutHandoffUrl),
     uploadDir: config.uploadDir,
     outputDir: config.outputDir
   };
@@ -1914,6 +1967,141 @@ async function seedDemoWorkspace() {
   return seeded;
 }
 
+async function commandStatus(command, args = ["-version"]) {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, { timeout: 4000 });
+    const firstLine = (stdout || stderr || "").split("\n")[0] || `${command} available`;
+    return { configured: true, command, version: firstLine };
+  } catch (error) {
+    return { configured: false, command, message: `${command} is not available to the server process.` };
+  }
+}
+
+async function mediaToolStatus() {
+  const [ffmpeg, ffprobe] = await Promise.all([
+    commandStatus("ffmpeg"),
+    commandStatus("ffprobe")
+  ]);
+  return {
+    mode: ffmpeg.configured && ffprobe.configured ? "local_render_ready" : "manual_handoff",
+    ffmpeg,
+    ffprobe,
+    outputDir: config.outputDir,
+    secretsExposed: false,
+    notes: ffmpeg.configured && ffprobe.configured
+      ? "Local render tools are available for future near-finished drafts."
+      : "CapCut handoff remains available while local render tools are installed."
+  };
+}
+
+function inferBrowserUrl(goal, fallback = "") {
+  const text = cleanText(goal).toLowerCase();
+  if (fallback) return fallback;
+  if (/capcut/.test(text)) return config.capcutHandoffUrl;
+  if (/kick/.test(text)) return "https://kick.com/";
+  if (/twitch/.test(text)) return "https://www.twitch.tv/directory";
+  if (/youtube|shorts/.test(text)) return "https://www.youtube.com/";
+  if (/instagram|reels/.test(text)) return "https://www.instagram.com/";
+  if (/tiktok/.test(text)) return "https://www.tiktok.com/";
+  return "";
+}
+
+async function runAgent101Browser(body = {}) {
+  const goal = cleanText(body.goal || body.message || "Open the supervised browser workspace.");
+  const requestedUrl = inferBrowserUrl(goal, body.url);
+  const blocked = blockedAgentAction(goal);
+  if (blocked) {
+    const request = createApprovalRequest({
+      type: "browser_external_action",
+      actionType: "external_api_action",
+      title: `Browser action needs review: ${goal.slice(0, 80)}`,
+      riskLevel: "high",
+      linkedId: newId("browser_goal"),
+      evidence: {
+        goal,
+        reason: blocked.reason,
+        requestedUrl
+      }
+    });
+    await logEvent("browser_blocked", "Agent 101 browser request routed to Human Gate", {
+      goal,
+      reason: blocked.reason,
+      approvalId: request.id
+    });
+    await saveState();
+    return {
+      status: "needs_approval",
+      summary: blocked.reason,
+      approvalRequest: request,
+      session: null,
+      logs: ["Risky browser action stopped before execution."]
+    };
+  }
+
+  if (!requestedUrl) {
+    return {
+      status: "needs_input",
+      summary: "Tell Agent 101 what site to open or use a supported handoff such as CapCut, Twitch, Kick, or YouTube.",
+      session: null,
+      logs: []
+    };
+  }
+
+  const workspace = browserWorkspace();
+  const session = body.sessionId
+    ? workspace.profile().sessions.find((item) => item.id === body.sessionId)
+    : await workspace.createSession({ purpose: goal, actor: "agent101" });
+  if (!session) throw new Error("Could not create browser session.");
+
+  const isCapCut = /capcut/i.test(requestedUrl) || /capcut/i.test(goal);
+  const nav = await workspace.navigate(session.id, requestedUrl, { actor: isCapCut ? "operator" : "agent101" });
+  if (!nav.allowed) {
+    const request = createApprovalRequest({
+      type: "browser_domain_request",
+      actionType: "external_api_action",
+      title: `Review browser domain: ${requestedUrl.slice(0, 80)}`,
+      riskLevel: "medium",
+      linkedId: session.id,
+      evidence: {
+        goal,
+        requestedUrl,
+        reason: nav.reason
+      }
+    });
+    await logEvent("browser_policy_review", "Browser domain requires policy review", {
+      sessionId: session.id,
+      requestedUrl,
+      reason: nav.reason,
+      approvalId: request.id
+    });
+    await saveState();
+    return {
+      status: "needs_approval",
+      summary: nav.reason,
+      approvalRequest: request,
+      session: nav.session,
+      logs: ["Navigation blocked by browser policy."]
+    };
+  }
+
+  const finalSession = isCapCut
+    ? await workspace.setControl(session.id, "human_control", { actor: "agent101" })
+    : nav.session;
+  await logEvent("browser_agent_run", "Agent 101 opened a supervised browser workspace", {
+    sessionId: finalSession.id,
+    url: finalSession.currentUrl,
+    goal
+  });
+  return {
+    status: isCapCut ? "needs_human" : "completed",
+    summary: isCapCut
+      ? "CapCut is open as a manual human-control handoff. Agent 101 can prepare instructions, but will not operate the editor."
+      : "Agent 101 opened the browser workspace under the approved policy.",
+    session: finalSession,
+    logs: ["Browser workspace opened.", isCapCut ? "Human control is active for CapCut." : "Read-only browsing is active."]
+  };
+}
+
 async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "GET" && pathname === "/api/health") {
     return sendJson(res, 200, {
@@ -1927,6 +2115,130 @@ async function handleApi(req, res, pathname, searchParams) {
         pendingApprovals: state.approvalRequests.filter((request) => request.status === "pending").length
       }
     });
+  }
+
+  if (req.method === "GET" && pathname === "/api/browser/profile") {
+    return sendJson(res, 200, browserWorkspace().profile());
+  }
+
+  if (req.method === "POST" && pathname === "/api/browser/profile") {
+    return sendJson(res, 200, browserWorkspace().profile());
+  }
+
+  if (req.method === "DELETE" && pathname === "/api/browser/profile") {
+    const profile = await browserWorkspace().resetProfile();
+    return sendJson(res, 200, profile);
+  }
+
+  if (req.method === "GET" && pathname === "/api/browser/policies") {
+    return sendJson(res, 200, browserWorkspace().policies());
+  }
+
+  if (req.method === "POST" && pathname === "/api/browser/sessions") {
+    const body = await readJsonBody(req);
+    const session = await browserWorkspace().createSession({
+      purpose: cleanText(body.purpose) || "StreamClipper browser workspace",
+      url: cleanText(body.url),
+      actor: "operator"
+    });
+    return sendJson(res, 201, { session });
+  }
+
+  const browserSessionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)$/);
+  if (browserSessionMatch && req.method === "GET") {
+    const session = browserWorkspace().profile().sessions.find((item) => item.id === browserSessionMatch[1]);
+    if (!session) return sendError(res, 404, "Browser session not found");
+    return sendJson(res, 200, { session });
+  }
+
+  if (browserSessionMatch && req.method === "DELETE") {
+    const session = await browserWorkspace().closeSession(browserSessionMatch[1]);
+    return sendJson(res, 200, { session });
+  }
+
+  const browserActionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/(navigate|back|forward|refresh|take-control|give-agent-control|pause)$/);
+  if (browserActionMatch && req.method === "POST") {
+    const [, sessionId, action] = browserActionMatch;
+    const workspace = browserWorkspace();
+    if (action === "navigate") {
+      const body = await readJsonBody(req);
+      const result = await workspace.navigate(sessionId, body.url, { actor: "operator" });
+      return sendJson(res, result.allowed ? 200 : 403, result);
+    }
+    if (action === "take-control") {
+      const session = await workspace.setControl(sessionId, "human_control", { actor: "operator" });
+      return sendJson(res, 200, { session });
+    }
+    if (action === "give-agent-control") {
+      const session = await workspace.setControl(sessionId, "agent_assisted", { actor: "operator" });
+      return sendJson(res, 200, { session });
+    }
+    if (action === "pause") {
+      const session = await workspace.setControl(sessionId, "paused", { actor: "operator" });
+      return sendJson(res, 200, { session });
+    }
+    const session = await workspace.simplePageAction(sessionId, action, { actor: "operator" });
+    return sendJson(res, 200, { session });
+  }
+
+  const browserScreenshotMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/screenshot$/);
+  if (browserScreenshotMatch && req.method === "GET") {
+    const buffer = await browserWorkspace().screenshot(browserScreenshotMatch[1]);
+    return sendPng(res, buffer);
+  }
+
+  const browserEventsMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/events$/);
+  if (browserEventsMatch && req.method === "GET") {
+    return browserWorkspace().subscribe(browserEventsMatch[1], res);
+  }
+
+  if (req.method === "POST" && pathname === "/api/agent101/browser/run") {
+    const body = await readJsonBody(req);
+    const result = await runAgent101Browser(body);
+    return sendJson(res, result.status === "error" ? 500 : 200, result);
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut/status") {
+    return sendJson(res, 200, {
+      status: "manual_handoff",
+      configured: Boolean(config.capcutHandoffUrl),
+      url: config.capcutHandoffUrl,
+      browserReady: config.browserEnabled,
+      notes: "CapCut is a manual polishing workspace. Agent 101 prepares briefs and instructions, but does not operate the editor."
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut/open") {
+    const body = await readJsonBody(req);
+    const workspace = browserWorkspace();
+    const session = body.sessionId
+      ? workspace.profile().sessions.find((item) => item.id === body.sessionId)
+      : await workspace.createSession({ purpose: "CapCut manual handoff", actor: "operator" });
+    if (!session) return sendError(res, 404, "Browser session not found");
+    const result = await workspace.navigate(session.id, body.url || config.capcutHandoffUrl, { actor: "operator" });
+    const finalSession = result.allowed
+      ? await workspace.setControl(session.id, "human_control", { actor: "operator" })
+      : result.session;
+    await logEvent("capcut_opened", "CapCut manual handoff opened in supervised browser", {
+      sessionId: session.id,
+      allowed: result.allowed,
+      url: body.url || config.capcutHandoffUrl
+    });
+    return sendJson(res, result.allowed ? 200 : 403, { ...result, session: finalSession });
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut/handoff") {
+    const body = await readJsonBody(req);
+    const clipPackage = state.clipPackages.find((item) => item.id === body.clipPackageId) || state.clipPackages[0];
+    if (!clipPackage) return sendError(res, 404, "No clip package is ready for a CapCut handoff");
+    const result = await createAgentCapCutBrief(clipPackage);
+    await logEvent("capcut_handoff", "CapCut handoff prepared for operator", { clipPackageId: clipPackage.id });
+    await saveState();
+    return sendJson(res, 201, result);
+  }
+
+  if (req.method === "GET" && pathname === "/api/media/status") {
+    return sendJson(res, 200, await mediaToolStatus());
   }
 
   if (req.method === "GET" && pathname === "/api/openai/status") {

@@ -707,6 +707,7 @@ svg {
 
 .sidebar-chat-head,
 .permission-card-top,
+.run-console-head,
 .permission-card-actions,
 .sidebar-chat-bubble > div {
   display: flex;
@@ -737,7 +738,7 @@ svg {
 }
 
 .sidebar-chat-log {
-  min-height: 210px;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -748,7 +749,8 @@ svg {
 }
 
 .sidebar-chat-bubble,
-.sidebar-permission-card {
+.sidebar-permission-card,
+.sidebar-run-console {
   max-width: 92%;
   padding: 10px 11px;
   border: 1px solid rgba(125, 211, 252, 0.12);
@@ -769,7 +771,8 @@ svg {
 .sidebar-chat-bubble.tool,
 .sidebar-chat-bubble.system,
 .sidebar-chat-bubble.error,
-.sidebar-permission-card {
+.sidebar-permission-card,
+.sidebar-run-console {
   align-self: flex-start;
 }
 
@@ -778,6 +781,19 @@ svg {
   background:
     linear-gradient(135deg, rgba(34, 211, 238, 0.1), rgba(59, 130, 246, 0.06)),
     rgba(2, 6, 23, 0.68);
+}
+
+.sidebar-tool-done {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  border-radius: 999px;
+  color: #a7f3d0;
+  background: rgba(6, 78, 59, 0.24);
+  font-size: 0.52rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .sidebar-chat-bubble.system,
@@ -819,7 +835,8 @@ svg {
 
 .sidebar-chat-bubble p,
 .sidebar-permission-card p,
-.sidebar-permission-card small {
+.sidebar-permission-card small,
+.sidebar-run-console small {
   margin: 5px 0 0;
   color: #dbeafe;
   font-size: 0.7rem;
@@ -835,6 +852,113 @@ svg {
   background:
     radial-gradient(circle at 8% 0%, rgba(251, 191, 36, 0.15), transparent 36%),
     linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.9));
+}
+
+.sidebar-run-console {
+  width: 100%;
+  max-width: 100%;
+  display: grid;
+  gap: 9px;
+  border-color: rgba(34, 211, 238, 0.3);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(34, 211, 238, 0.18), transparent 42%),
+    radial-gradient(circle at 92% 8%, rgba(124, 58, 237, 0.14), transparent 38%),
+    linear-gradient(180deg, rgba(8, 18, 36, 0.96), rgba(2, 6, 23, 0.9));
+  box-shadow: 0 0 34px rgba(34, 211, 238, 0.08), 0 16px 34px rgba(0, 0, 0, 0.28);
+}
+
+.run-console-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-console-head span {
+  color: #67e8f9;
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-console-head em {
+  color: rgba(203, 213, 225, 0.7);
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.sidebar-run-console > strong {
+  color: #f8fafc;
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.run-console-meter {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.run-console-meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--run-progress, 20%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22d3ee, #60a5fa, #8b5cf6);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.5);
+}
+
+.sidebar-run-console ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-run-console li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: rgba(203, 213, 225, 0.7);
+  font-size: 0.64rem;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+.sidebar-run-console li span {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 999px;
+  color: rgba(203, 213, 225, 0.72);
+  background: rgba(15, 23, 42, 0.62);
+  font-size: 0.55rem;
+  font-weight: 950;
+}
+
+.sidebar-run-console li.done,
+.sidebar-run-console li.active {
+  color: #e0f2fe;
+}
+
+.sidebar-run-console li.done span {
+  border-color: rgba(45, 212, 191, 0.4);
+  color: #a7f3d0;
+  background: rgba(6, 78, 59, 0.38);
+}
+
+.sidebar-run-console li.active span {
+  border-color: rgba(103, 232, 249, 0.65);
+  color: #020617;
+  background: #67e8f9;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.42);
 }
 
 .permission-card-top {
@@ -853,6 +977,14 @@ svg {
 .sidebar-permission-card small {
   color: rgba(203, 213, 225, 0.72);
   font-size: 0.62rem;
+}
+
+.sidebar-permission-card .permission-card-note {
+  padding: 7px 8px;
+  border: 1px solid rgba(251, 191, 36, 0.14);
+  border-radius: 10px;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.16);
 }
 
 .permission-card-actions {

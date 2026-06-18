@@ -1757,6 +1757,8 @@ let selectedAgentKey = null;
 let depoChatMessages = [];
 let agent101ChatThreads = [];
 let agent101ChatSending = false;
+let agent101RunProgress = null;
+let agent101RunProgressTimer = null;
 let activeAgent101ThreadByRoom = (() => {
   try {
     return JSON.parse(localStorage.getItem("agent101ActiveThreads") || "{}") || {};
@@ -4047,15 +4049,102 @@ function scrollSidebarAgentChatToLatest(force = false) {
   }
 }
 
+function inferAgent101RunPreviewSteps(goal = "") {
+  const text = String(goal || "").toLowerCase();
+  const clippingGoal = includesAny(text, [
+    "practice stream",
+    "clip",
+    "candidate",
+    "capcut",
+    "posting draft",
+    "watch cycle",
+    "run it",
+    "go ahead",
+  ]);
+  if (!clippingGoal) {
+    return [
+      "Read your message",
+      "Check the safety boundary",
+      "Draft the answer",
+      "Save the thread",
+    ];
+  }
+  return [
+    "Read your goal",
+    "Confirm safe internal mode",
+    "Add demo streamers",
+    "Run watch cycle",
+    "Create clip candidates",
+    "Score the best moments",
+    "Build top 3 packages",
+    "Create CapCut briefs",
+    "Draft posting packages",
+    "Send risky posting step to Human Gate",
+    "Save artifacts and logs",
+  ];
+}
+
+function startAgent101RunProgress(goal = "") {
+  if (agent101RunProgressTimer) {
+    window.clearInterval(agent101RunProgressTimer);
+    agent101RunProgressTimer = null;
+  }
+  agent101RunProgress = {
+    goal: String(goal || "").trim(),
+    steps: inferAgent101RunPreviewSteps(goal),
+    startedAt: Date.now(),
+  };
+  agent101RunProgressTimer = window.setInterval(() => renderSidebarAgentChat(), 1400);
+  renderSidebarAgentChat();
+}
+
+function stopAgent101RunProgress() {
+  if (agent101RunProgressTimer) {
+    window.clearInterval(agent101RunProgressTimer);
+    agent101RunProgressTimer = null;
+  }
+  agent101RunProgress = null;
+}
+
+function agent101RunProgressMarkup() {
+  if (!agent101RunProgress) return "";
+  const steps = agent101RunProgress.steps || [];
+  const elapsedSeconds = Math.max(1, Math.floor((Date.now() - agent101RunProgress.startedAt) / 1000));
+  const currentIndex = Math.min(steps.length - 1, Math.floor(elapsedSeconds / 2.4));
+  const progress = Math.min(94, Math.round(((currentIndex + 1) / Math.max(steps.length, 1)) * 100));
+  return `
+    <article class="sidebar-run-console" aria-label="Agent 101 run progress">
+      <div class="run-console-head">
+        <span>Agent 101 is working</span>
+        <em>${escapeHtml(`${elapsedSeconds}s`)}</em>
+      </div>
+      <strong>${escapeHtml(steps[currentIndex] || "Running safe internal workflow")}</strong>
+      <div class="run-console-meter" style="--run-progress: ${progress}%"><i></i></div>
+      <ol>
+        ${steps
+          .slice(0, 7)
+          .map((step, index) => {
+            const status = index < currentIndex ? "done" : index === currentIndex ? "active" : "queued";
+            return `<li class="${status}"><span>${index + 1}</span>${escapeHtml(step)}</li>`;
+          })
+          .join("")}
+      </ol>
+      ${steps.length > 7 ? `<small>${escapeHtml(`${steps.length - 7} more save/package steps queued`)}</small>` : ""}
+    </article>
+  `;
+}
+
 function sidebarAgentChatMessageMarkup(message = {}) {
   const roleClass = message.role === "user" ? "user" : message.role === "tool" ? "tool" : message.role === "system" ? "system" : "agent";
   const statusClass = ["thinking", "running", "error"].includes(message.status) ? message.status : "";
   const artifacts = Array.isArray(message.metadata?.artifacts) ? message.metadata.artifacts : [];
+  const isToolStep = roleClass === "tool";
+  const label = isToolStep ? message.metadata?.stepTitle || "Tool step" : agent101MessageLabel(message);
   return `
     <article class="sidebar-chat-bubble ${escapeHtml(roleClass)} ${escapeHtml(statusClass)}">
       <div>
-        <strong>${escapeHtml(agent101MessageLabel(message))}</strong>
-        <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+        <strong>${escapeHtml(label)}</strong>
+        ${isToolStep ? `<span class="sidebar-tool-done">Done</span>` : `<time>${escapeHtml(formatChatTime(message.createdAt))}</time>`}
       </div>
       <p>${escapeHtml(message.content)}</p>
       ${
@@ -4074,16 +4163,17 @@ function sidebarPermissionCardMarkup(approval = {}) {
   return `
     <article class="sidebar-permission-card ${escapeHtml(risk)}">
       <div class="permission-card-top">
-        <span>Permission request</span>
-        <em>${escapeHtml(risk)}</em>
+        <span>Human Gate request</span>
+        <em>${escapeHtml(risk)} risk</em>
       </div>
       <strong>${escapeHtml(approval.title || "Human Gate approval")}</strong>
       <p>${escapeHtml(approval.action || "Review before any external action can happen.")}</p>
       <small>${escapeHtml(approval.evidence || "Agent 101 attached no evidence yet.")}</small>
+      <small class="permission-card-note">Agent 101 is paused here. Approving only releases the reviewed draft step; posting, uploads, accounts, and money stay locked.</small>
       <div class="permission-card-actions">
-        <button type="button" data-sidebar-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve</button>
+        <button type="button" data-sidebar-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve local step</button>
         <button type="button" data-sidebar-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
-        <button type="button" data-sidebar-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+        <button type="button" data-sidebar-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Block</button>
       </div>
     </article>
   `;
@@ -4097,14 +4187,19 @@ function renderSidebarAgentChat() {
   const approvals = pendingApprovals().slice(0, 4);
   sidebarAgentChatLog.innerHTML = [
     ...messages.map(sidebarAgentChatMessageMarkup),
+    agent101RunProgressMarkup(),
     ...approvals.map(sidebarPermissionCardMarkup),
   ].join("");
   if (sidebarAgentChatStatus) {
-    sidebarAgentChatStatus.textContent = agent101ChatSending
-      ? "Running"
-      : approvals.length
-        ? escapeHtml(pluralize(approvals.length, "permission"))
-        : "Saved";
+    let chatStatus = "Saved";
+    if (agent101RunProgress) {
+      chatStatus = "Working";
+    } else if (agent101ChatSending) {
+      chatStatus = "Thinking";
+    } else if (approvals.length) {
+      chatStatus = pluralize(approvals.length, "permission");
+    }
+    sidebarAgentChatStatus.textContent = chatStatus;
   }
   if (sidebarAgentChatSubmit) sidebarAgentChatSubmit.disabled = agent101ChatSending;
   requestAnimationFrame(() => scrollSidebarAgentChatToLatest(autoScroll || messages.length <= 2));
@@ -6853,6 +6948,8 @@ function changeApprovalStatusLocally(id, action, source = "Human Gate") {
   appendMainAgentChatMessages(approvalDecisionMainThreadMessages(approval, action, source));
   render();
   if (isMainChatApprovalSource(source)) {
+    resetHabitatView(false);
+    renderSidebarAgentChat();
     requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
     return true;
   }
@@ -6884,6 +6981,8 @@ async function changeApprovalStatus(id, action, source = "Human Gate") {
     }
     await loadState();
     if (isMainChatApprovalSource(source)) {
+      resetHabitatView(false);
+      renderSidebarAgentChat();
       requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
       return;
     }
@@ -7169,6 +7268,7 @@ async function submitDepoChat(roomKey, message) {
     let thread = null;
     let pendingMessage = null;
     agent101ChatSending = true;
+    startAgent101RunProgress(trimmed);
     try {
       thread = await ensureServerAgent101Thread(resolved, clientChatTitleFromContent(trimmed));
       appendClientAgentThreadMessages(thread, {
@@ -7179,7 +7279,7 @@ async function submitDepoChat(roomKey, message) {
       });
       [pendingMessage] = appendClientAgentThreadMessages(thread, {
         role: "agent",
-        content: "Thinking...",
+        content: "I am reading this and checking whether it is safe internal work or needs Human Gate.",
         status: "thinking",
         metadata: { roomId: resolved },
       });
@@ -7231,6 +7331,7 @@ async function submitDepoChat(roomKey, message) {
       renderShellData();
     } finally {
       agent101ChatSending = false;
+      stopAgent101RunProgress();
       renderShellData();
       requestAnimationFrame(() => {
         scrollAgentChatToLatest();

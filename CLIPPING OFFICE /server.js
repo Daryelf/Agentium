@@ -966,7 +966,18 @@ function addAgentStep(run, tool, status, message, details = {}) {
 
 function blockedAgentAction(goal) {
   const text = cleanText(goal);
-  return AGENT101_BLOCKED_ACTIONS.find((item) => item.pattern.test(text));
+  const lower = text.toLowerCase();
+  const match = AGENT101_BLOCKED_ACTIONS.find((item) => item.pattern.test(text));
+  if (!match) return null;
+  const isSafeInternalRun = shouldRunFullInternalWorkflow(text);
+  const hasExternalSafetyBoundary =
+    /\b(do not|don't|never)\s+(post|upload|publish|push live|release externally)\b/.test(lower) ||
+    /\b(no|nothing)\s+(external|externally|publicly)\b/.test(lower) ||
+    /\b(posting|uploads?|publishing)\s+(remain|stays?|stay)\s+blocked\b/.test(lower);
+  if (isSafeInternalRun && hasExternalSafetyBoundary && match.reason.includes("Publishing or uploading")) {
+    return null;
+  }
+  return match;
 }
 
 async function agentOpenAIPlan(goal) {

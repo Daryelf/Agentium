@@ -414,6 +414,11 @@ const sidebarSystemHealth = document.querySelector("#sidebarSystemHealth");
 const sidebarAgentId = document.querySelector("#sidebarAgentId");
 const sidebarAgentMode = document.querySelector("#sidebarAgentMode");
 const sidebarMiniChart = document.querySelector("#sidebarMiniChart");
+const sidebarAgentChatLog = document.querySelector("#sidebarAgentChatLog");
+const sidebarAgentChatForm = document.querySelector("#sidebarAgentChatForm");
+const sidebarAgentChatInput = document.querySelector("#sidebarAgentChatInput");
+const sidebarAgentChatSubmit = document.querySelector("#sidebarAgentChatSubmit");
+const sidebarAgentChatStatus = document.querySelector("#sidebarAgentChatStatus");
 const sidebarStatusRows = [
   {
     label: document.querySelector("#sidebarStatusLabelA"),
@@ -436,6 +441,8 @@ const sidebarStatusRows = [
     value: document.querySelector("#sidebarStatusValueD"),
   },
 ];
+
+const mainAgentChatRoomId = "depo-habitat";
 
 const depoWorkflowStages = [
   "depo-habitat",
@@ -4023,6 +4030,86 @@ function agent101ChatMessageMarkup(message = {}) {
   `;
 }
 
+function mainAgentChatThread() {
+  return activeAgent101Thread(mainAgentChatRoomId);
+}
+
+function shouldAutoScrollSidebarAgentChat() {
+  if (!sidebarAgentChatLog) return false;
+  const distanceFromBottom = sidebarAgentChatLog.scrollHeight - sidebarAgentChatLog.scrollTop - sidebarAgentChatLog.clientHeight;
+  return distanceFromBottom < 64;
+}
+
+function scrollSidebarAgentChatToLatest(force = false) {
+  if (!sidebarAgentChatLog) return;
+  if (force || shouldAutoScrollSidebarAgentChat()) {
+    sidebarAgentChatLog.scrollTop = sidebarAgentChatLog.scrollHeight;
+  }
+}
+
+function sidebarAgentChatMessageMarkup(message = {}) {
+  const roleClass = message.role === "user" ? "user" : message.role === "tool" ? "tool" : message.role === "system" ? "system" : "agent";
+  const statusClass = ["thinking", "running", "error"].includes(message.status) ? message.status : "";
+  const artifacts = Array.isArray(message.metadata?.artifacts) ? message.metadata.artifacts : [];
+  return `
+    <article class="sidebar-chat-bubble ${escapeHtml(roleClass)} ${escapeHtml(statusClass)}">
+      <div>
+        <strong>${escapeHtml(agent101MessageLabel(message))}</strong>
+        <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+      </div>
+      <p>${escapeHtml(message.content)}</p>
+      ${
+        artifacts.length
+          ? `<small>${escapeHtml(pluralize(artifacts.length, "artifact"))} created</small>`
+          : message.metadata?.requiresApproval
+            ? `<small>Human Gate required</small>`
+            : ""
+      }
+    </article>
+  `;
+}
+
+function sidebarPermissionCardMarkup(approval = {}) {
+  const risk = approval.risk || "medium";
+  return `
+    <article class="sidebar-permission-card ${escapeHtml(risk)}">
+      <div class="permission-card-top">
+        <span>Permission request</span>
+        <em>${escapeHtml(risk)}</em>
+      </div>
+      <strong>${escapeHtml(approval.title || "Human Gate approval")}</strong>
+      <p>${escapeHtml(approval.action || "Review before any external action can happen.")}</p>
+      <small>${escapeHtml(approval.evidence || "Agent 101 attached no evidence yet.")}</small>
+      <div class="permission-card-actions">
+        <button type="button" data-sidebar-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve</button>
+        <button type="button" data-sidebar-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Send back</button>
+        <button type="button" data-sidebar-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderSidebarAgentChat() {
+  if (!sidebarAgentChatLog) return;
+  const autoScroll = shouldAutoScrollSidebarAgentChat();
+  const thread = mainAgentChatThread();
+  const messages = (thread.messages || []).slice(-40);
+  const approvals = pendingApprovals().slice(0, 4);
+  sidebarAgentChatLog.innerHTML = [
+    ...messages.map(sidebarAgentChatMessageMarkup),
+    ...approvals.map(sidebarPermissionCardMarkup),
+  ].join("");
+  if (sidebarAgentChatStatus) {
+    sidebarAgentChatStatus.textContent = agent101ChatSending
+      ? "Running"
+      : approvals.length
+        ? escapeHtml(pluralize(approvals.length, "permission"))
+        : "Saved";
+  }
+  if (sidebarAgentChatSubmit) sidebarAgentChatSubmit.disabled = agent101ChatSending;
+  requestAnimationFrame(() => scrollSidebarAgentChatToLatest(autoScroll || messages.length <= 2));
+}
+
 function agent101ThreadListMarkup(roomId, activeThreadId) {
   const threads = agent101ThreadsForRoom(roomId).slice(0, 5);
   if (!threads.length) return "";
@@ -4058,30 +4145,24 @@ function agent101QuickPromptsMarkup(roomId) {
 }
 
 function officeChatMarkup(card) {
-  const resolved = resolveRoomKey(card.id);
-  const thread = activeAgent101Thread(resolved);
-  const visibleMessages = thread.messages?.length ? thread.messages : createLocalAgentThread(resolved).messages;
+  const profile = businessOfficeProfile(card.id);
+  const runtime = officeRuntimeSnapshot();
+  const taskCount = stateList("tasks").filter((task) => resolveRoomKey(task.roomId || task.officeId || "") === resolveRoomKey(card.id)).length;
+  const artifactCount = stateList("artifacts").filter((artifact) => resolveRoomKey(artifact.roomId || artifact.officeId || "") === resolveRoomKey(card.id)).length;
+  const approvalCount = runtime.pending.filter((approval) => approvalReturnRoom(approval) === resolveRoomKey(card.id)).length;
   return `
-    <section class="office-chat agent-thread-chat" data-agent-chat-room="${escapeHtml(resolved)}" data-agent-chat-thread-id="${escapeHtml(thread.id)}">
-      <div class="office-chat-toolbar">
-        <div>
-          <h4>Agent 101 Command Chat</h4>
-          <span>${escapeHtml(thread.title || "Agent 101 Session")}</span>
-        </div>
-        <div>
-          <em>${agent101ChatSending ? "Running" : "Saved"}</em>
-          <button type="button" data-agent-chat-new>New chat</button>
-        </div>
+    <section class="office-local-summary">
+      <div class="office-section-head">
+        <h4>Office Context</h4>
+        <span>Use the left Agent 101 chat</span>
       </div>
-      ${agent101ThreadListMarkup(resolved, thread.id)}
-      <div class="office-chat-log" aria-live="polite">
-        ${visibleMessages.map(agent101ChatMessageMarkup).join("")}
+      <p>${escapeHtml(profile.goal)}</p>
+      <div class="office-context-grid">
+        <div><span>Queued work</span><strong>${escapeHtml(String(taskCount))}</strong></div>
+        <div><span>Artifacts</span><strong>${escapeHtml(String(artifactCount))}</strong></div>
+        <div><span>Gate requests</span><strong>${escapeHtml(String(approvalCount))}</strong></div>
       </div>
-      ${agent101QuickPromptsMarkup(resolved)}
-      <form class="agent-chat-form office-chat-form" data-depo-chat-form>
-        <textarea name="message" autocomplete="off" rows="1" placeholder="Message Agent 101..."></textarea>
-        <button type="submit">Send</button>
-      </form>
+      <small>All commands now go through the single Agent 101 chat in the left sidebar. This keeps memory and Human Gate decisions in one place.</small>
     </section>
   `;
 }
@@ -4116,7 +4197,7 @@ function businessOfficeMarkup(card) {
             </div>
           </section>
           <div class="office-command-grid">
-            ${card.id === "human-gate" ? humanGateChatMarkup(card, runtime) : officeChatMarkup(card)}
+            ${card.id === "human-gate" ? humanGateOfficeQueueMarkup(runtime) : officeChatMarkup(card)}
             <section class="office-capabilities">
               <div>
                 <h4>What This Office Will Do</h4>
@@ -4426,6 +4507,7 @@ function renderShellData() {
     }
     if (autoScrollChat) requestAnimationFrame(scrollAgentChatToLatest);
   }
+  renderSidebarAgentChat();
 }
 
 function applySelectionClasses() {
@@ -6398,6 +6480,7 @@ function renderKpis() {
 function render() {
   renderShellData();
   renderSidebarSystemStatus();
+  renderSidebarAgentChat();
   setStep();
   renderStatus();
   renderNotifications();
@@ -6687,6 +6770,68 @@ function recordApprovalChatDecision(approval = {}, action, source = "Human Gate"
   return { messages: appended, returnRoom: nextRoom };
 }
 
+function approvalDecisionMainThreadMessages(approval = {}, action, source = "Human Gate") {
+  const label = approvalActionTitle(action);
+  const title = approval.title || "approval package";
+  const nextRoom = approvalReturnRoom(approval);
+  const nextRoomName = businessOfficeProfile(nextRoom).title.replace(/^Business Office: |^Agent Office: /, "");
+  const agentReply = action === "approve"
+    ? `${label}. I recorded the decision and returned this to ${nextRoomName}. I will continue only with the approved local draft step.`
+    : action === "revise"
+      ? `${label}. I sent this back to ${nextRoomName} for revision. Nothing external was executed.`
+      : `${label}. I blocked this package. The risky action stays locked and logged.`;
+  const createdAt = new Date().toISOString();
+  return [
+    {
+      role: "user",
+      content: `${label}: ${title}`,
+      status: "sent",
+      createdAt,
+      metadata: {
+        roomId: "human-gate",
+        source,
+        approvalId: approval.id,
+        taskType: "human_gate_decision",
+      },
+    },
+    {
+      role: "agent",
+      content: agentReply,
+      status: "complete",
+      createdAt: new Date(Date.parse(createdAt) + 1).toISOString(),
+      metadata: {
+        roomId: nextRoom,
+        source,
+        approvalId: approval.id,
+        taskType: "human_gate_decision",
+        riskLevel: action === "block" ? "high" : "low",
+      },
+    },
+  ];
+}
+
+function isMainChatApprovalSource(source = "") {
+  return String(source || "").toLowerCase().includes("agent 101 chat");
+}
+
+async function appendMainAgentChatMessages(messages = []) {
+  const safeMessages = (Array.isArray(messages) ? messages : [messages]).filter(Boolean);
+  if (!safeMessages.length) return;
+  const localThread = mainAgentChatThread();
+  appendClientAgentThreadMessages(localThread, safeMessages);
+  renderSidebarAgentChat();
+  if (!apiAvailable) return;
+  try {
+    const thread = await ensureServerAgent101Thread(mainAgentChatRoomId, "Agent 101 Command");
+    const payload = await postJson(`/api/agent101/chats/${encodeURIComponent(thread.id)}/append`, { messages: safeMessages });
+    mergeAgent101ThreadPayload(payload);
+    setActiveAgent101Thread(mainAgentChatRoomId, payload.thread?.id || thread.id);
+    renderSidebarAgentChat();
+  } catch (error) {
+    addLocalAudit("Agent 101 chat memory unavailable", error.message);
+  }
+}
+
 function changeApprovalStatusLocally(id, action, source = "Human Gate") {
   const approvals = stateList("approvals");
   const approval = approvals.find((item) => item.id === id);
@@ -6705,19 +6850,25 @@ function changeApprovalStatusLocally(id, action, source = "Human Gate") {
     roomId: "human-gate",
   });
   const decision = recordApprovalChatDecision(approval, action, source);
+  appendMainAgentChatMessages(approvalDecisionMainThreadMessages(approval, action, source));
   render();
+  if (isMainChatApprovalSource(source)) {
+    requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
+    return true;
+  }
   selectedRoomKey = decision.returnRoom || "human-gate";
   openModuleInfoCard(selectedRoomKey, { scrollChat: true, focusInput: true });
   return true;
 }
 
-function changeApprovalStatus(id, action, source = "Human Gate") {
+async function changeApprovalStatus(id, action, source = "Human Gate") {
   const approvalBeforeChange = stateList("approvals").find((item) => item.id === id);
   if (!apiAvailable) {
     changeApprovalStatusLocally(id, action, source);
     return;
   }
-  postJson(`/api/approvals/${encodeURIComponent(id)}/${action}`).then(async (changedState) => {
+  try {
+    const changedState = await postJson(`/api/approvals/${encodeURIComponent(id)}/${action}`);
     if (!changedState) {
       changeApprovalStatusLocally(id, action, source);
       return;
@@ -6729,16 +6880,21 @@ function changeApprovalStatus(id, action, source = "Human Gate") {
       const decision = recordApprovalChatDecision(approvalBeforeChange, action, source, { persist: false });
       returnRoom = decision.returnRoom || returnRoom;
       await persistChatMessages(decision.messages);
+      await appendMainAgentChatMessages(approvalDecisionMainThreadMessages(approvalBeforeChange, action, source));
+    }
+    await loadState();
+    if (isMainChatApprovalSource(source)) {
+      requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
+      return;
     }
     selectedRoomKey = returnRoom;
-    await loadState();
     openModuleInfoCard(returnRoom, { scrollChat: true, focusInput: true });
-  }).catch((error) => {
+  } catch (error) {
     if (!changeApprovalStatusLocally(id, action, source)) {
       addLocalAudit("Approval unavailable", error.message);
       render();
     }
-  });
+  }
 }
 
 function addBlockedActionApproval(actionType, roomKey, source = "Agent 101 chat") {
@@ -6805,6 +6961,10 @@ function riskForOffice(roomKey) {
 
 function blockedActionFromChatText(text) {
   const normalized = String(text || "").toLowerCase();
+  const safeInternalDemoRequest =
+    includesAny(normalized, ["practice streams", "demo clipping workflow", "safe internal", "clip candidates", "capcut brief", "draft posting package"]) &&
+    includesAny(normalized, ["do not post", "don't post", "do not upload", "don't upload", "nothing external", "no external", "posting remains blocked"]);
+  if (safeInternalDemoRequest) return "";
   const blockedMap = [
     ["publish externally", ["publish", "post", "post this video", "post it to tiktok", "upload this video", "upload this to tiktok", "launch listing", "make live", "go live"]],
     ["spend money", ["spend", "buy", "purchase", "pay for", "ad spend", "run ads"]],
@@ -7024,7 +7184,10 @@ async function submitDepoChat(roomKey, message) {
         metadata: { roomId: resolved },
       });
       renderShellData();
-      requestAnimationFrame(scrollAgentChatToLatest);
+      requestAnimationFrame(() => {
+        scrollAgentChatToLatest();
+        scrollSidebarAgentChatToLatest(true);
+      });
       const payload = await postJson(`/api/agent101/chats/${encodeURIComponent(thread.id)}/messages`, {
         content: trimmed,
         roomId: resolved,
@@ -7069,7 +7232,10 @@ async function submitDepoChat(roomKey, message) {
     } finally {
       agent101ChatSending = false;
       renderShellData();
-      requestAnimationFrame(scrollAgentChatToLatest);
+      requestAnimationFrame(() => {
+        scrollAgentChatToLatest();
+        scrollSidebarAgentChatToLatest(true);
+      });
     }
     return;
   }
@@ -7910,6 +8076,29 @@ moduleInfoCard?.addEventListener("keydown", (event) => {
   event.preventDefault();
   const form = input.closest("[data-depo-chat-form]");
   form?.requestSubmit();
+});
+
+sidebarAgentChatForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const message = sidebarAgentChatInput?.value || "";
+  if (sidebarAgentChatInput) sidebarAgentChatInput.value = "";
+  if (sidebarAgentChatSubmit) sidebarAgentChatSubmit.disabled = true;
+  submitDepoChat(mainAgentChatRoomId, message).finally(() => {
+    if (sidebarAgentChatSubmit) sidebarAgentChatSubmit.disabled = false;
+    requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
+  });
+});
+
+sidebarAgentChatInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey) return;
+  event.preventDefault();
+  sidebarAgentChatForm?.requestSubmit();
+});
+
+sidebarAgentChatLog?.addEventListener("click", (event) => {
+  const approvalButton = event.target.closest("[data-sidebar-approval-action]");
+  if (!approvalButton) return;
+  changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.sidebarApprovalAction, "Agent 101 chat permission");
 });
 
 moduleInfoCard?.addEventListener("focusin", () => {

@@ -71,6 +71,21 @@
             <i style="height: 84%"></i>
           </div>
         </section>
+
+        <section class="sidebar-agent-chat" aria-label="Agent 101 main chat">
+          <div class="sidebar-chat-head">
+            <div>
+              <p class="eyebrow">Agent 101 Chat</p>
+              <strong>Main command thread</strong>
+            </div>
+            <span id="sidebarAgentChatStatus">Saved</span>
+          </div>
+          <div class="sidebar-chat-log" id="sidebarAgentChatLog" aria-live="polite"></div>
+          <form class="sidebar-chat-form" id="sidebarAgentChatForm">
+            <textarea id="sidebarAgentChatInput" name="message" autocomplete="off" rows="1" placeholder="Tell Agent 101 what to plan, draft, check, or run safely..."></textarea>
+            <button id="sidebarAgentChatSubmit" type="submit">Send</button>
+          </form>
+        </section>
       </aside>
 
       <main>

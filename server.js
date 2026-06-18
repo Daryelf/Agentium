@@ -1466,17 +1466,33 @@ function deleteAgent101ChatThread(threadId) {
   return { deleted: true, threads: publicAgent101ChatThreads(state) };
 }
 
+function appendAgent101ChatThreadMessagesDirect(threadId, payload = {}) {
+  const state = readState();
+  const thread = findAgent101Thread(state, threadId);
+  if (!thread || thread.archived) throw guardedError("Chat thread not found.", 404);
+  const messages = Array.isArray(payload.messages) ? payload.messages : [payload.message || payload];
+  appendAgent101ThreadMessages(thread, messages);
+  writeState(state);
+  return { thread, threads: publicAgent101ChatThreads(state) };
+}
+
 function shouldTriggerAgentRunner(message = "") {
   const text = String(message || "").toLowerCase();
   const workflowPhrases = [
     "find 5 practice streams",
+    "find practice streams",
     "practice streams",
+    "safe internal demo workflow",
+    "run the safe internal",
     "demo clipping workflow",
     "run the demo",
     "run clipping workflow",
     "make clips",
+    "make clip candidates",
     "create candidates",
     "clip candidates",
+    "capcut briefs",
+    "draft posting packages",
     "package top clips",
     "package the top",
     "go ahead",
@@ -4737,6 +4753,17 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req);
       sendJson(res, 201, createAgent101ChatThread(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agent101ChatAppendMatch = url.pathname.match(/^\/api\/agent101\/chats\/([^/]+)\/append$/);
+  if (req.method === "POST" && agent101ChatAppendMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, appendAgent101ChatThreadMessagesDirect(decodeURIComponent(agent101ChatAppendMatch[1]), payload));
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
     }

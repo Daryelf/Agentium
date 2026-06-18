@@ -1305,7 +1305,7 @@ function defaultAgentThread(roomId = "depo-habitat", flatMessages = []) {
       normalizeAgent101ChatMessage(
         {
           role: "agent",
-          content: "I'm ready. Ask me to plan, research, draft, or run a safe clipping workflow. Anything external stays behind Human Gate.",
+          content: "Ready. Send one goal and I will keep the plan, tool steps, approvals, saved outputs, and final summary in this thread.",
           status: "complete",
           metadata: { roomId },
         },

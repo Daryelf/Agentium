@@ -1828,7 +1828,7 @@ function createLocalAgentThread(roomId = "depo-habitat") {
   const message = normalizeClientAgentMessage(
     {
       role: "agent",
-      content: "I'm ready. Ask me to plan, research, draft, package, or run a safe internal workflow here.",
+      content: "Ready. Send one goal and I will keep the plan, tool steps, approvals, saved outputs, and final summary in this thread.",
       status: "complete",
       metadata: { roomId: resolved },
     },

@@ -27,6 +27,8 @@ const state = {
   approvals: [],
   artifacts: [],
   logs: [],
+  handoffs: [],
+  smokeTest: null,
   browser: null,
   capcut: null,
   media: null,
@@ -35,6 +37,8 @@ const state = {
   studioSeek: null,
   studioBusy: false,
   browserBusy: false,
+  smokeBusy: false,
+  smokeModalOpen: false,
   browserScreenshotStamp: 0,
   recommendations: [],
   recommendationsMessage: "",
@@ -245,7 +249,7 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, kick, browser, capcut, media, studio, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, browser, capcut, media, handoffs, smoke, studio, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
@@ -254,6 +258,8 @@ async function loadCore() {
     api("/api/browser/profile"),
     api("/api/capcut/status"),
     api("/api/media/status"),
+    api("/api/handoffs"),
+    api("/api/system/smoke-test"),
     api("/api/clipping-office/project"),
     api("/api/twitch/streamers"),
     api("/api/clips/candidates"),
@@ -272,6 +278,8 @@ async function loadCore() {
     browser,
     capcut,
     media,
+    handoffs: handoffs.handoffs || [],
+    smokeTest: smoke.latest || null,
     studio,
     streamers: streamers.streamers,
     candidates: candidates.candidates,
@@ -3557,16 +3565,138 @@ function renderSettings() {
   `;
 }
 
+function labelize(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function statusTone(value) {
+  const text = String(value || "").toLowerCase();
+  if (/ready|passed|connected|human_review|package_ready|capcut_open|completed/.test(text)) return "good";
+  if (/warning|pending|manual|human|paused|draft|preparing/.test(text)) return "warn";
+  if (/failed|error|blocked|cancelled|missing|rejected/.test(text)) return "bad";
+  return "neutral";
+}
+
+function getActiveHandoff() {
+  return (state.handoffs || []).find((handoff) => handoff.active) || (state.handoffs || [])[0] || null;
+}
+
+function renderPreflightList(handoff) {
+  const checks = handoff?.preflight?.checks || [];
+  return `
+    <div class="handoff-check-list">
+      ${checks.slice(0, 8).map((check) => `
+        <span class="${check.passed ? "ok" : "warn"}">
+          <b>${check.passed ? "OK" : "!"}</b>
+          <em>${esc(check.label)}</em>
+        </span>
+      `).join("") || empty("No preflight checks yet")}
+    </div>
+  `;
+}
+
+function renderActiveHandoff(handoff) {
+  if (!handoff) {
+    return `
+      <section class="panel browser-card active-handoff-card">
+        <h2>Active Handoff</h2>
+        ${empty("Select or package a clip to prepare a supervised CapCut handoff.")}
+        <button class="stretch" data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare latest package</button>
+      </section>
+    `;
+  }
+  return `
+    <section class="panel browser-card active-handoff-card">
+      <div class="browser-card-title">
+        <h2>Active Handoff</h2>
+        ${badge(labelize(handoff.status), statusTone(handoff.status))}
+      </div>
+      <article class="active-handoff-summary">
+        <div class="handoff-thumb ${handoff.thumbnail ? "" : "blank"}">
+          ${handoff.thumbnail ? `<img src="${esc(handoff.thumbnail)}" alt="">` : `<span>SC</span>`}
+        </div>
+        <div>
+          <strong>${esc(handoff.clipPackage?.title || "CapCut handoff")}</strong>
+          <p>${esc(handoff.creator?.displayName || "Creator pending")} · ${esc(handoff.outputDuration || 0)}s output</p>
+        </div>
+      </article>
+      <div class="kv compact">
+        <span>Render</span><span>${esc(handoff.renderStatus)}</span>
+        <span>Captions</span><span>${esc(handoff.captionStatus)}</span>
+        <span>Package</span><span>${esc(handoff.packageStatus)}</span>
+        <span>Expires</span><span>${fmtDate(handoff.expiresAt)}</span>
+      </div>
+      ${renderPreflightList(handoff)}
+      <div class="browser-card-actions">
+        <button data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare package</button>
+        <button class="primary" data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut</button>
+        <button data-browser-action="cancel-handoff" ${state.browserBusy ? "disabled" : ""}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderSmokeModal() {
+  if (!state.smokeModalOpen) return "";
+  const smoke = state.smokeTest;
+  const checks = smoke?.checks || [];
+  return `
+    <div class="modal-backdrop smoke-backdrop" role="presentation">
+      <section class="smoke-modal" role="dialog" aria-modal="true" aria-label="System smoke test">
+        <header>
+          <div>
+            <span class="eyebrow">System diagnostics</span>
+            <h2>Smoke Test</h2>
+            <p>Real checks for the API, media tools, supervised browser, CapCut DNS, and state storage. Warnings stay warnings.</p>
+          </div>
+          <button aria-label="Close smoke test" data-smoke-close>×</button>
+        </header>
+        <div class="smoke-summary">
+          ${badge(state.smokeBusy ? "Running" : labelize(smoke?.status || "Not run"), state.smokeBusy ? "warn" : statusTone(smoke?.status))}
+          <span><b>${esc(smoke?.durationMs ?? "--")}ms</b><small>Duration</small></span>
+          <span><b>${esc(checks.filter((check) => check.status === "failed").length)}</b><small>Failed</small></span>
+          <span><b>${esc(checks.filter((check) => check.status === "warning").length)}</b><small>Warnings</small></span>
+        </div>
+        <div class="smoke-checks">
+          ${state.smokeBusy && !checks.length ? `
+            ${["API", "FFmpeg", "Chromium", "CapCut DNS"].map((label) => `
+              <article class="running"><span></span><strong>${label}</strong><p>Running...</p></article>
+            `).join("")}
+          ` : checks.map((check) => `
+            <article class="${esc(check.status)}">
+              <span></span>
+              <div>
+                <strong>${esc(check.label)}</strong>
+                <p>${esc(check.message)}</p>
+                ${check.technical ? `<code>${esc(check.technical).slice(0, 280)}</code>` : ""}
+              </div>
+              <em>${esc(check.durationMs)}ms</em>
+            </article>
+          `).join("") || empty("Run the smoke test to see diagnostics.")}
+        </div>
+        <footer>
+          <button data-smoke-copy ${smoke ? "" : "disabled"}>Copy diagnostic report</button>
+          <button class="primary" data-smoke-retry ${state.smokeBusy ? "disabled" : ""}>${state.smokeBusy ? "Running..." : "Retry smoke test"}</button>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
 function renderBrowserWorkspace() {
   const browser = state.browser || {};
   const active = browser.activeSession || (browser.sessions || []).find((session) => session.status !== "closed") || null;
   const policies = browser.policies || [];
   const downloads = browser.downloads || [];
+  const handoff = getActiveHandoff();
   const screenshotUrl = active
     ? appUrl(`/api/browser/sessions/${active.id}/screenshot?stamp=${state.browserScreenshotStamp || Date.now()}`)
     : "";
   const controlTone = active?.controlMode === "agent_assisted" ? "info" : active?.controlMode === "paused" ? "warn" : "good";
   const mediaReady = state.media?.ffmpeg?.configured && state.media?.ffprobe?.configured;
+  const sessionStatus = active?.state || (active?.status ? labelize(active.status).toUpperCase() : "NOT_STARTED");
   view.innerHTML = `
     <section class="browser-workspace">
       <div class="browser-command">
@@ -3576,9 +3706,9 @@ function renderBrowserWorkspace() {
           <p>Persistent server-side browser profile. The operator sees the screen; secrets and cookies stay on the backend.</p>
         </div>
         <div class="browser-command-actions">
-          <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>Start browser</button>
+          <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>${state.browserBusy ? "Starting..." : "Start browser"}</button>
           <button data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut handoff</button>
-          <button data-browser-action="test-example" ${state.browserBusy ? "disabled" : ""}>Smoke test</button>
+          <button data-browser-action="test-example" ${state.smokeBusy ? "disabled" : ""}>${state.smokeBusy ? "Running..." : "Smoke test"}</button>
         </div>
       </div>
 
@@ -3589,6 +3719,7 @@ function renderBrowserWorkspace() {
             <button type="button" data-browser-action="forward" ${active ? "" : "disabled"}>Forward</button>
             <button type="button" data-browser-action="refresh" ${active ? "" : "disabled"}>Refresh</button>
             <input name="url" value="${esc(active?.currentUrl || "")}" placeholder="https://www.twitch.tv/directory or https://kick.com">
+            <span class="browser-domain-chip ${active?.policyMode || "none"}">${esc(active?.currentHostname || "No domain")}</span>
             <button class="primary" type="submit" ${active ? "" : "disabled"}>Go</button>
           </form>
 
@@ -3610,26 +3741,34 @@ function renderBrowserWorkspace() {
           </div>
 
           <div class="browser-control-strip">
-            ${active ? badge(active.controlMode || "human_control", controlTone) : badge("idle", "neutral")}
+            ${badge(sessionStatus, statusTone(sessionStatus))}
+            <span><b>${esc(active?.controlMode || "human_control")}</b><small>Control mode</small></span>
             <span><b>${esc(active?.policyMode || "none")}</b><small>Policy mode</small></span>
             <span><b>${esc(active?.title || "No page")}</b><small>Current page</small></span>
             <div class="browser-control-buttons">
               <button data-browser-action="refresh-shot" ${active ? "" : "disabled"}>Refresh screen</button>
               <button data-browser-action="take-control" ${active ? "" : "disabled"}>Human control</button>
               <button data-browser-action="give-agent-control" ${active && !active.privacyShield?.active ? "" : "disabled"}>Agent assisted</button>
-              <button data-browser-action="pause" ${active ? "" : "disabled"}>Pause</button>
+              <button data-browser-action="${active?.controlMode === "paused" ? "resume" : "pause"}" ${active ? "" : "disabled"}>${active?.controlMode === "paused" ? "Resume" : "Pause"}</button>
             </div>
           </div>
         </section>
 
         <aside class="browser-side">
           <section class="panel browser-card">
-            <h2>Session</h2>
+            <div class="browser-card-title">
+              <h2>Session</h2>
+              ${badge(sessionStatus, statusTone(sessionStatus))}
+            </div>
             <div class="kv">
-              <span>Status</span><span>${esc(active?.status || "Not started")}</span>
-              <span>Mode</span><span>${esc(browser.mode || "screenshot")}</span>
+              <span>Status</span><span>${esc(sessionStatus)}</span>
+              <span>Mode</span><span>${esc(active?.mode || browser.mode || "headless_screenshot")}</span>
               <span>Viewport</span><span>${esc(active?.viewport ? `${active.viewport.width}x${active.viewport.height}` : `${state.config?.browserViewport?.width || 1440}x${state.config?.browserViewport?.height || 900}`)}</span>
-              <span>Secrets</span><span>server-side only</span>
+              <span>Browser</span><span>${esc(active?.browserEngine || "Chromium")}</span>
+              <span>Profile</span><span>server-side only</span>
+              <span>Started</span><span>${fmtDate(active?.startedAt)}</span>
+              <span>Last activity</span><span>${fmtDate(active?.lastActivityAt)}</span>
+              <span>Latency</span><span>${esc(active?.latencyMs ? `${active.latencyMs}ms` : "Not measured")}</span>
             </div>
             ${active?.lastError ? `<p class="browser-error">${esc(active.lastError)}</p>` : ""}
           </section>
@@ -3639,15 +3778,17 @@ function renderBrowserWorkspace() {
             <div class="browser-status-list">
               <span><b>CapCut</b><em>${esc(state.capcut?.status || "manual_handoff")}</em></span>
               <span><b>FFmpeg</b><em>${mediaReady ? "ready" : "manual handoff"}</em></span>
+              <span><b>Object storage</b><em>${state.config?.objectStorageConfigured ? "ready" : "local only"}</em></span>
               <span><b>Posting</b><em>Human Gate required</em></span>
             </div>
             <button class="primary stretch" data-browser-action="open-capcut">Open CapCut handoff</button>
+            <button class="stretch" data-browser-action="prepare-handoff">Prepare handoff package</button>
           </section>
 
           <section class="panel browser-card">
             <h2>Allowed Domains</h2>
             <div class="browser-policy-list">
-              ${policies.slice(0, 8).map((policy) => `
+              ${policies.map((policy) => `
                 <span>
                   <b>${esc(policy.domain)}</b>
                   <em>${esc(policy.mode)}</em>
@@ -3656,7 +3797,9 @@ function renderBrowserWorkspace() {
             </div>
           </section>
 
-          <section class="panel browser-card">
+          ${renderActiveHandoff(handoff)}
+
+          <section class="panel browser-card compact-card">
             <h2>Recent Activity</h2>
             <div class="activity-list browser-activity-list">
               ${(browser.actions || []).slice(0, 5).map((action) => `
@@ -3669,7 +3812,7 @@ function renderBrowserWorkspace() {
             </div>
           </section>
 
-          <section class="panel browser-card">
+          <section class="panel browser-card compact-card">
             <h2>Downloads</h2>
             <div class="browser-download-list">
               ${downloads.slice(0, 4).map((download) => `<span><b>${esc(download.suggestedFilename || download.filename)}</b><em>${fmtDate(download.createdAt)}</em></span>`).join("") || empty("No browser downloads")}
@@ -3678,6 +3821,7 @@ function renderBrowserWorkspace() {
         </aside>
       </div>
     </section>
+    ${renderSmokeModal()}
   `;
 }
 
@@ -3773,12 +3917,20 @@ function cleanCommand(value) {
 }
 
 async function loadBrowserState() {
-  const [browser, capcut, media] = await Promise.all([
+  const [browser, capcut, media, handoffs, smoke] = await Promise.all([
     api("/api/browser/profile"),
     api("/api/capcut/status"),
-    api("/api/media/status")
+    api("/api/media/status"),
+    api("/api/handoffs"),
+    api("/api/system/smoke-test")
   ]);
-  Object.assign(state, { browser, capcut, media });
+  Object.assign(state, {
+    browser,
+    capcut,
+    media,
+    handoffs: handoffs.handoffs || [],
+    smokeTest: smoke.latest || state.smokeTest
+  });
 }
 
 async function ensureBrowserSession() {
@@ -3813,6 +3965,43 @@ async function navigateBrowser(form) {
   }
 }
 
+async function ensureHandoffPackage({ prepare = false } = {}) {
+  let handoff = getActiveHandoff();
+  if (!handoff) {
+    const clipPackage = state.packages?.[0];
+    if (!clipPackage?.id) throw new Error("Create a clip package before preparing a CapCut handoff.");
+    const created = await api("/api/handoffs", {
+      method: "POST",
+      body: JSON.stringify({ clipPackageId: clipPackage.id })
+    });
+    handoff = created.handoff;
+  }
+  if (prepare && handoff?.id) {
+    const prepared = await api(`/api/handoffs/${handoff.id}/prepare`, { method: "POST", body: "{}" });
+    handoff = prepared.handoff;
+  }
+  await loadBrowserState();
+  return handoff;
+}
+
+async function runSystemSmoke() {
+  state.smokeModalOpen = true;
+  state.smokeBusy = true;
+  render();
+  try {
+    const result = await api("/api/system/smoke-test", { method: "POST", body: "{}" });
+    state.smokeTest = result.smokeTest;
+    toast(`Smoke test ${result.smokeTest.status}`, statusTone(result.smokeTest.status));
+    await loadBrowserState();
+  } catch (error) {
+    toast(error.message, "bad");
+  } finally {
+    state.smokeBusy = false;
+    renderNav();
+    render();
+  }
+}
+
 async function handleBrowserAction(action) {
   const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
   state.browserBusy = true;
@@ -3825,16 +4014,26 @@ async function handleBrowserAction(action) {
       });
       toast("Browser session started", "good");
     } else if (action === "test-example") {
-      const sessionId = await ensureBrowserSession();
-      await api(`/api/browser/sessions/${sessionId}/navigate`, {
-        method: "POST",
-        body: JSON.stringify({ url: "https://example.com" })
-      });
-      state.browserScreenshotStamp = Date.now();
-      toast("Browser smoke test loaded", "good");
+      state.browserBusy = false;
+      await runSystemSmoke();
+      return;
+    } else if (action === "prepare-handoff") {
+      await ensureHandoffPackage({ prepare: true });
+      toast("CapCut handoff package prepared", "good");
+    } else if (action === "cancel-handoff") {
+      const handoff = getActiveHandoff();
+      if (!handoff?.id) return;
+      if (!window.confirm("Cancel this CapCut handoff? The generated artifacts stay saved.")) return;
+      await api(`/api/handoffs/${handoff.id}/cancel`, { method: "POST", body: "{}" });
+      toast("CapCut handoff cancelled", "info");
     } else if (action === "open-capcut") {
+      const handoff = await ensureHandoffPackage({ prepare: false }).catch(() => null);
       const body = active?.id ? { sessionId: active.id } : {};
-      await api("/api/capcut/open", { method: "POST", body: JSON.stringify(body) });
+      if (handoff?.id) {
+        await api(`/api/handoffs/${handoff.id}/open-capcut`, { method: "POST", body: JSON.stringify(body) });
+      } else {
+        await api("/api/capcut/open", { method: "POST", body: JSON.stringify(body) });
+      }
       state.browserScreenshotStamp = Date.now();
       toast("CapCut handoff opened in human-control mode", "good");
     } else if (action === "refresh-shot") {
@@ -3846,9 +4045,14 @@ async function handleBrowserAction(action) {
       toast("Browser profile reset", "info");
     } else if (["back", "forward", "refresh", "take-control", "give-agent-control", "pause"].includes(action)) {
       if (!active?.id) return;
+      if (action === "give-agent-control" && !window.confirm("Agent Assisted only allows approved, reversible actions. Login, CAPTCHA, payments, uploads, publishing, and destructive actions stay blocked. Continue?")) return;
       await api(`/api/browser/sessions/${active.id}/${action}`, { method: "POST", body: "{}" });
       state.browserScreenshotStamp = Date.now();
       toast("Browser control updated", "good");
+    } else if (action === "resume") {
+      if (!active?.id) return;
+      await api(`/api/browser/sessions/${active.id}/resume`, { method: "POST", body: "{}" });
+      toast("Browser session resumed in human-control mode", "good");
     }
     await loadBrowserState();
   } catch (error) {
@@ -4082,6 +4286,9 @@ document.addEventListener("click", async (event) => {
   const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
   const browserAction = target.closest("[data-browser-action]")?.dataset.browserAction;
+  const smokeClose = target.closest("[data-smoke-close]");
+  const smokeRetry = target.closest("[data-smoke-retry]");
+  const smokeCopy = target.closest("[data-smoke-copy]");
   const studioTab = target.closest("[data-studio-tab]")?.dataset.studioTab;
   const studioAction = target.closest("[data-studio-action]")?.dataset.studioAction;
   const studioCandidate = target.closest("[data-studio-select-candidate]")?.dataset.studioSelectCandidate;
@@ -4124,6 +4331,20 @@ document.addEventListener("click", async (event) => {
     }
     if (browserAction) {
       await handleBrowserAction(browserAction);
+      return;
+    }
+    if (smokeClose) {
+      state.smokeModalOpen = false;
+      render();
+      return;
+    }
+    if (smokeRetry) {
+      await runSystemSmoke();
+      return;
+    }
+    if (smokeCopy) {
+      await navigator.clipboard?.writeText(JSON.stringify(state.smokeTest || {}, null, 2));
+      toast("Smoke diagnostic report copied", "good");
       return;
     }
     if (studioTab) {

@@ -14,7 +14,12 @@ const DEFAULT_POLICIES = [
   { domain: "kick.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Login and account actions are blocked." },
   { domain: "www.kick.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Login and account actions are blocked." },
   { domain: "youtube.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Uploads are blocked." },
-  { domain: "www.youtube.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Uploads are blocked." }
+  { domain: "www.youtube.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Uploads are blocked." },
+  { domain: "studio.youtube.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "YouTube Studio is human-only. Uploading and publishing require Human Gate." },
+  { domain: "tiktok.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "TikTok account actions are human-only." },
+  { domain: "www.tiktok.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "TikTok account actions are human-only." },
+  { domain: "instagram.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "Instagram account actions are human-only." },
+  { domain: "www.instagram.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "Instagram account actions are human-only." }
 ];
 
 const BLOCKED_PROTOCOLS = new Set(["file:", "javascript:", "data:", "chrome:", "chrome-extension:", "about:", "blob:", "ftp:"]);
@@ -93,20 +98,49 @@ function domainMatches(policyDomain, hostname) {
   return host === policyHost || host.endsWith(`.${policyHost}`);
 }
 
+function hostnameFromUrl(value) {
+  try {
+    return new URL(value).hostname || "";
+  } catch {
+    return "";
+  }
+}
+
+function sessionStateLabel(session) {
+  if (!session) return "NOT_STARTED";
+  if (session.status === "starting") return "STARTING";
+  if (session.status === "loading") return "NAVIGATING";
+  if (session.status === "blocked") return "ERROR";
+  if (session.status === "paused" || session.controlMode === "paused") return "PAUSED";
+  if (session.status === "closed") return "CLOSED";
+  if (session.controlMode === "human_control" && session.currentUrl) return "WAITING_FOR_HUMAN";
+  if (session.status === "ready" || session.status === "idle") return "READY";
+  return String(session.status || "NOT_STARTED").toUpperCase();
+}
+
 function publicSession(session) {
   if (!session) return null;
   return {
     id: session.id,
     purpose: session.purpose,
     status: session.status,
+    state: sessionStateLabel(session),
     controlMode: session.controlMode,
+    mode: session.controlMode === "agent_assisted" ? "AGENT_ASSISTED" : session.controlMode === "paused" ? "PAUSED" : "HUMAN_CONTROL",
+    engine: "Chromium",
+    browserEngine: "Chromium",
     policyMode: session.policyMode,
     currentUrl: session.currentUrl,
+    currentHostname: hostnameFromUrl(session.currentUrl),
     title: session.title,
+    startedAt: session.startedAt || session.createdAt,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    lastActivityAt: session.updatedAt,
+    closedAt: session.closedAt || null,
     lastNavigationAt: session.lastNavigationAt,
     lastScreenshotAt: session.lastScreenshotAt,
+    latencyMs: session.latencyMs || null,
     privacyShield: session.privacyShield || { active: false },
     lastError: session.lastError || "",
     viewport: session.viewport
@@ -357,21 +391,25 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       const session = {
         id: helpers.newId("browser_session"),
         purpose,
-        status: "idle",
+        status: "starting",
         controlMode: "human_control",
         policyMode: "none",
         currentUrl: "",
         title: "New browser session",
+        startedAt: now(),
         createdAt: now(),
         updatedAt: now(),
         lastNavigationAt: null,
         lastScreenshotAt: null,
+        latencyMs: null,
         viewport: config.browserViewport,
         privacyShield: { active: false }
       };
       browser.sessions.unshift(session);
       browser.sessions = browser.sessions.slice(0, 12);
       await pageForSession(session);
+      session.status = "ready";
+      session.updatedAt = now();
       await appendAction(session, "session_created", { actor, purpose });
       if (url) await this.navigate(session.id, url, { actor });
       await persist();
@@ -383,6 +421,7 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       const page = runtime.pages.get(session.id);
       if (page && !page.isClosed()) await page.close();
       session.status = "closed";
+      session.closedAt = now();
       session.updatedAt = now();
       await appendAction(session, "session_closed", { actor: "operator" });
       await persist();
@@ -428,12 +467,14 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       session.lastError = "";
       session.updatedAt = now();
       await appendAction(session, "navigate", { actor, url: policy.url.href, policyMode: policy.mode });
+      const started = Date.now();
       await page.goto(policy.url.href, { waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs });
       await page.waitForLoadState("networkidle", { timeout: Math.min(7000, config.browserNavigationTimeoutMs) }).catch(() => {});
       await updateSensitivity(session, page);
       session.status = session.privacyShield?.active ? "human_control" : "ready";
       session.currentUrl = sanitizeUrl(page.url());
       session.title = await page.title().catch(() => policy.url.hostname);
+      session.latencyMs = Date.now() - started;
       session.lastNavigationAt = now();
       session.updatedAt = now();
       await log("browser_navigated", "Browser workspace navigated", {
@@ -450,6 +491,7 @@ export function createBrowserWorkspace({ config, state, helpers }) {
     async simplePageAction(sessionId, action, { actor = "operator" } = {}) {
       const session = findSession(sessionId);
       const page = await pageForSession(session);
+      const started = Date.now();
       if (action === "back") await page.goBack({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
       else if (action === "forward") await page.goForward({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
       else if (action === "refresh") await page.reload({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
@@ -458,6 +500,7 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       session.currentUrl = sanitizeUrl(page.url());
       session.title = await page.title().catch(() => session.title);
       session.status = session.privacyShield?.active ? "human_control" : "ready";
+      session.latencyMs = Date.now() - started;
       session.updatedAt = now();
       session.lastNavigationAt = now();
       await appendAction(session, action, { actor, url: session.currentUrl });

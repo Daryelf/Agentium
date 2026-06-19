@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import dns from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -54,6 +55,9 @@ const config = {
   kickClientId: process.env.KICK_CLIENT_ID || "",
   kickClientSecret: process.env.KICK_CLIENT_SECRET || "",
   kickOAuthToken: process.env.KICK_OAUTH_TOKEN || "",
+  databaseUrl: process.env.DATABASE_URL || "",
+  redisUrl: process.env.REDIS_URL || "",
+  objectStorageBucket: process.env.S3_BUCKET || process.env.AWS_BUCKET || process.env.MINIO_BUCKET || "",
   uploadDir: path.resolve(__dirname, process.env.CLIPPER_UPLOAD_DIR || "./uploads"),
   outputDir: path.resolve(__dirname, process.env.CLIPPER_OUTPUT_DIR || "./outputs"),
   browserEnabled: process.env.BROWSER_ENABLED !== "false",
@@ -85,6 +89,8 @@ const stateDefaults = {
   discoveredStreamers: [],
   executionContracts: [],
   agentRuns: [],
+  handoffPackages: [],
+  smokeTests: [],
   twitchValidation: null,
   logs: [],
   browser: {
@@ -290,6 +296,7 @@ function publicConfig() {
     browserMode: config.browserHeadless ? "headless_screenshot" : "headed_local",
     browserViewport: config.browserViewport,
     capcutManualHandoff: Boolean(config.capcutHandoffUrl),
+    objectStorageConfigured: Boolean(config.objectStorageBucket),
     uploadDir: config.uploadDir,
     outputDir: config.outputDir
   };
@@ -2272,6 +2279,425 @@ async function createAgentCapCutBrief(clipPackage) {
   return { brief, artifacts: [jsonArtifact, textArtifact], reused: false };
 }
 
+const HANDOFF_ACTIVE_STATUSES = new Set([
+  "DRAFT",
+  "PREPARING",
+  "PACKAGE_READY",
+  "BROWSER_STARTING",
+  "CAPCUT_OPEN",
+  "WAITING_FOR_LOGIN",
+  "WAITING_FOR_UPLOAD",
+  "UPLOADING",
+  "HUMAN_EDITING",
+  "WAITING_FOR_EXPORT",
+  "EXPORT_DETECTED",
+  "IMPORTING_EXPORT",
+  "TECHNICAL_QA",
+  "HUMAN_REVIEW"
+]);
+
+function resolveClipPackageForHandoff(body = {}) {
+  const clipId = cleanText(body.clipId || body.candidateClipId);
+  const packageId = cleanText(body.clipPackageId || body.packageId);
+  const renderId = cleanText(body.renderId || body.renderedArtifactId);
+  return (
+    state.clipPackages.find((item) => item.id === packageId) ||
+    state.clipPackages.find((item) => item.id === clipId || item.candidateId === clipId) ||
+    state.clipPackages.find((item) => item.renderedArtifactId === renderId) ||
+    null
+  );
+}
+
+function handoffPreflight(handoff) {
+  const clipPackage = state.clipPackages.find((item) => item.id === handoff.clipPackageId);
+  const candidate = state.clipCandidates.find((item) => item.id === clipPackage?.candidateId);
+  const streamer = findStreamer(candidate?.streamerId);
+  const source = findExistingMediaSource(candidate?.sourceId);
+  const rendered = state.artifacts.find((artifact) => artifact.id === (handoff.renderId || clipPackage?.renderedArtifactId));
+  const captionArtifact = state.artifacts.find((artifact) =>
+    ["captions", "caption_set"].includes(artifact.kind || artifact.type) &&
+    (clipPackage?.artifacts || []).some((ref) => (typeof ref === "string" ? ref : ref?.id) === artifact.id)
+  );
+  const checks = [
+    {
+      key: "source_video",
+      label: "Source video exists",
+      passed: Boolean(source?.filePath || candidate?.mediaPlayable || rendered?.path),
+      message: source?.filePath || candidate?.mediaPlayable || rendered?.path
+        ? "Source media is tracked in StreamClipper."
+        : "No source file is linked yet. Manual source upload is required before export QA."
+    },
+    {
+      key: "vertical_render",
+      label: "Vertical render exists",
+      passed: artifactIsVerifiedClip(rendered),
+      message: artifactIsVerifiedClip(rendered)
+        ? "A verified 9:16 draft is available."
+        : "No verified vertical draft MP4 exists yet."
+    },
+    {
+      key: "audio_track",
+      label: "Audio track exists",
+      passed: Boolean(rendered?.content?.probe?.hasAudio || rendered?.content?.hasAudio || clipPackage?.audioStatus === "ready"),
+      message: rendered?.content?.probe?.hasAudio || rendered?.content?.hasAudio
+        ? "Audio was detected on the rendered clip."
+        : "Audio has not been verified yet."
+    },
+    {
+      key: "captions",
+      label: "Captions generated",
+      passed: Boolean(captionArtifact || clipPackage?.captionOverlays?.length || clipPackage?.packagePlan?.captionOverlays?.length),
+      message: "Caption overlays or files are available for the handoff notes."
+    },
+    {
+      key: "rights",
+      label: "Rights status approved",
+      passed: isApprovedStreamer(streamer),
+      message: isApprovedStreamer(streamer)
+        ? `${streamer?.displayName || "Creator"} is approved for this local workflow.`
+        : "Creator permission is not approved; Human Gate must review before external use."
+    },
+    {
+      key: "human_review",
+      label: "Human review complete",
+      passed: clipPackage?.approvalStatus === "approved" || handoff.reviewStatus === "approved",
+      message: clipPackage?.approvalStatus === "approved" || handoff.reviewStatus === "approved"
+        ? "Human review is complete."
+        : "Human Gate approval is still required before posting or public use."
+    },
+    {
+      key: "temporary_links",
+      label: "Temporary download links created",
+      passed: Boolean(rendered?.url || rendered?.playbackUrl),
+      message: rendered?.url || rendered?.playbackUrl
+        ? "Local download/playback URL is available."
+        : "No verified media link exists yet; handoff package will include instructions only."
+    },
+    {
+      key: "browser_ready",
+      label: "Browser session ready",
+      passed: Boolean(state.browser?.sessions?.some((session) => session.status !== "closed")),
+      message: state.browser?.sessions?.some((session) => session.status !== "closed")
+        ? "A supervised browser session is available."
+        : "Start a supervised browser session when you are ready to open CapCut."
+    }
+  ];
+  return {
+    checks,
+    passed: checks.every((check) => check.passed),
+    warnings: checks.filter((check) => !check.passed).map((check) => check.message)
+  };
+}
+
+function publicHandoff(handoff) {
+  if (!handoff) return null;
+  const clipPackage = state.clipPackages.find((item) => item.id === handoff.clipPackageId);
+  const candidate = state.clipCandidates.find((item) => item.id === clipPackage?.candidateId);
+  const streamer = findStreamer(candidate?.streamerId);
+  const rendered = state.artifacts.find((artifact) => artifact.id === (handoff.renderId || clipPackage?.renderedArtifactId));
+  return {
+    ...handoff,
+    clipPackage,
+    candidate,
+    creator: streamer ? { id: streamer.id, displayName: streamer.displayName, platform: streamer.platform } : null,
+    active: HANDOFF_ACTIVE_STATUSES.has(handoff.status),
+    preflight: handoffPreflight(handoff),
+    thumbnail: candidate?.thumbnailUrl || candidate?.frameUrl || rendered?.thumbnailUrl || "",
+    sourceDuration: candidate?.duration || clipPackage?.targetDuration || 0,
+    outputDuration: clipPackage?.targetDuration || candidate?.duration || 0,
+    renderStatus: artifactIsVerifiedClip(rendered) ? "verified" : "missing",
+    captionStatus: clipPackage?.captionOverlays?.length ? "ready" : "needs review",
+    packageStatus: handoff.artifactIds?.length ? "ready" : "draft"
+  };
+}
+
+async function setHandoffStatus(handoff, status, actor = "operator", message = "", metadata = {}) {
+  handoff.status = status;
+  handoff.updatedAt = now();
+  const event = {
+    id: newId("handoff_event"),
+    handoffId: handoff.id,
+    status,
+    actor,
+    message: message || status.toLowerCase().replaceAll("_", " "),
+    metadata,
+    createdAt: now()
+  };
+  handoff.events ||= [];
+  handoff.events.unshift(event);
+  await logEvent("handoff_state_changed", event.message, {
+    handoffId: handoff.id,
+    status,
+    actor,
+    ...metadata
+  });
+  return event;
+}
+
+async function createHandoffPackage(body = {}) {
+  const clipPackage = resolveClipPackageForHandoff(body);
+  if (!clipPackage) {
+    throw Object.assign(new Error("No clip package is ready for a CapCut handoff."), { statusCode: 404 });
+  }
+  const existing = state.handoffPackages.find(
+    (handoff) => handoff.clipPackageId === clipPackage.id && !["COMPLETED", "CANCELLED"].includes(handoff.status)
+  );
+  if (existing) return { handoff: existing, reused: true };
+  const candidate = state.clipCandidates.find((item) => item.id === clipPackage.candidateId);
+  const streamer = findStreamer(candidate?.streamerId);
+  const rendered = state.artifacts.find((artifact) => artifact.id === (body.renderId || clipPackage.renderedArtifactId));
+  const handoff = {
+    id: newId("handoff"),
+    organizationId: "local",
+    creatorId: streamer?.id || "",
+    candidateClipId: candidate?.id || clipPackage.candidateId || "",
+    clipPackageId: clipPackage.id,
+    editProjectId: body.editProjectId || DEMO_PROJECT_ID,
+    renderId: rendered?.id || clipPackage.renderedArtifactId || "",
+    browserSessionId: "",
+    status: "DRAFT",
+    sourceAssetKey: candidate?.sourceId || "",
+    draftAssetKey: rendered?.filename || rendered?.id || "",
+    captionSrtKey: "",
+    captionVttKey: "",
+    editPlanKey: "",
+    socialCopyKey: "",
+    thumbnailKey: "",
+    exportedAssetKey: "",
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString(),
+    createdById: body.createdById || "operator",
+    artifactIds: [],
+    reviewStatus: clipPackage.approvalStatus || "draft",
+    events: [],
+    createdAt: now(),
+    updatedAt: now()
+  };
+  state.handoffPackages.unshift(handoff);
+  await setHandoffStatus(handoff, "DRAFT", "operator", "CapCut handoff package drafted", { clipPackageId: clipPackage.id });
+  await saveState();
+  return { handoff, reused: false };
+}
+
+function handoffReadme() {
+  return [
+    "StreamClipper Supervised CapCut Handoff",
+    "",
+    "1. Upload vertical-draft.mp4 when available, or use the original/source media shown in StreamClipper.",
+    "2. Import captions.srt where CapCut supports captions.",
+    "3. Review edit-plan.json before changing timing, crops, captions, or music.",
+    "4. Do not alter the creator's meaning.",
+    "5. Export at 1080 x 1920.",
+    "6. Use H.264 video and AAC audio where available.",
+    "7. Return the exported file to StreamClipper for technical QA.",
+    "8. Do not publish directly unless the creator and Human Gate have separately approved it.",
+    "",
+    "CapCut is human-controlled. Agent 101 will not log in, solve CAPTCHA, buy anything, publish, or operate account settings."
+  ].join("\n");
+}
+
+function captionFileText(overlays = [], type = "srt") {
+  const lines = (overlays.length ? overlays : ["Watch this", "No way", "Wait for the payoff"]).slice(0, 5);
+  if (type === "vtt") {
+    return `WEBVTT\n\n${lines.map((line, index) => {
+      const start = String(index * 2).padStart(2, "0");
+      const end = String(index * 2 + 2).padStart(2, "0");
+      return `00:00:${start}.000 --> 00:00:${end}.000\n${line}`;
+    }).join("\n\n")}`;
+  }
+  return lines.map((line, index) => {
+    const start = String(index * 2).padStart(2, "0");
+    const end = String(index * 2 + 2).padStart(2, "0");
+    return `${index + 1}\n00:00:${start},000 --> 00:00:${end},000\n${line}`;
+  }).join("\n\n");
+}
+
+async function prepareHandoffPackage(handoff) {
+  const clipPackage = state.clipPackages.find((item) => item.id === handoff.clipPackageId);
+  if (!clipPackage) throw Object.assign(new Error("Clip package not found."), { statusCode: 404 });
+  await setHandoffStatus(handoff, "PREPARING", "agent101", "Preparing supervised CapCut handoff package", { clipPackageId: clipPackage.id });
+  const candidate = state.clipCandidates.find((item) => item.id === clipPackage.candidateId);
+  const plan = clipPackage.packagePlan || buildPackage(candidate || {});
+  const briefResult = await createAgentCapCutBrief(clipPackage);
+  const editPlan = {
+    clipId: candidate?.id || clipPackage.candidateId,
+    packageId: clipPackage.id,
+    sourceIn: candidate?.timestampStart || "00:00:00",
+    sourceOut: candidate?.timestampEnd || "",
+    outputDimensions: "1080x1920",
+    frameRate: "source-native 30/60fps",
+    faceCamCrop: plan.cropGuidance?.[0] || "Keep creator reaction visible when present.",
+    gameplayCrop: plan.cropGuidance?.[1] || "Keep primary action centered.",
+    captionSafeZone: "Avoid bottom 18% and right platform UI strip.",
+    hookText: plan.hook || clipPackage.hook || clipPackage.title,
+    speakerLabels: ["Creator", "Chat/context"],
+    audioNormalizationNotes: "Keep original meaning and avoid heavy music over speech.",
+    sensitiveWordMarkers: [],
+    brandTemplateId: "streamclipper-default",
+    recommendedExportSettings: {
+      aspectRatio: "9:16",
+      resolution: "1080x1920",
+      codec: "H.264",
+      audio: "AAC",
+      container: "MP4"
+    }
+  };
+  const socialCopy = {
+    suggestedTitle: plan.title || clipPackage.title,
+    tiktokCaption: plan.captions?.tiktok || `${plan.hook}. ${plan.title}`,
+    youtubeShortsTitle: plan.title || clipPackage.title,
+    instagramReelCaption: plan.captions?.reels || `${plan.title}. ${plan.hook}`,
+    hashtagCandidates: plan.hashtags || [],
+    sponsorDisclosure: "None identified. Add disclosure if sponsor/affiliate context exists.",
+    contentWarningRecommendation: "No content warning detected from current draft metadata.",
+    creatorApprovalNotes: "Human Gate must approve before any public posting."
+  };
+  const artifacts = [
+    ...(briefResult.artifacts || []),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-edit-plan`, editPlan, "json"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-social-copy`, socialCopy, "json"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-captions`, captionFileText(plan.captionOverlays || clipPackage.captionOverlays || [], "srt"), "srt"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-captions`, captionFileText(plan.captionOverlays || clipPackage.captionOverlays || [], "vtt"), "vtt"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-transcript`, candidate?.transcriptSnippet || "Transcript unavailable. Review source media manually.", "txt"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-clip-details`, { clipPackage, candidate, preflight: handoffPreflight(handoff) }, "json"),
+    await writeArtifact("capcut_handoff", `${clipPackage.title}-README`, handoffReadme(), "txt")
+  ];
+  handoff.artifactIds = Array.from(new Set([...(handoff.artifactIds || []), ...artifacts.map((artifact) => artifact.id)]));
+  handoff.captionSrtKey = artifacts.find((artifact) => artifact.filename?.endsWith(".srt"))?.filename || "";
+  handoff.captionVttKey = artifacts.find((artifact) => artifact.filename?.endsWith(".vtt"))?.filename || "";
+  handoff.editPlanKey = artifacts.find((artifact) => artifact.title.includes("edit-plan"))?.filename || "";
+  handoff.socialCopyKey = artifacts.find((artifact) => artifact.title.includes("social-copy"))?.filename || "";
+  clipPackage.handoffId = handoff.id;
+  clipPackage.updatedAt = now();
+  await setHandoffStatus(handoff, "PACKAGE_READY", "agent101", "CapCut handoff package is ready for human-controlled editing", {
+    artifacts: artifacts.length,
+    preflightPassed: handoffPreflight(handoff).passed
+  });
+  await saveState();
+  return { handoff, artifacts };
+}
+
+function smokeResultStatus(checks) {
+  if (checks.some((check) => check.status === "failed")) return "failed";
+  if (checks.some((check) => check.status === "warning")) return "warning";
+  return "passed";
+}
+
+function createSmokeCheck(key, label, status, message, technical = "", startedAt = Date.now()) {
+  return {
+    key,
+    label,
+    status,
+    message,
+    technical,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    completedAt: now()
+  };
+}
+
+async function runSystemSmokeTest() {
+  const startedAt = now();
+  const checks = [];
+  const runCheck = async (key, label, fn) => {
+    const started = Date.now();
+    try {
+      const result = await fn();
+      checks.push(createSmokeCheck(key, label, result.status || "passed", result.message || "Passed.", result.technical || "", started));
+    } catch (error) {
+      checks.push(createSmokeCheck(key, label, "failed", error.message || "Check failed.", error.stack || error.message, started));
+    }
+  };
+
+  await runCheck("api", "API reachable", async () => ({ status: "passed", message: "StreamClipper API route handler is responding." }));
+  await runCheck("state", "Persistent state writable", async () => {
+    await fs.access(path.dirname(DATA_FILE));
+    await saveState();
+    return { status: "passed", message: "Local JSON state is writable." };
+  });
+  await runCheck("postgres", "PostgreSQL reachable", async () => ({
+    status: config.databaseUrl ? "warning" : "warning",
+    message: config.databaseUrl
+      ? "DATABASE_URL is set, but this plain Node prototype does not include a Postgres client yet."
+      : "PostgreSQL is not configured in this local prototype.",
+    technical: "Use DATABASE_URL plus a database adapter before marking this check passed."
+  }));
+  await runCheck("redis", "Redis reachable", async () => ({
+    status: config.redisUrl ? "warning" : "warning",
+    message: config.redisUrl
+      ? "REDIS_URL is set, but BullMQ/Redis workers are not installed in this prototype yet."
+      : "Redis is not configured; background work is in-process/local only.",
+    technical: "Use REDIS_URL and a queue worker before marking Redis passed."
+  }));
+  await runCheck("queue", "Queue reachable", async () => ({
+    status: "warning",
+    message: "Queue foundation is local/in-process. No BullMQ worker is connected yet."
+  }));
+  await runCheck("storage", "Object storage reachable", async () => {
+    await fs.access(config.outputDir);
+    return {
+      status: config.objectStorageBucket ? "warning" : "warning",
+      message: config.objectStorageBucket
+        ? "Object-storage env is present, but this build still writes to local output storage."
+        : "Local output storage is writable; S3-compatible object storage is not configured yet.",
+      technical: `outputDir=${config.outputDir}`
+    };
+  });
+  const media = await mediaToolStatus();
+  checks.push(createSmokeCheck("ffmpeg", "FFmpeg installed", media.ffmpeg.configured ? "passed" : "failed", media.ffmpeg.configured ? "FFmpeg is available." : media.ffmpeg.message, media.ffmpeg.version || media.ffmpeg.command));
+  checks.push(createSmokeCheck("ffprobe", "FFprobe installed", media.ffprobe.configured ? "passed" : "failed", media.ffprobe.configured ? "FFprobe is available." : media.ffprobe.message, media.ffprobe.version || media.ffprobe.command));
+  await runCheck("browser_worker", "Browser worker reachable", async () => {
+    if (!config.browserEnabled) return { status: "warning", message: "Browser workspace is disabled by BROWSER_ENABLED=false." };
+    await import("playwright");
+    return { status: "passed", message: "Playwright browser worker module loaded." };
+  });
+  await runCheck("chromium", "Chromium executable available", async () => {
+    const { chromium } = await import("playwright");
+    const executablePath = chromium.executablePath();
+    await fs.access(executablePath);
+    return { status: "passed", message: "Chromium executable is available.", technical: executablePath };
+  });
+  await runCheck("signed_url", "Temporary signed URL creation works", async () => ({
+    status: "warning",
+    message: "Production signed asset URLs are not configured yet; local output URLs are available.",
+    technical: `expiresAt=${new Date(Date.now() + 10 * 60 * 1000).toISOString()}`
+  }));
+  await runCheck("capcut_dns", "CapCut hostname resolves", async () => {
+    const hostname = new URL(config.capcutHandoffUrl).hostname;
+    const result = await dns.lookup(hostname);
+    return { status: "passed", message: `${hostname} resolved.`, technical: JSON.stringify(result) };
+  });
+  await runCheck("browser_session", "Create and close test browser session", async () => {
+    if (!config.browserEnabled) return { status: "warning", message: "Browser workspace disabled." };
+    const workspace = browserWorkspace();
+    const session = await workspace.createSession({ purpose: "Smoke test browser session", actor: "system" });
+    await workspace.closeSession(session.id);
+    return { status: "passed", message: "Created and closed a supervised browser session.", technical: session.id };
+  });
+  await runCheck("sse", "SSE connection endpoint registered", async () => ({
+    status: "passed",
+    message: "Browser session event stream route is registered for live updates."
+  }));
+
+  const completedAt = now();
+  const smokeTest = {
+    id: newId("smoke"),
+    status: smokeResultStatus(checks),
+    startedAt,
+    completedAt,
+    durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime(),
+    checks
+  };
+  state.smokeTests.unshift(smokeTest);
+  state.smokeTests = state.smokeTests.slice(0, 20);
+  await logEvent("smoke_test_completed", "System smoke test completed", {
+    smokeTestId: smokeTest.id,
+    status: smokeTest.status,
+    failed: checks.filter((check) => check.status === "failed").length,
+    warnings: checks.filter((check) => check.status === "warning").length
+  });
+  await saveState();
+  return smokeTest;
+}
+
 async function agentToolAddDemoStreamers(run) {
   let added = 0;
   let updated = 0;
@@ -3252,7 +3678,7 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, { session });
   }
 
-  const browserActionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/(navigate|back|forward|refresh|take-control|give-agent-control|pause)$/);
+  const browserActionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/(navigate|back|forward|refresh|take-control|give-agent-control|pause|resume|mode)$/);
   if (browserActionMatch && req.method === "POST") {
     const [, sessionId, action] = browserActionMatch;
     const workspace = browserWorkspace();
@@ -3273,6 +3699,17 @@ async function handleApi(req, res, pathname, searchParams) {
       const session = await workspace.setControl(sessionId, "paused", { actor: "operator" });
       return sendJson(res, 200, { session });
     }
+    if (action === "resume") {
+      const session = await workspace.setControl(sessionId, "human_control", { actor: "operator" });
+      return sendJson(res, 200, { session });
+    }
+    if (action === "mode") {
+      const body = await readJsonBody(req);
+      const requested = cleanText(body.mode).toUpperCase();
+      const mode = requested === "AGENT_ASSISTED" ? "agent_assisted" : requested === "PAUSED" ? "paused" : "human_control";
+      const session = await workspace.setControl(sessionId, mode, { actor: "operator" });
+      return sendJson(res, 200, { session });
+    }
     const session = await workspace.simplePageAction(sessionId, action, { actor: "operator" });
     return sendJson(res, 200, { session });
   }
@@ -3286,6 +3723,123 @@ async function handleApi(req, res, pathname, searchParams) {
   const browserEventsMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/events$/);
   if (browserEventsMatch && req.method === "GET") {
     return browserWorkspace().subscribe(browserEventsMatch[1], res);
+  }
+
+  if (req.method === "GET" && pathname === "/api/handoffs") {
+    return sendJson(res, 200, { handoffs: state.handoffPackages.map(publicHandoff) });
+  }
+
+  if (req.method === "POST" && pathname === "/api/handoffs") {
+    const body = await readJsonBody(req);
+    const result = await createHandoffPackage(body);
+    return sendJson(res, result.reused ? 200 : 201, { handoff: publicHandoff(result.handoff), reused: result.reused });
+  }
+
+  const handoffMatch = pathname.match(/^\/api\/handoffs\/([^/]+)(?:\/([^/]+))?$/);
+  if (handoffMatch) {
+    const [, handoffId, handoffAction] = handoffMatch;
+    const handoff = state.handoffPackages.find((item) => item.id === handoffId);
+    if (!handoff) return sendError(res, 404, "Handoff package not found");
+
+    if (req.method === "GET" && !handoffAction) {
+      return sendJson(res, 200, { handoff: publicHandoff(handoff) });
+    }
+
+    if (req.method === "GET" && handoffAction === "events") {
+      return sendJson(res, 200, { events: handoff.events || [] });
+    }
+
+    if (req.method === "POST" && handoffAction === "prepare") {
+      const result = await prepareHandoffPackage(handoff);
+      return sendJson(res, 200, { handoff: publicHandoff(result.handoff), artifacts: result.artifacts });
+    }
+
+    if (req.method === "POST" && handoffAction === "open-capcut") {
+      const body = await readJsonBody(req);
+      await setHandoffStatus(handoff, "BROWSER_STARTING", "operator", "Starting supervised browser for CapCut", {});
+      const workspace = browserWorkspace();
+      const session = body.sessionId
+        ? workspace.profile().sessions.find((item) => item.id === body.sessionId)
+        : await workspace.createSession({ purpose: "Supervised CapCut handoff", actor: "operator" });
+      if (!session) return sendError(res, 404, "Browser session not found");
+      const result = await workspace.navigate(session.id, body.url || config.capcutHandoffUrl, { actor: "operator" });
+      handoff.browserSessionId = session.id;
+      if (!result.allowed) {
+        await setHandoffStatus(handoff, "NAVIGATION_BLOCKED", "operator", "CapCut navigation blocked by browser policy", { reason: result.reason });
+        await saveState();
+        return sendJson(res, 403, { ...result, handoff: publicHandoff(handoff) });
+      }
+      const finalSession = await workspace.setControl(session.id, "human_control", { actor: "operator" });
+      await setHandoffStatus(handoff, "CAPCUT_OPEN", "operator", "CapCut opened in human-control mode", { sessionId: session.id });
+      await saveState();
+      return sendJson(res, 200, { ...result, session: finalSession, handoff: publicHandoff(handoff) });
+    }
+
+    if (req.method === "POST" && handoffAction === "confirm-file-attachment") {
+      const body = await readJsonBody(req);
+      if (!body.confirm) return sendError(res, 400, "Explicit confirmation is required before file attachment.");
+      const rendered = state.artifacts.find((artifact) => artifact.id === handoff.renderId);
+      if (!artifactIsVerifiedClip(rendered)) {
+        await setHandoffStatus(handoff, "UPLOAD_FAILED", "operator", "File attachment blocked because no verified vertical draft exists", {});
+        await saveState();
+        return sendError(res, 422, "No verified vertical-draft MP4 is available to attach.");
+      }
+      await setHandoffStatus(handoff, "WAITING_FOR_UPLOAD", "operator", "Operator confirmed manual file attachment. Continue inside CapCut.", { artifactId: rendered.id });
+      await saveState();
+      return sendJson(res, 200, { handoff: publicHandoff(handoff), message: "Manual handoff ready. The operator remains in control." });
+    }
+
+    if (req.method === "POST" && handoffAction === "import-download") {
+      const body = await readJsonBody(req);
+      const downloadId = cleanText(body.downloadId);
+      const download = state.browser?.downloads?.find((item) => item.id === downloadId);
+      if (!download) return sendError(res, 422, "Select an authorized browser download before importing.");
+      await setHandoffStatus(handoff, "EXPORT_DETECTED", "operator", "Operator selected a browser download for import review", { downloadId });
+      await saveState();
+      return sendJson(res, 200, { handoff: publicHandoff(handoff), download });
+    }
+
+    if (req.method === "POST" && handoffAction === "upload-export") {
+      const body = await readJsonBody(req);
+      const artifact = state.artifacts.find((item) => item.id === cleanText(body.artifactId || body.exportedArtifactId));
+      if (!artifactIsVerifiedClip(artifact)) {
+        await setHandoffStatus(handoff, "QA_FAILED", "operator", "Export upload rejected because technical QA did not verify the media", {});
+        await saveState();
+        return sendError(res, 422, "Uploaded export must be a verified rendered clip artifact.");
+      }
+      handoff.exportedAssetKey = artifact.id;
+      await setHandoffStatus(handoff, "TECHNICAL_QA", "agent101", "Exported media passed available technical QA checks", { artifactId: artifact.id });
+      const request = createApprovalRequest({
+        type: "capcut_export_review",
+        actionType: "publish_video",
+        title: `Review returned CapCut export: ${artifact.title}`,
+        riskLevel: "medium",
+        linkedId: artifact.id,
+        evidence: {
+          handoffId: handoff.id,
+          artifactId: artifact.id,
+          note: "Posting remains blocked until Human Gate approves the returned export."
+        }
+      });
+      await setHandoffStatus(handoff, "HUMAN_REVIEW", "agent101", "Returned export routed to Human Gate", { approvalId: request.id });
+      await saveState();
+      return sendJson(res, 200, { handoff: publicHandoff(handoff), approvalRequest: request });
+    }
+
+    if (req.method === "POST" && handoffAction === "cancel") {
+      await setHandoffStatus(handoff, "CANCELLED", "operator", "CapCut handoff cancelled by operator", {});
+      await saveState();
+      return sendJson(res, 200, { handoff: publicHandoff(handoff) });
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/system/smoke-test") {
+    return sendJson(res, 200, { latest: state.smokeTests[0] || null, smokeTests: state.smokeTests || [] });
+  }
+
+  if (req.method === "POST" && pathname === "/api/system/smoke-test") {
+    const result = await runSystemSmokeTest();
+    return sendJson(res, 200, { smokeTest: result });
   }
 
   if (req.method === "POST" && pathname === "/api/agent101/browser/run") {
@@ -3325,12 +3879,10 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "POST" && pathname === "/api/capcut/handoff") {
     const body = await readJsonBody(req);
-    const clipPackage = state.clipPackages.find((item) => item.id === body.clipPackageId) || state.clipPackages[0];
-    if (!clipPackage) return sendError(res, 404, "No clip package is ready for a CapCut handoff");
-    const result = await createAgentCapCutBrief(clipPackage);
-    await logEvent("capcut_handoff", "CapCut handoff prepared for operator", { clipPackageId: clipPackage.id });
-    await saveState();
-    return sendJson(res, 201, result);
+    const created = await createHandoffPackage(body);
+    const result = await prepareHandoffPackage(created.handoff);
+    await logEvent("capcut_handoff", "CapCut handoff prepared for operator", { handoffId: created.handoff.id });
+    return sendJson(res, created.reused ? 200 : 201, { handoff: publicHandoff(result.handoff), artifacts: result.artifacts });
   }
 
   if (req.method === "GET" && pathname === "/api/media/status") {

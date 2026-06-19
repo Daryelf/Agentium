@@ -3,6 +3,17 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { URL, pathToFileURL } = require("node:url");
+const {
+  STOCK_WORKSPACE_ID,
+  normalizeStockOfficeState,
+  loadStockOfficeSnapshot,
+  stockOverview,
+  listStockRecords,
+  getStockRecord,
+  answerStockQuestion,
+  redactSensitiveText,
+  stockPermissions,
+} = require("./services/stock-office");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -35,6 +46,7 @@ const PASSWORD_ITERATIONS = 210_000;
 const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
+const stockOfficeRateBuckets = new Map();
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
@@ -160,14 +172,14 @@ const BUSINESS_OFFICES = {
   "stock-office": {
     id: "stock-office",
     name: "Stock Office",
-    title: "Business Office: Stock",
+    title: "Business Office: Stock Guru",
     workflowId: "workflow-stock-watch",
-    intent: "market_monitoring",
+    intent: "financial_market_decision_support",
     risk: "high",
-    allowedWork: ["watch notes", "risk labels", "paper-mode summaries", "operator review packets"],
-    requiredInputs: ["watchlist", "market notes", "risk rule", "operator decision"],
-    outputs: ["stock watch note", "risk memo", "approval package"],
-    blockedWork: ["place trades", "move money", "promise returns", "broker account changes"],
+    allowedWork: ["read evaluator reports", "summarize risk labels", "review source freshness", "draft operator review packets"],
+    requiredInputs: ["Stock Guru reports", "watchlist", "readiness checks", "operator decision"],
+    outputs: ["market research summary", "risk memo", "readiness report", "approval package"],
+    blockedWork: ["place trades", "move money", "promise returns", "broker account changes", "read credential values"],
   },
   "etsy-office": {
     id: "etsy-office",
@@ -838,6 +850,14 @@ function defaultState() {
       approvalRequired: true,
       externalActions: "Locked",
     },
+    stockOffice: {
+      workspaceId: STOCK_WORKSPACE_ID,
+      lastLocalSyncAt: null,
+      selectedTicker: "",
+      chatMessages: [],
+      syncRuns: [],
+      assistantRuns: [],
+    },
     toolConnections: {
       openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
       browser: {
@@ -1115,6 +1135,7 @@ function normalizeState(state) {
   state.meta = { ...fresh.meta, ...state.meta };
   state.agent = { ...fresh.agent, ...state.agent };
   state.agent101 = { ...fresh.agent101, ...state.agent101 };
+  state.stockOffice = normalizeStockOfficeState(state.stockOffice || fresh.stockOffice);
   state.toolConnections = {
     ...fresh.toolConnections,
     ...(state.toolConnections || {}),
@@ -4643,6 +4664,86 @@ function currentAccessUser(req) {
   };
 }
 
+function requireStockOfficeAccess(req, capability = "view") {
+  const access = currentAccessUser(req);
+  if (!access?.user) throw guardedError("Session is no longer valid.", 401);
+  const permissions = stockPermissions(access.user.role);
+  const capabilityMap = {
+    view: "canViewWorkspace",
+    records: "canViewRecords",
+    sources: "canViewSources",
+    chat_read: "canViewChat",
+    chat_write: "canPostChat",
+    assistant: "canUseAssistant",
+    sync: "canTriggerSync",
+  };
+  const permissionKey = capabilityMap[capability] || "canViewWorkspace";
+  if (!permissions[permissionKey]) {
+    throw guardedError("You do not have permission to use this Stock Office action.", 403);
+  }
+  return { user: access.user, permissions };
+}
+
+function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 60_000) {
+  const key = `${clientKey(req)}:${action}`;
+  const nowMs = Date.now();
+  const bucket = stockOfficeRateBuckets.get(key);
+  const activeBucket = bucket && bucket.resetAt > nowMs ? bucket : { count: 0, resetAt: nowMs + windowMs };
+  activeBucket.count += 1;
+  stockOfficeRateBuckets.set(key, activeBucket);
+  if (activeBucket.count > maxRequests) {
+    throw guardedError("Too many Stock Office requests. Try again shortly.", 429);
+  }
+}
+
+function stockOfficeSnapshot(state, permissions) {
+  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state });
+  snapshot.permissions = permissions || snapshot.permissions;
+  return snapshot;
+}
+
+function stockOfficeErrorResponse(error) {
+  const status = error.status || 500;
+  return {
+    status,
+    payload: {
+      error: status >= 500 ? "Stock Office could not complete that request safely." : error.message,
+    },
+  };
+}
+
+function stockOfficeQueryOptions(url) {
+  return {
+    q: url.searchParams.get("q") || "",
+    status: url.searchParams.get("status") || "all",
+    sort: url.searchParams.get("sort") || "score_desc",
+    page: Number(url.searchParams.get("page") || 1),
+    pageSize: Number(url.searchParams.get("pageSize") || 20),
+  };
+}
+
+function createStockOfficeSyncRun(snapshot) {
+  const warnings = [
+    ...snapshot.alerts.filter((alert) => alert.level !== "error").map((alert) => `${alert.title}: ${alert.body}`),
+    ...snapshot.sources.filter((source) => source.status === "stale").map((source) => `${source.label}: ${source.summary}`),
+  ].slice(0, 8);
+  const errors = snapshot.sources
+    .filter((source) => source.status === "error")
+    .map((source) => `${source.label}: ${source.safeError || source.summary}`)
+    .slice(0, 8);
+  return {
+    id: `stock-sync-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+    mode: "local_file_rescan",
+    status: errors.length ? "partial" : "success",
+    recordsImported: snapshot.records.length,
+    changedRecords: 0,
+    warnings,
+    errors,
+    startedAt: now(),
+    completedAt: now(),
+  };
+}
+
 function requireCurrentPassword(req, payload, store, user) {
   const currentPassword = String(payload.currentPassword || "");
   if (!verifyPassword(currentPassword, user)) {
@@ -5074,6 +5175,217 @@ async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/agent101/artifacts") {
     const state = readState();
     sendJson(res, 200, (state.artifacts || []).filter((artifact) => artifact.createdBy === "agent-101" || artifact.workflowId === "workflow-clips-office"));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/permissions") {
+    try {
+      const access = requireStockOfficeAccess(req, "view");
+      sendJson(res, 200, { permissions: access.permissions });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/overview") {
+    try {
+      enforceStockOfficeRateLimit(req, "overview", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, stockOverview(snapshot));
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/records") {
+    try {
+      enforceStockOfficeRateLimit(req, "records", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "records");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, {
+        ...listStockRecords(snapshot, stockOfficeQueryOptions(url)),
+        generatedAt: snapshot.generatedAt,
+        sourceHealth: snapshot.sourceHealth,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockRecordMatch = url.pathname.match(/^\/api\/stock-office\/records\/([^/]+)$/);
+  if (req.method === "GET" && stockRecordMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "record", 100, 60_000);
+      const access = requireStockOfficeAccess(req, "records");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const record = getStockRecord(snapshot, decodeURIComponent(stockRecordMatch[1]));
+      if (!record) throw guardedError("Stock Office record not found.", 404);
+      sendJson(res, 200, {
+        record,
+        generatedAt: snapshot.generatedAt,
+        citations: [record.provenance].filter(Boolean),
+        safety: snapshot.workspace.safetyRule,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/sources") {
+    try {
+      enforceStockOfficeRateLimit(req, "sources", 60, 60_000);
+      const access = requireStockOfficeAccess(req, "sources");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, {
+        sources: snapshot.sources,
+        sourceHealth: snapshot.sourceHealth,
+        threatModel: snapshot.threatModel,
+        workspace: snapshot.workspace,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/activity") {
+    try {
+      enforceStockOfficeRateLimit(req, "activity", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { activity: snapshot.activity, syncRuns: snapshot.syncRuns, assistantRuns: snapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/chat") {
+    try {
+      enforceStockOfficeRateLimit(req, "chat-read", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "chat_read");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { messages: snapshot.chatMessages, assistantRuns: snapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/chat") {
+    try {
+      enforceStockOfficeRateLimit(req, "chat-write", 20, 60_000);
+      const access = requireStockOfficeAccess(req, "chat_write");
+      const payload = await readBody(req);
+      const question = redactSensitiveText(String(payload.message || payload.question || "").trim()).slice(0, 700);
+      if (!question) throw guardedError("Stock Office question is required.", 400);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const response = answerStockQuestion(snapshot, question);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const operatorMessage = {
+        id: `stock-chat-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        sender: "operator",
+        text: question,
+        citations: [],
+        createdAt: now(),
+      };
+      const assistantMessage = {
+        id: `stock-chat-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        sender: "assistant",
+        text: response.answer,
+        citations: response.citations,
+        createdAt: now(),
+      };
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        chatMessages: [...current.chatMessages, operatorMessage, assistantMessage],
+      });
+      audit(state, "Stock Office chat answered", `Answered a read-only Stock Office question with ${response.citations.length} citation(s).`);
+      writeState(state);
+      const updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { response, messages: updatedSnapshot.chatMessages, assistantRuns: updatedSnapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/assistant") {
+    try {
+      enforceStockOfficeRateLimit(req, "assistant", 15, 60_000);
+      const access = requireStockOfficeAccess(req, "assistant");
+      const payload = await readBody(req);
+      const question = redactSensitiveText(String(payload.message || payload.question || "").trim()).slice(0, 700);
+      if (!question) throw guardedError("Assistant question is required.", 400);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const response = answerStockQuestion(snapshot, question);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const run = {
+        id: `stock-assistant-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        question,
+        answerPreview: response.answer,
+        citationCount: response.citations.length,
+        createdAt: now(),
+      };
+      const nextChatMessages =
+        payload.saveToChat === false
+          ? current.chatMessages
+          : [
+              ...current.chatMessages,
+              { id: `stock-chat-${crypto.randomBytes(8).toString("hex")}`, sender: "operator", text: question, citations: [], createdAt: now() },
+              { id: `stock-chat-${crypto.randomBytes(8).toString("hex")}`, sender: "assistant", text: response.answer, citations: response.citations, createdAt: now() },
+            ];
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        chatMessages: nextChatMessages,
+        assistantRuns: [run, ...current.assistantRuns],
+      });
+      audit(state, "Stock Office assistant run", `Created a read-only Stock Office assistant answer with ${response.citations.length} citation(s).`);
+      writeState(state);
+      sendJson(res, 200, { run, response, messages: state.stockOffice.chatMessages });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/sync") {
+    try {
+      enforceStockOfficeRateLimit(req, "sync", 8, 300_000);
+      const access = requireStockOfficeAccess(req, "sync");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const syncRun = createStockOfficeSyncRun(snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        lastLocalSyncAt: syncRun.completedAt,
+        syncRuns: [syncRun, ...current.syncRuns],
+      });
+      audit(state, "Stock Office local sync", `Rescanned ${syncRun.recordsImported} Stock Guru record(s) in read-only mode.`);
+      writeState(state);
+      const updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 20 }) });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
     return;
   }
 

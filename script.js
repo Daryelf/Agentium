@@ -231,6 +231,16 @@ let cycleTimer = null;
 let apiAvailable = false;
 let automationTelemetryMessages = ["Agent 101 is waiting for bounded work."];
 let automationTelemetryIndex = 0;
+let stockOfficeOverview = null;
+let stockOfficeRecords = { records: [], page: 1, pageSize: 12, total: 0, totalPages: 1 };
+let stockOfficeSelectedTicker = "";
+let stockOfficeLoading = false;
+let stockOfficeError = "";
+let stockOfficeFilters = {
+  q: "",
+  status: "all",
+  sort: "score_desc",
+};
 
 const avatar = document.querySelector("#depoAvatar");
 const progress = document.querySelector("#missionProgress");
@@ -2173,6 +2183,110 @@ async function postJson(path, payload = {}) {
   });
 }
 
+function stockOfficeQueryString(overrides = {}) {
+  const next = { ...stockOfficeFilters, ...overrides };
+  const params = new URLSearchParams();
+  if (next.q) params.set("q", next.q);
+  params.set("status", next.status || "all");
+  params.set("sort", next.sort || "score_desc");
+  params.set("page", String(next.page || stockOfficeRecords.page || 1));
+  params.set("pageSize", String(next.pageSize || stockOfficeRecords.pageSize || 12));
+  return params.toString();
+}
+
+function stockOfficeModalIsOpen() {
+  return Boolean(moduleInfoCard && !moduleInfoCard.hidden && moduleInfoCard.dataset.station === "stock-office");
+}
+
+function renderOpenStockOfficeModal() {
+  if (!stockOfficeModalIsOpen()) return;
+  moduleInfoCard.innerHTML = moduleInfoMarkup("stock-office");
+  positionModuleInfoCard("stock-office");
+}
+
+async function loadStockOfficeData(options = {}) {
+  if (!apiAvailable || stockOfficeLoading) return;
+  const force = Boolean(options.force);
+  if (!force && stockOfficeOverview && stockOfficeRecords.records?.length) return;
+  stockOfficeLoading = true;
+  stockOfficeError = "";
+  renderOpenStockOfficeModal();
+  try {
+    const query = stockOfficeQueryString(options);
+    const [overview, records] = await Promise.all([
+      api("/api/stock-office/overview"),
+      api(`/api/stock-office/records?${query}`),
+    ]);
+    stockOfficeOverview = overview;
+    stockOfficeRecords = records;
+    if (!stockOfficeSelectedTicker) {
+      stockOfficeSelectedTicker = records.records?.[0]?.ticker || overview.topRecords?.[0]?.ticker || "";
+    }
+  } catch (error) {
+    stockOfficeError = error.message || "Stock Office data could not be loaded.";
+  } finally {
+    stockOfficeLoading = false;
+    renderOpenStockOfficeModal();
+  }
+}
+
+async function loadStockOfficeRecords(options = {}) {
+  if (!apiAvailable || stockOfficeLoading) return;
+  stockOfficeLoading = true;
+  stockOfficeError = "";
+  renderOpenStockOfficeModal();
+  try {
+    const query = stockOfficeQueryString(options);
+    stockOfficeRecords = await api(`/api/stock-office/records?${query}`);
+    if (!stockOfficeSelectedTicker) stockOfficeSelectedTicker = stockOfficeRecords.records?.[0]?.ticker || "";
+  } catch (error) {
+    stockOfficeError = error.message || "Stock Office records could not be loaded.";
+  } finally {
+    stockOfficeLoading = false;
+    renderOpenStockOfficeModal();
+  }
+}
+
+async function syncStockOffice() {
+  if (!apiAvailable || stockOfficeLoading) return;
+  stockOfficeLoading = true;
+  stockOfficeError = "";
+  renderOpenStockOfficeModal();
+  try {
+    const payload = await postJson("/api/stock-office/sync", {});
+    stockOfficeOverview = payload.overview;
+    stockOfficeRecords = payload.records;
+    if (!stockOfficeSelectedTicker) stockOfficeSelectedTicker = payload.records?.records?.[0]?.ticker || "";
+  } catch (error) {
+    stockOfficeError = error.message || "Stock Office sync could not complete.";
+  } finally {
+    stockOfficeLoading = false;
+    renderOpenStockOfficeModal();
+  }
+}
+
+async function askStockOffice(question) {
+  if (!apiAvailable || stockOfficeLoading) return;
+  const text = String(question || "").trim();
+  if (!text) return;
+  stockOfficeLoading = true;
+  stockOfficeError = "";
+  renderOpenStockOfficeModal();
+  try {
+    const payload = await postJson("/api/stock-office/chat", { message: text });
+    stockOfficeOverview = {
+      ...(stockOfficeOverview || {}),
+      chatMessages: payload.messages,
+      assistantRuns: payload.assistantRuns || stockOfficeOverview?.assistantRuns || [],
+    };
+  } catch (error) {
+    stockOfficeError = error.message || "Stock Office assistant could not answer.";
+  } finally {
+    stockOfficeLoading = false;
+    renderOpenStockOfficeModal();
+  }
+}
+
 async function loadState() {
   try {
     state = await api("/api/state");
@@ -3665,19 +3779,19 @@ function businessOfficeProfile(roomKey) {
       secondaryAction: "Draft workflow",
     },
     "stock-office": {
-      title: "Business Office: Stock",
+      title: "Business Office: Stock Guru",
       badge: "Business",
-      officeType: "Market Research",
-      status: "Guarded",
+      officeType: "Financial Research",
+      status: "Read-only",
       priority: "High",
-      goal: "Prepare stock watch notes and risk-labeled research without trading, moving money, or making claims.",
-      willDo: ["Gather ticker notes", "Track watch ideas", "Label risk", "Draft summaries", "Prepare review packets"],
-      needsAccess: ["Market notes", "Operator watchlist", "Risk rules", "Memory"],
-      blocked: ["Place trades", "Move money", "Promise returns", "Change brokerage settings"],
-      steps: ["Set watch topic", "Gather notes", "Check risk", "Draft watch note", "Package for review", "Report to Agent 101"],
-      tools: ["Watch note draft", "Risk labels", "Memory notes", "Human Gate"],
-      primaryAction: "Save note",
-      secondaryAction: "Run check",
+      goal: "Read the local Stock Guru workspace, summarize evaluator records, source freshness, readiness blockers, and masked broker snapshots without any trade execution.",
+      willDo: ["Read evaluator reports", "Summarize ticker risk", "Check source freshness", "Explain readiness blockers", "Draft operator review notes"],
+      needsAccess: ["reports/evaluations.json", "config/universe.txt", "readiness JSON", "masked broker snapshot"],
+      blocked: ["Place trades", "Move money", "Promise returns", "Change broker settings", "Read or expose credential values"],
+      steps: ["Rescan local files", "Review source health", "Rank evaluator records", "Check readiness", "Draft review note", "Keep actions blocked"],
+      tools: ["Stock Guru snapshot", "Read-only assistant", "Source health", "Human Gate boundary"],
+      primaryAction: "Refresh Stock Office",
+      secondaryAction: "Ask Stock Office",
     },
     "etsy-office": {
       title: "Business Office: Etsy Store",
@@ -4601,8 +4715,334 @@ function humanGateOfficeQueueMarkup(runtime) {
   `;
 }
 
+function stockStatusLabel(status) {
+  const labels = {
+    valid_setup: "Valid setup",
+    rejected: "Rejected",
+    watch: "Watch",
+    review: "Review",
+    ready: "Ready",
+    stale: "Stale",
+    error: "Error",
+    missing: "Missing",
+    configured: "Configured",
+    healthy: "Healthy",
+    partial: "Partial",
+  };
+  return labels[status] || String(status || "Unknown").replace(/_/g, " ");
+}
+
+function stockStatusClass(status) {
+  const value = String(status || "").toLowerCase();
+  if (["valid_setup", "ready", "configured", "healthy"].includes(value)) return "good";
+  if (["stale", "watch", "review", "partial"].includes(value)) return "warn";
+  if (["error", "missing", "rejected"].includes(value)) return "bad";
+  return "";
+}
+
+function stockMetricMarkup(label, value, hint = "") {
+  return `
+    <article>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value ?? "—")}</strong>
+      ${hint ? `<small>${escapeHtml(hint)}</small>` : ""}
+    </article>
+  `;
+}
+
+function stockOfficeAlertMarkup() {
+  const alerts = stockOfficeOverview?.alerts || [];
+  if (stockOfficeError) {
+    return `<div class="stock-office-alert bad"><strong>Stock Office error</strong><span>${escapeHtml(stockOfficeError)}</span></div>`;
+  }
+  if (!alerts.length) {
+    return `<div class="stock-office-alert good"><strong>Read-only boundary active</strong><span>Stock Guru data is visible for review only. No trades or money movement exist in this office.</span></div>`;
+  }
+  return alerts
+    .map(
+      (alert) => `
+        <div class="stock-office-alert ${escapeHtml(alert.level === "error" ? "bad" : alert.level === "warning" ? "warn" : "good")}">
+          <strong>${escapeHtml(alert.title)}</strong>
+          <span>${escapeHtml(alert.body)}</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function selectedStockRecord() {
+  const records = stockOfficeRecords.records || [];
+  return records.find((record) => record.ticker === stockOfficeSelectedTicker) || stockOfficeOverview?.topRecords?.find((record) => record.ticker === stockOfficeSelectedTicker) || records[0] || stockOfficeOverview?.topRecords?.[0] || null;
+}
+
+function stockRecordsMarkup() {
+  const rows = stockOfficeRecords.records || [];
+  if (!rows.length) {
+    return `<div class="stock-empty-state"><strong>No Stock Guru records loaded</strong><p>Run the Stock Guru scanner/evaluator outside Argentum, then press Sync local files here.</p></div>`;
+  }
+  return `
+    <div class="stock-record-table" role="table" aria-label="Stock Guru evaluator records">
+      <div class="stock-record-row head" role="row">
+        <span>Ticker</span>
+        <span>Status</span>
+        <span>Score</span>
+        <span>Setup</span>
+        <span>Risk</span>
+      </div>
+      ${rows
+        .map(
+          (record) => `
+            <button class="stock-record-row ${record.ticker === stockOfficeSelectedTicker ? "selected" : ""}" type="button" data-stock-record="${escapeHtml(record.ticker)}" role="row">
+              <span><strong>${escapeHtml(record.ticker)}</strong><small>${escapeHtml(record.decision)}</small></span>
+              <span><em class="${escapeHtml(stockStatusClass(record.status))}">${escapeHtml(stockStatusLabel(record.status))}</em></span>
+              <span>${escapeHtml(record.score ?? "—")}</span>
+              <span>${escapeHtml(record.setupType || "Unclassified")}</span>
+              <span>${escapeHtml(record.mainRisk || record.rejectionReason || "No risk note")}</span>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function stockRecordDetailMarkup() {
+  const record = selectedStockRecord();
+  if (!record) {
+    return `<section class="stock-detail-card"><h4>Selected record</h4><p>No evaluator record is selected yet.</p></section>`;
+  }
+  const details = [
+    ["Decision", record.decision],
+    ["Current price", record.currentPrice ? `$${record.currentPrice}` : "—"],
+    ["Entry zone", record.entryZone || "—"],
+    ["Stop loss", record.stopLoss ? `$${record.stopLoss}` : "—"],
+    ["Target 1", record.target1 ? `$${record.target1}` : "—"],
+    ["Target 2", record.target2 ? `$${record.target2}` : "—"],
+    ["Risk/reward", record.riskReward || "—"],
+    ["Data fresh", record.dataFresh ? "Yes" : "No"],
+  ];
+  return `
+    <section class="stock-detail-card">
+      <div class="stock-section-head">
+        <div>
+          <span>Selected record</span>
+          <h4>${escapeHtml(record.ticker)}</h4>
+        </div>
+        <em class="${escapeHtml(stockStatusClass(record.status))}">${escapeHtml(stockStatusLabel(record.status))}</em>
+      </div>
+      <p>${escapeHtml(record.mainRisk || record.rejectionReason || "No risk note recorded.")}</p>
+      <div class="stock-detail-grid">
+        ${details.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+      <small>Source: ${escapeHtml(record.provenance?.sourceLabel || record.source || "Stock Guru")} · ${escapeHtml(record.provenance?.status || "unknown")}</small>
+    </section>
+  `;
+}
+
+function stockSourcesMarkup() {
+  const sources = stockOfficeOverview?.sources || [];
+  return `
+    <section class="stock-source-card">
+      <div class="stock-section-head">
+        <div>
+          <span>Source health</span>
+          <h4>${escapeHtml(stockStatusLabel(stockOfficeOverview?.sourceHealth?.status || "partial"))}</h4>
+        </div>
+        <button type="button" data-stock-action="sync">${stockOfficeLoading ? "Syncing..." : "Sync local files"}</button>
+      </div>
+      <div class="stock-source-list">
+        ${sources
+          .map(
+            (source) => `
+              <article>
+                <span>${escapeHtml(source.label)}</span>
+                <strong class="${escapeHtml(stockStatusClass(source.status))}">${escapeHtml(stockStatusLabel(source.status))}</strong>
+                <small>${escapeHtml(source.summary)}</small>
+              </article>
+            `,
+          )
+          .join("") || `<article><span>No sources</span><strong class="bad">Missing</strong><small>Stock Guru folder is not mounted or STOCK_GURU_PATH is wrong.</small></article>`}
+      </div>
+    </section>
+  `;
+}
+
+function stockReadinessMarkup() {
+  const readiness = stockOfficeOverview?.readiness || {};
+  const broker = stockOfficeOverview?.broker || {};
+  const blockers = readiness.blockers || [];
+  const warnings = readiness.warnings || [];
+  return `
+    <section class="stock-readiness-card">
+      <div class="stock-section-head">
+        <div>
+          <span>Readiness boundary</span>
+          <h4>${readiness.readyForLiveAuto ? "Ready in source" : "Not armable"}</h4>
+        </div>
+        <em class="${readiness.readyForLiveAuto ? "warn" : "bad"}">${escapeHtml(readiness.action || "READ_ONLY")}</em>
+      </div>
+      <div class="stock-broker-grid">
+        <div><span>Masked account</span><strong>${escapeHtml(broker.account || "Not available")}</strong></div>
+        <div><span>Buying power</span><strong>${escapeHtml(broker.buyingPower || "Unknown")}</strong></div>
+        <div><span>Positions</span><strong>${escapeHtml(String(broker.positions?.length || 0))}</strong></div>
+      </div>
+      <ul>
+        ${(blockers.length ? blockers : warnings.length ? warnings : ["No readiness notes loaded."])
+          .slice(0, 5)
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("")}
+      </ul>
+      <small>No order, transfer, broker account, or trade-execution endpoint is exposed here.</small>
+    </section>
+  `;
+}
+
+function stockChatMarkup() {
+  const messages = stockOfficeOverview?.chatMessages || [];
+  const recent = messages.slice(-8);
+  return `
+    <section class="stock-chat-card">
+      <div class="stock-section-head">
+        <div>
+          <span>Read-only assistant</span>
+          <h4>Ask Stock Guru data</h4>
+        </div>
+        <em>Research only</em>
+      </div>
+      <div class="stock-chat-log">
+        ${
+          recent.length
+            ? recent
+                .map(
+                  (message) => `
+                    <article class="${message.sender === "operator" ? "operator" : "assistant"}">
+                      <strong>${message.sender === "operator" ? "You" : "Stock Office"}</strong>
+                      <p>${escapeHtml(message.text)}</p>
+                      ${
+                        message.citations?.length
+                          ? `<small>${escapeHtml(message.citations.map((citation) => citation.label).join(" · "))}</small>`
+                          : ""
+                      }
+                    </article>
+                  `,
+                )
+                .join("")
+            : `<article class="assistant"><strong>Stock Office</strong><p>Ask about top setups, readiness blockers, stale sources, or the masked broker snapshot.</p></article>`
+        }
+      </div>
+      <div class="stock-chat-input">
+        <input id="stockOfficeQuestion" type="text" placeholder="Ask about top setups, blockers, source freshness..." />
+        <button type="button" data-stock-action="ask">Ask</button>
+      </div>
+    </section>
+  `;
+}
+
+function stockActivityMarkup() {
+  const activity = stockOfficeOverview?.activity || [];
+  return `
+    <section class="stock-activity-card">
+      <div class="stock-section-head">
+        <div>
+          <span>Audit stream</span>
+          <h4>Local activity</h4>
+        </div>
+      </div>
+      <div class="stock-activity-list">
+        ${activity
+          .slice(0, 8)
+          .map(
+            (entry) => `
+              <article>
+                <strong>${escapeHtml(entry.title)}</strong>
+                <span>${escapeHtml(entry.body)}</span>
+                <small>${escapeHtml(formatChatTime(entry.createdAt))}</small>
+              </article>
+            `,
+          )
+          .join("") || `<article><strong>No activity yet</strong><span>Run a sync to record the first Stock Office local rescan.</span></article>`}
+      </div>
+    </section>
+  `;
+}
+
+function stockOfficeMarkup(card) {
+  const profile = businessOfficeProfile(card.id);
+  const metrics = stockOfficeOverview?.metrics || {};
+  const sourceHealth = stockOfficeOverview?.sourceHealth || {};
+  const workspace = stockOfficeOverview?.workspace || {
+    title: "Stock Office",
+    description: profile.goal,
+    mode: "read_only_guarded",
+    safetyRule: "Research and analytics only. No broker actions are available.",
+  };
+  const metricCards = [
+    ["Records", metrics.trackedRecords ?? "—", `${metrics.validSetups ?? 0} valid setup(s)`],
+    ["Watchlist", metrics.watchlistCount ?? "—", "local universe"],
+    ["Rejected", metrics.rejectedRecords ?? "—", "risk filtered"],
+    ["Sources", sourceHealth.ready ?? "—", `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
+    ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
+    ["Live auto", metrics.readyForLiveAuto ? "Ready source" : "Blocked", "Argentum remains read-only"],
+  ];
+  return `
+    <div class="office-detail-panel stock-office-panel">
+      <div class="office-detail-header">
+        <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+        <div>
+          <h3>${escapeHtml(profile.title)}</h3>
+          <p>${escapeHtml(workspace.description)}</p>
+        </div>
+        <button class="module-info-close" type="button" aria-label="Close office">×</button>
+      </div>
+      <div class="stock-office-status-row">
+        ${metricCards.map(([label, value, hint]) => stockMetricMarkup(label, value, hint)).join("")}
+      </div>
+      <div class="stock-office-alerts">${stockOfficeAlertMarkup()}</div>
+      <div class="stock-office-toolbar">
+        <input id="stockOfficeSearch" type="search" value="${escapeHtml(stockOfficeFilters.q)}" placeholder="Search ticker, setup, risk..." />
+        <select id="stockOfficeStatusFilter">
+          ${["all", "valid_setup", "watch", "review", "rejected"].map((status) => `<option value="${escapeHtml(status)}" ${stockOfficeFilters.status === status ? "selected" : ""}>${escapeHtml(status === "all" ? "All statuses" : stockStatusLabel(status))}</option>`).join("")}
+        </select>
+        <select id="stockOfficeSort">
+          ${[
+            ["score_desc", "Score high to low"],
+            ["ticker_asc", "Ticker A-Z"],
+            ["updated_desc", "Recently updated"],
+          ]
+            .map(([value, label]) => `<option value="${escapeHtml(value)}" ${stockOfficeFilters.sort === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+            .join("")}
+        </select>
+        <button type="button" data-stock-action="search">Apply</button>
+        <button type="button" data-stock-action="refresh">${stockOfficeLoading ? "Loading..." : "Refresh"}</button>
+      </div>
+      <div class="stock-office-grid">
+        <section class="stock-records-card">
+          <div class="stock-section-head">
+            <div>
+              <span>Evaluator records</span>
+              <h4>${escapeHtml(pluralize(stockOfficeRecords.total || stockOfficeRecords.records?.length || 0, "record"))}</h4>
+            </div>
+            <em>${escapeHtml(workspace.mode || "read_only_guarded")}</em>
+          </div>
+          ${stockRecordsMarkup()}
+        </section>
+        ${stockRecordDetailMarkup()}
+        ${stockReadinessMarkup()}
+        ${stockSourcesMarkup()}
+        ${stockChatMarkup()}
+        ${stockActivityMarkup()}
+      </div>
+      <section class="stock-threat-card">
+        <h4>Security boundary</h4>
+        <ul>${safeList(stockOfficeOverview?.threatModel || [workspace.safetyRule], [], 5).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </section>
+    </div>
+  `;
+}
+
 function moduleInfoMarkup(roomKey) {
   const card = moduleCardData(roomKey);
+  if (resolveRoomKey(roomKey) === "stock-office") return stockOfficeMarkup(card);
   return businessOfficeMarkup(card);
 }
 
@@ -4687,6 +5127,12 @@ function openModuleInfoCard(roomKey, options = {}) {
     if (!canPreservePosition) positionModuleInfoCard(resolved);
     moduleInfoCard.classList.add("open");
   });
+  if (resolved === "stock-office") {
+    loadStockOfficeData({ force: !stockOfficeOverview }).catch((error) => {
+      stockOfficeError = error.message;
+      renderOpenStockOfficeModal();
+    });
+  }
 }
 
 function renderOrbitScene() {
@@ -8183,10 +8629,82 @@ moduleInfoCard?.addEventListener("click", async (event) => {
     changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.cardApprovalAction, "Human Gate card");
     return;
   }
+  const stockRecordButton = event.target.closest("[data-stock-record]");
+  if (stockRecordButton) {
+    stockOfficeSelectedTicker = stockRecordButton.dataset.stockRecord || "";
+    renderOpenStockOfficeModal();
+    return;
+  }
+  const stockActionButton = event.target.closest("[data-stock-action]");
+  if (stockActionButton) {
+    const action = stockActionButton.dataset.stockAction;
+    if (action === "refresh") {
+      loadStockOfficeData({ force: true }).catch((error) => {
+        stockOfficeError = error.message;
+        renderOpenStockOfficeModal();
+      });
+      return;
+    }
+    if (action === "sync") {
+      syncStockOffice().catch((error) => {
+        stockOfficeError = error.message;
+        renderOpenStockOfficeModal();
+      });
+      return;
+    }
+    if (action === "search") {
+      stockOfficeFilters = {
+        q: document.querySelector("#stockOfficeSearch")?.value || "",
+        status: document.querySelector("#stockOfficeStatusFilter")?.value || "all",
+        sort: document.querySelector("#stockOfficeSort")?.value || "score_desc",
+      };
+      loadStockOfficeRecords({ page: 1 }).catch((error) => {
+        stockOfficeError = error.message;
+        renderOpenStockOfficeModal();
+      });
+      return;
+    }
+    if (action === "ask") {
+      const input = document.querySelector("#stockOfficeQuestion");
+      const question = input?.value || "";
+      if (input) input.value = "";
+      askStockOffice(question).catch((error) => {
+        stockOfficeError = error.message;
+        renderOpenStockOfficeModal();
+      });
+      return;
+    }
+  }
   const actionButton = event.target.closest("[data-module-action]");
   if (!actionButton) return;
   const action = actionButton.dataset.moduleAction;
   handleModuleAction(action, stationId);
+});
+
+moduleInfoCard?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (event.target?.id === "stockOfficeSearch") {
+    event.preventDefault();
+    stockOfficeFilters = {
+      q: document.querySelector("#stockOfficeSearch")?.value || "",
+      status: document.querySelector("#stockOfficeStatusFilter")?.value || "all",
+      sort: document.querySelector("#stockOfficeSort")?.value || "score_desc",
+    };
+    loadStockOfficeRecords({ page: 1 }).catch((error) => {
+      stockOfficeError = error.message;
+      renderOpenStockOfficeModal();
+    });
+  }
+  if (event.target?.id === "stockOfficeQuestion") {
+    event.preventDefault();
+    const input = event.target;
+    const question = input.value || "";
+    input.value = "";
+    askStockOffice(question).catch((error) => {
+      stockOfficeError = error.message;
+      renderOpenStockOfficeModal();
+    });
+  }
 });
 
 openAgentChatBtn?.addEventListener("click", () => setAgentChatWorkspaceOpen(true));

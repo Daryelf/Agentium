@@ -71,6 +71,12 @@ AI_MONTHLY_LIMIT_USD=10
 
 Frontend JavaScript never receives API keys. Use Settings -> AI Providers to check `/api/ai/status` and run a safe backend connection test.
 
+## Stock Office
+
+Stock Office can read a local Stock Guru workspace in read-only mode for evaluator records, source freshness, readiness blockers, masked broker snapshots, and operator review notes. It never places trades, moves money, changes broker settings, or exposes provider credentials.
+
+Set `STOCK_GURU_PATH` only if the Stock Guru folder is not at `./stocks`. See [`docs/stock-office.md`](docs/stock-office.md) for routes, safety boundaries, and validation steps.
+
 ## Current prototype
 
 - Visual control floor with Depo moving through research, verification, drafting, and approval.
@@ -90,6 +96,7 @@ Frontend JavaScript never receives API keys. Use Settings -> AI Providers to che
 - One-click `Run next task` control for letting Depo process the next queued supervised job.
 - Supervised `Run workday` batch mode that processes up to three queued tasks into artifacts and approvals.
 - Business KPI hooks for artifact throughput, POD briefs, market notes, function growth, approval load, risk queue, and readiness.
+- Read-only Stock Office bridge for the local Stock Guru workspace.
 - Depo manifest in `agents/depo.manifest.json`.
 
 ## Core rule

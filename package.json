@@ -11,7 +11,8 @@
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "start": "node server.js",
-    "check": "node --check server.js && node --check script.js"
+    "check": "node --check server.js && node --check script.js && node --check services/stock-office.js",
+    "test": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=20"

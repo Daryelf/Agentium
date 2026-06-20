@@ -92,13 +92,117 @@ function countWhere(items, predicate) {
   return items.filter(predicate).length;
 }
 
+function isPracticeStreamer(streamer) {
+  return Boolean(
+    streamer?.isDemo
+    || streamer?.permissionStatus === "demo_approved"
+    || streamer?.platform === "demo"
+    || /^demo_/.test(String(streamer?.liveStatus || ""))
+    || /demo|practice/i.test(String(streamer?.channelId || ""))
+  );
+}
+
+function isPracticeCandidate(candidate) {
+  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
+  return Boolean(
+    candidate?.provenance === "DEMO_SOURCE"
+    || candidate?.sourceProvenance === "DEMO_SOURCE"
+    || /demo|practice|synthetic/i.test(String(candidate?.sourceType || ""))
+    || isPracticeStreamer(streamer)
+  );
+}
+
+function isPracticePackage(clipPackage) {
+  const candidate = state.candidates.find((item) => item.id === clipPackage?.candidateId);
+  return isPracticeCandidate(candidate);
+}
+
+function isPracticeDraft(draft) {
+  const clipPackage = state.packages.find((item) => item.id === draft?.clipPackageId);
+  return isPracticePackage(clipPackage);
+}
+
+function isPracticeApproval(approval) {
+  if (!approval) return false;
+  if (approval.linkedId === "project_clipping_office_main") return true;
+  const draft = state.drafts.find((item) => item.id === approval.linkedId);
+  const clipPackage = state.packages.find((item) => item.id === approval.linkedId);
+  const candidate = state.candidates.find((item) => item.id === approval.linkedId);
+  const streamer = state.streamers.find((item) => item.id === approval.linkedId);
+  return isPracticeDraft(draft) || isPracticePackage(clipPackage) || isPracticeCandidate(candidate) || isPracticeStreamer(streamer);
+}
+
+function isPracticeArtifact(artifact) {
+  const content = artifact?.content || {};
+  const candidate = state.candidates.find((item) => item.id === content.candidateId);
+  const clipPackage = state.packages.find((item) => item.id === content.clipPackageId);
+  return Boolean(
+    artifact?.provenance === "DEMO_SOURCE"
+    || content.provenance === "DEMO_SOURCE"
+    || /demo|practice/i.test(String(artifact?.title || ""))
+    || isPracticeCandidate(candidate)
+    || isPracticePackage(clipPackage)
+  );
+}
+
+function realStreamers() {
+  return state.streamers.filter((streamer) => !isPracticeStreamer(streamer));
+}
+
+function practiceStreamers() {
+  return state.streamers.filter(isPracticeStreamer);
+}
+
+function realCandidates() {
+  return state.candidates.filter((candidate) => !isPracticeCandidate(candidate));
+}
+
+function practiceCandidates() {
+  return state.candidates.filter(isPracticeCandidate);
+}
+
+function realPackages() {
+  return state.packages.filter((clipPackage) => !isPracticePackage(clipPackage));
+}
+
+function realDrafts() {
+  return state.drafts.filter((draft) => !isPracticeDraft(draft));
+}
+
+function realApprovals() {
+  return state.approvals.filter((approval) => !isPracticeApproval(approval));
+}
+
+function realArtifacts() {
+  return state.artifacts.filter((artifact) => !isPracticeArtifact(artifact));
+}
+
+function practiceArtifacts() {
+  return state.artifacts.filter(isPracticeArtifact);
+}
+
+function hasPracticeData() {
+  return Boolean(
+    practiceStreamers().length
+    || practiceCandidates().length
+    || countWhere(state.packages, isPracticePackage)
+    || countWhere(state.drafts, isPracticeDraft)
+    || countWhere(state.approvals, isPracticeApproval)
+    || practiceArtifacts().length
+  );
+}
+
+function disabledAttr(disabled, reason = "Unavailable") {
+  return disabled ? `disabled aria-disabled="true" title="${esc(reason)}"` : "";
+}
+
 function isPermissionReady(streamer) {
   return ["approved", "demo_approved"].includes(streamer?.permissionStatus);
 }
 
 function dailyLimitValue() {
   const approvedToday = countWhere(
-    state.drafts,
+    realDrafts(),
     (draft) => draft.approvalStatus === "approved" && (draft.approvedAt || draft.updatedAt || draft.createdAt || "").slice(0, 10) === todayKey()
   );
   return {
@@ -340,10 +444,10 @@ function renderNav() {
 }
 
 function navCount(key) {
-  if (key === "streamers") return state.streamers.length || "";
-  if (key === "candidates") return state.candidates.length || "";
-  if (key === "queue") return countWhere(state.drafts, (draft) => draft.approvalStatus === "pending") || "";
-  if (key === "gate") return countWhere(state.approvals, (approval) => approval.status === "pending") || "";
+  if (key === "streamers") return realStreamers().length || "";
+  if (key === "candidates") return realCandidates().length || "";
+  if (key === "queue") return countWhere(realDrafts(), (draft) => draft.approvalStatus === "pending") || "";
+  if (key === "gate") return countWhere(realApprovals(), (approval) => approval.status === "pending") || "";
   return "";
 }
 
@@ -479,7 +583,7 @@ function renderAgentChatDrawer() {
         <form id="global-agent101-command-form" class="agent-chat-form">
           <textarea name="goal" rows="3" placeholder="Tell Agent 101 what to run, e.g. find 5 practice streams and make clip candidates"></textarea>
           <div>
-            <button type="button" data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run demo workflow</button>
+            <button type="button" data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run practice workflow</button>
             <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Send</button>
           </div>
         </form>
@@ -489,15 +593,25 @@ function renderAgentChatDrawer() {
 }
 
 function renderDashboard() {
-  const watched = countWhere(state.streamers, (item) => item.monitorEnabled);
-  const approved = countWhere(state.streamers, isPermissionReady);
-  const liveNow = countWhere(state.streamers, (item) => String(item.liveStatus || "").includes("live"));
-  const pendingCandidates = countWhere(state.candidates, (candidate) => candidate.status === "candidate");
-  const highScore = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 60);
-  const ready = countWhere(state.candidates, (candidate) => candidate.status === "packaged");
-  const queuedToday = countWhere(state.drafts, (draft) => (draft.createdAt || "").slice(0, 10) === todayKey());
-  const awaitingApproval = countWhere(state.drafts, (draft) => draft.approvalStatus === "pending");
-  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
+  const streamers = realStreamers();
+  const candidates = realCandidates();
+  const drafts = realDrafts();
+  const approvals = realApprovals();
+  const watched = countWhere(streamers, (item) => item.monitorEnabled);
+  const approved = countWhere(streamers, (streamer) => streamer.permissionStatus === "approved");
+  const liveNow = countWhere(streamers, (item) => String(item.liveStatus || "").includes("live"));
+  const pendingCandidates = countWhere(candidates, (candidate) => candidate.status === "candidate");
+  const highScore = countWhere(candidates, (candidate) => Number(candidate.score || 0) >= 60);
+  const ready = countWhere(candidates, (candidate) => candidate.status === "packaged");
+  const queuedToday = countWhere(drafts, (draft) => (draft.createdAt || "").slice(0, 10) === todayKey());
+  const awaitingApproval = countWhere(drafts, (draft) => draft.approvalStatus === "pending");
+  const pendingApprovals = countWhere(approvals, (approval) => approval.status === "pending");
+  const practice = {
+    streamers: practiceStreamers().length,
+    candidates: practiceCandidates().length,
+    drafts: countWhere(state.drafts, isPracticeDraft),
+    approvals: countWhere(state.approvals, isPracticeApproval)
+  };
   const approvedToday = dailyLimitValue().approvedToday;
   view.innerHTML = `
     <div class="dashboard-hero">
@@ -507,14 +621,22 @@ function renderDashboard() {
         <p>Monitor approved creators, score moments, build 9:16 packages, and hold every risky external step at Human Gate.</p>
       </div>
       <div class="hero-actions">
-        <button class="primary" data-action="agent101-demo-workflow">Run Demo Clipping Workflow</button>
+        <button class="primary" data-action="agent101-demo-workflow">Run Practice Workflow</button>
         <button data-action="run-watch">Run Watch Cycle</button>
-        <button data-action="seed-demo">Load Demo Mission</button>
+        <button data-action="seed-demo">Start Practice Project</button>
+        ${practice.streamers || practice.candidates ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
       </div>
     </div>
+    ${practice.streamers || practice.candidates || practice.drafts || practice.approvals ? `
+      <section class="practice-banner">
+        <strong>PRACTICE MEDIA — NOT A REAL STREAM</strong>
+        <span>${practice.streamers} practice streamer(s), ${practice.candidates} practice candidate(s), ${practice.drafts} draft(s), ${practice.approvals} approval item(s). These are excluded from real dashboard counts.</span>
+        <button data-action="clear-demo">Clear Practice Data</button>
+      </section>
+    ` : ""}
     ${renderAgentRunPanel()}
     <div class="metric-strip">
-      ${metric("Watched Streams", watched, `${state.streamers.length} total`, "CAM", "good")}
+      ${metric("Watched Streams", watched, `${streamers.length} real total`, "CAM", "good")}
       ${metric("Approved Streamers", approved, `${liveNow} live now`, "PRO", "violet")}
       ${metric("Clip Candidates", pendingCandidates, `${highScore} high score`, "AI", "info")}
       ${metric("Ready Packages", ready, `${awaitingApproval} for review`, "PKG", "warn")}
@@ -549,7 +671,7 @@ function renderDashboard() {
           <h2>Clip Funnel</h2>
           <span class="pill info">Today</span>
         </div>
-        ${renderFunnel({ watched, moments: state.candidates.length, highScore, ready, approved: approvedToday })}
+        ${renderFunnel({ watched, moments: candidates.length, highScore, ready, approved: approvedToday })}
       </section>
       <section class="panel activity-panel">
         <div class="toolbar">
@@ -595,7 +717,7 @@ function renderAgentRunPanel() {
         <div>
           <span class="eyebrow">Agent 101 Runner</span>
           <h2>Safe internal clipping workflow</h2>
-          <p class="muted">${esc(run.summary || "Run demo/local tasks without logging in, uploading, publishing, spending, or changing accounts.")}</p>
+          <p class="muted">${esc(run.summary || "Run explicit Practice Mode tasks without logging in, uploading, publishing, spending, or changing accounts.")}</p>
         </div>
         ${badge(status === "idle" ? "Idle" : status, statusTone)}
       </div>
@@ -614,8 +736,8 @@ function renderAgentRunPanel() {
         <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Run Agent 101</button>
       </form>
       <div class="agent-run-actions">
-        <button data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run demo clipping workflow</button>
-        <button data-action="agent101-add-demo-streamers" ${state.agentRunBusy ? "disabled" : ""}>Add 5 demo streamers</button>
+        <button data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run practice clipping workflow</button>
+        <button data-action="agent101-add-demo-streamers" ${state.agentRunBusy ? "disabled" : ""}>Add 5 practice streamers</button>
         <button data-action="agent101-watch-cycle" ${state.agentRunBusy ? "disabled" : ""}>Run watch cycle</button>
         <button data-action="agent101-create-candidates" ${state.agentRunBusy ? "disabled" : ""}>Generate clip candidates</button>
         <button data-action="agent101-package-top3" ${state.agentRunBusy ? "disabled" : ""}>Package top 3 clips</button>
@@ -642,16 +764,23 @@ function metric(label, value, detail = "", icon = "SC", tone = "info") {
 }
 
 function renderLiveDesk() {
-  if (!state.streamers.length) {
+  const streamers = realStreamers();
+  const practice = practiceStreamers();
+  if (!streamers.length) {
     return `
       <div class="empty-mission">
-        <strong>No streamers loaded yet</strong>
-        <p>Add approved creators manually, or load a local demo mission to test the clipping pipeline without Twitch credentials.</p>
-        <button class="primary" data-action="seed-demo">Load Demo Mission</button>
+        <strong>No real streamers loaded yet</strong>
+        <p>Add approved creators manually to use Real Mode. Practice Mode is available for safe local testing and is excluded from real metrics.</p>
+        <div class="actions">
+          <button class="primary" data-nav-jump="watchlist">Add Real Streamer</button>
+          <button data-action="seed-demo">Start Practice Project</button>
+          ${practice.length ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
+        </div>
+        ${practice.length ? `<small class="practice-inline">PRACTICE MEDIA — NOT A REAL STREAM: ${practice.length} practice streamer(s) currently loaded.</small>` : ""}
       </div>
     `;
   }
-  const cards = state.streamers.slice(0, 5).map((streamer, index) => {
+  const cards = streamers.slice(0, 5).map((streamer, index) => {
     const relatedCandidate = bestCandidateForStreamer(streamer.id);
     const status = liveStatusMeta(streamer);
     return `
@@ -685,12 +814,16 @@ function renderLiveDesk() {
       ${cards}
       <button class="add-stream-card" data-nav-jump="watchlist"><b>+</b><span>Add Streamer</span><small>Monitor a new channel</small></button>
     </div>
+    ${practice.length ? `<div class="practice-inline">PRACTICE MEDIA — NOT A REAL STREAM: ${practice.length} practice streamer(s) are available from Practice Mode.</div>` : ""}
   `;
 }
 
 function renderTopCandidates() {
-  const candidates = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0)).slice(0, 5);
-  if (!candidates.length) return empty("No candidates yet. Run a watch cycle after adding approved streamers.");
+  const real = [...realCandidates()].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const practice = [...practiceCandidates()].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const usingPractice = !real.length && practice.length;
+  const candidates = (usingPractice ? practice : real).slice(0, 5);
+  if (!candidates.length) return empty("No real candidates yet. Add an approved streamer and run a watch cycle, or start a Practice Project.");
   return `<div class="candidate-list">${candidates.map((candidate, index) => `
     <article class="candidate-row" data-select-candidate="${candidate.id}">
       ${radarThumb(candidate, index + 2)}
@@ -702,7 +835,7 @@ function renderTopCandidates() {
       </div>
       <span class="spark">${sparkline(Number(candidate.score || 0))}</span>
     </article>
-  `).join("")}</div>`;
+  `).join("")}</div>${usingPractice ? practiceNotice("Practice candidates are shown because no real candidates exist yet.") : ""}`;
 }
 
 function renderFunnel({ watched, moments, highScore, ready, approved }) {
@@ -743,7 +876,7 @@ function renderSystemTiles() {
     ["Kick API", state.kick?.configured ? "Connected" : "Needs vars", state.kick?.configured ? "good" : "warn"],
     ["OpenAI API", state.openai?.configured ? "Connected" : "Local fallback", state.openai?.configured ? "good" : "warn"],
     ["Storage", "Healthy", "good"],
-    ["Human Gate", countWhere(state.approvals, (approval) => approval.status === "pending") ? "Reviewing" : "Ready", "info"]
+    ["Human Gate", countWhere(realApprovals(), (approval) => approval.status === "pending") ? "Reviewing" : "Ready", "info"]
   ];
   return `<div class="system-grid">${tiles.map(([label, value, tone]) => `
     <span class="system-tile ${esc(tone)}"><b>${esc(label)}</b><em>${esc(value)}</em></span>
@@ -751,16 +884,19 @@ function renderSystemTiles() {
 }
 
 function renderWatchlist() {
-  const liveCount = countWhere(state.streamers, isStreamerLive);
-  const monitoringCount = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
-  const offlineCount = countWhere(state.streamers, isStreamerConfirmedOffline);
-  const pendingCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "pending");
-  const blockedCount = countWhere(state.streamers, (streamer) => streamer.permissionStatus === "blocked");
+  const streamers = realStreamers();
+  const practice = practiceStreamers();
+  const liveCount = countWhere(streamers, isStreamerLive);
+  const monitoringCount = countWhere(streamers, (streamer) => streamer.monitorEnabled);
+  const offlineCount = countWhere(streamers, isStreamerConfirmedOffline);
+  const pendingCount = countWhere(streamers, (streamer) => streamer.permissionStatus === "pending");
+  const blockedCount = countWhere(streamers, (streamer) => streamer.permissionStatus === "blocked");
   const selected = selectedStreamer();
   view.innerHTML = `
     <section class="watchlist-page">
+      ${practice.length ? practiceNotice(`${practice.length} practice streamer(s) are hidden from the Real Mode table and can be cleared safely.`, true) : ""}
       <div class="watchlist-tabs">
-        <button class="active">All Streamers <b>${state.streamers.length}</b></button>
+        <button class="active">All Streamers <b>${streamers.length}</b></button>
         <button>Live Now <b>${liveCount}</b></button>
         <button>Monitoring <b>${monitoringCount}</b></button>
         <button>Offline <b>${offlineCount}</b></button>
@@ -773,8 +909,8 @@ function renderWatchlist() {
       </div>
 
       <div class="watchlist-stats">
-        ${watchStat("Total Streamers", state.streamers.length, "+ local workspace", "TEAM", "warn")}
-        ${watchStat("Live Right Now", liveCount, `${state.streamers.length ? Math.round((liveCount / state.streamers.length) * 100) : 0}% of total`, "LIVE", "bad")}
+        ${watchStat("Total Streamers", streamers.length, "real records", "TEAM", "warn")}
+        ${watchStat("Live Right Now", liveCount, `${streamers.length ? Math.round((liveCount / streamers.length) * 100) : 0}% of real total`, "LIVE", "bad")}
         ${watchStat("Monitoring", monitoringCount, "Actively watching", "EYE", "info")}
         ${watchStat("Pending Approval", pendingCount, "Needs review", "CLK", "warn")}
         ${watchStat("Blocked", blockedCount, "No blocked channels", "SHD", "neutral")}
@@ -791,7 +927,7 @@ function renderWatchlist() {
             <select aria-label="Permission filter"><option>Permission: All</option><option>Approved</option><option>Pending</option></select>
             <select aria-label="Sort filter"><option>Sort: Last Checked</option><option>Sort: Candidates</option><option>Sort: Name</option></select>
           </div>
-          ${state.streamers.length ? renderStreamerTable(true) : empty("No streamers added")}
+          ${streamers.length ? renderStreamerTable(true, streamers) : empty("No real streamers added. Use Add Streamer for production records or Start Practice Project for local testing.")}
         </section>
 
         <aside class="panel streamer-inspector">
@@ -823,7 +959,8 @@ function renderWatchlist() {
           <h2>Quick Actions</h2>
           <button class="primary" data-action="run-watch">Run Watch Cycle Now</button>
           <button data-nav-jump="radar">View Clip Radar</button>
-          <button data-action="seed-demo">Load Demo Mission</button>
+          <button data-action="seed-demo">Start Practice Project</button>
+          ${practice.length ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
           <button data-nav-jump="settings">API Connections</button>
         </section>
       </div>
@@ -831,8 +968,8 @@ function renderWatchlist() {
   `;
 }
 
-function renderStreamerTable(editable) {
-  const sortedStreamers = [...state.streamers].sort((a, b) => {
+function renderStreamerTable(editable, rows = state.streamers) {
+  const sortedStreamers = [...rows].sort((a, b) => {
     const liveDelta = Number(isStreamerLive(b)) - Number(isStreamerLive(a));
     if (liveDelta) return liveDelta;
     return String(b.lastCheckedAt || "").localeCompare(String(a.lastCheckedAt || ""));
@@ -861,7 +998,7 @@ function renderStreamerTable(editable) {
                 <div class="streamer-cell">
                   <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer.displayName))}</span>
                   <div>
-                    <strong>${esc(streamer.displayName)} <em>verified</em></strong>
+                    <strong>${esc(streamer.displayName)} ${isPracticeStreamer(streamer) ? "<em>practice</em>" : "<em>verified</em>"}</strong>
                     <small>${esc(streamer.channelId || streamer.channelUrl || "local channel")}</small>
                   </div>
                 </div>
@@ -990,8 +1127,8 @@ function renderCompactStreamerForm() {
 
 function selectedStreamer() {
   const selected = state.streamers.find((streamer) => streamer.id === state.selectedStreamerId);
-  if (selected) return selected;
-  return state.streamers[0] || null;
+  if (selected && !isPracticeStreamer(selected)) return selected;
+  return realStreamers()[0] || state.streamers[0] || null;
 }
 
 function streamerCandidateCount(streamerId) {
@@ -1009,7 +1146,7 @@ function isStreamerConfirmedOffline(streamer) {
 function liveStatusMeta(streamer) {
   const status = streamer?.liveStatus || "unknown";
   if (status === "live") return { label: "LIVE", className: "is-live" };
-  if (status === "demo_live") return { label: "DEMO LIVE", className: "is-live" };
+  if (status === "demo_live") return { label: "PRACTICE", className: "is-live" };
   if (status === "offline" || status === "offline_or_demo" || status === "demo_offline") return { label: "OFFLINE", className: "is-offline" };
   if (status === "api_not_configured") return { label: "API NEEDED", className: "needs-api" };
   if (status === "api_error") return { label: "CHECK FAILED", className: "has-error" };
@@ -1021,7 +1158,7 @@ function liveStatusMeta(streamer) {
 function liveSourceLabel(streamer) {
   if (streamer?.platform === "kick") return state.kick?.configured ? "Official Kick API" : "Needs Kick API vars";
   if (streamer?.platform === "twitch") return state.twitch?.configured ? "Official Twitch API" : "Needs Twitch API vars";
-  return "Manual/demo source";
+  return streamer?.isDemo || streamer?.permissionStatus === "demo_approved" ? "Practice source" : "Manual source";
 }
 
 function platformBadge(platform) {
@@ -1088,22 +1225,27 @@ function renderStreamerInspector(streamer) {
 
 function permissionBadge(status) {
   if (status === "approved") return badge("approved", "good");
-  if (status === "demo_approved") return badge("demo approved", "info");
+  if (status === "demo_approved") return badge("practice", "info");
   if (status === "blocked") return badge("blocked", "bad");
   return badge("pending", "warn");
 }
 
 function renderRadar() {
   const selected = selectedCandidate();
-  const sorted = [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-  const highScore = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 70);
-  const ready = countWhere(state.candidates, (candidate) => candidate.status === "packaged");
-  const reviewed = countWhere(state.candidates, (candidate) => ["reviewed", "packaged", "rejected"].includes(candidate.status));
-  const dismissed = countWhere(state.candidates, (candidate) => candidate.status === "rejected");
+  const real = realCandidates();
+  const practice = practiceCandidates();
+  const showingPractice = !real.length && practice.length;
+  const visibleCandidates = showingPractice ? practice : real;
+  const sorted = [...visibleCandidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const highScore = countWhere(visibleCandidates, (candidate) => Number(candidate.score || 0) >= 70);
+  const ready = countWhere(visibleCandidates, (candidate) => candidate.status === "packaged");
+  const reviewed = countWhere(visibleCandidates, (candidate) => ["reviewed", "packaged", "rejected"].includes(candidate.status));
+  const dismissed = countWhere(visibleCandidates, (candidate) => candidate.status === "rejected");
   view.innerHTML = `
     <section class="radar-page">
+      ${showingPractice ? practiceNotice("Practice candidates are visible because no real clip candidates exist yet. They are not counted as production clips.", true) : practice.length ? practiceNotice(`${practice.length} practice candidate(s) are hidden from Real Mode counts.`, true) : ""}
       <div class="radar-tabs">
-        <button class="active">All Candidates <b>${state.candidates.length}</b></button>
+        <button class="active">${showingPractice ? "Practice Candidates" : "All Candidates"} <b>${visibleCandidates.length}</b></button>
         <button>High Score <b>${highScore}</b></button>
         <button>Ready to Package <b>${ready}</b></button>
         <button>Reviewed <b>${reviewed}</b></button>
@@ -1115,13 +1257,13 @@ function renderRadar() {
           <div class="radar-filterbar">
             <label class="stream-search radar-search">Search clips <input placeholder="Search clips..." aria-label="Search clips"></label>
             <select aria-label="Platform filter"><option>Platform: All</option><option>Twitch</option><option>YouTube</option></select>
-            <select aria-label="Streamer filter"><option>Streamer: All</option>${state.streamers.map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}</select>
+            <select aria-label="Streamer filter"><option>Streamer: All</option>${(showingPractice ? practiceStreamers() : realStreamers()).map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}</select>
             <select aria-label="Score filter"><option>Score: All</option><option>70+</option><option>90+</option></select>
             <select aria-label="Duration filter"><option>Duration: All</option><option>Short</option><option>Ideal</option><option>Long</option></select>
             <select aria-label="Status filter"><option>Status: All</option><option>New</option><option>Packaged</option><option>Rejected</option></select>
           </div>
 
-          ${sorted.length ? renderRadarTable(sorted) : empty("No clip candidates yet. Run a watch cycle after adding approved streamers.")}
+          ${sorted.length ? renderRadarTable(sorted) : empty("No real clip candidates yet. Run a watch cycle after adding approved streamers, or start a Practice Project.")}
         </section>
 
         <aside class="panel radar-inspector">
@@ -1130,7 +1272,7 @@ function renderRadar() {
       </div>
 
       <div class="radar-footer">
-        <span>${selected ? `1 selected` : `${state.candidates.length} candidates`}</span>
+        <span>${selected ? `1 selected` : `${visibleCandidates.length} ${showingPractice ? "practice " : ""}candidates`}</span>
         <div class="actions">
           <button data-action="run-watch">Run Watch Cycle</button>
           <button data-score-candidate="${selected?.id || ""}" ${selected ? "" : "disabled"}>Mark Reviewed</button>
@@ -1190,8 +1332,8 @@ function renderRadarRow(candidate, index) {
         <div class="radar-streamer-cell">
           <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
           <div>
-            <strong>${esc(streamer?.displayName || "Unknown streamer")} <em>verified</em></strong>
-            <small>${esc(candidate.category || "Demo stream")}${streamer?.liveStatus ? ` · ${liveLabel(streamer.liveStatus)}` : ""}</small>
+            <strong>${esc(streamer?.displayName || "Unknown streamer")} <em>${isPracticeCandidate(candidate) ? "practice" : "verified"}</em></strong>
+            <small>${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice stream" : "Clip"))}${streamer?.liveStatus ? ` · ${liveLabel(streamer.liveStatus)}` : ""}</small>
           </div>
         </div>
       </td>
@@ -1253,17 +1395,18 @@ function renderCandidateCard(candidate) {
 
 function selectedCandidate() {
   const selected = state.candidates.find((item) => item.id === state.selectedCandidateId);
-  if (selected) return selected;
-  return [...state.candidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+  const real = realCandidates();
+  if (selected && (!isPracticeCandidate(selected) || !real.length)) return selected;
+  return [...(real.length ? real : practiceCandidates())].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
 }
 
 function radarThumb(candidate, index = 0) {
   const start = candidate.timestampStart || "00:00";
   const end = candidate.timestampEnd || "00:30";
   const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const isDemo = candidate.sourceProvenance === "DEMO_SOURCE" || candidate.provenance === "DEMO_SOURCE" || /demo/i.test(candidate.sourceType || "");
+  const isDemo = isPracticeCandidate(candidate);
   return previewFrame({
-    label: isDemo ? "DEMO" : candidate.sourceProvenance === "UNAVAILABLE" ? "UNAVAILABLE" : "SOURCE",
+    label: isDemo ? "PRACTICE" : candidate.sourceProvenance === "UNAVAILABLE" ? "UNAVAILABLE" : "SOURCE",
     title: candidate.title || "Clip preview",
     subtitle: `${streamer?.displayName || "Stream"} · ${candidate.category || "Clip"}`,
     timestamp: start,
@@ -1289,6 +1432,7 @@ function liveLabel(value) {
   if (value === "offline") return "Offline by Twitch API";
   if (value === "api_not_configured") return "Needs Twitch API";
   if (value === "api_error") return "Twitch check failed";
+  if (String(value || "").startsWith("demo")) return "Practice mode";
   return String(value || "Not checked");
 }
 
@@ -1353,7 +1497,7 @@ function renderCandidateInspector(candidate) {
     <div class="selected-title">
       <div>
         <h3>${esc(candidate.title || "Untitled clip")}</h3>
-        <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || "Demo")} · ${timeAgo(candidate.updatedAt || candidate.createdAt)}</p>
+        <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice" : "Clip"))} · ${timeAgo(candidate.updatedAt || candidate.createdAt)}</p>
       </div>
       ${scoreRing(score)}
     </div>
@@ -1386,7 +1530,7 @@ function renderCandidateInspector(candidate) {
     <div class="inspector-section">
       <h3>Clip Details</h3>
       <div class="inspector-kv">
-        <span>Source</span><b>${esc(candidate.sourceType || "demo")}</b>
+        <span>Source</span><b>${esc(candidate.sourceType || (isPracticeCandidate(candidate) ? "practice" : "unknown"))}</b>
         <span>Resolution</span><b>1080x1920</b>
         <span>Duration</span><b>${candidate.duration || 30}s</b>
         <span>Risk</span><b>${candidate.riskScore || 0}/100</b>
@@ -1410,7 +1554,7 @@ function renderClipPreviewModal() {
           <div>
             <span class="eyebrow">Local draft preview</span>
             <h2>${esc(candidate.title || "Clip preview")}</h2>
-            <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || "Demo stream")} · ${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || `${candidate.duration || 30}s`)}</p>
+            <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice stream" : "Clip"))} · ${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || `${candidate.duration || 30}s`)}</p>
           </div>
           <button class="icon-button" data-close-preview aria-label="Close preview">×</button>
         </div>
@@ -1418,11 +1562,11 @@ function renderClipPreviewModal() {
           <div class="preview-player">
             ${source?.playbackUrl ? `
               <div class="clip-preview-video-wrap">
-                ${source.provenance === "DEMO_SOURCE" ? `<span class="demo-ribbon">DEMO MEDIA — NOT A REAL LIVE STREAM</span>` : ""}
+                ${source.provenance === "DEMO_SOURCE" ? `<span class="demo-ribbon">PRACTICE MEDIA — NOT A REAL STREAM</span>` : ""}
                 <video class="studio-player clip-preview-video" src="${esc(appUrl(source.playbackUrl))}" controls playsinline preload="metadata" data-studio-video data-start="${esc(candidateStartSeconds(candidate))}"></video>
               </div>
             ` : previewFrame({
-              label: candidate.sourceType === "demo" ? "DEMO CLIP" : "LIVE CLIP",
+              label: isPracticeCandidate(candidate) ? "PRACTICE" : "LIVE CLIP",
               title: plan.thumbnailText || plan.hook || candidate.title,
               subtitle: "Source data unavailable. Playable media is required for final clipping.",
               timestamp: candidate.timestampStart || "00:00",
@@ -1547,7 +1691,7 @@ function studioSelectedCandidate(candidates = []) {
 }
 
 function provenancePill(value) {
-  const label = String(value || "UNAVAILABLE").replaceAll("_", " ");
+  const label = value === "DEMO_SOURCE" ? "PRACTICE MEDIA" : String(value || "UNAVAILABLE").replaceAll("_", " ");
   const tone = value === "DEMO_SOURCE" ? "warn" : value === "VERIFIED_MEDIA" || value === "AUTHORIZED_UPLOAD" ? "good" : "neutral";
   return `<span class="provenance-pill ${tone}">${esc(label)}</span>`;
 }
@@ -1577,8 +1721,14 @@ function renderStudioStage(source, candidate, renderedArtifact) {
   if (!source?.playable) {
     return `
       <div class="studio-empty-stage">
-        <h3>Upload a practice video to begin</h3>
-        <p>No playable media source is selected. Agent 101 cannot create real candidates until a video source exists.</p>
+        <span class="eyebrow">No verified source</span>
+        <h3>Start a Clip Project</h3>
+        <p>No playable media source is selected. Add approved media for Real Mode, open a verified Clip Radar candidate, or start Practice Mode deliberately.</p>
+        <div class="empty-actions">
+          <button class="primary" data-nav-jump="watchlist">Add approved streamer</button>
+          <button data-nav-jump="radar">Open Clip Radar</button>
+          <button data-action="seed-demo">Start Practice Project</button>
+        </div>
       </div>
     `;
   }
@@ -1614,7 +1764,7 @@ function renderStudioStage(source, candidate, renderedArtifact) {
   const clipLabel = mode === "candidate" && candidate ? `${candidate.timestampStart} - ${candidate.timestampEnd}` : "Full source";
   return `
     <div class="studio-stage ${vertical ? "vertical-mode" : ""}">
-      ${source.provenance === "DEMO_SOURCE" ? `<div class="demo-ribbon">DEMO MEDIA — NOT A REAL LIVE STREAM</div>` : ""}
+      ${source.provenance === "DEMO_SOURCE" ? `<div class="demo-ribbon">PRACTICE MEDIA — NOT A REAL STREAM</div>` : ""}
       <video
         class="studio-player ${vertical ? "studio-vertical-player" : ""}"
         src="${esc(src)}"
@@ -1661,7 +1811,7 @@ function renderStudioTransport(source, candidate, candidates = []) {
 }
 
 function renderStudioInspector(source, candidate, activeJob) {
-  if (!candidate) return empty("Select a playable candidate.");
+  if (!candidate) return empty("Select a playable candidate or start a project with a verified source.");
   const packageReady = state.packages.some((item) => item.candidateId === candidate.id);
   const transcript = candidate.transcriptProvenance === "UNAVAILABLE"
     ? "Source data unavailable. No transcript has been extracted from this media."
@@ -1679,7 +1829,7 @@ function renderStudioInspector(source, candidate, activeJob) {
       <span><b>${esc(candidate.sourceProvenance || source?.provenance || "UNAVAILABLE")}</b><em>Source proof</em></span>
       <span><b>${esc(candidate.creativeProvenance || "AI_GENERATED")}</b><em>Creative text</em></span>
       <span><b>${candidate.viewerCount == null ? "Unavailable" : esc(candidate.viewerCount)}</b><em>Viewers</em></span>
-      <span><b>${esc(candidate.confidence || "demo")}</b><em>Confidence</em></span>
+      <span><b>${esc(candidate.confidence || (isPracticeCandidate(candidate) ? "practice" : "unknown"))}</b><em>Confidence</em></span>
     </div>
     <section class="studio-inspector-section">
       <h3>Evidence breakdown</h3>
@@ -1711,7 +1861,7 @@ function renderStudioInspector(source, candidate, activeJob) {
       </section>
     ` : ""}
     <div class="studio-action-stack">
-      <button class="primary" data-studio-action="render-draft" ${source?.playable && !state.studioBusy ? "" : "disabled"}>Render 9:16 draft</button>
+      <button class="primary" data-studio-action="render-draft" ${disabledAttr(!(source?.playable && !state.studioBusy), source?.playable ? "Render is already running" : "Select a playable media source first")}>Render 9:16 draft</button>
       <button data-package-candidate="${esc(candidate.id)}">Create clip package</button>
       <button data-action="create-capcut" ${packageReady ? "" : "disabled"}>Prepare CapCut handoff</button>
       <button data-studio-action="capcut-open">Open CapCut workspace</button>
@@ -1894,16 +2044,21 @@ function renderDraftSummary(draft) {
 }
 
 function renderQueue() {
-  const drafts = state.drafts;
+  const real = realDrafts();
+  const practice = state.drafts.filter(isPracticeDraft);
+  const showingPractice = !real.length && practice.length;
+  const drafts = showingPractice ? practice : real;
   const limit = dailyLimitValue();
   const pending = countWhere(drafts, (draft) => draft.approvalStatus === "pending");
   const approved = countWhere(drafts, (draft) => draft.approvalStatus === "approved");
   const rejected = countWhere(drafts, (draft) => draft.approvalStatus === "rejected");
   const sendBack = countWhere(drafts, (draft) => draft.approvalStatus === "send_back");
   const scheduled = countWhere(drafts, (draft) => Boolean(draft.scheduledFor) || draft.status === "queued");
-  const needsApproval = countWhere(state.approvals, (approval) => approval.status === "pending" && approval.type === "posting_draft");
+  const visibleApprovals = showingPractice ? state.approvals.filter(isPracticeApproval) : realApprovals();
+  const needsApproval = countWhere(visibleApprovals, (approval) => approval.status === "pending" && approval.type === "posting_draft");
   view.innerHTML = `
     <section class="queue-page">
+      ${showingPractice ? practiceNotice("Practice posting drafts are shown because no real posting drafts exist. Nothing here has been posted externally.", true) : practice.length ? practiceNotice(`${practice.length} practice posting draft(s) are hidden from Real Mode counts.`, true) : ""}
       <div class="queue-tabs">
         ${queueTab("Queue", pending, true)}
         ${queueTab("Scheduled", scheduled)}
@@ -1929,7 +2084,7 @@ function renderQueue() {
             </select>
             <select aria-label="All streamers">
               <option>All Streamers</option>
-              ${state.streamers.map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}
+              ${(showingPractice ? practiceStreamers() : realStreamers()).map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}
             </select>
             <select aria-label="All dates">
               <option>All Dates</option>
@@ -2075,7 +2230,7 @@ function queueStreamerCell(streamer, index) {
       <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
       <div>
         <strong>${esc(streamer?.displayName || "Unknown")}</strong>
-        <small>${esc(streamer?.category || streamer?.platform || "Demo channel")}</small>
+        <small>${esc(streamer?.category || streamer?.platform || (isPracticeStreamer(streamer) ? "Practice channel" : "Channel"))}</small>
       </div>
     </div>
   `;
@@ -2170,7 +2325,10 @@ function renderDraftCard(draft) {
 }
 
 function renderGate() {
-  const approvals = state.approvals;
+  const real = realApprovals();
+  const practice = state.approvals.filter(isPracticeApproval);
+  const showingPractice = !real.length && practice.length;
+  const approvals = showingPractice ? practice : real;
   const pending = approvals.filter((approval) => approval.status === "pending");
   const selected = selectedApproval(pending);
   const postApprovals = countWhere(pending, (approval) => approval.type === "posting_draft" || approval.type === "clip_package");
@@ -2182,6 +2340,7 @@ function renderGate() {
   const recentDecisions = approvals.filter((approval) => approval.status !== "pending").slice(0, 4);
   view.innerHTML = `
     <section class="gate-page">
+      ${showingPractice ? practiceNotice("Practice approvals are shown because no real Human Gate items exist. They are local review exercises only.", true) : practice.length ? practiceNotice(`${practice.length} practice approval item(s) are hidden from Real Mode counts.`, true) : ""}
       <div class="gate-metrics">
         ${gateMetric("Pending Decisions", pending.length, "Needs your review", "violet")}
         ${gateMetric("High Risk", highRisk, "Requires attention", "amber")}
@@ -2261,7 +2420,7 @@ function renderGate() {
 }
 
 function selectedApproval(pending) {
-  const selected = state.approvals.find((approval) => approval.id === state.selectedApprovalId && approval.status === "pending");
+  const selected = pending.find((approval) => approval.id === state.selectedApprovalId && approval.status === "pending");
   if (selected) return selected;
   const fallback = pending[0] || null;
   if (fallback) {
@@ -2507,14 +2666,19 @@ function timelineStep(label, done) {
 }
 
 function renderOutputs() {
-  const outputs = buildOutputRows();
+  const allOutputs = buildOutputRows();
+  const realOutputs = allOutputs.filter((output) => !output.practice);
+  const practiceOutputs = allOutputs.filter((output) => output.practice);
+  const showingPractice = !realOutputs.length && practiceOutputs.length;
+  const outputs = showingPractice ? practiceOutputs : realOutputs;
   const counts = outputCounts(outputs);
   const recent = outputs.slice(0, 4);
   const total = outputs.length;
-  const storagePct = Math.min(100, Math.max(8, Math.round((state.artifacts.length / Math.max(1, total)) * 100)));
+  const storagePct = Math.min(100, Math.max(0, Math.round((outputs.length / Math.max(1, allOutputs.length || outputs.length || 1)) * 100)));
   view.innerHTML = `
     <div class="outputs-page">
       <section class="outputs-main">
+        ${showingPractice ? practiceNotice("Practice outputs are shown because no real outputs exist yet. They are local draft artifacts only.", true) : practiceOutputs.length ? practiceNotice(`${practiceOutputs.length} practice output(s) are hidden from Real Mode counts.`, true) : ""}
         <div class="output-tabs">
           ${outputTab("All Outputs", total, "all", true)}
           ${outputTab("Clip Packages", counts.clipPackage, "clip_package")}
@@ -2530,10 +2694,10 @@ function renderOutputs() {
           <select aria-label="Streamer filter"><option>All Streamers</option></select>
           <select aria-label="Type filter"><option>All Types</option></select>
           <select aria-label="Status filter"><option>All Status</option></select>
-          <button type="button">Date Range</button>
+          <button type="button" ${disabledAttr(true, "Date filtering is not wired yet")}>Date Range</button>
           <select aria-label="Sort outputs"><option>Sort: Newest</option></select>
-          <button type="button" aria-label="Grid view">▦</button>
-          <button type="button" aria-label="List view">☰</button>
+          <button type="button" aria-label="Grid view" ${disabledAttr(true, "Grid view is not wired yet")}>▦</button>
+          <button type="button" aria-label="List view" ${disabledAttr(true, "List view is the current view")}>☰</button>
         </div>
 
         <div class="outputs-table-wrap">
@@ -2541,7 +2705,7 @@ function renderOutputs() {
         </div>
 
         <div class="outputs-footer">
-          <span>Showing 1 to ${Math.min(10, total)} of ${total} outputs</span>
+          <span>${total ? `Showing 1 to ${Math.min(10, total)} of ${total} outputs` : "No outputs to show"}</span>
           <div class="outputs-pages"><b>1</b><span>2</span><span>3</span><em>...</em><span>${Math.max(1, Math.ceil(total / 10))}</span><button type="button">›</button></div>
           <label>Show <select><option>10</option><option>25</option></select> per page</label>
         </div>
@@ -2566,17 +2730,17 @@ function renderOutputs() {
 
         <section class="outputs-card storage-card">
           <h2>Storage Usage</h2>
-          <div><span>${storagePct}% used</span><span>${state.artifacts.length} stored artifacts</span></div>
+          <div><span>${storagePct}% visible</span><span>${outputs.length} visible artifact rows</span></div>
           <i><em style="width:${storagePct}%"></em></i>
-          <button type="button">Manage Storage</button>
+          <button type="button" ${disabledAttr(true, "Storage manager is not wired yet")}>Manage Storage</button>
         </section>
 
         <section class="outputs-card">
           <h2>Quick Actions</h2>
           <div class="output-actions">
-            <button type="button">Export Multiple <span>›</span></button>
-            <button type="button">Generate Report <span>›</span></button>
-            <button type="button">Clean Up Old Files <span>›</span></button>
+            <button type="button" ${disabledAttr(true, "Bulk export endpoint is not wired yet")}>Export Multiple <span>›</span></button>
+            <button type="button" ${disabledAttr(true, "Report generation endpoint is not wired yet")}>Generate Report <span>›</span></button>
+            <button type="button" ${disabledAttr(true, "Storage cleanup requires a persisted storage policy first")}>Clean Up Old Files <span>›</span></button>
           </div>
         </section>
 
@@ -2585,7 +2749,7 @@ function renderOutputs() {
           <div class="recent-exports">
             ${recent.map(renderRecentExport).join("") || empty("No recent exports")}
           </div>
-          <button class="ghost" type="button">View all exports →</button>
+          <button class="ghost" type="button" ${disabledAttr(true, "Export archive view is not wired yet")}>View all exports →</button>
         </section>
       </aside>
     </div>
@@ -2612,7 +2776,8 @@ function buildOutputRows() {
       candidate,
       icon: "PKG",
       thumbClass: `thumb-${index % 5}`,
-      url: clipPackage.artifacts?.[0]?.url || ""
+      url: clipPackage.artifacts?.[0]?.url || "",
+      practice: isPracticePackage(clipPackage)
     });
   });
 
@@ -2635,7 +2800,8 @@ function buildOutputRows() {
       candidate,
       icon: "TXT",
       thumbClass: `thumb-${(index + 2) % 5}`,
-      url: clipPackage?.artifacts?.[0]?.url || ""
+      url: clipPackage?.artifacts?.[0]?.url || "",
+      practice: isPracticeDraft(draft)
     });
   });
 
@@ -2659,7 +2825,8 @@ function buildOutputRows() {
       candidate,
       icon: meta.icon,
       thumbClass: meta.thumb ? `thumb-${index % 5}` : "",
-      url: artifact.url
+      url: artifact.url,
+      practice: isPracticeArtifact(artifact)
     });
   });
 
@@ -2708,6 +2875,7 @@ function renderOutputRow(output, index) {
             <strong>${esc(output.title)}</strong>
             <p>${esc(output.subtitle)}</p>
             ${output.badge ? `<em>${esc(output.badge)}</em>` : ""}
+            ${output.practice ? `<em class="practice-mark">PRACTICE</em>` : ""}
           </div>
         </div>
       </td>
@@ -2720,7 +2888,7 @@ function renderOutputRow(output, index) {
         <div class="output-row-actions">
           ${output.url ? `<a href="${esc(appUrl(output.url))}" download title="Download">↓</a>` : `<button type="button" title="Download disabled" disabled>↓</button>`}
           <button type="button" data-nav-jump="builder" title="Open in builder">↗</button>
-          <button type="button" title="More">...</button>
+          <button type="button" ${disabledAttr(true, "More output actions are not wired yet")}>...</button>
         </div>
       </td>
     </tr>
@@ -2773,14 +2941,18 @@ function outputLegend(label, value, tone) {
 }
 
 function renderRecentExport(output) {
+  const inner = `
+    <span class="${outputTypeClass(output.typeKey)}">${esc(output.icon)}</span>
+    <div>
+      <strong>${esc(output.title)}</strong>
+      <small>${timeAgo(output.createdAt)} · ${esc(output.size || "Stored")}</small>
+    </div>
+    <b>✓</b>
+  `;
+  if (!output.url) return `<article class="recent-export disabled" title="No downloadable file is attached yet">${inner}</article>`;
   return `
-    <a class="recent-export" href="${output.url ? esc(appUrl(output.url)) : "#"}" ${output.url ? "download" : ""}>
-      <span class="${outputTypeClass(output.typeKey)}">${esc(output.icon)}</span>
-      <div>
-        <strong>${esc(output.title)}</strong>
-        <small>${timeAgo(output.createdAt)} · ${esc(output.size || "Stored")}</small>
-      </div>
-      <b>✓</b>
+    <a class="recent-export" href="${esc(appUrl(output.url))}" download>
+      ${inner}
     </a>
   `;
 }
@@ -2793,19 +2965,21 @@ function percent(value, total) {
 function renderAnalytics() {
   const stats = analyticsStats();
   const topStreamers = analyticsStreamerRows().slice(0, 6);
-  const queuePressure = state.approvals.length ? percent(stats.pendingApprovals, state.approvals.length) : 0;
+  const realApprovalTotal = realApprovals().length;
+  const queuePressure = realApprovalTotal ? percent(stats.pendingApprovals, realApprovalTotal) : 0;
   const approvalAccuracy = percent(stats.approvedDecisions, Math.max(1, stats.decidedApprovals));
   view.innerHTML = `
     <section class="analytics-page">
+      ${hasPracticeData() ? practiceNotice("Practice rows are excluded from these Real Mode analytics. Use the Dashboard practice banner to clear them.", true) : ""}
       <div class="analytics-tabs">
         <button class="active">Overview</button>
-        <button>Agent 101</button>
-        <button>Streamers</button>
-        <button>Human Gate</button>
-        <button>System</button>
-        <button>Custom</button>
+        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Agent 101</button>
+        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Streamers</button>
+        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Human Gate</button>
+        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>System</button>
+        <button type="button" ${disabledAttr(true, "Custom analytics ranges are not wired yet")}>Custom</button>
       </div>
-      <button class="analytics-export" type="button">Export Report</button>
+      <button class="analytics-export" type="button" ${disabledAttr(true, "Report export needs a persisted report endpoint first")}>Export Report</button>
 
       <div class="analytics-metrics">
         ${analyticsMetric("Agent workload", stats.agentWorkload, `${stats.pendingApprovals} decisions waiting`, "AG", queuePressure > 50 ? "warn" : "good")}
@@ -2830,9 +3004,9 @@ function renderAnalytics() {
         <section class="panel analytics-donut-card">
           <h2>Agent Work Mix</h2>
           ${renderAnalyticsDonut([
-            ["Tasks", state.drafts.length, "#38bdf8"],
-            ["Approvals", state.approvals.length, "#a855f7"],
-            ["Outputs", state.artifacts.length, "#22c55e"],
+            ["Tasks", realDrafts().length, "#38bdf8"],
+            ["Approvals", realApprovalTotal, "#a855f7"],
+            ["Outputs", realArtifacts().length, "#22c55e"],
             ["Logs", Math.min(state.logs.length, 250), "#f59e0b"]
           ], "Agent Work")}
         </section>
@@ -2858,7 +3032,7 @@ function renderAnalytics() {
             ["Pending", stats.pendingApprovals, "#a855f7"],
             ["Approved", stats.approvedApprovals, "#22c55e"],
             ["Blocked", stats.blockedApprovals, "#ef4444"],
-            ["Other", Math.max(0, state.approvals.length - stats.pendingApprovals - stats.approvedApprovals - stats.blockedApprovals), "#64748b"]
+            ["Other", Math.max(0, realApprovalTotal - stats.pendingApprovals - stats.approvedApprovals - stats.blockedApprovals), "#64748b"]
           ], "Decisions")}
         </section>
         <section class="panel quality-card">
@@ -2868,10 +3042,10 @@ function renderAnalytics() {
             <span>/100</span>
           </div>
           <div class="quality-bars">
-            ${qualityBar("Streamer permission coverage", percent(stats.approvedStreamers, state.streamers.length))}
-            ${qualityBar("Monitoring coverage", percent(stats.monitoredStreamers, state.streamers.length))}
-            ${qualityBar("High-signal candidate rate", percent(stats.highScoreCandidates, state.candidates.length))}
-            ${qualityBar("Approval completion", percent(stats.decidedApprovals, state.approvals.length))}
+            ${qualityBar("Streamer permission coverage", percent(stats.approvedStreamers, realStreamers().length))}
+            ${qualityBar("Monitoring coverage", percent(stats.monitoredStreamers, realStreamers().length))}
+            ${qualityBar("High-signal candidate rate", percent(stats.highScoreCandidates, realCandidates().length))}
+            ${qualityBar("Approval completion", percent(stats.decidedApprovals, realApprovalTotal))}
           </div>
         </section>
       </div>
@@ -2880,18 +3054,18 @@ function renderAnalytics() {
         <section class="panel system-health-card">
           <h2>Agent System Health</h2>
           <div class="analytics-health-grid">
-            ${healthTile("Provider", state.openai?.configured ? "OpenAI live" : "Local demo", state.openai?.configured ? "good" : "warn")}
-            ${healthTile("Twitch layer", state.twitch?.configured ? "Ready" : "Manual/demo", state.twitch?.configured ? "good" : "warn")}
+            ${healthTile("Provider", state.openai?.configured ? "OpenAI live" : "Local fallback", state.openai?.configured ? "good" : "warn")}
+            ${healthTile("Stream API", state.twitch?.configured || state.kick?.configured ? streamApiStatusLabel() : "API needed", state.twitch?.configured || state.kick?.configured ? "good" : "warn")}
             ${healthTile("Queue health", stats.pendingApprovals ? "Review needed" : "Clear", stats.pendingApprovals ? "warn" : "good")}
             ${healthTile("Agent safety", "Approval gated", "good")}
           </div>
         </section>
         <section class="panel feature-card">
           <h2>Agent Capability Usage</h2>
-          ${usageBar("Stream monitoring", percent(stats.monitoredStreamers, Math.max(1, state.streamers.length)))}
-          ${usageBar("Clip scoring", percent(state.candidates.length, Math.max(1, state.candidates.length + 20)))}
-          ${usageBar("Approval packaging", percent(state.approvals.length, Math.max(1, state.approvals.length + 15)))}
-          ${usageBar("Output generation", percent(state.artifacts.length, Math.max(1, state.artifacts.length + 25)))}
+          ${usageBar("Stream monitoring", percent(stats.monitoredStreamers, Math.max(1, realStreamers().length)))}
+          ${usageBar("Clip scoring", percent(realCandidates().length, Math.max(1, realCandidates().length + 20)))}
+          ${usageBar("Approval packaging", percent(realApprovalTotal, Math.max(1, realApprovalTotal + 15)))}
+          ${usageBar("Output generation", percent(realArtifacts().length, Math.max(1, realArtifacts().length + 25)))}
         </section>
         <section class="panel insight-card">
           <h2>Insights</h2>
@@ -2905,18 +3079,24 @@ function renderAnalytics() {
 }
 
 function analyticsStats() {
-  const monitoredStreamers = countWhere(state.streamers, (streamer) => streamer.monitorEnabled);
-  const approvedStreamers = countWhere(state.streamers, isPermissionReady);
-  const pendingApprovals = countWhere(state.approvals, (approval) => approval.status === "pending");
-  const approvedApprovals = countWhere(state.approvals, (approval) => approval.status === "approved");
-  const blockedApprovals = countWhere(state.approvals, (approval) => ["blocked", "rejected", "sent_back"].includes(approval.status));
-  const decidedApprovals = state.approvals.length - pendingApprovals;
-  const scores = state.candidates.map((candidate) => Number(candidate.score || 0)).filter(Boolean);
+  const streamers = realStreamers();
+  const candidates = realCandidates();
+  const packages = realPackages();
+  const drafts = realDrafts();
+  const approvals = realApprovals();
+  const artifacts = realArtifacts();
+  const monitoredStreamers = countWhere(streamers, (streamer) => streamer.monitorEnabled);
+  const approvedStreamers = countWhere(streamers, (streamer) => streamer.permissionStatus === "approved");
+  const pendingApprovals = countWhere(approvals, (approval) => approval.status === "pending");
+  const approvedApprovals = countWhere(approvals, (approval) => approval.status === "approved");
+  const blockedApprovals = countWhere(approvals, (approval) => ["blocked", "rejected", "sent_back"].includes(approval.status));
+  const decidedApprovals = approvals.length - pendingApprovals;
+  const scores = candidates.map((candidate) => Number(candidate.score || 0)).filter(Boolean);
   const averageCandidateScore = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0;
-  const highScoreCandidates = countWhere(state.candidates, (candidate) => Number(candidate.score || 0) >= 70);
-  const agentWorkload = state.drafts.length + state.approvals.length + state.packages.length;
-  const agentOutputs = state.packages.length + state.artifacts.length;
-  const savedMinutesTotal = Math.max(0, state.packages.length * 18 + state.artifacts.length * 6 + monitoredStreamers * 4);
+  const highScoreCandidates = countWhere(candidates, (candidate) => Number(candidate.score || 0) >= 70);
+  const agentWorkload = drafts.length + approvals.length + packages.length;
+  const agentOutputs = packages.length + artifacts.length;
+  const savedMinutesTotal = Math.max(0, packages.length * 18 + artifacts.length * 6 + monitoredStreamers * 4);
   return {
     monitoredStreamers,
     approvedStreamers,
@@ -2929,7 +3109,7 @@ function analyticsStats() {
     highScoreCandidates,
     agentWorkload,
     agentOutputs,
-    artifacts: state.artifacts.length,
+    artifacts: artifacts.length,
     savedHours: Math.floor(savedMinutesTotal / 60),
     savedMinutes: savedMinutesTotal % 60
   };
@@ -2949,19 +3129,21 @@ function analyticsMetric(label, value, detail, icon, tone = "info") {
 }
 
 function analyticsStreamerRows() {
-  return state.streamers
+  const candidates = realCandidates();
+  const approvals = realApprovals();
+  return realStreamers()
     .map((streamer, index) => {
-      const candidates = state.candidates.filter((candidate) => candidate.streamerId === streamer.id);
-      const approvals = state.approvals.filter((approval) => approval.evidence?.streamerId === streamer.id);
-      const avgScore = candidates.length
-        ? Math.round(candidates.reduce((sum, candidate) => sum + Number(candidate.score || 0), 0) / candidates.length)
+      const streamerCandidates = candidates.filter((candidate) => candidate.streamerId === streamer.id);
+      const streamerApprovals = approvals.filter((approval) => approval.evidence?.streamerId === streamer.id);
+      const avgScore = streamerCandidates.length
+        ? Math.round(streamerCandidates.reduce((sum, candidate) => sum + Number(candidate.score || 0), 0) / streamerCandidates.length)
         : 0;
       return {
         streamer,
         index,
-        candidates: candidates.length,
+        candidates: streamerCandidates.length,
         avgScore,
-        approvals: approvals.length,
+        approvals: streamerApprovals.length,
         approved: isPermissionReady(streamer),
         monitored: streamer.monitorEnabled,
         lastCheckedAt: streamer.lastCheckedAt
@@ -3927,6 +4109,16 @@ function empty(label) {
   return `<div class="empty">${esc(label)}</div>`;
 }
 
+function practiceNotice(message, includeClear = false) {
+  return `
+    <div class="practice-inline">
+      <strong>PRACTICE MEDIA — NOT A REAL STREAM</strong>
+      <span>${esc(message)}</span>
+      ${includeClear ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
+    </div>
+  `;
+}
+
 async function refresh() {
   await loadCore();
   renderNav();
@@ -3942,14 +4134,20 @@ async function runWatch() {
 async function seedDemo() {
   const result = await api("/api/demo/seed", { method: "POST", body: "{}" });
   const seeded = result.seeded || {};
-  toast(`Demo mission loaded: ${seeded.streamers || 0} streamers, ${seeded.candidates || 0} candidates`, "good");
+  toast(`Practice project started: ${seeded.streamers || 0} streamers, ${seeded.candidates || 0} candidates`, "good");
+  await refresh();
+}
+
+async function clearDemo() {
+  const result = await api("/api/demo/clear", { method: "POST", body: "{}" });
+  toast(result.message || "Practice data cleared", "good");
   await refresh();
 }
 
 const agent101Goals = {
-  "agent101-demo-workflow": "Add 5 demo streamers, run a watch cycle, generate clip candidates, score them, create packages for the top 3, create CapCut briefs, create draft posting packages, and send them to Human Gate.",
-  "agent101-add-demo-streamers": "Add 5 demo streamers for internal StreamClipper sandbox testing.",
-  "agent101-watch-cycle": "Run a safe watch cycle across demo-approved streamers and create live demo sessions.",
+  "agent101-demo-workflow": "Start Practice Mode, add 5 practice streamers, run a watch cycle, generate clip candidates, score them, create packages for the top 3, create CapCut briefs, create draft posting packages, and send them to Human Gate. Mark every record as practice.",
+  "agent101-add-demo-streamers": "Add 5 practice streamers for internal StreamClipper sandbox testing.",
+  "agent101-watch-cycle": "Run a safe watch cycle across practice-approved streamers and create practice sessions.",
   "agent101-create-candidates": "Find 5 practice streams and make clip candidates.",
   "agent101-package-top3": "Package the top 3 clip candidates, create CapCut handoffs, and create draft posting packages.",
   "agent101-human-gate": "Send current draft posting packages to Human Gate without publishing anything."
@@ -4561,6 +4759,7 @@ document.addEventListener("click", async (event) => {
     if (action === "run-watch") await runWatch();
     if (action === "scout-streamers") await scoutStreamers();
     if (action === "seed-demo") await seedDemo();
+    if (action === "clear-demo") await clearDemo();
     if (agent101Goals[action]) await runAgent101(agent101Goals[action], "demo");
     if (action === "create-capcut") await createCapCut();
     if (action === "create-captions") await createCaptions();

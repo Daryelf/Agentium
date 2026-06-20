@@ -968,6 +968,67 @@ button:disabled {
   opacity: 0.5;
 }
 
+button:disabled:hover {
+  border-color: var(--line);
+  background: #20282d;
+  transform: none;
+}
+
+.practice-banner,
+.practice-inline {
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #fed7aa;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 158, 11, 0.16), transparent 38%),
+    rgba(45, 20, 4, 0.58);
+}
+
+.practice-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+
+.practice-banner strong,
+.practice-inline {
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.practice-banner span {
+  color: #fde68a;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.practice-banner button {
+  min-height: 34px;
+  border-color: rgba(245, 158, 11, 0.36);
+  color: #ffedd5;
+  background: rgba(120, 53, 15, 0.72);
+}
+
+.practice-inline {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 12px;
+  padding: 7px 9px;
+  border-radius: 999px;
+}
+
+.practice-mark {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  color: #fed7aa !important;
+  background: rgba(146, 64, 14, 0.24) !important;
+}
+
 input,
 select,
 textarea {
@@ -5081,6 +5142,15 @@ h1 {
 
 .recent-export b {
   color: #22c55e;
+}
+
+.recent-export.disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.recent-export.disabled b {
+  color: #64748b;
 }
 
 .queue-page {

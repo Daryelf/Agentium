@@ -458,7 +458,7 @@ function inferExecutionContract(body = {}) {
 
 function contractSummary(contract) {
   if (contract.operation === "discover_streamers") {
-    return `I interpreted this as ${contract.requestedCount} ${contract.sourceMode === "real" ? "real currently-live Twitch" : "DEMO / SYNTHETIC"} stream${contract.requestedCount === 1 ? "" : "s"}. This is discovery only; no clipping or posting will occur.`;
+    return `I interpreted this as ${contract.requestedCount} ${contract.sourceMode === "real" ? "real currently-live Twitch/Kick" : "practice"} stream${contract.requestedCount === 1 ? "" : "s"}. This is discovery only; no clipping or posting will occur.`;
   }
   if (contract.sourceScope === "approved_watchlist") {
     return `I will check the approved watchlist for up to ${contract.requestedCount} eligible live streamer${contract.requestedCount === 1 ? "" : "s"}, then continue only if rights and playable source media are verified.`;
@@ -723,7 +723,7 @@ function scoreClipMoment(input = {}) {
     confidence,
     reason:
       confidence === "low"
-        ? "Manual/demo candidate: add transcript, chat notes, or visual context for a stronger score."
+        ? "Manual/practice candidate: add transcript, chat notes, or visual context for a stronger score."
         : "Candidate scored from engagement, transcript energy, hook potential, length, context, and risk.",
     suggestedHook,
     suggestedTitle,
@@ -859,7 +859,6 @@ function publicMediaSource(source) {
 }
 
 function findMediaSource(id) {
-  ensureClippingStudioProject();
   return state.mediaSources.find((source) => source.id === id);
 }
 
@@ -873,7 +872,7 @@ function demoFrameUrl(index) {
 
 function demoCandidateDefinitions(sourceId = DEMO_MEDIA_SOURCE_ID) {
   const base = [
-    ["candidate_demo_source_001", "Practice motion test", "VALORANT", 2, 7, 82, "AI suggestion based on demo media timing. Source transcript is unavailable."],
+    ["candidate_demo_source_001", "Practice motion test", "VALORANT", 2, 7, 82, "AI suggestion based on practice media timing. Source transcript is unavailable."],
     ["candidate_demo_source_002", "Perfect timing beat", "Gaming", 7, 12, 76, "AI suggestion for testing a clean reaction-style crop. Source transcript is unavailable."],
     ["candidate_demo_source_003", "Fast transition moment", "Just Chatting", 12, 17, 71, "AI suggestion for testing captions and 9:16 preview. Source transcript is unavailable."],
     ["candidate_demo_source_004", "Clean replay cut", "Apex Legends", 17, 22, 68, "AI suggestion for testing render output. Source transcript is unavailable."]
@@ -881,7 +880,7 @@ function demoCandidateDefinitions(sourceId = DEMO_MEDIA_SOURCE_ID) {
   return base.map(([id, title, category, startSec, endSec, score, reason], index) => ({
     id,
     streamerId: DEMO_STREAMER_ID,
-    streamerName: "Demo Media Source",
+    streamerName: "Practice Media Source",
     title,
     category,
     sourceType: "demo_media",
@@ -895,7 +894,7 @@ function demoCandidateDefinitions(sourceId = DEMO_MEDIA_SOURCE_ID) {
     timestampStartSeconds: startSec,
     timestampEndSeconds: endSec,
     duration: endSec - startSec,
-    transcriptSnippet: "Source data unavailable: bundled demo media has no speech transcript.",
+    transcriptSnippet: "Source data unavailable: bundled practice media has no speech transcript.",
     transcriptProvenance: PROVENANCE.UNAVAILABLE,
     chatSignals: { source: PROVENANCE.UNAVAILABLE, label: "Source data unavailable" },
     viewerCount: null,
@@ -924,7 +923,7 @@ function ensureClippingStudioProject() {
   if (!state.streamers.some((streamer) => streamer.id === DEMO_STREAMER_ID)) {
     state.streamers.unshift({
       id: DEMO_STREAMER_ID,
-      displayName: "Demo Media Source",
+      displayName: "Practice Media Source",
       platform: "demo",
       channelId: "demo-media-source",
       channelUrl: "",
@@ -932,7 +931,7 @@ function ensureClippingStudioProject() {
       monitorEnabled: true,
       isDemo: true,
       liveStatus: "demo_source",
-      notes: "Bundled playable demo media for local clipping workflow testing. Not a real live stream.",
+      notes: "Bundled playable practice media for local clipping workflow testing. Not a real live stream.",
       createdAt: now(),
       updatedAt: now()
     });
@@ -943,7 +942,7 @@ function ensureClippingStudioProject() {
     source = {
       id: DEMO_MEDIA_SOURCE_ID,
       title: "StreamClipper Practice Media",
-      displayName: "Demo practice video",
+      displayName: "Practice video",
       type: "video/mp4",
       mimeType: "video/mp4",
       provenance: PROVENANCE.DEMO_SOURCE,
@@ -958,8 +957,8 @@ function ensureClippingStudioProject() {
       playable: true,
       transcriptStatus: PROVENANCE.UNAVAILABLE,
       rightsStatus: "demo_only",
-      label: "DEMO MEDIA — NOT A REAL LIVE STREAM",
-      warning: "Demo media is for workflow testing only. Do not treat it as a real live stream or public posting source.",
+      label: "PRACTICE MEDIA — NOT A REAL STREAM",
+      warning: "Practice media is for workflow testing only. Do not treat it as a real live stream or public posting source.",
       createdAt: now(),
       updatedAt: now()
     };
@@ -1012,9 +1011,44 @@ function secondsToTimestamp(value) {
     : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+function emptyStudioProjectPayload(projectId = DEMO_PROJECT_ID) {
+  return {
+    project: {
+      id: projectId,
+      officeId: "clips",
+      title: "Clipping Office Workspace",
+      activeSourceId: "",
+      selectedCandidateId: "",
+      stage: "setup",
+      status: "empty",
+      sourceTruth: {
+        provenance: PROVENANCE.UNAVAILABLE,
+        label: "No media source selected",
+        rightsStatus: "unavailable",
+        transcriptStatus: PROVENANCE.UNAVAILABLE,
+        viewerCount: PROVENANCE.UNAVAILABLE,
+        chatSignals: PROVENANCE.UNAVAILABLE
+      }
+    },
+    source: null,
+    candidates: [],
+    renderJobs: [],
+    artifacts: [],
+    capcut: {
+      status: "manual_handoff",
+      workspaceUrl: config.capcutHandoffUrl,
+      browserReady: config.browserEnabled
+    },
+    unavailable: {
+      transcript: "No media source selected.",
+      liveMetrics: "No verified stream or practice media is selected."
+    }
+  };
+}
+
 function studioProjectPayload(projectId = DEMO_PROJECT_ID) {
-  const project = ensureClippingStudioProject();
-  const activeProject = state.mediaProjects.find((item) => item.id === projectId) || project;
+  const activeProject = state.mediaProjects.find((item) => item.id === projectId) || state.mediaProjects[0];
+  if (!activeProject) return emptyStudioProjectPayload(projectId);
   const source = findMediaSource(activeProject.activeSourceId);
   const candidates = state.clipCandidates
     .filter((candidate) => candidate.sourceId === activeProject.activeSourceId)
@@ -1047,8 +1081,12 @@ function studioProjectPayload(projectId = DEMO_PROJECT_ID) {
       browserReady: config.browserEnabled
     },
     unavailable: {
-      transcript: "Source data unavailable. No speech transcript has been extracted for this demo media.",
-      liveMetrics: "Source data unavailable. Demo media does not contain verified viewer counts, live status, or chat spikes."
+      transcript: source?.provenance === PROVENANCE.DEMO_SOURCE
+        ? "Practice media has no verified speech transcript."
+        : "Source data unavailable. No speech transcript has been extracted.",
+      liveMetrics: source?.provenance === PROVENANCE.DEMO_SOURCE
+        ? "Practice media has no verified viewer counts, live status, or chat spikes."
+        : "Source data unavailable. No verified live metrics are attached."
     }
   };
 }
@@ -1192,7 +1230,7 @@ async function createRenderJob(body = {}) {
       probeStatus: "passed",
       renderStatus: "completed",
       note: source.provenance === PROVENANCE.DEMO_SOURCE
-        ? "Rendered from bundled demo media. Not a real live stream."
+        ? "Rendered from bundled practice media. Not a real live stream."
         : "Rendered from selected playable source media."
     });
     artifact.fileSizeBytes = stat.size;
@@ -1806,7 +1844,7 @@ function createPostingDraftsForPackage(clipPackage, packagePlan) {
   });
 }
 
-const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a truthful supervised clipping agent inside StreamClipper. Never claim you found, watched, clipped, rendered, queued, or posted media unless the corresponding verified record or file exists. Honor requested quantities exactly. If the user requests two streamers, return no more than two. Do not silently expand scope. Real mode may only use real Twitch records from official APIs with provider IDs, fetch timestamps, and response hashes. Demo mode must be explicitly requested and clearly labeled DEMO / SYNTHETIC — NOT REAL TWITCH DATA. Follow the workflow in order: discovery, validation, rights, source, analysis, candidate, clip, verify, posting draft, approval. Do not create downstream artifacts before prerequisites are complete. If a real integration, right, or media source is unavailable, explain the exact blocker and stop. Do not replace a failed real action with a simulation.`;
+const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a truthful supervised clipping agent inside StreamClipper. Never claim you found, watched, clipped, rendered, queued, or posted media unless the corresponding verified record or file exists. Honor requested quantities exactly. If the user requests two streamers, return no more than two. Do not silently expand scope. Real mode may only use real Twitch/Kick records from official APIs with provider IDs, fetch timestamps, and response hashes. Practice mode must be explicitly requested and clearly labeled PRACTICE MEDIA — NOT A REAL STREAM. Follow the workflow in order: discovery, validation, rights, source, analysis, candidate, clip, verify, posting draft, approval. Do not create downstream artifacts before prerequisites are complete. If a real integration, right, or media source is unavailable, explain the exact blocker and stop. Do not replace a failed real action with a simulation.`;
 
 const AGENT101_DEMO_STREAMERS = [
   {
@@ -2747,7 +2785,7 @@ async function agentToolAddDemoStreamers(run) {
     });
     added += 1;
   }
-  addAgentLog(run, "agent_tool", "Agent 101 prepared demo streamer workspace", { added, updated });
+  addAgentLog(run, "agent_tool", "Agent 101 prepared practice streamer workspace", { added, updated });
   return { added, updated, totalDemoStreamers: AGENT101_DEMO_STREAMERS.length };
 }
 
@@ -2893,7 +2931,7 @@ async function agentToolCreateClipCandidates(run) {
       category: session.category || profile.category,
       transcriptSnippet: snippet,
       chatSignals: { spike: Math.max(30, baseScore - 38), messagesPerMinute: Math.max(40, baseScore - 20), source: "agent101_demo" },
-      reason: "Agent 101 generated this safe demo candidate from the internal clipping workflow.",
+      reason: "Agent 101 generated this safe practice candidate from the internal clipping workflow.",
       hookScore: Math.min(20, Math.round(baseScore / 5)),
       riskScore: 12,
       status: "candidate",
@@ -3179,8 +3217,8 @@ async function runAgent101(body = {}) {
     artifacts: [],
     logs: [],
     context: {
-      demoLabel: contract.sourceMode === "demo" ? "DEMO / SYNTHETIC — NOT REAL TWITCH DATA" : "",
-      sourceTruth: contract.sourceMode === "real" ? "Official provider data only. No synthetic fallback." : "Explicit demo mode only."
+      demoLabel: contract.sourceMode === "demo" ? "PRACTICE MEDIA — NOT A REAL STREAM" : "",
+      sourceTruth: contract.sourceMode === "real" ? "Official provider data only. No synthetic fallback." : "Explicit Practice Mode only."
     },
     results: {
       streamers: [],
@@ -3233,8 +3271,8 @@ async function runAgent101(body = {}) {
     }
 
     if (contract.sourceMode === "demo") {
-      addRunEvent(run, "INTEGRATION_CHECK", "not_required", "DEMO / SYNTHETIC mode selected; official provider data is not required.", {
-        demoLabel: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA"
+      addRunEvent(run, "INTEGRATION_CHECK", "not_required", "Practice Mode selected; official provider data is not required.", {
+        demoLabel: "PRACTICE MEDIA — NOT A REAL STREAM"
       });
       ensureClippingStudioProject();
       run.results.candidates = state.clipCandidates
@@ -3247,13 +3285,13 @@ async function runAgent101(body = {}) {
         postingDraftsCreated: 0,
         approvalsCreated: 0
       };
-      addRunEvent(run, "STREAM_DISCOVERY", "not_required", "Demo workspace is available. No real Twitch discovery was performed.", run.counts);
-      addRunEvent(run, "COMPLETED", "succeeded", "Demo mode prepared the local practice workspace only. It did not create real Twitch records or external posting drafts.", run.counts);
+      addRunEvent(run, "STREAM_DISCOVERY", "not_required", "Practice workspace is available. No real Twitch discovery was performed.", run.counts);
+      addRunEvent(run, "COMPLETED", "succeeded", "Practice Mode prepared the local practice workspace only. It did not create real Twitch records or external posting drafts.", run.counts);
       run.status = "COMPLETED";
       run.externalStatus = "completed";
       run.progress = 100;
       run.completedAt = now();
-      run.summary = "DEMO / SYNTHETIC — NOT REAL TWITCH DATA. Local practice media is ready; no real streams, clips, posts, or approvals were fabricated.";
+      run.summary = "PRACTICE MEDIA — NOT A REAL STREAM. Local practice media is ready; no real streams, clips, posts, or approvals were fabricated.";
       await saveRunState(run);
       return { ...run, externalStatus: toExternalRunStatus(run.status) };
     }
@@ -3399,6 +3437,7 @@ function demoStreamerProfiles() {
 }
 
 async function seedDemoWorkspace() {
+  ensureClippingStudioProject();
   const seeded = {
     streamers: 0,
     candidates: 0
@@ -3413,12 +3452,13 @@ async function seedDemoWorkspace() {
       displayName,
       channelId,
       channelUrl: `https://www.twitch.tv/${channelId}`,
-      permissionStatus: "approved",
+      permissionStatus: "demo_approved",
       allowedUse: ["clips", "edits", "reposts"],
       monitorEnabled: true,
       lastCheckedAt: now(),
       liveStatus: "demo_live",
-      notes: "Approved local demo creator for supervised StreamClipper workflow testing.",
+      isDemo: true,
+      notes: "Practice-only creator for supervised StreamClipper workflow testing. Not real streamer permission.",
       createdAt: now(),
       updatedAt: now()
     });
@@ -3426,7 +3466,9 @@ async function seedDemoWorkspace() {
   }
 
   const profiles = demoStreamerProfiles();
-  const activeStreamers = state.streamers.filter((streamer) => streamer.monitorEnabled && isApprovedStreamer(streamer)).slice(0, 5);
+  const activeStreamers = state.streamers
+    .filter((streamer) => streamer.monitorEnabled && (streamer.isDemo || streamer.permissionStatus === "demo_approved"))
+    .slice(0, 5);
   for (const [index, streamer] of activeStreamers.entries()) {
     const hasCandidate = state.clipCandidates.some((candidate) => candidate.streamerId === streamer.id);
     if (hasCandidate) continue;
@@ -3435,8 +3477,8 @@ async function seedDemoWorkspace() {
       id: newId("session"),
       streamerId: streamer.id,
       platform: streamer.platform,
-      title: `${streamer.displayName} supervised demo stream`,
-      category: profile[2] || "Demo / manual review",
+      title: `${streamer.displayName} supervised practice stream`,
+      category: profile[2] || "Practice / manual review",
       startedAt: now(),
       endedAt: null,
       vodId: null,
@@ -3449,14 +3491,17 @@ async function seedDemoWorkspace() {
       sessionId: session.id,
       sourceType: "demo",
       sourceId: session.id,
+      sourceProvenance: PROVENANCE.DEMO_SOURCE,
+      provenance: PROVENANCE.DEMO_SOURCE,
+      creativeProvenance: PROVENANCE.AI_GENERATED,
       timestampStart: `00:0${index + 1}:08`,
       timestampEnd: `00:0${index + 1}:36`,
       duration: 28,
       title: profile[3] || `${streamer.displayName} reaction moment`,
       category: session.category,
-      transcriptSnippet: "Insane live reaction. No way this clutch just happened. Demo candidate generated locally for supervised review.",
-      chatSignals: { spike: 42 + index * 5, source: "demo" },
-      reason: "Safe demo candidate for workflow testing. No download, login, upload, or external post has occurred.",
+      transcriptSnippet: "Practice candidate generated locally for supervised review. No real streamer media is being claimed.",
+      chatSignals: { spike: 42 + index * 5, source: "practice" },
+      reason: "Safe practice candidate for workflow testing. No download, login, upload, or external post has occurred.",
       hookScore: 15 + index,
       riskScore: 12,
       status: "candidate",
@@ -3468,7 +3513,7 @@ async function seedDemoWorkspace() {
     seeded.candidates += 1;
   }
 
-  await logEvent("demo_seeded", "StreamClipper demo mission loaded", seeded);
+  await logEvent("practice_seeded", "StreamClipper practice project started", seeded);
   await saveState();
   return seeded;
 }
@@ -3980,7 +4025,6 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 
   if (req.method === "GET" && pathname === "/api/media/sources") {
-    ensureClippingStudioProject();
     return sendJson(res, 200, { sources: state.mediaSources.map(publicMediaSource) });
   }
 
@@ -4307,7 +4351,7 @@ async function handleApi(req, res, pathname, searchParams) {
         return sendJson(res, 200, {
           configured: false,
           live: false,
-          message: "Twitch credentials are not configured. Real mode will stop instead of using demo data."
+          message: "Twitch credentials are not configured. Real mode will stop instead of using practice data."
         });
       }
       const token = config.twitchOAuthToken || (await getTwitchAppToken());
@@ -4397,33 +4441,114 @@ async function handleApi(req, res, pathname, searchParams) {
     const seeded = await seedDemoWorkspace();
     return sendJson(res, 200, {
       seeded,
-      message: "Demo mission loaded. StreamClipper is ready to run a supervised clipping cycle."
+      message: "Practice project started. StreamClipper is ready to run a supervised local clipping cycle."
     });
   }
 
   if (req.method === "POST" && pathname === "/api/demo/clear") {
+    const demoStreamerIds = new Set(
+      state.streamers
+        .filter((streamer) => streamer.isDemo || streamer.permissionStatus === "demo_approved" || streamer.platform === "demo")
+        .map((streamer) => streamer.id)
+    );
+    const demoSessionIds = new Set(
+      state.streamSessions
+        .filter((session) => String(session.status || "").startsWith("demo") || demoStreamerIds.has(session.streamerId))
+        .map((session) => session.id)
+    );
+    const demoSourceIds = new Set(
+      state.mediaSources
+        .filter((source) => source.provenance === PROVENANCE.DEMO_SOURCE || source.sourceKind === "demo_media")
+        .map((source) => source.id)
+    );
+    const demoCandidateIds = new Set(
+      state.clipCandidates
+        .filter((candidate) => (
+          candidate.provenance === PROVENANCE.DEMO_SOURCE
+          || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE
+          || /demo/i.test(candidate.sourceType || "")
+          || demoStreamerIds.has(candidate.streamerId)
+          || demoSessionIds.has(candidate.sessionId)
+          || demoSourceIds.has(candidate.sourceId)
+        ))
+        .map((candidate) => candidate.id)
+    );
+    const demoPackageIds = new Set(
+      state.clipPackages
+        .filter((clipPackage) => demoCandidateIds.has(clipPackage.candidateId))
+        .map((clipPackage) => clipPackage.id)
+    );
+    const demoDraftIds = new Set(
+      state.postingDrafts
+        .filter((draft) => demoPackageIds.has(draft.clipPackageId))
+        .map((draft) => draft.id)
+    );
+    const demoHandoffIds = new Set(
+      state.handoffPackages
+        .filter((handoff) => demoPackageIds.has(handoff.clipPackageId) || demoCandidateIds.has(handoff.candidateClipId))
+        .map((handoff) => handoff.id)
+    );
+    const demoArtifactIds = new Set(
+      state.artifacts
+        .filter((artifact) => {
+          const content = artifact.content || {};
+          return (
+            artifact.provenance === PROVENANCE.DEMO_SOURCE
+            || content.provenance === PROVENANCE.DEMO_SOURCE
+            || demoSourceIds.has(content.sourceId)
+            || demoPackageIds.has(content.clipPackageId)
+            || demoCandidateIds.has(content.candidateId)
+            || demoHandoffIds.has(content.handoffId)
+          );
+        })
+        .map((artifact) => artifact.id)
+    );
     const before = {
       streamers: state.streamers.length,
       sessions: state.streamSessions.length,
       candidates: state.clipCandidates.length,
       sources: state.mediaSources.length,
-      projects: state.mediaProjects.length
+      projects: state.mediaProjects.length,
+      packages: state.clipPackages.length,
+      drafts: state.postingDrafts.length,
+      approvals: state.approvalRequests.length,
+      artifacts: state.artifacts.length,
+      handoffs: state.handoffPackages.length,
+      jobs: state.mediaJobs.length
     };
-    state.streamers = state.streamers.filter((streamer) => !(streamer.isDemo || streamer.permissionStatus === "demo_approved" || streamer.platform === "demo"));
-    state.streamSessions = state.streamSessions.filter((session) => !String(session.status || "").startsWith("demo"));
-    state.clipCandidates = state.clipCandidates.filter((candidate) => !(candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE || /demo/i.test(candidate.sourceType || "")));
-    state.mediaSources = state.mediaSources.filter((source) => source.provenance !== PROVENANCE.DEMO_SOURCE);
+    state.streamers = state.streamers.filter((streamer) => !demoStreamerIds.has(streamer.id));
+    state.streamSessions = state.streamSessions.filter((session) => !demoSessionIds.has(session.id));
+    state.clipCandidates = state.clipCandidates.filter((candidate) => !demoCandidateIds.has(candidate.id));
+    state.clipPackages = state.clipPackages.filter((clipPackage) => !demoPackageIds.has(clipPackage.id));
+    state.postingDrafts = state.postingDrafts.filter((draft) => !demoDraftIds.has(draft.id));
+    state.approvalRequests = state.approvalRequests.filter((approval) => (
+      !demoDraftIds.has(approval.linkedId)
+      && !demoPackageIds.has(approval.linkedId)
+      && !demoCandidateIds.has(approval.linkedId)
+      && !demoStreamerIds.has(approval.linkedId)
+      && approval.linkedId !== DEMO_PROJECT_ID
+    ));
+    state.artifacts = state.artifacts.filter((artifact) => !demoArtifactIds.has(artifact.id));
+    state.handoffPackages = state.handoffPackages.filter((handoff) => !demoHandoffIds.has(handoff.id));
+    state.mediaJobs = state.mediaJobs.filter((job) => !demoCandidateIds.has(job.candidateId) && !demoSourceIds.has(job.sourceId) && job.projectId !== DEMO_PROJECT_ID);
+    state.mediaSources = state.mediaSources.filter((source) => !demoSourceIds.has(source.id));
     state.mediaProjects = state.mediaProjects.filter((project) => project.id !== DEMO_PROJECT_ID);
     const cleared = {
       streamers: before.streamers - state.streamers.length,
       sessions: before.sessions - state.streamSessions.length,
       candidates: before.candidates - state.clipCandidates.length,
       sources: before.sources - state.mediaSources.length,
-      projects: before.projects - state.mediaProjects.length
+      projects: before.projects - state.mediaProjects.length,
+      packages: before.packages - state.clipPackages.length,
+      drafts: before.drafts - state.postingDrafts.length,
+      approvals: before.approvals - state.approvalRequests.length,
+      artifacts: before.artifacts - state.artifacts.length,
+      handoffs: before.handoffs - state.handoffPackages.length,
+      jobs: before.jobs - state.mediaJobs.length
     };
-    await logEvent("demo_cleared", "Demo data cleared from StreamClipper state", cleared);
+    await logEvent("practice_cleared", "Practice data cleared from StreamClipper state", cleared);
     await saveState();
-    return sendJson(res, 200, { cleared, message: "Demo rows cleared. Real data was left untouched." });
+    return sendJson(res, 200, { cleared, message: "Practice rows cleared. Real data was left untouched." });
   }
 
   if (req.method === "GET" && (pathname === "/api/twitch/streams" || pathname === "/api/streams")) {
@@ -4586,13 +4711,13 @@ async function handleApi(req, res, pathname, searchParams) {
     const runMode = normalizeStatus(body.mode || "real", ["real", "demo"], "real");
     if (runMode === "demo") {
       ensureClippingStudioProject();
-      await logEvent("demo_watch_cycle", "Explicit demo watch cycle used bundled practice media", {
-        label: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA"
+      await logEvent("practice_watch_cycle", "Explicit Practice Mode watch cycle used bundled practice media", {
+        label: "PRACTICE MEDIA — NOT A REAL STREAM"
       });
       await saveState();
       return sendJson(res, 200, {
         mode: "demo",
-        label: "DEMO / SYNTHETIC — NOT REAL TWITCH DATA",
+        label: "PRACTICE MEDIA — NOT A REAL STREAM",
         results: state.clipCandidates
           .filter((candidate) => candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE)
           .map((candidate) => ({ candidate, demo: true })),
@@ -4607,7 +4732,7 @@ async function handleApi(req, res, pathname, searchParams) {
           live: null,
           skipped: true,
           official: false,
-          reason: "Demo streamer hidden from real watch cycle."
+          reason: "Practice streamer hidden from real watch cycle."
         });
         continue;
       }

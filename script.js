@@ -3784,6 +3784,7 @@ function businessOfficeProfile(roomKey) {
       officeType: "Financial Research",
       status: "Read-only",
       priority: "High",
+      appUrl: "/apps/stock-office/",
       goal: "Read the local Stock Guru workspace, summarize evaluator records, source freshness, readiness blockers, and masked broker snapshots without any trade execution.",
       willDo: ["Read evaluator reports", "Summarize ticker risk", "Check source freshness", "Explain readiness blockers", "Draft operator review notes"],
       needsAccess: ["reports/evaluations.json", "config/universe.txt", "readiness JSON", "masked broker snapshot"],
@@ -4584,12 +4585,14 @@ function businessOfficeMarkup(card) {
     <div class="office-detail-panel">
       <div class="office-detail-header">
         <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
-        <div>
+        <div class="office-header-copy">
           <h3>${escapeHtml(profile.title)}</h3>
           <p>Agent 101 · ${escapeHtml(profile.officeType)} · Supervised · Draft-only</p>
         </div>
-        ${profile.appUrl ? `<a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>` : ""}
-        <button class="module-info-close" type="button" aria-label="Close office">×</button>
+        <div class="office-header-actions">
+          ${profile.appUrl ? `<a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>` : ""}
+          <button class="module-info-close" type="button" aria-label="Close office">×</button>
+        </div>
       </div>
       ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
       <div class="office-metrics">
@@ -4988,11 +4991,14 @@ function stockOfficeMarkup(card) {
     <div class="office-detail-panel stock-office-panel">
       <div class="office-detail-header">
         <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
-        <div>
+        <div class="office-header-copy">
           <h3>${escapeHtml(profile.title)}</h3>
           <p>${escapeHtml(workspace.description)}</p>
         </div>
-        <button class="module-info-close" type="button" aria-label="Close office">×</button>
+        <div class="office-header-actions">
+          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>
+          <button class="module-info-close" type="button" aria-label="Close office">×</button>
+        </div>
       </div>
       <div class="stock-office-status-row">
         ${metricCards.map(([label, value, hint]) => stockMetricMarkup(label, value, hint)).join("")}

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stock Guru Office | Argentum</title>
+    <link rel="stylesheet" href="./stock-office.css" />
+    <script src="./stock-office.js" defer></script>
+  </head>
+  <body>
+    <main class="stock-app">
+      <header class="topbar">
+        <a class="back-link" href="/" aria-label="Back to Argentum">Argentum</a>
+        <div>
+          <p class="eyebrow">Read-only business office</p>
+          <h1>Stock Guru Office</h1>
+          <p>Market scanner, ranking engine, paper-trading journal, and guarded decision-support workspace.</p>
+        </div>
+        <div class="top-actions">
+          <span class="status-pill" id="stockStatusPill">Loading</span>
+          <button id="syncButton" type="button">Sync local files</button>
+        </div>
+      </header>
+
+      <section class="hero-panel">
+        <div>
+          <p class="eyebrow">Safety boundary</p>
+          <h2>Research only. No orders. No broker actions.</h2>
+          <p id="safetyCopy">Stock Guru data is visible for review only while Argentum keeps all trading execution blocked.</p>
+        </div>
+        <div class="hero-metrics" id="metricGrid"></div>
+      </section>
+
+      <section class="workspace-grid">
+        <section class="panel records-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Evaluator records</p>
+              <h2 id="recordsTitle">Records</h2>
+            </div>
+            <div class="record-filters">
+              <input id="searchInput" type="search" placeholder="Search ticker, setup, risk..." />
+              <select id="statusFilter">
+                <option value="all">All statuses</option>
+                <option value="valid_setup">Valid setup</option>
+                <option value="watch">Watch</option>
+                <option value="review">Review</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <button id="applyFilters" type="button">Apply</button>
+            </div>
+          </div>
+          <div class="record-table">
+            <div class="record-table-head">
+              <span>Ticker</span>
+              <span>Status</span>
+              <span>Score</span>
+              <span>Setup</span>
+              <span>Risk</span>
+            </div>
+            <div id="recordsList" class="records-list"></div>
+          </div>
+        </section>
+
+        <aside class="panel detail-panel">
+          <p class="eyebrow">Selected record</p>
+          <div id="recordDetail" class="record-detail">
+            <h2>No record selected</h2>
+            <p>Run the Stock Guru scanner outside Argentum, then sync local files here.</p>
+          </div>
+        </aside>
+
+        <section class="panel source-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Source health</p>
+              <h2 id="sourceTitle">Checking sources</h2>
+            </div>
+            <span id="sourceBadge" class="status-pill muted">Read only</span>
+          </div>
+          <div id="sourceList" class="source-list"></div>
+        </section>
+
+        <section class="panel assistant-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Read-only assistant</p>
+              <h2>Ask Stock Guru data</h2>
+            </div>
+            <span class="status-pill muted">Research only</span>
+          </div>
+          <div id="stockChat" class="stock-chat"></div>
+          <form id="stockChatForm" class="chat-form">
+            <input id="stockChatInput" type="text" placeholder="Ask about readiness, risk, source freshness..." />
+            <button type="submit">Ask</button>
+          </form>
+        </section>
+
+        <section class="panel activity-panel">
+          <div class="panel-head compact">
+            <div>
+              <p class="eyebrow">Audit trail</p>
+              <h2>Recent Stock Office activity</h2>
+            </div>
+          </div>
+          <div id="activityList" class="activity-list"></div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

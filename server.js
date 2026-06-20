@@ -21,6 +21,8 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
 const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
+const STOCK_OFFICE_MOUNT = "/apps/stock-office";
+const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -5639,6 +5641,45 @@ async function handleClippingOffice(req, res, url) {
   }
 }
 
+function handleStockOfficeApp(req, res, url) {
+  if (url.pathname === STOCK_OFFICE_MOUNT) {
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      location: `${STOCK_OFFICE_MOUNT}/`,
+      "cache-control": "no-store",
+    });
+    res.end();
+    return;
+  }
+
+  const strippedPath = url.pathname.slice(STOCK_OFFICE_MOUNT.length) || "/";
+  let filePath = strippedPath === "/" ? "/index.html" : decodeURIComponent(strippedPath);
+  filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const absolutePath = path.join(STOCK_OFFICE_APP_DIR, filePath);
+
+  if (!absolutePath.startsWith(STOCK_OFFICE_APP_DIR)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": [".html", ".css", ".js"].includes(extension) ? "no-store" : "private, max-age=300",
+    });
+    res.end(data);
+  });
+}
+
 ensureState();
 readAuthStore();
 
@@ -5662,6 +5703,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {
       await handleClippingOffice(req, res, url);
+      return;
+    }
+    if (url.pathname.startsWith(STOCK_OFFICE_MOUNT)) {
+      handleStockOfficeApp(req, res, url);
       return;
     }
     if (url.pathname.startsWith("/api/")) {

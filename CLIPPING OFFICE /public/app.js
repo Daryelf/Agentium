@@ -373,6 +373,15 @@ function setView(id) {
   $("#view-subtitle").textContent = subtitleFor(id);
   renderNav();
   render();
+  if (id === "browser") {
+    loadBrowserState()
+      .then(() => {
+        if (state.view !== "browser") return;
+        renderNav();
+        render();
+      })
+      .catch((error) => toast(error.message, "bad"));
+  }
 }
 
 function subtitleFor(id) {
@@ -3685,141 +3694,230 @@ function renderSmokeModal() {
   `;
 }
 
+function renderBrowserTabs(active) {
+  const tabs = active?.tabs || [];
+  if (!tabs.length) {
+    return `<div class="browser-tab-strip empty-tabs"><span>No tabs yet</span><button data-browser-action="new-tab" ${active ? "" : "disabled"}>+ New tab</button></div>`;
+  }
+  return `
+    <div class="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+      ${tabs.map((tab) => `
+        <button class="browser-tab ${tab.active ? "active" : ""}" data-browser-tab="${esc(tab.id)}" title="${esc(tab.url || tab.title)}">
+          <span class="tab-dot ${tab.loading ? "loading" : ""}"></span>
+          <b>${esc(tab.title || tab.hostname || "New tab")}</b>
+          <small>${esc(tab.hostname || "blank")}</small>
+        </button>
+      `).join("")}
+      <button class="browser-tab-add" data-browser-action="new-tab" aria-label="New browser tab">+</button>
+    </div>
+  `;
+}
+
+function renderBrowserTaskRail(active, handoff) {
+  const browser = state.browser || {};
+  const actions = browser.actions || [];
+  const currentStep = active?.privacyShield?.active
+    ? "Human sign-in or sensitive step"
+    : active?.controlMode === "agent_assisted"
+      ? "Agent assisted observation"
+      : active
+        ? "Human controlled browser"
+        : "No active browser";
+  const nextAction = active?.privacyShield?.active
+    ? "Complete the sensitive step manually, then take human control again."
+    : handoff?.status === "PACKAGE_READY"
+      ? "Open CapCut and use the prepared handoff files."
+      : handoff
+        ? "Prepare the handoff package before opening CapCut."
+        : "Start a browser session or package a clip for CapCut.";
+  const activeTask = browser.tasks?.[0];
+  return `
+    <aside class="browser-side browser-task-rail">
+      <section class="panel browser-card browser-task-card">
+        <div class="browser-card-title">
+          <h2>Current Task</h2>
+          ${badge(active?.state || "Offline", statusTone(active?.state || "offline"))}
+        </div>
+        <div class="browser-task-hero">
+          <strong>${esc(activeTask?.goal || handoff?.clipPackage?.title || "Supervised browser workspace")}</strong>
+          <p>${esc(currentStep)}</p>
+        </div>
+        <div class="kv">
+          <span>Controller</span><span>${esc(active?.controlMode || "offline")}</span>
+          <span>Policy</span><span>${esc(active?.policyMode || "none")}</span>
+          <span>Domain</span><span>${esc(active?.currentHostname || "No domain")}</span>
+          <span>Linked handoff</span><span>${esc(handoff?.id ? handoff.status : "None")}</span>
+          <span>Last activity</span><span>${fmtDate(active?.lastActivityAt)}</span>
+        </div>
+        ${active?.lastError ? `<p class="browser-error">${esc(active.lastError)}</p>` : ""}
+      </section>
+
+      <section class="panel browser-card browser-next-action">
+        <h2>Next Action</h2>
+        <p>${esc(nextAction)}</p>
+        <div class="browser-card-actions two">
+          <button data-browser-action="take-control" ${active ? "" : "disabled"}>Take control</button>
+          <button data-browser-action="${active?.controlMode === "paused" ? "resume" : "pause"}" ${active ? "" : "disabled"}>${active?.controlMode === "paused" ? "Resume" : "Pause"}</button>
+        </div>
+      </section>
+
+      ${renderActiveHandoff(handoff)}
+
+      <section class="panel browser-card compact-card">
+        <div class="browser-card-title">
+          <h2>Action Timeline</h2>
+          <button data-browser-action="run-diagnostics">Diagnostics</button>
+        </div>
+        <div class="activity-list browser-activity-list">
+          ${actions.slice(0, 8).map((action) => `
+            <article>
+              <span>BR</span>
+              <p>${esc((action.action || action.actionType || "browser event").replaceAll("_", " "))}</p>
+              <time>${fmtDate(action.createdAt)}</time>
+            </article>
+          `).join("") || empty("No browser actions yet")}
+        </div>
+      </section>
+    </aside>
+  `;
+}
+
+function renderBrowserAssetDock(handoff, downloads) {
+  const artifactIds = new Set(handoff?.artifactIds || []);
+  const handoffArtifacts = state.artifacts.filter((artifact) => artifactIds.has(artifact.id));
+  return `
+    <section class="panel browser-asset-dock">
+      <div class="browser-dock-header">
+        <div>
+          <span class="eyebrow">Project asset dock</span>
+          <h2>CapCut Handoff Files</h2>
+        </div>
+        <div class="browser-dock-actions">
+          <button data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare handoff</button>
+          <button class="primary" data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut</button>
+        </div>
+      </div>
+      <div class="browser-asset-grid">
+        ${handoffArtifacts.map((artifact) => `
+          <article class="browser-asset">
+            <span>${esc((artifact.format || artifact.type || "file").toUpperCase())}</span>
+            <strong>${esc(artifact.title || artifact.filename || artifact.id)}</strong>
+            <small>${esc(artifact.fileSizeBytes ? `${Math.round(artifact.fileSizeBytes / 1024)} KB` : artifact.status || "artifact")}</small>
+            ${artifact.url ? `<a href="${esc(appUrl(artifact.url))}" download>Download</a>` : `<em>Saved</em>`}
+          </article>
+        `).join("") || empty("No prepared handoff files yet. Package a verified clip, then prepare the handoff.")}
+      </div>
+      <div class="browser-download-row">
+        <strong>Recent downloads</strong>
+        ${downloads.slice(0, 4).map((download) => `<span>${esc(download.suggestedFilename || download.filename)} <em>${fmtDate(download.createdAt)}</em></span>`).join("") || `<span>No browser downloads detected yet.</span>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderBrowserWorkspace() {
   const browser = state.browser || {};
-  const active = browser.activeSession || (browser.sessions || []).find((session) => session.status !== "closed") || null;
+  const active = browser.activeSession || (browser.sessions || []).find((session) => !["closed", "stopped"].includes(session.status)) || null;
   const policies = browser.policies || [];
   const downloads = browser.downloads || [];
   const handoff = getActiveHandoff();
   const screenshotUrl = active
     ? appUrl(`/api/browser/sessions/${active.id}/screenshot?stamp=${state.browserScreenshotStamp || Date.now()}`)
     : "";
-  const controlTone = active?.controlMode === "agent_assisted" ? "info" : active?.controlMode === "paused" ? "warn" : "good";
   const mediaReady = state.media?.ffmpeg?.configured && state.media?.ffprobe?.configured;
   const sessionStatus = active?.state || (active?.status ? labelize(active.status).toUpperCase() : "NOT_STARTED");
   view.innerHTML = `
-    <section class="browser-workspace">
-      <div class="browser-command">
+    <section class="browser-workspace browser-workspace-v2">
+      <header class="browser-topbar">
         <div>
-          <span class="eyebrow">Supervised browser workspace</span>
-          <h2>Agent 101 Tool Browser</h2>
-          <p>Persistent server-side browser profile. The operator sees the screen; secrets and cookies stay on the backend.</p>
+          <span class="eyebrow">Browser Workspace</span>
+          <h2>Supervised tool browser</h2>
+          <p>Real server-side Chromium, persistent profile, human handoff for sensitive pages, and CapCut-ready assets.</p>
         </div>
-        <div class="browser-command-actions">
-          <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>${state.browserBusy ? "Starting..." : "Start browser"}</button>
-          <button data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut handoff</button>
-          <button data-browser-action="test-example" ${state.smokeBusy ? "disabled" : ""}>${state.smokeBusy ? "Running..." : "Smoke test"}</button>
+        <div class="browser-status-chips">
+          ${badge(`Worker ${browser.enabled ? "on" : "off"}`, browser.enabled ? "good" : "bad")}
+          ${badge(sessionStatus, statusTone(sessionStatus))}
+          ${badge(`Controller ${active?.controlMode || "offline"}`, active?.controlMode === "paused" ? "warn" : "info")}
+          ${badge(`CapCut ${state.capcut?.status || "manual"}`, "neutral")}
+          ${badge(mediaReady ? "Media ready" : "Media check", mediaReady ? "good" : "warn")}
         </div>
-      </div>
+      </header>
 
       <div class="browser-layout">
-        <section class="panel browser-stage">
-          <form id="browser-url-form" class="browser-toolbar">
-            <button type="button" data-browser-action="back" ${active ? "" : "disabled"}>Back</button>
-            <button type="button" data-browser-action="forward" ${active ? "" : "disabled"}>Forward</button>
-            <button type="button" data-browser-action="refresh" ${active ? "" : "disabled"}>Refresh</button>
+        <section class="panel browser-stage browser-stage-v2">
+          ${renderBrowserTabs(active)}
+          <form id="browser-url-form" class="browser-toolbar browser-toolbar-v2">
+            <button type="button" data-browser-action="back" ${active ? "" : "disabled"} title="Back">‹</button>
+            <button type="button" data-browser-action="forward" ${active ? "" : "disabled"} title="Forward">›</button>
+            <button type="button" data-browser-action="refresh" ${active ? "" : "disabled"} title="Refresh">↻</button>
+            <button type="button" data-browser-action="stop-loading" ${active ? "" : "disabled"} title="Stop loading">×</button>
             <input name="url" value="${esc(active?.currentUrl || "")}" placeholder="https://www.twitch.tv/directory or https://kick.com">
             <span class="browser-domain-chip ${active?.policyMode || "none"}">${esc(active?.currentHostname || "No domain")}</span>
             <button class="primary" type="submit" ${active ? "" : "disabled"}>Go</button>
           </form>
 
-          <div class="browser-viewport ${active ? "" : "empty"}">
-            ${active ? `
-              <img src="${esc(screenshotUrl)}" alt="Live browser screenshot for ${esc(active.title || "workspace")}" data-browser-shot>
-              ${active.privacyShield?.active ? `
-                <div class="browser-privacy-shield">
-                  <strong>Human control active</strong>
-                  <p>${esc(active.privacyShield.reason || "Sensitive screen detected.")}</p>
+          <div class="browser-viewport-shell">
+            <div class="browser-viewport ${active ? "" : "empty"}" data-browser-viewport>
+              ${active ? `
+                <img src="${esc(screenshotUrl)}" alt="Live browser screenshot for ${esc(active.title || "workspace")}" data-browser-shot draggable="false">
+                <span class="browser-controller-badge">${esc(active.controlMode || "human_control")}</span>
+                ${active.privacyShield?.active ? `
+                  <div class="browser-privacy-shield">
+                    <strong>Sensitive page detected</strong>
+                    <p>${esc(active.privacyShield.reason || "Agent 101 is paused. Human control is required.")}</p>
+                  </div>
+                ` : ""}
+              ` : `
+                <div class="browser-empty-state">
+                  <strong>No browser session</strong>
+                  <p>Start an isolated Chromium workspace to use approved web tools. No fake browser is displayed here.</p>
+                  <div>
+                    <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>Start Browser</button>
+                    <button data-browser-action="run-diagnostics">Run Diagnostics</button>
+                  </div>
                 </div>
-              ` : ""}
-            ` : `
-              <div class="browser-empty-state">
-                <strong>No browser session yet</strong>
-                <p>Start a supervised browser session, then open approved tools like Twitch, Kick, YouTube, or CapCut handoff.</p>
-              </div>
-            `}
+              `}
+            </div>
           </div>
 
-          <div class="browser-control-strip">
-            ${badge(sessionStatus, statusTone(sessionStatus))}
-            <span><b>${esc(active?.controlMode || "human_control")}</b><small>Control mode</small></span>
-            <span><b>${esc(active?.policyMode || "none")}</b><small>Policy mode</small></span>
-            <span><b>${esc(active?.title || "No page")}</b><small>Current page</small></span>
+          <div class="browser-input-bridge">
+            <form id="browser-type-form">
+              <input name="text" placeholder="Type into the focused browser field..." ${active?.controlMode === "human_control" ? "" : "disabled"}>
+              <button type="submit" ${active?.controlMode === "human_control" ? "" : "disabled"}>Type</button>
+              <button type="button" data-browser-action="browser-enter" ${active?.controlMode === "human_control" ? "" : "disabled"}>Enter</button>
+              <button type="button" data-browser-action="browser-scroll" ${active?.controlMode === "human_control" ? "" : "disabled"}>Scroll</button>
+            </form>
             <div class="browser-control-buttons">
-              <button data-browser-action="refresh-shot" ${active ? "" : "disabled"}>Refresh screen</button>
-              <button data-browser-action="take-control" ${active ? "" : "disabled"}>Human control</button>
+              <button data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>${active ? "Restore" : "Start"}</button>
+              <button data-browser-action="new-tab" ${active ? "" : "disabled"}>New tab</button>
+              <button data-browser-action="close-tab" ${active?.activeTabId ? "" : "disabled"}>Close tab</button>
+              <button data-browser-action="take-control" ${active ? "" : "disabled"}>Take control</button>
               <button data-browser-action="give-agent-control" ${active && !active.privacyShield?.active ? "" : "disabled"}>Agent assisted</button>
-              <button data-browser-action="${active?.controlMode === "paused" ? "resume" : "pause"}" ${active ? "" : "disabled"}>${active?.controlMode === "paused" ? "Resume" : "Pause"}</button>
+              <button data-browser-action="restart-session" ${active ? "" : "disabled"}>Restart</button>
+              <button data-browser-action="end-session" ${active ? "" : "disabled"}>End</button>
             </div>
           </div>
         </section>
 
-        <aside class="browser-side">
-          <section class="panel browser-card">
-            <div class="browser-card-title">
-              <h2>Session</h2>
-              ${badge(sessionStatus, statusTone(sessionStatus))}
-            </div>
-            <div class="kv">
-              <span>Status</span><span>${esc(sessionStatus)}</span>
-              <span>Mode</span><span>${esc(active?.mode || browser.mode || "headless_screenshot")}</span>
-              <span>Viewport</span><span>${esc(active?.viewport ? `${active.viewport.width}x${active.viewport.height}` : `${state.config?.browserViewport?.width || 1440}x${state.config?.browserViewport?.height || 900}`)}</span>
-              <span>Browser</span><span>${esc(active?.browserEngine || "Chromium")}</span>
-              <span>Profile</span><span>server-side only</span>
-              <span>Started</span><span>${fmtDate(active?.startedAt)}</span>
-              <span>Last activity</span><span>${fmtDate(active?.lastActivityAt)}</span>
-              <span>Latency</span><span>${esc(active?.latencyMs ? `${active.latencyMs}ms` : "Not measured")}</span>
-            </div>
-            ${active?.lastError ? `<p class="browser-error">${esc(active.lastError)}</p>` : ""}
-          </section>
-
-          <section class="panel browser-card">
-            <h2>CapCut & Media</h2>
-            <div class="browser-status-list">
-              <span><b>CapCut</b><em>${esc(state.capcut?.status || "manual_handoff")}</em></span>
-              <span><b>FFmpeg</b><em>${mediaReady ? "ready" : "manual handoff"}</em></span>
-              <span><b>Object storage</b><em>${state.config?.objectStorageConfigured ? "ready" : "local only"}</em></span>
-              <span><b>Posting</b><em>Human Gate required</em></span>
-            </div>
-            <button class="primary stretch" data-browser-action="open-capcut">Open CapCut handoff</button>
-            <button class="stretch" data-browser-action="prepare-handoff">Prepare handoff package</button>
-          </section>
-
-          <section class="panel browser-card">
-            <h2>Allowed Domains</h2>
-            <div class="browser-policy-list">
-              ${policies.map((policy) => `
-                <span>
-                  <b>${esc(policy.domain)}</b>
-                  <em>${esc(policy.mode)}</em>
-                </span>
-              `).join("") || empty("No browser policies loaded")}
-            </div>
-          </section>
-
-          ${renderActiveHandoff(handoff)}
-
-          <section class="panel browser-card compact-card">
-            <h2>Recent Activity</h2>
-            <div class="activity-list browser-activity-list">
-              ${(browser.actions || []).slice(0, 5).map((action) => `
-                <article>
-                  <span>BR</span>
-                  <p>${esc(action.action.replaceAll("_", " "))}</p>
-                  <time>${fmtDate(action.createdAt)}</time>
-                </article>
-              `).join("") || empty("No browser actions yet")}
-            </div>
-          </section>
-
-          <section class="panel browser-card compact-card">
-            <h2>Downloads</h2>
-            <div class="browser-download-list">
-              ${downloads.slice(0, 4).map((download) => `<span><b>${esc(download.suggestedFilename || download.filename)}</b><em>${fmtDate(download.createdAt)}</em></span>`).join("") || empty("No browser downloads")}
-            </div>
-          </section>
-        </aside>
+        ${renderBrowserTaskRail(active, handoff)}
       </div>
+
+      ${renderBrowserAssetDock(handoff, downloads)}
+
+      <section class="panel browser-policy-dock">
+        <div class="browser-card-title">
+          <h2>Domain Policies</h2>
+          <span>${esc(policies.length)} reviewed</span>
+        </div>
+        <div class="browser-policy-list horizontal">
+          ${policies.slice(0, 10).map((policy) => `
+            <span>
+              <b>${esc(policy.domain)}</b>
+              <em>${esc(policy.mode)}</em>
+            </span>
+          `).join("") || empty("No browser policies loaded")}
+        </div>
+      </section>
     </section>
     ${renderSmokeModal()}
   `;
@@ -3989,8 +4087,15 @@ async function runSystemSmoke() {
   state.smokeBusy = true;
   render();
   try {
-    const result = await api("/api/system/smoke-test", { method: "POST", body: "{}" });
-    state.smokeTest = result.smokeTest;
+    const result = await api("/api/browser/smoke-test", { method: "POST", body: "{}" });
+    state.smokeTest = {
+      ...result.smokeTest,
+      checks: (result.smokeTest?.checks || []).map((check) => ({
+        ...check,
+        status: check.status === "passed" ? "passed" : "failed",
+        technical: check.details ? JSON.stringify(check.details) : ""
+      }))
+    };
     toast(`Smoke test ${result.smokeTest.status}`, statusTone(result.smokeTest.status));
     await loadBrowserState();
   } catch (error) {
@@ -4000,6 +4105,18 @@ async function runSystemSmoke() {
     renderNav();
     render();
   }
+}
+
+async function sendBrowserInput(input) {
+  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
+  if (!active?.id) throw new Error("Start the browser before sending input.");
+  const result = await api(`/api/browser/sessions/${active.id}/input`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  state.browserScreenshotStamp = Date.now();
+  await loadBrowserState();
+  return result;
 }
 
 async function handleBrowserAction(action) {
@@ -4013,10 +4130,32 @@ async function handleBrowserAction(action) {
         body: JSON.stringify({ purpose: "StreamClipper supervised browser" })
       });
       toast("Browser session started", "good");
-    } else if (action === "test-example") {
+    } else if (action === "test-example" || action === "run-diagnostics") {
       state.browserBusy = false;
       await runSystemSmoke();
       return;
+    } else if (action === "new-tab") {
+      if (!active?.id) return;
+      await api(`/api/browser/sessions/${active.id}/tabs`, { method: "POST", body: "{}" });
+      toast("New browser tab opened", "good");
+    } else if (action === "close-tab") {
+      if (!active?.id || !active.activeTabId) return;
+      await api(`/api/browser/sessions/${active.id}/tabs/${active.activeTabId}`, { method: "DELETE" });
+      toast("Browser tab closed", "info");
+    } else if (action === "restart-session") {
+      if (!active?.id) return;
+      await api(`/api/browser/sessions/${active.id}/restart`, { method: "POST", body: "{}" });
+      toast("Browser session restarted", "good");
+    } else if (action === "end-session") {
+      if (!active?.id) return;
+      await api(`/api/browser/sessions/${active.id}`, { method: "DELETE" });
+      toast("Browser session ended", "info");
+    } else if (action === "browser-enter") {
+      await sendBrowserInput({ action: "keypress", key: "Enter" });
+      toast("Enter sent to browser", "good");
+    } else if (action === "browser-scroll") {
+      await sendBrowserInput({ action: "scroll", deltaY: 560 });
+      toast("Scrolled browser", "info");
     } else if (action === "prepare-handoff") {
       await ensureHandoffPackage({ prepare: true });
       toast("CapCut handoff package prepared", "good");
@@ -4043,7 +4182,7 @@ async function handleBrowserAction(action) {
       if (!window.confirm("Reset the browser profile and close active sessions?")) return;
       await api("/api/browser/profile", { method: "DELETE" });
       toast("Browser profile reset", "info");
-    } else if (["back", "forward", "refresh", "take-control", "give-agent-control", "pause"].includes(action)) {
+    } else if (["back", "forward", "refresh", "stop-loading", "take-control", "give-agent-control", "pause"].includes(action)) {
       if (!active?.id) return;
       if (action === "give-agent-control" && !window.confirm("Agent Assisted only allows approved, reversible actions. Login, CAPTCHA, payments, uploads, publishing, and destructive actions stay blocked. Continue?")) return;
       await api(`/api/browser/sessions/${active.id}/${action}`, { method: "POST", body: "{}" });
@@ -4259,8 +4398,9 @@ async function gate(path, id) {
 document.addEventListener("submit", async (event) => {
   const agentForm = event.target.closest("#agent101-command-form, #global-agent101-command-form");
   const browserForm = event.target.closest("#browser-url-form");
+  const browserTypeForm = event.target.closest("#browser-type-form");
   const form = event.target.closest("#streamer-form");
-  if (!agentForm && !browserForm && !form) return;
+  if (!agentForm && !browserForm && !browserTypeForm && !form) return;
   event.preventDefault();
   try {
     if (agentForm) {
@@ -4269,6 +4409,16 @@ document.addEventListener("submit", async (event) => {
     }
     if (browserForm) {
       await navigateBrowser(browserForm);
+      return;
+    }
+    if (browserTypeForm) {
+      const text = cleanCommand(browserTypeForm.elements.text?.value);
+      if (!text) return;
+      await sendBrowserInput({ action: "type", text });
+      browserTypeForm.reset();
+      toast("Text sent to browser", "good");
+      renderNav();
+      render();
       return;
     }
     await submitStreamer(form);
@@ -4286,6 +4436,8 @@ document.addEventListener("click", async (event) => {
   const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
   const browserAction = target.closest("[data-browser-action]")?.dataset.browserAction;
+  const browserTab = target.closest("[data-browser-tab]")?.dataset.browserTab;
+  const browserShot = target.closest("[data-browser-shot]");
   const smokeClose = target.closest("[data-smoke-close]");
   const smokeRetry = target.closest("[data-smoke-retry]");
   const smokeCopy = target.closest("[data-smoke-copy]");
@@ -4326,6 +4478,28 @@ document.addEventListener("click", async (event) => {
     }
     if (closePreview) {
       state.previewCandidateId = "";
+      render();
+      return;
+    }
+    if (browserTab) {
+      const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
+      if (active?.id) {
+        await api(`/api/browser/sessions/${active.id}/tabs/${browserTab}`, { method: "PATCH", body: "{}" });
+        state.browserScreenshotStamp = Date.now();
+        await loadBrowserState();
+        renderNav();
+        render();
+      }
+      return;
+    }
+    if (browserShot && state.browser?.activeSession?.controlMode === "human_control") {
+      const rect = browserShot.getBoundingClientRect();
+      const naturalWidth = browserShot.naturalWidth || state.browser.activeSession.viewport?.width || 1440;
+      const naturalHeight = browserShot.naturalHeight || state.browser.activeSession.viewport?.height || 900;
+      const x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * naturalWidth;
+      const y = ((event.clientY - rect.top) / Math.max(1, rect.height)) * naturalHeight;
+      await sendBrowserInput({ action: "click", x, y });
+      renderNav();
       render();
       return;
     }

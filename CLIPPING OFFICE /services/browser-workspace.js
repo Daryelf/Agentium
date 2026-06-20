@@ -23,6 +23,7 @@ const DEFAULT_POLICIES = [
 ];
 
 const BLOCKED_PROTOCOLS = new Set(["file:", "javascript:", "data:", "chrome:", "chrome-extension:", "about:", "blob:", "ftp:"]);
+const EXECUTABLE_EXTENSIONS = new Set([".app", ".bat", ".cmd", ".com", ".dmg", ".exe", ".msi", ".pkg", ".ps1", ".scr", ".sh"]);
 const SECRET_PATTERNS = [
   /([?&](?:token|access_token|refresh_token|code|key|secret|password)=)[^&#]+/gi,
   /(authorization:\s*bearer\s+)[^\s]+/gi,
@@ -86,10 +87,29 @@ function ensureBrowserState(state) {
   state.browser.sessions ||= [];
   state.browser.actions ||= [];
   state.browser.downloads ||= [];
+  state.browser.tasks ||= [];
+  state.browser.uploadRequests ||= [];
   if (!Array.isArray(state.browser.policies) || state.browser.policies.length === 0) {
     state.browser.policies = DEFAULT_POLICIES.map((policy) => ({ ...policy, actions: [...policy.actions] }));
   }
   return state.browser;
+}
+
+function publicTab(tab, activeTabId) {
+  if (!tab) return null;
+  return {
+    id: tab.id,
+    title: tab.title || "New tab",
+    url: sanitizeUrl(tab.url || ""),
+    hostname: hostnameFromUrl(tab.url),
+    status: tab.status || "ready",
+    loading: tab.status === "loading",
+    favicon: tab.favicon || "",
+    active: tab.id === activeTabId,
+    createdAt: tab.createdAt,
+    updatedAt: tab.updatedAt,
+    closedAt: tab.closedAt || null
+  };
 }
 
 function domainMatches(policyDomain, hostname) {
@@ -133,6 +153,8 @@ function publicSession(session) {
     currentUrl: session.currentUrl,
     currentHostname: hostnameFromUrl(session.currentUrl),
     title: session.title,
+    activeTabId: session.activeTabId || "",
+    tabs: (session.tabs || []).filter((tab) => !tab.closedAt).map((tab) => publicTab(tab, session.activeTabId)),
     startedAt: session.startedAt || session.createdAt,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
@@ -152,6 +174,7 @@ export function createBrowserWorkspace({ config, state, helpers }) {
     playwright: null,
     context: null,
     pages: new Map(),
+    tabPages: new Map(),
     subscribers: new Map(),
     launching: null
   };
@@ -214,14 +237,25 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       context.on("page", (page) => {
         page.on("download", async (download) => {
           const suggested = download.suggestedFilename();
+          const extension = path.extname(suggested).toLowerCase();
+          if (EXECUTABLE_EXTENSIONS.has(extension)) {
+            await log("browser_download_blocked", "Executable browser download blocked", {
+              filename: suggested,
+              sourceUrl: download.url()
+            });
+            return;
+          }
           const filename = `${Date.now()}-${suggested}`;
           const filePath = path.join(config.browserDownloadsDir, filename);
           await download.saveAs(filePath);
+          const stats = await fs.stat(filePath).catch(() => null);
           const browser = browserState();
           browser.downloads.unshift({
             id: helpers.newId("download"),
             filename,
             suggestedFilename: suggested,
+            sizeBytes: stats?.size || 0,
+            sourceUrl: sanitizeUrl(download.url()),
             createdAt: now()
           });
           browser.downloads = browser.downloads.slice(0, 50);
@@ -245,23 +279,97 @@ export function createBrowserWorkspace({ config, state, helpers }) {
     return session;
   };
 
-  const pageForSession = async (session) => {
-    if (runtime.pages.has(session.id)) return runtime.pages.get(session.id);
-    const context = await ensureContext();
-    const page = await context.newPage();
-    runtime.pages.set(session.id, page);
+  const activeSessions = () => browserState().sessions.filter((session) => !["closed", "stopped"].includes(session.status));
+
+  const syncSessionFromTab = (session, tab = null) => {
+    const activeTab = tab || (session.tabs || []).find((item) => item.id === session.activeTabId) || (session.tabs || [])[0];
+    if (!activeTab) return;
+    session.activeTabId = activeTab.id;
+    session.currentUrl = sanitizeUrl(activeTab.url || session.currentUrl || "");
+    session.title = activeTab.title || session.title || "New tab";
+    session.updatedAt = now();
+  };
+
+  const ensureSessionTabs = (session) => {
+    session.tabs ||= [];
+    session.tabs = session.tabs.filter((tab) => !tab.closedAt);
+    if (!session.tabs.length) {
+      const tab = {
+        id: helpers.newId("browser_tab"),
+        title: "New tab",
+        url: "",
+        status: "ready",
+        createdAt: now(),
+        updatedAt: now()
+      };
+      session.tabs.push(tab);
+      session.activeTabId = tab.id;
+    }
+    if (!session.activeTabId || !session.tabs.some((tab) => tab.id === session.activeTabId)) {
+      session.activeTabId = session.tabs[0].id;
+    }
+    syncSessionFromTab(session);
+    return session.tabs;
+  };
+
+  const bindPageToTab = (session, page, tab) => {
+    runtime.tabPages.set(tab.id, page);
     page.on("framenavigated", async (frame) => {
       if (frame !== page.mainFrame()) return;
-      session.currentUrl = sanitizeUrl(page.url());
-      session.updatedAt = now();
-      emit(session.id, "navigated", publicSession(session));
+      tab.url = sanitizeUrl(page.url());
+      tab.status = "loading";
+      tab.updatedAt = now();
+      if (session.activeTabId === tab.id) syncSessionFromTab(session, tab);
+      emit(session.id, "tab_changed", publicTab(tab, session.activeTabId));
+    });
+    page.on("load", async () => {
+      tab.status = "ready";
+      tab.url = sanitizeUrl(page.url());
+      tab.title = await page.title().catch(() => tab.title || "New tab");
+      tab.updatedAt = now();
+      if (session.activeTabId === tab.id) {
+        syncSessionFromTab(session, tab);
+        emit(session.id, "session", publicSession(session));
+      }
     });
     page.on("close", () => {
-      runtime.pages.delete(session.id);
-      session.status = "closed";
+      runtime.tabPages.delete(tab.id);
+      tab.closedAt = now();
+      tab.status = "closed";
+      tab.updatedAt = now();
+      session.tabs = (session.tabs || []).filter((item) => !item.closedAt);
+      if (!session.tabs.length) {
+        session.status = "closed";
+        session.closedAt = now();
+      } else if (session.activeTabId === tab.id) {
+        session.activeTabId = session.tabs[0].id;
+        syncSessionFromTab(session);
+      }
       session.updatedAt = now();
-      emit(session.id, "closed", publicSession(session));
+      emit(session.id, "tab_closed", publicTab(tab, session.activeTabId));
+      emit(session.id, "session", publicSession(session));
     });
+  };
+
+  const pageForSession = async (session, requestedTabId = "") => {
+    ensureSessionTabs(session);
+    const tab = session.tabs.find((item) => item.id === (requestedTabId || session.activeTabId)) || session.tabs[0];
+    if (!tab) throw new Error("Browser tab not found.");
+    const existing = runtime.tabPages.get(tab.id);
+    if (existing && !existing.isClosed()) {
+      session.activeTabId = tab.id;
+      runtime.pages.set(session.id, existing);
+      syncSessionFromTab(session, tab);
+      return existing;
+    }
+    const context = await ensureContext();
+    const page = await context.newPage();
+    bindPageToTab(session, page, tab);
+    session.activeTabId = tab.id;
+    runtime.pages.set(session.id, page);
+    if (tab.url) {
+      await page.goto(tab.url, { waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => {});
+    }
     return page;
   };
 
@@ -357,18 +465,33 @@ export function createBrowserWorkspace({ config, state, helpers }) {
   return {
     profile() {
       const browser = browserState();
+      const sessions = browser.sessions.map((session) => {
+        if (!["closed", "stopped"].includes(session.status)) ensureSessionTabs(session);
+        return publicSession(session);
+      });
+      const activeSession = browser.sessions.find((session) => !["closed", "stopped"].includes(session.status));
       return {
         enabled: config.browserEnabled,
         provider: "playwright",
         mode: config.browserHeadless ? "headless_screenshot" : "headed_local",
         profile: browser.profile,
-        sessions: browser.sessions.map(publicSession),
-        activeSession: publicSession(browser.sessions.find((session) => session.status !== "closed")),
+        sessions,
+        activeSession: publicSession(activeSession),
         policies: browser.policies,
         downloads: browser.downloads,
+        tasks: browser.tasks,
+        uploadRequests: browser.uploadRequests,
         browserInstalled: Boolean(runtime.playwright || runtime.context),
         profileDirConfigured: Boolean(config.browserProfileDir),
-        secretsExposed: false
+        secretsExposed: false,
+        diagnostics: {
+          contextRunning: Boolean(runtime.context),
+          activeRuntimePages: runtime.tabPages.size,
+          persistentProfile: true,
+          frameMode: "screenshot",
+          inputBridge: "playwright",
+          eventStream: "sse"
+        }
       };
     },
 
@@ -385,9 +508,18 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       return this.profile();
     },
 
-    async createSession({ purpose = "Agent 101 browser workspace", url = "", actor = "operator" } = {}) {
+    async createSession({ purpose = "Agent 101 browser workspace", url = "", actor = "operator", forceNew = false } = {}) {
       if (!config.browserEnabled) throw new Error("Browser workspace is disabled.");
       const browser = browserState();
+      const existing = activeSessions()[0];
+      if (existing && !forceNew) {
+        await pageForSession(existing);
+        existing.status = existing.controlMode === "paused" ? "paused" : "ready";
+        existing.updatedAt = now();
+        await appendAction(existing, "session_reused", { actor, purpose });
+        await persist();
+        return publicSession(existing);
+      }
       const session = {
         id: helpers.newId("browser_session"),
         purpose,
@@ -403,7 +535,9 @@ export function createBrowserWorkspace({ config, state, helpers }) {
         lastScreenshotAt: null,
         latencyMs: null,
         viewport: config.browserViewport,
-        privacyShield: { active: false }
+        privacyShield: { active: false },
+        tabs: [],
+        activeTabId: ""
       };
       browser.sessions.unshift(session);
       browser.sessions = browser.sessions.slice(0, 12);
@@ -418,8 +552,12 @@ export function createBrowserWorkspace({ config, state, helpers }) {
 
     async closeSession(sessionId) {
       const session = findSession(sessionId);
-      const page = runtime.pages.get(session.id);
-      if (page && !page.isClosed()) await page.close();
+      for (const tab of [...(session.tabs || [])]) {
+        const page = runtime.tabPages.get(tab.id);
+        if (page && !page.isClosed()) await page.close();
+        runtime.tabPages.delete(tab.id);
+      }
+      runtime.pages.delete(session.id);
       session.status = "closed";
       session.closedAt = now();
       session.updatedAt = now();
@@ -429,7 +567,8 @@ export function createBrowserWorkspace({ config, state, helpers }) {
     },
 
     async closeAll() {
-      for (const page of runtime.pages.values()) {
+      const pages = new Set([...runtime.pages.values(), ...runtime.tabPages.values()]);
+      for (const page of pages) {
         try {
           if (!page.isClosed()) await page.close();
         } catch {
@@ -437,6 +576,7 @@ export function createBrowserWorkspace({ config, state, helpers }) {
         }
       }
       runtime.pages.clear();
+      runtime.tabPages.clear();
       if (runtime.context) {
         await runtime.context.close();
         runtime.context = null;
@@ -466,14 +606,55 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       session.policyMode = policy.mode;
       session.lastError = "";
       session.updatedAt = now();
+      const tab = session.tabs.find((item) => item.id === session.activeTabId);
+      if (tab) {
+        tab.status = "loading";
+        tab.url = sanitizeUrl(policy.url.href);
+        tab.updatedAt = now();
+      }
       await appendAction(session, "navigate", { actor, url: policy.url.href, policyMode: policy.mode });
       const started = Date.now();
       await page.goto(policy.url.href, { waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs });
       await page.waitForLoadState("networkidle", { timeout: Math.min(7000, config.browserNavigationTimeoutMs) }).catch(() => {});
+      const finalUrl = page.url();
+      const finalPolicy = policyForUrl(finalUrl, "navigate", actor);
+      if (!finalPolicy.allowed) {
+        await page.goto("about:blank").catch(() => {});
+        session.status = "blocked";
+        session.policyMode = "blocked";
+        session.currentUrl = sanitizeUrl(policy.url.href);
+        session.lastError = `Navigation redirected to a blocked destination: ${finalPolicy.reason}`;
+        session.updatedAt = now();
+        if (tab) {
+          tab.status = "blocked";
+          tab.url = session.currentUrl;
+          tab.updatedAt = now();
+        }
+        await appendAction(session, "navigation_redirect_blocked", {
+          actor,
+          url: policy.url.href,
+          finalUrl,
+          reason: finalPolicy.reason
+        });
+        await log("browser_blocked", "Browser redirect blocked by policy", {
+          sessionId,
+          actor,
+          url: policy.url.href,
+          reason: finalPolicy.reason
+        });
+        await persist();
+        return { session: publicSession(session), allowed: false, reason: session.lastError };
+      }
       await updateSensitivity(session, page);
       session.status = session.privacyShield?.active ? "human_control" : "ready";
       session.currentUrl = sanitizeUrl(page.url());
       session.title = await page.title().catch(() => policy.url.hostname);
+      if (tab) {
+        tab.status = "ready";
+        tab.url = session.currentUrl;
+        tab.title = session.title;
+        tab.updatedAt = now();
+      }
       session.latencyMs = Date.now() - started;
       session.lastNavigationAt = now();
       session.updatedAt = now();
@@ -495,10 +676,18 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       if (action === "back") await page.goBack({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
       else if (action === "forward") await page.goForward({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
       else if (action === "refresh") await page.reload({ waitUntil: "domcontentloaded", timeout: config.browserNavigationTimeoutMs }).catch(() => null);
+      else if (action === "stop-loading") await page.evaluate(() => window.stop()).catch(() => null);
       else throw new Error("Unknown browser action.");
       await updateSensitivity(session, page);
       session.currentUrl = sanitizeUrl(page.url());
       session.title = await page.title().catch(() => session.title);
+      const tab = session.tabs.find((item) => item.id === session.activeTabId);
+      if (tab) {
+        tab.url = session.currentUrl;
+        tab.title = session.title;
+        tab.status = "ready";
+        tab.updatedAt = now();
+      }
       session.status = session.privacyShield?.active ? "human_control" : "ready";
       session.latencyMs = Date.now() - started;
       session.updatedAt = now();
@@ -506,6 +695,166 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       await appendAction(session, action, { actor, url: session.currentUrl });
       await persist();
       return publicSession(session);
+    },
+
+    tabs(sessionId) {
+      const session = findSession(sessionId);
+      ensureSessionTabs(session);
+      return { tabs: session.tabs.map((tab) => publicTab(tab, session.activeTabId)), activeTabId: session.activeTabId };
+    },
+
+    async newTab(sessionId, { url = "", actor = "operator" } = {}) {
+      const session = findSession(sessionId);
+      const context = await ensureContext();
+      const page = await context.newPage();
+      const tab = {
+        id: helpers.newId("browser_tab"),
+        title: "New tab",
+        url: "",
+        status: "ready",
+        createdAt: now(),
+        updatedAt: now()
+      };
+      session.tabs ||= [];
+      session.tabs.push(tab);
+      session.activeTabId = tab.id;
+      bindPageToTab(session, page, tab);
+      runtime.pages.set(session.id, page);
+      syncSessionFromTab(session, tab);
+      await appendAction(session, "tab_created", { actor, tabId: tab.id });
+      if (url) await this.navigate(session.id, url, { actor });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), tab: publicTab(tab, session.activeTabId) };
+    },
+
+    async switchTab(sessionId, tabId, { actor = "operator" } = {}) {
+      const session = findSession(sessionId);
+      ensureSessionTabs(session);
+      const tab = session.tabs.find((item) => item.id === tabId && !item.closedAt);
+      if (!tab) throw new Error("Browser tab not found.");
+      const page = await pageForSession(session, tab.id);
+      session.activeTabId = tab.id;
+      runtime.pages.set(session.id, page);
+      syncSessionFromTab(session, tab);
+      await appendAction(session, "tab_switched", { actor, tabId: tab.id });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), tab: publicTab(tab, session.activeTabId) };
+    },
+
+    async closeTab(sessionId, tabId, { actor = "operator" } = {}) {
+      const session = findSession(sessionId);
+      ensureSessionTabs(session);
+      const tab = session.tabs.find((item) => item.id === tabId && !item.closedAt);
+      if (!tab) throw new Error("Browser tab not found.");
+      const page = runtime.tabPages.get(tab.id);
+      if (page && !page.isClosed()) await page.close();
+      tab.closedAt = now();
+      tab.status = "closed";
+      runtime.tabPages.delete(tab.id);
+      session.tabs = session.tabs.filter((item) => !item.closedAt);
+      if (!session.tabs.length) {
+        session.status = "closed";
+        session.closedAt = now();
+        session.activeTabId = "";
+        runtime.pages.delete(session.id);
+      } else if (session.activeTabId === tab.id) {
+        session.activeTabId = session.tabs[0].id;
+        await pageForSession(session, session.activeTabId);
+      }
+      await appendAction(session, "tab_closed", { actor, tabId: tab.id });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), closedTabId: tab.id };
+    },
+
+    async input(sessionId, input = {}, { actor = "operator" } = {}) {
+      const session = findSession(sessionId);
+      if (session.status === "closed") throw new Error("Browser session is closed.");
+      if (session.controlMode === "paused") throw new Error("Browser session is paused.");
+      if (actor === "agent101" && session.controlMode !== "agent_assisted") {
+        throw new Error("Agent 101 does not currently control this browser session.");
+      }
+      if (actor === "operator" && session.controlMode !== "human_control") {
+        throw new Error("Take human control before sending browser input.");
+      }
+      if (actor === "agent101" && session.privacyShield?.active) {
+        throw new Error("Sensitive page detected. Agent 101 is paused.");
+      }
+      const action = safeText(input.action || "click");
+      if (["type", "keypress"].includes(action) && session.policyMode === "read_only") {
+        throw new Error("Typing is blocked on read-only browser policies.");
+      }
+      const page = await pageForSession(session);
+      await updateSensitivity(session, page);
+      if (actor === "agent101" && session.privacyShield?.active) {
+        throw new Error("Sensitive page detected. Agent 101 is paused.");
+      }
+      const started = Date.now();
+      if (action === "click" || action === "double_click") {
+        const x = Math.max(0, Math.min(config.browserViewport.width, Number(input.x || 0)));
+        const y = Math.max(0, Math.min(config.browserViewport.height, Number(input.y || 0)));
+        await page.mouse.click(x, y, { clickCount: action === "double_click" ? 2 : 1 });
+      } else if (action === "scroll") {
+        await page.mouse.wheel(Number(input.deltaX || 0), Number(input.deltaY || 420));
+      } else if (action === "type") {
+        const text = String(input.text || "");
+        if (!text) throw new Error("Nothing to type.");
+        await page.keyboard.type(text, { delay: 8 });
+      } else if (action === "keypress") {
+        const key = safeText(input.key || "Enter");
+        await page.keyboard.press(key);
+      } else if (action === "zoom") {
+        const zoom = Math.max(0.5, Math.min(1.75, Number(input.zoom || 1)));
+        await page.evaluate((value) => {
+          document.documentElement.style.zoom = String(value);
+        }, zoom);
+      } else {
+        throw new Error("Unsupported browser input action.");
+      }
+      await updateSensitivity(session, page);
+      session.currentUrl = sanitizeUrl(page.url());
+      session.title = await page.title().catch(() => session.title);
+      session.status = session.privacyShield?.active ? "human_control" : "ready";
+      session.latencyMs = Date.now() - started;
+      session.updatedAt = now();
+      const tab = session.tabs.find((item) => item.id === session.activeTabId);
+      if (tab) {
+        tab.url = session.currentUrl;
+        tab.title = session.title;
+        tab.status = "ready";
+        tab.updatedAt = now();
+      }
+      await appendAction(session, `input_${action}`, {
+        actor,
+        url: session.currentUrl,
+        textLength: action === "type" ? String(input.text || "").length : undefined,
+        key: action === "keypress" ? safeText(input.key || "Enter") : undefined
+      });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), action, status: "complete" };
+    },
+
+    async visibleText(sessionId) {
+      const session = findSession(sessionId);
+      const page = await pageForSession(session);
+      await updateSensitivity(session, page);
+      if (session.privacyShield?.active) {
+        return { text: "", links: [], privacyShield: session.privacyShield };
+      }
+      const text = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
+      const links = await page.$$eval("a[href]", (items) =>
+        items.slice(0, 50).map((link) => ({ text: link.textContent?.trim().slice(0, 120) || "", href: link.href }))
+      ).catch(() => []);
+      return {
+        text: text.slice(0, 8000),
+        links: links.map((link) => ({
+          text: link.text,
+          href: sanitizeUrl(link.href)
+        }))
+      };
     },
 
     async setControl(sessionId, mode, { actor = "operator" } = {}) {
@@ -520,6 +869,121 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       await appendAction(session, "control_changed", { actor, mode });
       await persist();
       return publicSession(session);
+    },
+
+    async health() {
+      const result = {
+        enabled: config.browserEnabled,
+        provider: "playwright",
+        status: config.browserEnabled ? "checking" : "disabled",
+        checks: [],
+        testedAt: now()
+      };
+      const add = (key, status, message, details = {}) => {
+        result.checks.push({ key, status, message, ...details });
+      };
+      if (!config.browserEnabled) {
+        add("enabled", "warning", "Browser workspace disabled by BROWSER_ENABLED=false.");
+        result.status = "disabled";
+        return result;
+      }
+      try {
+        const { chromium } = await loadPlaywright();
+        add("playwright", "ready", "Playwright module loaded.");
+        const executablePath = chromium.executablePath();
+        await fs.access(executablePath);
+        add("chromium", "ready", "Chromium executable found.", { executablePath });
+        await ensureDirs();
+        add("profile", "ready", "Profile and download directories are available.");
+        add("context", runtime.context ? "ready" : "idle", runtime.context ? "Browser worker is running." : "Browser worker will start on demand.");
+        result.status = "ready";
+      } catch (error) {
+        add("browser_worker", "error", error.message);
+        result.status = "error";
+      }
+      return result;
+    },
+
+    async smokeTest() {
+      const report = {
+        id: helpers.newId("browser_smoke"),
+        startedAt: now(),
+        status: "running",
+        checks: []
+      };
+      const run = async (key, label, fn) => {
+        const startedAt = Date.now();
+        try {
+          const value = await fn();
+          report.checks.push({ key, label, status: "passed", message: value?.message || "Passed.", durationMs: Date.now() - startedAt, details: value?.details || {} });
+        } catch (error) {
+          report.checks.push({ key, label, status: "failed", message: error.message, durationMs: Date.now() - startedAt });
+        }
+      };
+      let session = null;
+      await run("health", "Browser worker health", async () => {
+        const health = await this.health();
+        if (health.status !== "ready") throw new Error(health.checks.find((check) => check.status === "error")?.message || "Browser worker is not ready.");
+        return { message: "Browser worker ready." };
+      });
+      await run("start", "Start one real session", async () => {
+        session = await this.createSession({ purpose: "Browser smoke test", actor: "system", forceNew: true });
+        if (!session.id) throw new Error("No session id returned.");
+        return { message: `Session ${session.id} started.` };
+      });
+      await run("navigate", "Navigate controlled page", async () => {
+        const result = await this.navigate(session.id, "https://example.com", { actor: "operator" });
+        if (!result.allowed) throw new Error(result.reason || "Navigation blocked.");
+        return { message: "Example.com loaded." };
+      });
+      await run("screenshot", "Capture real viewport", async () => {
+        const buffer = await this.screenshot(session.id);
+        if (!buffer || buffer.length < 1000) throw new Error("Screenshot was empty.");
+        return { message: `${buffer.length} byte screenshot captured.` };
+      });
+      await run("tabs", "Create and switch tabs", async () => {
+        const tab = await this.newTab(session.id, { actor: "operator" });
+        await this.switchTab(session.id, tab.tab.id, { actor: "operator" });
+        const listed = this.tabs(session.id).tabs;
+        if (listed.length < 2) throw new Error("Expected at least two tabs.");
+        return { message: `${listed.length} tabs available.` };
+      });
+      await run("input", "Validate input bridge", async () => {
+        const active = findSession(session.id);
+        const page = await pageForSession(active);
+        active.policyMode = "automated";
+        await page.setContent("<main style='height:1800px'><input id='q' autofocus><button id='b'>ok</button><script>window.clicked=false;document.querySelector('#b').onclick=()=>{window.clicked=true}</script></main>");
+        await this.setControl(session.id, "human_control", { actor: "system" });
+        await this.input(session.id, { action: "type", text: "browser smoke" }, { actor: "operator" });
+        await this.input(session.id, { action: "keypress", key: "Tab" }, { actor: "operator" });
+        await this.input(session.id, { action: "keypress", key: "Enter" }, { actor: "operator" });
+        await this.input(session.id, { action: "scroll", deltaY: 600 }, { actor: "operator" });
+        const typed = await page.$eval("#q", (input) => input.value);
+        if (typed !== "browser smoke") throw new Error("Input bridge did not type into Chromium.");
+        return { message: "Keyboard and scroll input worked." };
+      });
+      await run("control", "Human and agent control handoff", async () => {
+        await this.setControl(session.id, "agent_assisted", { actor: "system" });
+        await this.setControl(session.id, "human_control", { actor: "operator" });
+        const current = this.profile().activeSession;
+        if (current.controlMode !== "human_control") throw new Error("Human control did not restore.");
+        return { message: "Control handoff worked." };
+      });
+      await run("privacy", "Privacy shield detects password fields", async () => {
+        const active = findSession(session.id);
+        const page = await pageForSession(active);
+        await page.setContent("<input type='password' aria-label='password'>");
+        await updateSensitivity(active, page);
+        if (!active.privacyShield?.active) throw new Error("Privacy Shield did not activate.");
+        return { message: "Privacy Shield activated on password field." };
+      });
+      await run("close", "Close smoke session", async () => {
+        await this.closeSession(session.id);
+        return { message: "Smoke session closed." };
+      });
+      report.completedAt = now();
+      report.status = report.checks.some((check) => check.status === "failed") ? "failed" : "passed";
+      return report;
     },
 
     async screenshot(sessionId) {

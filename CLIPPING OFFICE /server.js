@@ -2668,9 +2668,12 @@ async function runSystemSmokeTest() {
   await runCheck("browser_session", "Create and close test browser session", async () => {
     if (!config.browserEnabled) return { status: "warning", message: "Browser workspace disabled." };
     const workspace = browserWorkspace();
-    const session = await workspace.createSession({ purpose: "Smoke test browser session", actor: "system" });
-    await workspace.closeSession(session.id);
-    return { status: "passed", message: "Created and closed a supervised browser session.", technical: session.id };
+    const report = await workspace.smokeTest();
+    const failed = report.checks.filter((check) => check.status === "failed");
+    if (failed.length) {
+      return { status: "failed", message: failed[0].message, technical: JSON.stringify(report.checks).slice(0, 900) };
+    }
+    return { status: "passed", message: "Started Chromium, navigated, captured viewport, tested tabs/input/control/privacy, and closed the smoke session.", technical: report.id };
   });
   await runCheck("sse", "SSE connection endpoint registered", async () => ({
     status: "passed",
@@ -3643,8 +3646,40 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, browserWorkspace().profile());
   }
 
+  if (req.method === "GET" && pathname === "/api/browser/health") {
+    return sendJson(res, 200, await browserWorkspace().health());
+  }
+
+  if (req.method === "POST" && pathname === "/api/browser/smoke-test") {
+    const report = await browserWorkspace().smokeTest();
+    state.smokeTests.unshift({
+      id: report.id,
+      status: report.status,
+      startedAt: report.startedAt,
+      completedAt: report.completedAt,
+      durationMs: new Date(report.completedAt || now()).getTime() - new Date(report.startedAt).getTime(),
+      checks: report.checks.map((check) => ({
+        key: `browser_${check.key}`,
+        label: check.label,
+        status: check.status === "passed" ? "passed" : "failed",
+        message: check.message,
+        durationMs: check.durationMs,
+        technical: check.details ? JSON.stringify(check.details).slice(0, 300) : ""
+      }))
+    });
+    state.smokeTests = state.smokeTests.slice(0, 20);
+    await logEvent("browser_smoke_test", "Browser smoke test completed", { status: report.status, checks: report.checks.length });
+    await saveState();
+    return sendJson(res, 200, { smokeTest: report });
+  }
+
   if (req.method === "POST" && pathname === "/api/browser/profile") {
     return sendJson(res, 200, browserWorkspace().profile());
+  }
+
+  if (req.method === "POST" && pathname === "/api/browser/profile/clear") {
+    const profile = await browserWorkspace().resetProfile();
+    return sendJson(res, 200, profile);
   }
 
   if (req.method === "DELETE" && pathname === "/api/browser/profile") {
@@ -3656,12 +3691,17 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, browserWorkspace().policies());
   }
 
+  if (req.method === "GET" && pathname === "/api/browser/sessions") {
+    return sendJson(res, 200, { sessions: browserWorkspace().profile().sessions, activeSession: browserWorkspace().profile().activeSession });
+  }
+
   if (req.method === "POST" && pathname === "/api/browser/sessions") {
     const body = await readJsonBody(req);
     const session = await browserWorkspace().createSession({
       purpose: cleanText(body.purpose) || "StreamClipper browser workspace",
       url: cleanText(body.url),
-      actor: "operator"
+      actor: "operator",
+      forceNew: Boolean(body.forceNew)
     });
     return sendJson(res, 201, { session });
   }
@@ -3678,10 +3718,16 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, { session });
   }
 
-  const browserActionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/(navigate|back|forward|refresh|take-control|give-agent-control|pause|resume|mode)$/);
+  const browserActionMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/(navigate|back|forward|refresh|stop-loading|take-control|give-agent-control|pause|resume|mode|restart)$/);
   if (browserActionMatch && req.method === "POST") {
     const [, sessionId, action] = browserActionMatch;
     const workspace = browserWorkspace();
+    if (action === "restart") {
+      await workspace.closeSession(sessionId);
+      const body = await readJsonBody(req).catch(() => ({}));
+      const session = await workspace.createSession({ purpose: cleanText(body.purpose) || "Restarted browser workspace", actor: "operator", forceNew: true });
+      return sendJson(res, 200, { session });
+    }
     if (action === "navigate") {
       const body = await readJsonBody(req);
       const result = await workspace.navigate(sessionId, body.url, { actor: "operator" });
@@ -3712,6 +3758,41 @@ async function handleApi(req, res, pathname, searchParams) {
     }
     const session = await workspace.simplePageAction(sessionId, action, { actor: "operator" });
     return sendJson(res, 200, { session });
+  }
+
+  const browserTabsMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/tabs(?:\/([^/]+))?$/);
+  if (browserTabsMatch) {
+    const [, sessionId, tabId] = browserTabsMatch;
+    const workspace = browserWorkspace();
+    if (req.method === "GET" && !tabId) {
+      return sendJson(res, 200, workspace.tabs(sessionId));
+    }
+    if (req.method === "POST" && !tabId) {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 201, await workspace.newTab(sessionId, { url: cleanText(body.url), actor: "operator" }));
+    }
+    if (req.method === "PATCH" && tabId) {
+      return sendJson(res, 200, await workspace.switchTab(sessionId, tabId, { actor: "operator" }));
+    }
+    if (req.method === "DELETE" && tabId) {
+      return sendJson(res, 200, await workspace.closeTab(sessionId, tabId, { actor: "operator" }));
+    }
+  }
+
+  const browserInputMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/input$/);
+  if (browserInputMatch && req.method === "POST") {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, await browserWorkspace().input(browserInputMatch[1], body, { actor: "operator" }));
+  }
+
+  const browserTextMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/visible-text$/);
+  if (browserTextMatch && req.method === "GET") {
+    return sendJson(res, 200, await browserWorkspace().visibleText(browserTextMatch[1]));
+  }
+
+  const browserDownloadsMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/downloads$/);
+  if (browserDownloadsMatch && req.method === "GET") {
+    return sendJson(res, 200, { downloads: browserWorkspace().profile().downloads.filter((download) => !download.sessionId || download.sessionId === browserDownloadsMatch[1]) });
   }
 
   const browserScreenshotMatch = pathname.match(/^\/api\/browser\/sessions\/([^/]+)\/screenshot$/);

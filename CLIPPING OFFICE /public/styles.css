@@ -416,12 +416,297 @@
   background: rgba(127, 29, 29, 0.18);
 }
 
+.browser-workspace-v2 {
+  gap: 14px;
+}
+
+.browser-topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 16% 0, rgba(34, 211, 238, 0.13), transparent 38%),
+    radial-gradient(circle at 84% 0, rgba(139, 92, 246, 0.16), transparent 36%),
+    rgba(4, 10, 24, 0.86);
+}
+
+.browser-topbar h2 {
+  margin: 3px 0;
+  font-size: clamp(1.6rem, 2vw, 2.25rem);
+}
+
+.browser-topbar p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.browser-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.browser-workspace-v2 .browser-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.28fr);
+}
+
+.browser-stage-v2 {
+  gap: 10px;
+  padding: 12px;
+}
+
+.browser-tab-strip {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+}
+
+.browser-tab,
+.browser-tab-add {
+  display: grid;
+  align-items: center;
+  min-height: 46px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 13px;
+  background: rgba(3, 8, 18, 0.7);
+}
+
+.browser-tab {
+  grid-template-columns: auto minmax(0, 1fr);
+  flex: 0 0 min(240px, 32vw);
+  gap: 4px 8px;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.browser-tab.active {
+  border-color: rgba(168, 85, 247, 0.6);
+  background:
+    radial-gradient(circle at 20% 0, rgba(168, 85, 247, 0.24), transparent 42%),
+    rgba(8, 14, 32, 0.92);
+}
+
+.browser-tab b,
+.browser-tab small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab b {
+  font-size: 0.86rem;
+}
+
+.browser-tab small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.tab-dot {
+  grid-row: span 2;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.5);
+}
+
+.tab-dot.loading {
+  background: var(--amber);
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.55);
+}
+
+.browser-tab-add {
+  flex: 0 0 46px;
+  color: var(--cyan);
+  font-size: 1.3rem;
+}
+
+.browser-toolbar-v2 {
+  grid-template-columns: repeat(4, 42px) minmax(220px, 1fr) minmax(120px, auto) 64px;
+}
+
+.browser-toolbar-v2 button {
+  min-height: 42px;
+}
+
+.browser-viewport-shell {
+  position: relative;
+  border-radius: 18px;
+  background: #020610;
+}
+
+.browser-controller-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 999px;
+  color: #e0f2fe;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  background: rgba(2, 8, 23, 0.78);
+}
+
+.browser-input-bridge {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 16px;
+  background: rgba(4, 10, 24, 0.72);
+}
+
+.browser-input-bridge form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 8px;
+}
+
+.browser-input-bridge input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 14px;
+  color: var(--text);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 12px;
+  background: rgba(3, 8, 18, 0.78);
+}
+
+.browser-workspace-v2 .browser-control-buttons {
+  justify-content: flex-start;
+}
+
+.browser-task-rail {
+  align-content: start;
+}
+
+.browser-task-hero {
+  padding: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(34, 211, 238, 0.12), transparent 38%),
+    rgba(3, 8, 18, 0.56);
+}
+
+.browser-task-hero strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.browser-task-hero p,
+.browser-next-action p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.browser-card-actions.two {
+  grid-template-columns: 1fr 1fr;
+}
+
+.browser-asset-dock,
+.browser-policy-dock {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.browser-dock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.browser-dock-header h2 {
+  margin: 2px 0 0;
+}
+
+.browser-dock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.browser-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.browser-asset {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 14px;
+  background: rgba(3, 8, 18, 0.62);
+}
+
+.browser-asset span {
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.browser-asset strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-asset small,
+.browser-asset em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.browser-download-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.browser-download-row strong {
+  color: var(--text);
+}
+
+.browser-download-row span {
+  padding: 7px 9px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 999px;
+  background: rgba(2, 8, 23, 0.5);
+}
+
+.browser-policy-list.horizontal {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  max-height: none;
+  overflow: visible;
+}
+
 .stretch {
   width: 100%;
 }
 
 @media (max-width: 1320px) {
-  .browser-layout {
+  .browser-layout,
+  .browser-workspace-v2 .browser-layout {
     grid-template-columns: 1fr;
   }
 
@@ -431,7 +716,14 @@
 }
 
 @media (max-width: 860px) {
+  .browser-topbar,
   .browser-command {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .browser-status-chips,
+  .browser-dock-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -446,7 +738,8 @@
     flex: 1;
   }
 
-  .browser-toolbar {
+  .browser-toolbar,
+  .browser-toolbar-v2 {
     grid-template-columns: repeat(3, 1fr);
   }
 
@@ -471,6 +764,14 @@
   .browser-viewport,
   .browser-viewport img {
     min-height: 420px;
+  }
+
+  .browser-input-bridge form {
+    grid-template-columns: 1fr;
+  }
+
+  .browser-tab {
+    flex-basis: min(220px, 70vw);
   }
 }
 

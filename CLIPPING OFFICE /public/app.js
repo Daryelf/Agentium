@@ -32,6 +32,7 @@ const state = {
   browser: null,
   capcut: null,
   media: null,
+  mediaSources: [],
   studio: null,
   studioTab: localStorage.getItem("studioTab") || "source",
   studioSeek: null,
@@ -329,12 +330,15 @@ function renderSidebarOps() {
 }
 
 async function api(path, options = {}) {
+  const isFormData = options.body instanceof FormData;
   const response = await fetch(appUrl(path), {
     ...options,
-    headers: {
-      "content-type": "application/json",
-      ...(options.headers || {})
-    }
+    headers: isFormData
+      ? { ...(options.headers || {}) }
+      : {
+          "content-type": "application/json",
+          ...(options.headers || {})
+        }
   });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(json.error || `${response.status} ${response.statusText}`);
@@ -353,7 +357,7 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, kick, browser, capcut, media, handoffs, smoke, studio, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, handoffs, smoke, studio, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
@@ -362,6 +366,7 @@ async function loadCore() {
     api("/api/browser/profile"),
     api("/api/capcut/status"),
     api("/api/media/status"),
+    api("/api/media/sources"),
     api("/api/handoffs"),
     api("/api/system/smoke-test"),
     api("/api/clipping-office/project"),
@@ -382,6 +387,7 @@ async function loadCore() {
     browser,
     capcut,
     media,
+    mediaSources: mediaSources.sources || [],
     handoffs: handoffs.handoffs || [],
     smokeTest: smoke.latest || null,
     studio,
@@ -1476,6 +1482,13 @@ function timeAgo(value) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function shortTime(value) {
+  if (!value) return "now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "now";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function candidateStatusBadge(status) {
   if (status === "packaged") return badge("Packaged", "good");
   if (status === "rejected") return badge("Dismissed", "bad");
@@ -1543,7 +1556,9 @@ function renderClipPreviewModal() {
   const candidate = candidateById(state.previewCandidateId);
   if (!candidate) return "";
   const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const source = state.studio?.source?.id === candidate.sourceId ? state.studio.source : null;
+  const source = state.studio?.source?.id === candidate.sourceId
+    ? state.studio.source
+    : (state.mediaSources || []).find((item) => item.id === candidate.sourceId) || null;
   const plan = selectedClipPackage(candidate)?.packagePlan || fallbackPackagePlan(candidate);
   const score = Number(candidate.score || 0);
   const hook = Number(candidate.hookScore || 0);
@@ -1632,6 +1647,7 @@ function renderBuilder() {
   const project = studio.project || {};
   const renderJobs = studio.renderJobs || [];
   const activeJob = renderJobs.find((job) => job.candidateId === candidate?.id && job.status !== "cancelled");
+  const readiness = projectReadiness(project);
   const renderedArtifact = activeJob?.artifactId
     ? state.artifacts.find((artifact) => artifact.id === activeJob.artifactId)
     : candidate?.renderedArtifactId
@@ -1650,14 +1666,17 @@ function renderBuilder() {
         <div>
           <span class="eyebrow">Clipping Office</span>
           <h2>${esc(project.title || "Clipping Office Main Workspace")}</h2>
-          <p>Media-first workspace. Agent 101 can draft, score, package, and prepare handoffs. External posting stays behind Human Gate.</p>
+          <p>Media-first workspace. Agent 101 can draft, score, package, and prepare handoffs from verified playable source media.</p>
         </div>
         <div class="studio-status">
           ${provenancePill(source?.provenance || "UNAVAILABLE")}
+          ${badge(project.mode === "practice" ? "Practice project" : "Real project", project.mode === "practice" ? "warn" : "good")}
           ${badge(state.media?.mode === "local_render_ready" ? "Render ready" : "Render setup needed", state.media?.mode === "local_render_ready" ? "good" : "warn")}
-          <button class="primary slim" data-studio-action="render-draft" ${candidate && source?.playable && !state.studioBusy ? "" : "disabled"}>${state.studioBusy ? "Working..." : "Render draft"}</button>
+          <button class="primary slim" data-studio-action="render-draft" ${readiness.canRender && !state.studioBusy ? "" : "disabled"}>${state.studioBusy ? "Working..." : "Render draft"}</button>
         </div>
       </div>
+
+      ${source?.playable ? renderStudioProjectSummary(project, source, candidate, activeJob) : renderMediaUploadPanel()}
 
       <div class="studio-shell">
         <section class="panel studio-main">
@@ -1679,6 +1698,34 @@ function renderBuilder() {
         ${renderStudioCandidateRail(candidates, candidate)}
         ${renderStudioAssetDock(studio, activeJob)}
       </section>
+    </section>
+  `;
+}
+
+function renderStudioProjectSummary(project = {}, source, candidate, activeJob) {
+  const readiness = projectReadiness(project);
+  return `
+    <section class="panel studio-project-summary">
+      <div>
+        <span class="eyebrow">${esc(sourceTruthLabel(source))}</span>
+        <strong>${esc(source?.title || source?.displayName || "Playable source")}</strong>
+        <small>${esc(source?.originalFilename || source?.storagePath || "Verified source")} · ${Math.round(sourceDurationSeconds(source))}s · ${esc(source?.width || "?")}×${esc(source?.height || "?")}</small>
+      </div>
+      <div>
+        <span class="eyebrow">Selected clip</span>
+        <strong>${esc(candidate?.title || "No candidate selected")}</strong>
+        <small>${esc(candidate?.timestampStart || "00:00")} to ${esc(candidate?.timestampEnd || "00:00")} · ${Math.round(candidateEndSeconds(candidate) - candidateStartSeconds(candidate)) || 0}s</small>
+      </div>
+      <div>
+        <span class="eyebrow">Readiness</span>
+        <strong>${readiness.canRender ? "Ready to render" : "Needs setup"}</strong>
+        <small>${esc(readiness.canRender ? "Source, range, and candidate are valid." : (readiness.renderReasons || ["Project needs source setup."])[0])}</small>
+      </div>
+      <div>
+        <span class="eyebrow">Project state</span>
+        <strong>${esc(project.status || "empty")}</strong>
+        <small>${esc(autosaveLabel(project))}${activeJob ? ` · ${esc(activeJob.status)}` : ""}</small>
+      </div>
     </section>
   `;
 }
@@ -1711,6 +1758,72 @@ function parseTimestamp(value) {
 
 function sourcePlaybackUrl(source) {
   return source?.playbackUrl ? appUrl(source.playbackUrl) : "";
+}
+
+function sourceDurationSeconds(source) {
+  return Number(source?.durationSeconds ?? source?.duration ?? 0) || 0;
+}
+
+function candidateEndSeconds(candidate) {
+  return Number(candidate?.timestampEndSeconds ?? candidate?.endSeconds ?? candidateStartSeconds(candidate) + Number(candidate?.durationSeconds ?? candidate?.duration ?? 0)) || 0;
+}
+
+function candidateScoreValue(candidate) {
+  const value = candidate?.qualityScore ?? candidate?.score;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function candidateScoreBadge(candidate) {
+  const score = candidateScoreValue(candidate);
+  if (score == null) return `<span class="score-empty">Not scored</span>`;
+  return scoreRing(score);
+}
+
+function sourceTruthLabel(source) {
+  if (!source) return "No source";
+  if (source.provenance === "DEMO_SOURCE") return "PRACTICE MEDIA";
+  if (source.provenance === "AUTHORIZED_UPLOAD") return "VERIFIED UPLOAD";
+  if (source.provenance === "VERIFIED_MEDIA") return "VERIFIED MEDIA";
+  return String(source.provenance || "UNAVAILABLE").replaceAll("_", " ");
+}
+
+function projectReadiness(project = {}) {
+  return project.readiness || {
+    canRender: false,
+    canPackage: false,
+    canCapCut: false,
+    canHumanGate: false,
+    renderReasons: ["Project is not ready."]
+  };
+}
+
+function autosaveLabel(project = {}) {
+  if (!project.autosavedAt && !project.updatedAt) return "Not saved";
+  const value = project.autosavedAt || project.updatedAt;
+  return `Saved ${shortTime(value)}`;
+}
+
+function renderMediaUploadPanel() {
+  return `
+    <form id="media-upload-form" class="media-upload-form" enctype="multipart/form-data">
+      <div>
+        <span class="eyebrow">Real Project</span>
+        <h3>Upload approved source media</h3>
+        <p>Add a playable MP4/WebM/MOV that you own or are allowed to use. The server verifies it with FFprobe before editing.</p>
+      </div>
+      <label>
+        <span>Project title</span>
+        <input name="title" placeholder="e.g. Stream highlight package" autocomplete="off">
+      </label>
+      <label class="media-file-drop">
+        <input name="file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" required>
+        <strong>Select video file</strong>
+        <small>Keys stay server-side. Source path is never exposed.</small>
+      </label>
+      <button class="primary" type="submit">Upload and verify</button>
+    </form>
+  `;
 }
 
 function studioCandidateThumb(candidate, index = 0) {
@@ -1749,14 +1862,16 @@ function renderStudioStage(source, candidate, renderedArtifact) {
     `;
   }
   if (mode === "capcut") {
+    const readiness = projectReadiness(state.studio?.project || {});
     return `
       <div class="studio-capcut-stage">
         <div>
           <span class="eyebrow">Manual Handoff</span>
           <h3>CapCut Workspace</h3>
-          <p>Agent 101 can prepare instructions and files. Editing stays operator-controlled in the browser workspace.</p>
+          <p>${esc(readiness.canCapCut ? "Verified MP4 is ready for a supervised CapCut handoff. Editing stays operator-controlled." : "Render a verified 9:16 MP4 before preparing the CapCut handoff.")}</p>
         </div>
-        <button class="primary" data-studio-action="capcut-open">Open CapCut workspace</button>
+        <button class="primary" data-action="create-capcut" ${readiness.canCapCut ? "" : "disabled"}>Prepare handoff package</button>
+        <button data-studio-action="capcut-open" ${readiness.canCapCut ? "" : "disabled"}>Open CapCut workspace</button>
       </div>
     `;
   }
@@ -1786,9 +1901,11 @@ function renderSourceTruth(source, unavailable = {}) {
   return `
     <div class="source-truth">
       <span><b>Source</b>${esc(source?.title || "Source data unavailable")}</span>
-      <span><b>Provenance</b>${esc(source?.provenance || "UNAVAILABLE")}</span>
+      <span><b>Provenance</b>${esc(sourceTruthLabel(source))}</span>
       <span><b>Rights</b>${esc(source?.rightsStatus || "unavailable")}</span>
       <span><b>Transcript</b>${esc(source?.transcriptStatus || "UNAVAILABLE")}</span>
+      <span><b>Media</b>${source?.playable ? `${Math.round(sourceDurationSeconds(source))}s · ${esc(source.width || "?")}×${esc(source.height || "?")}` : "Not verified"}</span>
+      <span><b>Checksum</b>${source?.sha256 ? esc(`${source.sha256.slice(0, 10)}...`) : "Not available"}</span>
       <span><b>Live metrics</b>${esc(unavailable?.liveMetrics || "Source data unavailable")}</span>
     </div>
   `;
@@ -1813,6 +1930,7 @@ function renderStudioTransport(source, candidate, candidates = []) {
 function renderStudioInspector(source, candidate, activeJob) {
   if (!candidate) return empty("Select a playable candidate or start a project with a verified source.");
   const packageReady = state.packages.some((item) => item.candidateId === candidate.id);
+  const readiness = projectReadiness(state.studio?.project || {});
   const transcript = candidate.transcriptProvenance === "UNAVAILABLE"
     ? "Source data unavailable. No transcript has been extracted from this media."
     : candidate.transcriptSnippet;
@@ -1823,7 +1941,7 @@ function renderStudioInspector(source, candidate, activeJob) {
         <h2>${esc(candidate.title || "Selected candidate")}</h2>
         <p>${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || "00:00")} · ${esc(candidate.duration || 0)}s</p>
       </div>
-      ${scoreRing(Number(candidate.score || 0))}
+      ${candidateScoreBadge(candidate)}
     </div>
     <div class="studio-inspector-grid">
       <span><b>${esc(candidate.sourceProvenance || source?.provenance || "UNAVAILABLE")}</b><em>Source proof</em></span>
@@ -1835,9 +1953,9 @@ function renderStudioInspector(source, candidate, activeJob) {
       <h3>Evidence breakdown</h3>
       <p>${esc(candidate.reason || "Candidate has playable media but needs verified context before external use.")}</p>
       <div class="clip-metrics">
-        <span><b>${esc(candidate.hookScore || 0)}</b><em>Hook</em></span>
+        <span><b>${candidate.hookScore == null ? "Not scored" : esc(candidate.hookScore)}</b><em>Hook</em></span>
         <span><b>${esc(candidate.retentionPotential || "Unavailable")}</b><em>Retention</em></span>
-        <span><b>${esc(candidate.riskScore || 0)}</b><em>Risk</em></span>
+        <span><b>${candidate.riskScore == null ? "Unknown" : esc(candidate.riskScore)}</b><em>Risk</em></span>
       </div>
     </section>
     <section class="studio-inspector-section">
@@ -1861,17 +1979,17 @@ function renderStudioInspector(source, candidate, activeJob) {
       </section>
     ` : ""}
     <div class="studio-action-stack">
-      <button class="primary" data-studio-action="render-draft" ${disabledAttr(!(source?.playable && !state.studioBusy), source?.playable ? "Render is already running" : "Select a playable media source first")}>Render 9:16 draft</button>
-      <button data-package-candidate="${esc(candidate.id)}">Create clip package</button>
-      <button data-action="create-capcut" ${packageReady ? "" : "disabled"}>Prepare CapCut handoff</button>
-      <button data-studio-action="capcut-open">Open CapCut workspace</button>
+      <button class="primary" data-studio-action="render-draft" ${disabledAttr(!(readiness.canRender && !state.studioBusy), readiness.renderReasons?.[0] || "Select a playable media source first")}>Render 9:16 draft</button>
+      <button data-package-candidate="${esc(candidate.id)}" ${readiness.canPackage ? "" : "disabled"}>Create clip package</button>
+      <button data-action="create-capcut" ${readiness.canCapCut ? "" : "disabled"}>Prepare CapCut handoff</button>
+      <button data-studio-action="capcut-open" ${readiness.canCapCut ? "" : "disabled"}>Open CapCut workspace</button>
       <button data-nav-jump="gate">Human Gate</button>
     </div>
   `;
 }
 
 function renderStudioTimeline(source, candidate, candidates = []) {
-  const duration = Math.max(1, Number(source?.duration || 24));
+  const duration = Math.max(1, sourceDurationSeconds(source) || 24);
   return `
     <div class="studio-timeline">
       <div class="studio-section-head">
@@ -1881,10 +1999,11 @@ function renderStudioTimeline(source, candidate, candidates = []) {
       <div class="studio-timebar">
         ${candidates.map((item) => {
           const start = Math.max(0, (candidateStartSeconds(item) / duration) * 100);
-          const width = Math.max(2, (Number(item.duration || 4) / duration) * 100);
+          const width = Math.max(2, ((candidateEndSeconds(item) - candidateStartSeconds(item) || Number(item.duration || 4)) / duration) * 100);
           return `<button class="${item.id === candidate?.id ? "active" : ""}" style="left:${start}%;width:${Math.min(100 - start, width)}%" data-studio-select-candidate="${esc(item.id)}" title="${esc(item.title)}"></button>`;
         }).join("")}
       </div>
+      <div class="studio-timeline-note">${source?.playable ? `Verified ${Math.round(duration)}s source. Waveform extraction is not generated yet.` : "No playable source loaded."}</div>
     </div>
   `;
 }
@@ -1903,6 +2022,7 @@ function renderStudioCandidateRail(candidates = [], selected) {
             <span>${provenancePill(candidate.sourceProvenance || candidate.provenance || "UNAVAILABLE")}</span>
             <strong>${esc(candidate.title || "Untitled candidate")}</strong>
             <small>${esc(candidate.timestampStart || "00:00")} · ${esc(candidate.duration || 0)}s</small>
+            <em>${candidateScoreValue(candidate) == null ? "Not scored" : `${candidateScoreValue(candidate)} score`}</em>
           </button>
         `).join("") || empty("No playable candidates yet. Add or upload media first.")}
       </div>
@@ -1913,6 +2033,7 @@ function renderStudioCandidateRail(candidates = [], selected) {
 function renderStudioAssetDock(studio = {}, activeJob) {
   const source = studio.source;
   const artifacts = studio.artifacts || [];
+  const readiness = projectReadiness(studio.project || {});
   return `
     <div class="studio-assets">
       <div class="studio-section-head">
@@ -1923,6 +2044,7 @@ function renderStudioAssetDock(studio = {}, activeJob) {
         <span><b>Source video</b>${esc(source?.playable ? source.originalFilename || source.title : "Unavailable")}</span>
         <span><b>Transcript</b>${esc(source?.transcriptStatus || "UNAVAILABLE")}</span>
         <span><b>Latest render</b>${esc(activeJob?.status || "No render yet")}</span>
+        <span><b>CapCut</b>${readiness.canCapCut ? "Verified MP4 ready" : "Render required"}</span>
         ${artifacts.slice(0, 4).map((artifact) => `<span><b>${esc(artifact.kind || artifact.type)}</b>${esc(artifact.title)}</span>`).join("")}
       </div>
     </div>
@@ -4144,6 +4266,27 @@ async function clearDemo() {
   await refresh();
 }
 
+async function uploadMediaSource(form) {
+  const data = new FormData(form);
+  const file = data.get("file");
+  if (!file || !file.size) {
+    toast("Choose a video file first.", "bad");
+    return;
+  }
+  toast("Uploading and verifying source media...", "info");
+  const result = await api("/api/media/sources/upload", {
+    method: "POST",
+    body: data
+  });
+  state.selectedCandidateId = result.candidate?.id || state.selectedCandidateId;
+  if (result.candidate?.id) localStorage.setItem("selectedCandidateId", result.candidate.id);
+  state.studioTab = "source";
+  localStorage.setItem("studioTab", state.studioTab);
+  toast(`Source verified: ${result.source?.title || result.source?.originalFilename || "media loaded"}`, "good");
+  form.reset();
+  await refresh();
+}
+
 const agent101Goals = {
   "agent101-demo-workflow": "Start Practice Mode, add 5 practice streamers, run a watch cycle, generate clip candidates, score them, create packages for the top 3, create CapCut briefs, create draft posting packages, and send them to Human Gate. Mark every record as practice.",
   "agent101-add-demo-streamers": "Add 5 practice streamers for internal StreamClipper sandbox testing.",
@@ -4456,11 +4599,18 @@ async function saveBuilderDraft(id) {
 }
 
 async function createCapCut() {
-  const packageId = selectedClipPackage()?.id || state.drafts[0]?.clipPackageId;
-  if (!packageId) return;
-  await api("/api/clips/capcut-brief", {
+  const projectId = state.studio?.project?.id;
+  if (!projectId) return toast("Open a Clip Project first.", "bad");
+  if (!projectReadiness(state.studio.project).canCapCut) {
+    toast("Render a verified MP4 before preparing a CapCut handoff.", "bad");
+    return;
+  }
+  await api(`/api/clip-projects/${encodeURIComponent(projectId)}/capcut-handoff`, {
     method: "POST",
-    body: JSON.stringify({ clipPackageId: packageId })
+    body: JSON.stringify({
+      renderId: state.studio.project.readiness?.latestArtifactId,
+      clipPackageId: selectedClipPackage()?.id || state.drafts[0]?.clipPackageId || ""
+    })
   });
   toast("CapCut handoff created", "good");
   await refresh();
@@ -4517,25 +4667,52 @@ function selectStudioCandidate(id) {
 async function runStudioAction(action) {
   const candidates = state.studio?.candidates || [];
   const candidate = studioSelectedCandidate(candidates);
+  const projectId = state.studio?.project?.id;
   if (action === "replay") {
     state.studioSeek = candidateStartSeconds(candidate);
     render();
     return;
   }
   if (["mark-start", "mark-end", "capture-frame"].includes(action)) {
-    toast(action === "capture-frame" ? "Frame already comes from the selected source timestamp" : "Timestamp markers are locked to verified source data for now", "info");
+    const video = document.querySelector("[data-studio-video]");
+    const current = video ? Number(video.currentTime || 0) : candidateStartSeconds(candidate);
+    if (action === "capture-frame") {
+      const frameUrl = `/api/media/sources/${encodeURIComponent(state.studio?.source?.id || "")}/frame?candidateId=${encodeURIComponent(candidate?.id || "")}&t=${encodeURIComponent(current)}`;
+      window.open(appUrl(frameUrl), "_blank", "noopener,noreferrer");
+      toast("Opened a real source frame from the current timestamp.", "good");
+      return;
+    }
+    if (!projectId || !candidate) return toast("Open a Clip Project and select a candidate first.", "bad");
+    const start = action === "mark-start" ? current : candidateStartSeconds(candidate);
+    const end = action === "mark-end" ? current : candidateEndSeconds(candidate);
+    if (!(end > start)) return toast("End time must be after start time.", "bad");
+    await api(`/api/clip-projects/${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        candidateId: candidate.id,
+        clipStartSeconds: start,
+        clipEndSeconds: end
+      })
+    });
+    toast(action === "mark-start" ? "Start marker saved" : "End marker saved", "good");
+    await refresh();
     return;
   }
   if (action === "capcut-open") {
+    if (!projectReadiness(state.studio?.project || {}).canCapCut) {
+      toast("Prepare a verified CapCut handoff before opening the workspace.", "bad");
+      return;
+    }
     await handleBrowserAction("open-capcut");
     return;
   }
   if (action === "render-draft") {
     if (!candidate) return toast("Select a playable candidate first", "bad");
+    if (!projectId) return toast("Open or create a Clip Project first.", "bad");
     state.studioBusy = true;
     render();
     try {
-      const result = await api("/api/media/jobs", {
+      const result = await api(`/api/clip-projects/${encodeURIComponent(projectId || state.studio?.project?.id || "")}/render`, {
         method: "POST",
         body: JSON.stringify({
           projectId: state.studio?.project?.id,
@@ -4597,8 +4774,9 @@ document.addEventListener("submit", async (event) => {
   const agentForm = event.target.closest("#agent101-command-form, #global-agent101-command-form");
   const browserForm = event.target.closest("#browser-url-form");
   const browserTypeForm = event.target.closest("#browser-type-form");
+  const mediaUploadForm = event.target.closest("#media-upload-form");
   const form = event.target.closest("#streamer-form");
-  if (!agentForm && !browserForm && !browserTypeForm && !form) return;
+  if (!agentForm && !browserForm && !browserTypeForm && !mediaUploadForm && !form) return;
   event.preventDefault();
   try {
     if (agentForm) {
@@ -4617,6 +4795,10 @@ document.addEventListener("submit", async (event) => {
       toast("Text sent to browser", "good");
       renderNav();
       render();
+      return;
+    }
+    if (mediaUploadForm) {
+      await uploadMediaSource(mediaUploadForm);
       return;
     }
     await submitStreamer(form);

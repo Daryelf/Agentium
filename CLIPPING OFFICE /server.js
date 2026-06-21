@@ -22,11 +22,16 @@ const DEMO_PROJECT_ID = "project_clipping_office_main";
 const DEMO_STREAMER_ID = "streamer_demo_media_source";
 const DEMO_MEDIA_FILE = path.join(PUBLIC_DIR, "demo", "demo-source.mp4");
 const DEMO_FRAME_DIR = path.join(PUBLIC_DIR, "demo");
+const THUMBNAIL_DIR = path.join(__dirname, "outputs", "thumbnails");
 
 const PROVENANCE = {
   VERIFIED_API: "VERIFIED_API",
   AUTHORIZED_UPLOAD: "AUTHORIZED_UPLOAD",
   VERIFIED_MEDIA: "VERIFIED_MEDIA",
+  WATCHER_BUFFER: "WATCHER_BUFFER",
+  TWITCH_CLIP: "TWITCH_CLIP",
+  TWITCH_VOD: "TWITCH_VOD",
+  AUTHORIZED_REMOTE: "AUTHORIZED_REMOTE",
   LIVE_SOURCE: "LIVE_SOURCE",
   VOD_SOURCE: "VOD_SOURCE",
   DEMO_SOURCE: "DEMO_SOURCE",
@@ -72,7 +77,9 @@ const config = {
   browserNavigationTimeoutMs: Number(process.env.BROWSER_NAVIGATION_TIMEOUT_MS || 30000),
   capcutHandoffUrl: process.env.CAPCUT_HANDOFF_URL || "https://www.capcut.com/editor",
   postDailyLimit: Number(process.env.POST_DAILY_LIMIT || 20),
-  openaiTestBudgetUsd: Number(process.env.OPENAI_TEST_BUDGET_USD || 10)
+  openaiTestBudgetUsd: Number(process.env.OPENAI_TEST_BUDGET_USD || 10),
+  enableSyntheticTestFixtures: process.env.ENABLE_SYNTHETIC_TEST_FIXTURES === "true",
+  maxUploadBytes: Number(process.env.CLIPPER_MAX_UPLOAD_BYTES || 1024 * 1024 * 500)
 };
 
 const stateDefaults = {
@@ -86,6 +93,10 @@ const stateDefaults = {
   mediaSources: [],
   mediaProjects: [],
   mediaJobs: [],
+  clipProjectVersions: [],
+  editDecisionLists: [],
+  captionTracks: [],
+  overlayTracks: [],
   discoveredStreamers: [],
   executionContracts: [],
   agentRuns: [],
@@ -194,11 +205,26 @@ async function ensureStorage() {
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
   await fs.mkdir(config.uploadDir, { recursive: true });
   await fs.mkdir(config.outputDir, { recursive: true });
+  await fs.mkdir(THUMBNAIL_DIR, { recursive: true });
   await fs.mkdir(config.browserProfileDir, { recursive: true });
   await fs.mkdir(config.browserDownloadsDir, { recursive: true });
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
     state = { ...structuredClone(stateDefaults), ...JSON.parse(raw) };
+    state.streamers ||= [];
+    state.streamSessions ||= [];
+    state.clipCandidates ||= [];
+    state.clipPackages ||= [];
+    state.postingDrafts ||= [];
+    state.approvalRequests ||= [];
+    state.artifacts ||= [];
+    state.mediaSources ||= [];
+    state.mediaProjects ||= [];
+    state.mediaJobs ||= [];
+    state.clipProjectVersions ||= [];
+    state.editDecisionLists ||= [];
+    state.captionTracks ||= [];
+    state.overlayTracks ||= [];
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     await saveState();
@@ -276,6 +302,67 @@ async function readJsonBody(req) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+async function readRawBody(req, limitBytes = config.maxUploadBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limitBytes) {
+      const error = new Error("Upload is too large for this StreamClipper workspace.");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function bufferSplit(buffer, delimiter) {
+  const parts = [];
+  let start = 0;
+  let index = buffer.indexOf(delimiter, start);
+  while (index !== -1) {
+    parts.push(buffer.slice(start, index));
+    start = index + delimiter.length;
+    index = buffer.indexOf(delimiter, start);
+  }
+  parts.push(buffer.slice(start));
+  return parts;
+}
+
+function parseMultipartBody(buffer, contentType) {
+  const boundaryMatch = String(contentType || "").match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  if (!boundaryMatch) {
+    const error = new Error("Upload must use multipart/form-data.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const boundary = Buffer.from(`--${boundaryMatch[1] || boundaryMatch[2]}`);
+  const fields = {};
+  const files = {};
+  for (const rawPart of bufferSplit(buffer, boundary)) {
+    let part = rawPart;
+    if (part.length < 6 || part.includes(Buffer.from("--")) && part.toString("latin1").trim() === "--") continue;
+    if (part.slice(0, 2).toString("latin1") === "\r\n") part = part.slice(2);
+    if (part.slice(-2).toString("latin1") === "\r\n") part = part.slice(0, -2);
+    const headerEnd = part.indexOf(Buffer.from("\r\n\r\n"));
+    if (headerEnd === -1) continue;
+    const headerText = part.slice(0, headerEnd).toString("latin1");
+    const content = part.slice(headerEnd + 4);
+    const disposition = headerText.match(/content-disposition:\s*form-data;\s*([^\r\n]+)/i)?.[1] || "";
+    const name = disposition.match(/name="([^"]+)"/i)?.[1];
+    if (!name) continue;
+    const filename = disposition.match(/filename="([^"]*)"/i)?.[1];
+    const mimeType = headerText.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim() || "";
+    if (filename !== undefined) {
+      files[name] = { filename, mimeType, buffer: content };
+    } else {
+      fields[name] = content.toString("utf8");
+    }
+  }
+  return { fields, files };
 }
 
 function publicConfig() {
@@ -587,7 +674,7 @@ function assertCandidateReferencesSource(candidate, source) {
 function assertCandidateTimesValid(candidate, source) {
   const start = Number(candidate?.timestampStartSeconds ?? 0);
   const end = Number(candidate?.timestampEndSeconds ?? start + Number(candidate?.duration || 0));
-  const sourceDuration = Number(source?.duration || 0);
+  const sourceDuration = Number(sourceDurationSeconds(source) || 0);
   if (!(end > start)) throw new Error("Candidate timestamps are invalid.");
   if (sourceDuration && end > sourceDuration + 0.5) throw new Error("Candidate timestamps exceed source duration.");
 }
@@ -849,12 +936,14 @@ function outputArtifactForFile(kind, title, filePath, metadata = {}) {
 
 function publicMediaSource(source) {
   if (!source) return null;
+  const normalized = normalizeMediaSourceRecord(source);
   return {
-    ...source,
+    ...normalized,
     filePath: undefined,
-    playbackUrl: `/api/media/sources/${encodeURIComponent(source.id)}/playback`,
-    metadataUrl: `/api/media/sources/${encodeURIComponent(source.id)}/metadata`,
-    thumbnailsUrl: `/api/media/sources/${encodeURIComponent(source.id)}/thumbnails`
+    storagePath: source.storagePath ? path.basename(source.storagePath) : null,
+    playbackUrl: `/api/media/sources/${encodeURIComponent(normalized.id)}/playback`,
+    metadataUrl: `/api/media/sources/${encodeURIComponent(normalized.id)}/metadata`,
+    thumbnailsUrl: `/api/media/sources/${encodeURIComponent(normalized.id)}/thumbnails`
   };
 }
 
@@ -864,6 +953,237 @@ function findMediaSource(id) {
 
 function findExistingMediaSource(id) {
   return (state.mediaSources || []).find((source) => source.id === id);
+}
+
+function parseFrameRate(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const text = cleanText(value);
+  if (!text) return null;
+  const [num, den] = text.split("/").map(Number);
+  if (Number.isFinite(num) && Number.isFinite(den) && den > 0) return Math.round((num / den) * 100) / 100;
+  const direct = Number(text);
+  return Number.isFinite(direct) ? direct : null;
+}
+
+function sourceDurationSeconds(source = {}) {
+  return Number(source.durationSeconds ?? source.duration ?? 0) || null;
+}
+
+function sourceWidth(source = {}) {
+  return Number(source.width || 0) || null;
+}
+
+function sourceHeight(source = {}) {
+  return Number(source.height || 0) || null;
+}
+
+function normalizeMediaSourceRecord(source = {}) {
+  const sourceType = normalizeStatus(
+    source.sourceType || source.sourceKind || (source.provenance === PROVENANCE.DEMO_SOURCE ? "practice" : "upload"),
+    ["upload", "twitch_clip", "twitch_vod", "watcher_buffer", "authorized_remote", "practice", "demo_media"],
+    source.provenance === PROVENANCE.DEMO_SOURCE ? "practice" : "upload"
+  );
+  const durationSeconds = sourceDurationSeconds(source);
+  const width = sourceWidth(source);
+  const height = sourceHeight(source);
+  const mimeType = cleanText(source.mimeType || source.type || (source.filePath ? contentTypeFor(source.filePath).split(";")[0] : ""));
+  const ready = Boolean(
+    source.filePath
+    && source.playable !== false
+    && durationSeconds
+    && width
+    && height
+    && mimeType
+    && ["approved", "demo_approved", "uploaded", "verified", "practice_only"].includes(cleanText(source.permissionStatus || source.rightsStatus || "practice_only"))
+  );
+  return {
+    ...source,
+    ownerId: source.ownerId || "local",
+    projectId: source.projectId || source.editProjectId || source.mediaProjectId || null,
+    sourceType: sourceType === "demo_media" ? "practice" : sourceType,
+    provider: source.provider || (sourceType.startsWith("twitch") ? "twitch" : sourceType === "practice" || sourceType === "demo_media" ? "local" : null),
+    providerSourceId: source.providerSourceId || source.sourceClipId || null,
+    streamerId: source.streamerId || null,
+    displayName: source.displayName || source.title || source.originalFilename || "Media source",
+    originalFilename: source.originalFilename || (source.filePath ? path.basename(source.filePath) : null),
+    storagePath: source.storagePath || source.filePath || null,
+    mimeType,
+    fileSizeBytes: Number(source.fileSizeBytes ?? source.size ?? 0) || null,
+    sha256: source.sha256 || null,
+    durationSeconds,
+    width,
+    height,
+    frameRate: parseFrameRate(source.frameRate ?? source.fps),
+    hasAudio: source.hasAudio ?? null,
+    status: source.status || (ready ? "ready" : source.error ? "failed" : "verifying"),
+    provenance: source.provenance || PROVENANCE.UNAVAILABLE,
+    permissionStatus: source.permissionStatus || (source.provenance === PROVENANCE.DEMO_SOURCE ? "practice_only" : "uploaded"),
+    rightsStatus: source.rightsStatus || (source.provenance === PROVENANCE.DEMO_SOURCE ? "practice_only" : "operator_review_required"),
+    verifiedAt: source.verifiedAt || null,
+    error: source.error || null,
+    playable: ready,
+    label: source.label || (source.provenance === PROVENANCE.DEMO_SOURCE ? "PRACTICE MEDIA" : ready ? "VERIFIED MEDIA" : "SOURCE NEEDS VERIFICATION"),
+    updatedAt: source.updatedAt || source.createdAt || now()
+  };
+}
+
+function normalizeClipProjectRecord(project = {}) {
+  const sourceId = cleanText(project.sourceId || project.activeSourceId);
+  const candidateId = cleanText(project.candidateId || project.selectedCandidateId);
+  const mode = normalizeStatus(project.mode, ["real", "practice"], sourceId === DEMO_MEDIA_SOURCE_ID ? "practice" : "real");
+  const source = findExistingMediaSource(sourceId);
+  const status = normalizeStatus(
+    project.status,
+    ["empty", "source_ready", "analyzing", "editing", "rendering", "review", "approved", "completed", "failed", "ready"],
+    source?.playable || source?.status === "ready" ? "source_ready" : sourceId ? "failed" : "empty"
+  );
+  return {
+    ...project,
+    id: project.id || newId("clip_project"),
+    ownerId: project.ownerId || "local",
+    title: project.title || "Untitled Clip Project",
+    description: project.description || "",
+    sourceId,
+    activeSourceId: sourceId,
+    candidateId,
+    selectedCandidateId: candidateId,
+    streamerId: project.streamerId || source?.streamerId || null,
+    mode,
+    status: status === "ready" ? "source_ready" : status,
+    targetPlatform: project.targetPlatform || "multi_platform",
+    aspectRatio: "9:16",
+    resolution: "1080x1920",
+    frameRate: parseFrameRate(project.frameRate || source?.fps || source?.frameRate) || 30,
+    clipStartSeconds: project.clipStartSeconds ?? null,
+    clipEndSeconds: project.clipEndSeconds ?? null,
+    transcriptId: project.transcriptId || null,
+    editDecisionListId: project.editDecisionListId || null,
+    activeRenderJobId: project.activeRenderJobId || null,
+    latestArtifactId: project.latestArtifactId || null,
+    capcutHandoffId: project.capcutHandoffId || null,
+    createdAt: project.createdAt || now(),
+    updatedAt: project.updatedAt || now(),
+    autosavedAt: project.autosavedAt || null
+  };
+}
+
+function publicClipProject(project) {
+  if (!project) return null;
+  const normalized = normalizeClipProjectRecord(project);
+  const source = findExistingMediaSource(normalized.sourceId);
+  const candidate = state.clipCandidates.find((item) => item.id === normalized.candidateId);
+  return {
+    ...normalized,
+    readiness: projectReadiness(normalized, source, candidate)
+  };
+}
+
+function projectReadiness(project = {}, source = null, candidate = null) {
+  const normalizedSource = normalizeMediaSourceRecord(source || {});
+  const reasons = [];
+  if (!source) reasons.push("Select or upload a media source.");
+  if (source && normalizedSource.status !== "ready") reasons.push("Source must pass FFprobe verification.");
+  if (source && !normalizedSource.durationSeconds) reasons.push("Source duration is unknown.");
+  const start = Number(project.clipStartSeconds ?? candidate?.timestampStartSeconds ?? candidate?.startSeconds);
+  const end = Number(project.clipEndSeconds ?? candidate?.timestampEndSeconds ?? candidate?.endSeconds);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) reasons.push("Set a valid clip start and end.");
+  if (normalizedSource.durationSeconds && Number.isFinite(end) && end > normalizedSource.durationSeconds + 0.5) reasons.push("Clip range exceeds the source duration.");
+  const latestArtifact = state.artifacts.find((artifact) => artifact.id === project.latestArtifactId || artifact.id === candidate?.renderedArtifactId);
+  return {
+    canRender: reasons.length === 0,
+    renderReasons: reasons,
+    canPackage: Boolean(candidate && reasons.length === 0),
+    canCapCut: artifactIsVerifiedClip(latestArtifact),
+    canHumanGate: artifactIsVerifiedClip(latestArtifact),
+    latestArtifactId: latestArtifact?.id || null,
+    sourceStatus: source ? normalizedSource.status : "missing",
+    mode: project.mode || "real"
+  };
+}
+
+function ensureProjectEditDecisionList(project, source = null, candidate = null) {
+  state.editDecisionLists ||= [];
+  if (project.editDecisionListId) {
+    const existing = state.editDecisionLists.find((item) => item.id === project.editDecisionListId);
+    if (existing) return existing;
+  }
+  const edl = {
+    id: newId("edl"),
+    projectId: project.id,
+    version: 1,
+    sourceId: project.sourceId || source?.id || "",
+    clipStartSeconds: Number(project.clipStartSeconds ?? candidate?.timestampStartSeconds ?? 0),
+    clipEndSeconds: Number(project.clipEndSeconds ?? candidate?.timestampEndSeconds ?? Math.min(30, sourceDurationSeconds(source) || 30)),
+    cropMode: "center",
+    cropKeyframes: [],
+    captionTrackId: project.captionTrackId || null,
+    overlayTrackId: project.overlayTrackId || null,
+    audioTrackId: null,
+    transitions: [],
+    effects: [],
+    createdAt: now(),
+    updatedAt: now()
+  };
+  state.editDecisionLists.unshift(edl);
+  project.editDecisionListId = edl.id;
+  project.clipStartSeconds ??= edl.clipStartSeconds;
+  project.clipEndSeconds ??= edl.clipEndSeconds;
+  project.autosavedAt = now();
+  project.updatedAt = now();
+  return edl;
+}
+
+function defaultCandidateForSource(project, source) {
+  const normalized = normalizeMediaSourceRecord(source);
+  const end = Math.min(30, Math.max(1, normalized.durationSeconds || 30));
+  const existing = state.clipCandidates.find((candidate) => candidate.projectId === project.id && candidate.sourceId === source.id);
+  if (existing) return existing;
+  const candidate = {
+    id: newId("candidate"),
+    sourceId: source.id,
+    projectId: project.id,
+    streamerId: source.streamerId || "",
+    streamerName: source.displayName || "Uploaded source",
+    title: "Manual source window",
+    category: "Source review",
+    sourceType: normalized.sourceType,
+    sourceProvenance: normalized.provenance,
+    provenance: normalized.provenance,
+    creativeProvenance: PROVENANCE.USER_ENTERED,
+    mediaPlayable: true,
+    startSeconds: 0,
+    endSeconds: end,
+    timestampStartSeconds: 0,
+    timestampEndSeconds: end,
+    timestampStart: secondsToTimestamp(0),
+    timestampEnd: secondsToTimestamp(end),
+    duration: end,
+    durationSeconds: end,
+    thumbnailArtifactId: "",
+    thumbnailUrl: `/api/media/sources/${encodeURIComponent(source.id)}/frame?candidateId=__manual__&t=0`,
+    transcriptSegmentIds: [],
+    transcriptSnippet: "Transcript unavailable until extraction or operator notes are added.",
+    transcriptProvenance: PROVENANCE.UNAVAILABLE,
+    measuredEvidence: [
+      { label: "Playable source", provenance: normalized.provenance },
+      { label: "FFprobe metadata", provenance: PROVENANCE.VERIFIED_MEDIA }
+    ],
+    aiAnalysis: null,
+    qualityScore: null,
+    score: null,
+    confidence: null,
+    status: "selected",
+    createdBy: "operator",
+    createdAt: now(),
+    updatedAt: now()
+  };
+  state.clipCandidates.unshift(candidate);
+  project.candidateId = candidate.id;
+  project.selectedCandidateId = candidate.id;
+  project.clipStartSeconds = 0;
+  project.clipEndSeconds = end;
+  ensureProjectEditDecisionList(project, source, candidate);
+  return candidate;
 }
 
 function demoFrameUrl(index) {
@@ -1012,6 +1332,15 @@ function secondsToTimestamp(value) {
 }
 
 function emptyStudioProjectPayload(projectId = DEMO_PROJECT_ID) {
+  const sourceTruth = {
+    provenance: PROVENANCE.UNAVAILABLE,
+    label: "No media source selected",
+    rightsStatus: "unavailable",
+    transcriptStatus: PROVENANCE.UNAVAILABLE,
+    viewerCount: PROVENANCE.UNAVAILABLE,
+    chatSignals: PROVENANCE.UNAVAILABLE
+  };
+  const readiness = projectReadiness({ id: projectId, status: "empty", mode: "real" }, null, null);
   return {
     project: {
       id: projectId,
@@ -1021,16 +1350,12 @@ function emptyStudioProjectPayload(projectId = DEMO_PROJECT_ID) {
       selectedCandidateId: "",
       stage: "setup",
       status: "empty",
-      sourceTruth: {
-        provenance: PROVENANCE.UNAVAILABLE,
-        label: "No media source selected",
-        rightsStatus: "unavailable",
-        transcriptStatus: PROVENANCE.UNAVAILABLE,
-        viewerCount: PROVENANCE.UNAVAILABLE,
-        chatSignals: PROVENANCE.UNAVAILABLE
-      }
+      sourceTruth,
+      readiness
     },
     source: null,
+    sourceTruth,
+    readiness,
     candidates: [],
     renderJobs: [],
     artifacts: [],
@@ -1047,32 +1372,59 @@ function emptyStudioProjectPayload(projectId = DEMO_PROJECT_ID) {
 }
 
 function studioProjectPayload(projectId = DEMO_PROJECT_ID) {
-  const activeProject = state.mediaProjects.find((item) => item.id === projectId) || state.mediaProjects[0];
-  if (!activeProject) return emptyStudioProjectPayload(projectId);
-  const source = findMediaSource(activeProject.activeSourceId);
+  const requested = cleanText(projectId);
+  const activeProject = state.mediaProjects.find((item) => item.id === requested) || state.mediaProjects[0];
+  if (!activeProject) return emptyStudioProjectPayload(requested || "new_clip_project");
+  const normalizedProject = normalizeClipProjectRecord(activeProject);
+  Object.assign(activeProject, normalizedProject);
+  const source = findMediaSource(normalizedProject.sourceId);
+  const normalizedSource = source ? normalizeMediaSourceRecord(source) : null;
+  if (source) Object.assign(source, normalizedSource);
   const candidates = state.clipCandidates
-    .filter((candidate) => candidate.sourceId === activeProject.activeSourceId)
+    .filter((candidate) => candidate.sourceId === normalizedProject.sourceId || candidate.projectId === normalizedProject.id)
     .sort((a, b) => Number(a.timestampStartSeconds || 0) - Number(b.timestampStartSeconds || 0));
+  const selectedCandidate = candidates.find((candidate) => candidate.id === normalizedProject.candidateId)
+    || candidates[0]
+    || null;
+  if (selectedCandidate && normalizedProject.candidateId !== selectedCandidate.id) {
+    normalizedProject.candidateId = selectedCandidate.id;
+    normalizedProject.selectedCandidateId = selectedCandidate.id;
+    activeProject.candidateId = selectedCandidate.id;
+    activeProject.selectedCandidateId = selectedCandidate.id;
+  }
+  const readiness = projectReadiness(normalizedProject, source, selectedCandidate);
+  const edl = ensureProjectEditDecisionList(normalizedProject, source, selectedCandidate);
+  Object.assign(activeProject, normalizedProject, {
+    editDecisionListId: edl?.id || normalizedProject.editDecisionListId,
+    clipStartSeconds: normalizedProject.clipStartSeconds ?? edl?.clipStartSeconds ?? null,
+    clipEndSeconds: normalizedProject.clipEndSeconds ?? edl?.clipEndSeconds ?? null
+  });
   const renderJobs = state.mediaJobs
-    .filter((job) => job.projectId === activeProject.id)
+    .filter((job) => job.projectId === normalizedProject.id)
     .slice(0, 12);
   const projectArtifacts = state.artifacts
-    .filter((artifact) => artifact.content?.projectId === activeProject.id || artifact.content?.sourceId === activeProject.activeSourceId)
+    .filter((artifact) => artifact.content?.projectId === normalizedProject.id || artifact.content?.sourceId === normalizedProject.sourceId)
     .slice(0, 20);
+  const sourceTruth = {
+    provenance: normalizedSource?.provenance || PROVENANCE.UNAVAILABLE,
+    label: normalizedSource?.label || "Source data unavailable",
+    rightsStatus: normalizedSource?.rightsStatus || "unavailable",
+    transcriptStatus: normalizedSource?.transcriptStatus || PROVENANCE.UNAVAILABLE,
+    viewerCount: PROVENANCE.UNAVAILABLE,
+    chatSignals: PROVENANCE.UNAVAILABLE
+  };
   return {
     project: {
-      ...activeProject,
-      sourceTruth: {
-        provenance: source?.provenance || PROVENANCE.UNAVAILABLE,
-        label: source?.label || "Source data unavailable",
-        rightsStatus: source?.rightsStatus || "unavailable",
-        transcriptStatus: source?.transcriptStatus || PROVENANCE.UNAVAILABLE,
-        viewerCount: PROVENANCE.UNAVAILABLE,
-        chatSignals: PROVENANCE.UNAVAILABLE
-      }
+      ...normalizedProject,
+      readiness,
+      sourceTruth
     },
     source: publicMediaSource(source),
+    sourceTruth,
+    readiness,
     candidates,
+    editDecisionList: edl || null,
+    versions: (state.clipProjectVersions || []).filter((version) => version.projectId === normalizedProject.id).slice(0, 8),
     renderJobs,
     artifacts: projectArtifacts,
     capcut: {
@@ -1081,10 +1433,10 @@ function studioProjectPayload(projectId = DEMO_PROJECT_ID) {
       browserReady: config.browserEnabled
     },
     unavailable: {
-      transcript: source?.provenance === PROVENANCE.DEMO_SOURCE
+      transcript: normalizedSource?.provenance === PROVENANCE.DEMO_SOURCE
         ? "Practice media has no verified speech transcript."
         : "Source data unavailable. No speech transcript has been extracted.",
-      liveMetrics: source?.provenance === PROVENANCE.DEMO_SOURCE
+      liveMetrics: normalizedSource?.provenance === PROVENANCE.DEMO_SOURCE
         ? "Practice media has no verified viewer counts, live status, or chat spikes."
         : "Source data unavailable. No verified live metrics are attached."
     }
@@ -1124,9 +1476,11 @@ async function ffprobeMetadata(filePath) {
   const audio = parsed.streams?.find((stream) => stream.codec_type === "audio");
   return {
     duration: Number(parsed.format?.duration || 0),
+    durationSeconds: Number(parsed.format?.duration || 0),
     width: Number(video?.width || 0),
     height: Number(video?.height || 0),
     fps: video?.avg_frame_rate || video?.r_frame_rate || "",
+    frameRate: parseFrameRate(video?.avg_frame_rate || video?.r_frame_rate || ""),
     hasAudio: Boolean(audio),
     formatName: parsed.format?.format_name || "",
     size: Number(parsed.format?.size || 0),
@@ -1134,22 +1488,287 @@ async function ffprobeMetadata(filePath) {
   };
 }
 
+function sanitizeFilename(name, fallback = "media-source.mp4") {
+  const raw = cleanText(name) || fallback;
+  const ext = path.extname(raw).toLowerCase().replace(/[^a-z0-9.]/g, "") || ".mp4";
+  const base = path.basename(raw, path.extname(raw)).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "media-source";
+  return `${base.slice(0, 80)}${ext}`;
+}
+
+async function createClipProject(input = {}) {
+  const created = now();
+  const project = normalizeClipProjectRecord({
+    id: cleanText(input.id) || newId("clip_project"),
+    ownerId: "local",
+    officeId: "clips",
+    title: cleanText(input.title) || "Untitled Clip Project",
+    description: cleanText(input.description),
+    sourceId: cleanText(input.sourceId),
+    activeSourceId: cleanText(input.sourceId),
+    candidateId: cleanText(input.candidateId),
+    selectedCandidateId: cleanText(input.candidateId),
+    mode: normalizeStatus(input.mode, ["real", "practice"], "real"),
+    status: input.sourceId ? "source_ready" : "empty",
+    targetPlatform: normalizeStatus(input.targetPlatform, ["tiktok", "instagram_reels", "youtube_shorts", "multi_platform"], "multi_platform"),
+    createdAt: created,
+    updatedAt: created,
+    autosavedAt: null
+  });
+  state.mediaProjects.unshift(project);
+  return project;
+}
+
+async function createMediaSourceFromFile({ filePath, originalFilename, mimeType, title, projectId, mode = "real", provenance = PROVENANCE.AUTHORIZED_UPLOAD, permissionStatus = "uploaded", rightsStatus = "operator_review_required" }) {
+  await fs.stat(filePath);
+  const [metadata, stat, sha256] = await Promise.all([
+    ffprobeMetadata(filePath),
+    fs.stat(filePath),
+    fileSha256(filePath)
+  ]);
+  const source = normalizeMediaSourceRecord({
+    id: newId("media"),
+    ownerId: "local",
+    projectId: cleanText(projectId) || null,
+    sourceType: mode === "practice" ? "practice" : "upload",
+    provider: mode === "practice" ? "local" : "upload",
+    providerSourceId: null,
+    streamerId: "",
+    displayName: cleanText(title) || originalFilename || path.basename(filePath),
+    title: cleanText(title) || originalFilename || path.basename(filePath),
+    originalFilename,
+    storagePath: filePath,
+    filePath,
+    mimeType: mimeType || contentTypeFor(filePath).split(";")[0],
+    fileSizeBytes: stat.size,
+    sha256,
+    durationSeconds: metadata.durationSeconds,
+    duration: metadata.durationSeconds,
+    width: metadata.width,
+    height: metadata.height,
+    frameRate: metadata.frameRate,
+    fps: metadata.fps,
+    hasAudio: metadata.hasAudio,
+    status: "ready",
+    provenance,
+    permissionStatus,
+    rightsStatus,
+    verifiedAt: now(),
+    probeStatus: "passed",
+    playable: true,
+    transcriptStatus: PROVENANCE.UNAVAILABLE,
+    label: mode === "practice" ? "PRACTICE MEDIA" : "VERIFIED UPLOAD",
+    warning: mode === "practice"
+      ? "Practice media is for workflow testing only."
+      : "Operator-uploaded media. Rights must be reviewed before external publishing.",
+    createdAt: now(),
+    updatedAt: now()
+  });
+  state.mediaSources.unshift(source);
+  return source;
+}
+
+async function registerUploadedMedia({ file, fields }) {
+  if (!file?.buffer?.length) {
+    const error = new Error("Choose a real video file before creating a Clip Project.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${sanitizeFilename(file.filename)}`;
+  const filePath = path.join(config.uploadDir, filename);
+  await fs.writeFile(filePath, file.buffer);
+  const project = await createClipProject({
+    title: fields.title || file.filename || "Uploaded Clip Project",
+    description: fields.description,
+    mode: "real"
+  });
+  const source = await createMediaSourceFromFile({
+    filePath,
+    originalFilename: file.filename || filename,
+    mimeType: file.mimeType || contentTypeFor(filePath).split(";")[0],
+    title: fields.title || file.filename,
+    projectId: project.id,
+    mode: "real",
+    provenance: PROVENANCE.AUTHORIZED_UPLOAD,
+    permissionStatus: cleanText(fields.permissionStatus) || "uploaded",
+    rightsStatus: cleanText(fields.rightsStatus) || "operator_review_required"
+  });
+  Object.assign(project, {
+    sourceId: source.id,
+    activeSourceId: source.id,
+    status: "source_ready",
+    updatedAt: now(),
+    autosavedAt: now()
+  });
+  const candidate = defaultCandidateForSource(project, source);
+  await logEvent("media_uploaded", "Operator uploaded a verified media source", {
+    projectId: project.id,
+    sourceId: source.id,
+    candidateId: candidate.id,
+    sha256: source.sha256
+  });
+  await saveState();
+  return { project: publicClipProject(project), source: publicMediaSource(source), candidate };
+}
+
+async function ensurePracticeProject() {
+  const existing = state.mediaProjects.find((project) => project.id === DEMO_PROJECT_ID);
+  const metadata = await ffprobeMetadata(DEMO_MEDIA_FILE);
+  let source = state.mediaSources.find((item) => item.id === DEMO_MEDIA_SOURCE_ID);
+  if (!source) {
+    source = await createMediaSourceFromFile({
+      filePath: DEMO_MEDIA_FILE,
+      originalFilename: "demo-source.mp4",
+      mimeType: "video/mp4",
+      title: "StreamClipper Practice Media",
+      projectId: DEMO_PROJECT_ID,
+      mode: "practice",
+      provenance: PROVENANCE.DEMO_SOURCE,
+      permissionStatus: "practice_only",
+      rightsStatus: "practice_only"
+    });
+    source.id = DEMO_MEDIA_SOURCE_ID;
+  } else {
+    Object.assign(source, normalizeMediaSourceRecord({
+      ...source,
+      sourceType: "practice",
+      provenance: PROVENANCE.DEMO_SOURCE,
+      permissionStatus: "practice_only",
+      rightsStatus: "practice_only",
+      durationSeconds: metadata.durationSeconds,
+      duration: metadata.durationSeconds,
+      width: metadata.width,
+      height: metadata.height,
+      frameRate: metadata.frameRate,
+      fps: metadata.fps,
+      hasAudio: metadata.hasAudio,
+      mimeType: "video/mp4",
+      filePath: DEMO_MEDIA_FILE,
+      playable: true,
+      status: "ready",
+      label: "PRACTICE MEDIA",
+      warning: "Bundled practice media is for local workflow testing only."
+    }));
+  }
+  let project = existing;
+  if (!project) {
+    project = await createClipProject({
+      id: DEMO_PROJECT_ID,
+      title: "Practice Clip Project",
+      description: "Bundled playable media for testing the clipping workflow.",
+      mode: "practice",
+      sourceId: source.id
+    });
+  }
+  Object.assign(project, normalizeClipProjectRecord({
+    ...project,
+    title: project.title || "Practice Clip Project",
+    sourceId: source.id,
+    activeSourceId: source.id,
+    mode: "practice",
+    status: "source_ready",
+    updatedAt: now(),
+    autosavedAt: now()
+  }));
+  const definitions = demoCandidateDefinitions(source.id);
+  const candidates = [];
+  for (const candidate of definitions) {
+    const end = Math.min(Number(candidate.timestampEndSeconds || 0), metadata.durationSeconds || candidate.timestampEndSeconds || 0);
+    const normalizedCandidate = {
+      ...candidate,
+      projectId: project.id,
+      endSeconds: end,
+      timestampEndSeconds: end,
+      timestampEnd: secondsToTimestamp(end),
+      duration: Math.max(1, end - Number(candidate.timestampStartSeconds || 0)),
+      durationSeconds: Math.max(1, end - Number(candidate.timestampStartSeconds || 0)),
+      thumbnailUrl: `/api/media/sources/${encodeURIComponent(source.id)}/frame?candidateId=${encodeURIComponent(candidate.id)}`,
+      qualityScore: null,
+      score: null,
+      confidence: null,
+      measuredEvidence: [
+        { label: "Bundled playable media", provenance: PROVENANCE.DEMO_SOURCE },
+        { label: "FFprobe verified file", provenance: PROVENANCE.VERIFIED_MEDIA }
+      ],
+      reason: "Practice timestamp from bundled playable media. Transcript and live metrics are unavailable.",
+      updatedAt: now()
+    };
+    const existingCandidate = state.clipCandidates.find((item) => item.id === normalizedCandidate.id);
+    if (existingCandidate) Object.assign(existingCandidate, normalizedCandidate);
+    else state.clipCandidates.unshift(normalizedCandidate);
+    candidates.push(existingCandidate || normalizedCandidate);
+  }
+  const selected = candidates[0] || defaultCandidateForSource(project, source);
+  Object.assign(project, {
+    candidateId: selected.id,
+    selectedCandidateId: selected.id,
+    clipStartSeconds: selected.timestampStartSeconds,
+    clipEndSeconds: selected.timestampEndSeconds,
+    status: "source_ready",
+    updatedAt: now(),
+    autosavedAt: now()
+  });
+  ensureProjectEditDecisionList(project, source, selected);
+  return { project, source, candidates };
+}
+
+async function extractSourceFrame(source, candidate = null, explicitTime = null) {
+  const normalized = normalizeMediaSourceRecord(source);
+  if (!normalized.playable || !source.filePath) {
+    throw Object.assign(new Error("Frame extraction requires verified playable media."), { statusCode: 422 });
+  }
+  const timestamp = Math.max(0, Number(explicitTime ?? candidate?.timestampStartSeconds ?? candidate?.startSeconds ?? 0));
+  const safeKey = `${source.id}-${candidate?.id || "frame"}-${Math.round(timestamp * 1000)}`.replace(/[^a-z0-9_-]+/gi, "-");
+  const outputPath = path.join(THUMBNAIL_DIR, `${safeKey}.jpg`);
+  try {
+    await fs.stat(outputPath);
+    return outputPath;
+  } catch {
+    // Generate below.
+  }
+  await execFileAsync(ffmpegExecutable, [
+    "-y",
+    "-ss",
+    String(timestamp),
+    "-i",
+    source.filePath,
+    "-frames:v",
+    "1",
+    "-vf",
+    "scale=640:-2",
+    outputPath
+  ], { timeout: 20000, maxBuffer: 1024 * 1024 });
+  return outputPath;
+}
+
 async function createRenderJob(body = {}) {
-  const payload = studioProjectPayload(body.projectId || DEMO_PROJECT_ID);
-  const candidate = payload.candidates.find((item) => item.id === body.candidateId) || payload.candidates[0];
-  const source = findMediaSource(candidate?.sourceId || payload.source?.id);
+  const requestedProjectId = cleanText(body.projectId);
+  const project = state.mediaProjects.find((item) => item.id === requestedProjectId)
+    || state.mediaProjects.find((item) => item.id === cleanText(body.editProjectId))
+    || state.mediaProjects[0];
+  if (!project) throw Object.assign(new Error("Create or open a Clip Project before rendering."), { statusCode: 404 });
+  const normalizedProject = normalizeClipProjectRecord(project);
+  Object.assign(project, normalizedProject);
+  const candidate = state.clipCandidates.find((item) => item.id === cleanText(body.candidateId || normalizedProject.candidateId))
+    || state.clipCandidates.find((item) => item.sourceId === normalizedProject.sourceId)
+    || null;
+  const source = findMediaSource(cleanText(body.sourceId || normalizedProject.sourceId || candidate?.sourceId));
   if (!candidate) throw Object.assign(new Error("No playable candidate is selected."), { statusCode: 404 });
   if (!source?.filePath) throw Object.assign(new Error("Source data unavailable. Upload or select playable media first."), { statusCode: 400 });
   const sourcePath = source.filePath;
   await fs.stat(sourcePath);
+  const readiness = projectReadiness(normalizedProject, source, candidate);
+  if (!readiness.canRender) {
+    throw Object.assign(new Error(`Render blocked: ${readiness.renderReasons.join(" ")}`), { statusCode: 422 });
+  }
   const safeTitle = (candidate.suggestedTitle || candidate.title || "clip-render").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "clip-render";
   const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeTitle}-9x16.mp4`;
   const outputPath = path.join(config.outputDir, filename);
-  const start = Math.max(0, Number(candidate.timestampStartSeconds || 0));
-  const duration = Math.max(1, Math.min(90, Number(candidate.duration || 8)));
+  const start = Math.max(0, Number(body.startSeconds ?? normalizedProject.clipStartSeconds ?? candidate.timestampStartSeconds ?? 0));
+  const end = Number(body.endSeconds ?? normalizedProject.clipEndSeconds ?? candidate.timestampEndSeconds ?? start + Number(candidate.durationSeconds || candidate.duration || 8));
+  const duration = Math.max(1, Math.min(90, end - start));
   const job = {
     id: newId("render_job"),
-    projectId: payload.project.id,
+    projectId: normalizedProject.id,
     candidateId: candidate.id,
     sourceId: source.id,
     status: "running",
@@ -1212,9 +1831,10 @@ async function createRenderJob(body = {}) {
       throw new Error("Render verification failed. Output file did not pass size/probe checks.");
     }
     const artifact = outputArtifactForFile("rendered_clip", `${candidate.title} 9:16 Draft`, outputPath, {
-      projectId: payload.project.id,
+      projectId: normalizedProject.id,
       sourceId: source.id,
       candidateId: candidate.id,
+      renderJobId: job.id,
       provenance: PROVENANCE.VERIFIED_MEDIA,
       sourceProvenance: source.provenance,
       format: "9:16",
@@ -1253,6 +1873,16 @@ async function createRenderJob(body = {}) {
     candidate.renderedArtifactId = artifact.id;
     candidate.status = "packaged";
     candidate.updatedAt = now();
+    project.activeRenderJobId = job.id;
+    project.latestArtifactId = artifact.id;
+    project.status = "review";
+    project.updatedAt = now();
+    project.autosavedAt = now();
+    const linkedPackage = state.clipPackages.find((item) => item.candidateId === candidate.id);
+    if (linkedPackage) {
+      linkedPackage.renderedArtifactId = artifact.id;
+      linkedPackage.updatedAt = now();
+    }
     await logEvent("render_completed", "Rendered clip artifact saved", { jobId: job.id, artifactId: artifact.id });
     await saveState();
     return { job, artifact };
@@ -2472,18 +3102,33 @@ async function setHandoffStatus(handoff, status, actor = "operator", message = "
   return event;
 }
 
+function resolveRenderedArtifactReference(reference, fallbackReference = "") {
+  const key = cleanText(reference || fallbackReference);
+  if (!key) return null;
+  const directArtifact = state.artifacts.find((artifact) => artifact.id === key);
+  if (directArtifact) return directArtifact;
+  const job = state.mediaJobs.find((item) => item.id === key);
+  if (job?.artifactId) return state.artifacts.find((artifact) => artifact.id === job.artifactId) || null;
+  return state.artifacts.find((artifact) => artifact.content?.renderJobId === key) || null;
+}
+
 async function createHandoffPackage(body = {}) {
   const clipPackage = resolveClipPackageForHandoff(body);
   if (!clipPackage) {
     throw Object.assign(new Error("No clip package is ready for a CapCut handoff."), { statusCode: 404 });
   }
-  const existing = state.handoffPackages.find(
-    (handoff) => handoff.clipPackageId === clipPackage.id && !["COMPLETED", "CANCELLED"].includes(handoff.status)
-  );
-  if (existing) return { handoff: existing, reused: true };
   const candidate = state.clipCandidates.find((item) => item.id === clipPackage.candidateId);
   const streamer = findStreamer(candidate?.streamerId);
-  const rendered = state.artifacts.find((artifact) => artifact.id === (body.renderId || clipPackage.renderedArtifactId));
+  const rendered = resolveRenderedArtifactReference(body.renderId || body.renderedArtifactId, clipPackage.renderedArtifactId);
+  if (!artifactIsVerifiedClip(rendered)) {
+    throw Object.assign(new Error("CapCut handoff requires a verified rendered MP4 first."), { statusCode: 422 });
+  }
+  const existing = state.handoffPackages.find(
+    (handoff) => handoff.clipPackageId === clipPackage.id
+      && handoff.renderId === rendered.id
+      && !["COMPLETED", "CANCELLED"].includes(handoff.status)
+  );
+  if (existing) return { handoff: existing, reused: true };
   const handoff = {
     id: newId("handoff"),
     organizationId: "local",
@@ -3274,9 +3919,9 @@ async function runAgent101(body = {}) {
       addRunEvent(run, "INTEGRATION_CHECK", "not_required", "Practice Mode selected; official provider data is not required.", {
         demoLabel: "PRACTICE MEDIA — NOT A REAL STREAM"
       });
-      ensureClippingStudioProject();
+      const practice = await ensurePracticeProject();
       run.results.candidates = state.clipCandidates
-        .filter((candidate) => candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE)
+        .filter((candidate) => candidate.projectId === practice.project.id)
         .slice(0, contract.requestedCount);
       run.counts = {
         requestedStreamers: contract.requestedCount,
@@ -3437,10 +4082,12 @@ function demoStreamerProfiles() {
 }
 
 async function seedDemoWorkspace() {
-  ensureClippingStudioProject();
+  const practice = await ensurePracticeProject();
   const seeded = {
     streamers: 0,
-    candidates: 0
+    candidates: practice.candidates.length,
+    projectId: practice.project.id,
+    sourceId: practice.source.id
   };
   const existingNames = new Set(state.streamers.map((streamer) => streamer.displayName.toLowerCase()));
 
@@ -3470,8 +4117,6 @@ async function seedDemoWorkspace() {
     .filter((streamer) => streamer.monitorEnabled && (streamer.isDemo || streamer.permissionStatus === "demo_approved"))
     .slice(0, 5);
   for (const [index, streamer] of activeStreamers.entries()) {
-    const hasCandidate = state.clipCandidates.some((candidate) => candidate.streamerId === streamer.id);
-    if (hasCandidate) continue;
     const profile = profiles.find((item) => item[0].toLowerCase() === streamer.displayName.toLowerCase()) || profiles[index] || [];
     const session = {
       id: newId("session"),
@@ -3485,32 +4130,6 @@ async function seedDemoWorkspace() {
       status: "demo"
     };
     state.streamSessions.unshift(session);
-    const candidateBase = {
-      id: newId("candidate"),
-      streamerId: streamer.id,
-      sessionId: session.id,
-      sourceType: "demo",
-      sourceId: session.id,
-      sourceProvenance: PROVENANCE.DEMO_SOURCE,
-      provenance: PROVENANCE.DEMO_SOURCE,
-      creativeProvenance: PROVENANCE.AI_GENERATED,
-      timestampStart: `00:0${index + 1}:08`,
-      timestampEnd: `00:0${index + 1}:36`,
-      duration: 28,
-      title: profile[3] || `${streamer.displayName} reaction moment`,
-      category: session.category,
-      transcriptSnippet: "Practice candidate generated locally for supervised review. No real streamer media is being claimed.",
-      chatSignals: { spike: 42 + index * 5, source: "practice" },
-      reason: "Safe practice candidate for workflow testing. No download, login, upload, or external post has occurred.",
-      hookScore: 15 + index,
-      riskScore: 12,
-      status: "candidate",
-      createdAt: now(),
-      updatedAt: now()
-    };
-    const candidate = { ...candidateBase, ...scoreClipMoment(candidateBase) };
-    state.clipCandidates.unshift(candidate);
-    seeded.candidates += 1;
   }
 
   await logEvent("practice_seeded", "StreamClipper practice project started", seeded);
@@ -4005,10 +4624,14 @@ async function handleApi(req, res, pathname, searchParams) {
 
   if (req.method === "POST" && pathname === "/api/capcut/handoff") {
     const body = await readJsonBody(req);
-    const created = await createHandoffPackage(body);
-    const result = await prepareHandoffPackage(created.handoff);
-    await logEvent("capcut_handoff", "CapCut handoff prepared for operator", { handoffId: created.handoff.id });
-    return sendJson(res, created.reused ? 200 : 201, { handoff: publicHandoff(result.handoff), artifacts: result.artifacts });
+    try {
+      const created = await createHandoffPackage(body);
+      const result = await prepareHandoffPackage(created.handoff);
+      await logEvent("capcut_handoff", "CapCut handoff prepared for operator", { handoffId: created.handoff.id });
+      return sendJson(res, created.reused ? 200 : 201, { handoff: publicHandoff(result.handoff), artifacts: result.artifacts });
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/media/status") {
@@ -4016,7 +4639,7 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 
   if (req.method === "GET" && (pathname === "/api/clipping-office/project" || pathname === `/api/clipping-office/project/${DEMO_PROJECT_ID}`)) {
-    return sendJson(res, 200, studioProjectPayload(DEMO_PROJECT_ID));
+    return sendJson(res, 200, studioProjectPayload(searchParams.get("projectId") || state.mediaProjects[0]?.id || ""));
   }
 
   const projectMatch = pathname.match(/^\/api\/clipping-office\/project\/([^/]+)$/);
@@ -4024,11 +4647,229 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, studioProjectPayload(projectMatch[1]));
   }
 
+  if (req.method === "GET" && pathname === "/api/clip-projects") {
+    return sendJson(res, 200, {
+      projects: (state.mediaProjects || []).map(publicClipProject)
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/clip-projects") {
+    const body = await readJsonBody(req);
+    const project = await createClipProject({
+      title: body.title || "New Clip Project",
+      description: body.description,
+      mode: normalizeStatus(body.mode, ["real", "practice"], "real")
+    });
+    await logEvent("clip_project_created", "Clip Project created", { projectId: project.id, mode: project.mode });
+    await saveState();
+    return sendJson(res, 201, { project: publicClipProject(project) });
+  }
+
+  const clipProjectMatch = pathname.match(/^\/api\/clip-projects\/([^/]+)(?:\/(edl|render|capcut-handoff))?$/);
+  if (clipProjectMatch) {
+    const [, projectId, action = "detail"] = clipProjectMatch;
+    const project = state.mediaProjects.find((item) => item.id === decodeURIComponent(projectId));
+    if (!project) return sendError(res, 404, "Clip Project not found");
+    if (req.method === "GET" && action === "detail") {
+      return sendJson(res, 200, studioProjectPayload(project.id));
+    }
+    if (req.method === "PATCH" && action === "detail") {
+      const body = await readJsonBody(req);
+      const candidate = state.clipCandidates.find((item) => item.id === cleanText(body.candidateId || body.selectedCandidateId));
+      const source = findExistingMediaSource(cleanText(body.sourceId || body.activeSourceId || project.sourceId || candidate?.sourceId));
+      const nextStart = body.clipStartSeconds ?? body.startSeconds;
+      const nextEnd = body.clipEndSeconds ?? body.endSeconds;
+      Object.assign(project, {
+        title: cleanText(body.title) || project.title,
+        description: cleanText(body.description) || project.description,
+        sourceId: source?.id || project.sourceId || "",
+        activeSourceId: source?.id || project.activeSourceId || "",
+        candidateId: candidate?.id || project.candidateId || "",
+        selectedCandidateId: candidate?.id || project.selectedCandidateId || "",
+        clipStartSeconds: nextStart == null ? project.clipStartSeconds : Math.max(0, Number(nextStart)),
+        clipEndSeconds: nextEnd == null ? project.clipEndSeconds : Math.max(0, Number(nextEnd)),
+        status: source ? "source_ready" : project.status,
+        updatedAt: now(),
+        autosavedAt: now()
+      });
+      const normalized = normalizeClipProjectRecord(project);
+      const selectedCandidate = state.clipCandidates.find((item) => item.id === normalized.candidateId);
+      if (source && selectedCandidate) {
+        assertCandidateReferencesSource(selectedCandidate, source);
+        assertCandidateTimesValid({
+          ...selectedCandidate,
+          timestampStartSeconds: normalized.clipStartSeconds ?? selectedCandidate.timestampStartSeconds,
+          timestampEndSeconds: normalized.clipEndSeconds ?? selectedCandidate.timestampEndSeconds
+        }, source);
+      }
+      ensureProjectEditDecisionList(project, source, selectedCandidate);
+      const edl = state.editDecisionLists.find((item) => item.id === project.editDecisionListId);
+      if (edl) {
+        edl.clipStartSeconds = project.clipStartSeconds ?? edl.clipStartSeconds;
+        edl.clipEndSeconds = project.clipEndSeconds ?? edl.clipEndSeconds;
+        edl.updatedAt = now();
+      }
+      await logEvent("clip_project_updated", "Clip Project autosaved", { projectId: project.id });
+      await saveState();
+      return sendJson(res, 200, { project: publicClipProject(project), editDecisionList: edl || null });
+    }
+    if (req.method === "GET" && action === "edl") {
+      const normalized = normalizeClipProjectRecord(project);
+      const source = findExistingMediaSource(normalized.sourceId);
+      const candidate = state.clipCandidates.find((item) => item.id === normalized.candidateId);
+      const edl = ensureProjectEditDecisionList(project, source, candidate);
+      await saveState();
+      return sendJson(res, 200, { editDecisionList: edl });
+    }
+    if (req.method === "PUT" && action === "edl") {
+      const body = await readJsonBody(req);
+      const normalized = normalizeClipProjectRecord(project);
+      const source = findExistingMediaSource(normalized.sourceId);
+      const candidate = state.clipCandidates.find((item) => item.id === normalized.candidateId);
+      const edl = ensureProjectEditDecisionList(project, source, candidate);
+      Object.assign(edl, {
+        clipStartSeconds: Math.max(0, Number(body.clipStartSeconds ?? body.startSeconds ?? edl.clipStartSeconds)),
+        clipEndSeconds: Math.max(0, Number(body.clipEndSeconds ?? body.endSeconds ?? edl.clipEndSeconds)),
+        cropMode: cleanText(body.cropMode) || edl.cropMode,
+        cropKeyframes: Array.isArray(body.cropKeyframes) ? body.cropKeyframes : edl.cropKeyframes,
+        transitions: Array.isArray(body.transitions) ? body.transitions : edl.transitions,
+        effects: Array.isArray(body.effects) ? body.effects : edl.effects,
+        updatedAt: now()
+      });
+      project.clipStartSeconds = edl.clipStartSeconds;
+      project.clipEndSeconds = edl.clipEndSeconds;
+      project.updatedAt = now();
+      project.autosavedAt = now();
+      if (source) assertCandidateTimesValid({ timestampStartSeconds: edl.clipStartSeconds, timestampEndSeconds: edl.clipEndSeconds }, source);
+      await logEvent("edl_updated", "Clip Project edit decision list updated", { projectId: project.id, edlId: edl.id });
+      await saveState();
+      return sendJson(res, 200, { editDecisionList: edl, project: publicClipProject(project) });
+    }
+    if (req.method === "POST" && action === "render") {
+      const body = await readJsonBody(req);
+      try {
+        const result = await createRenderJob({ ...body, projectId: project.id });
+        return sendJson(res, 201, result);
+      } catch (error) {
+        return sendError(res, error.statusCode || 500, error.message, { message: error.message });
+      }
+    }
+    if (req.method === "POST" && action === "capcut-handoff") {
+      const body = await readJsonBody(req);
+      const normalized = normalizeClipProjectRecord(project);
+      const latestArtifact = resolveRenderedArtifactReference(body.renderId || body.renderedArtifactId, normalized.latestArtifactId);
+      if (!artifactIsVerifiedClip(latestArtifact)) {
+        return sendError(res, 422, "CapCut handoff requires a verified rendered MP4 first.");
+      }
+      const candidate = state.clipCandidates.find((item) => item.id === normalized.candidateId);
+      let clipPackage = state.clipPackages.find((item) => item.candidateId === candidate?.id);
+      if (!clipPackage && candidate) {
+        const packagePlan = buildPackage(candidate);
+        const packageArtifact = await writeArtifact("clip_package", packagePlan.title, {
+          candidate,
+          packagePlan,
+          createdAt: now()
+        });
+        clipPackage = {
+          id: newId("package"),
+          candidateId: candidate.id,
+          title: packagePlan.title,
+          format: "9:16",
+          resolution: "1080x1920",
+          targetDuration: Number(candidate.duration || 30),
+          hook: packagePlan.hook,
+          captionOverlays: packagePlan.captionOverlays,
+          cutInstructions: packagePlan.cutInstructions,
+          capcutBriefId: null,
+          postingDrafts: [],
+          approvalStatus: "draft",
+          artifacts: [packageArtifact],
+          sourceId: candidate.sourceId,
+          renderedArtifactId: latestArtifact.id,
+          packagePlan,
+          createdAt: now(),
+          updatedAt: now()
+        };
+        state.clipPackages.unshift(clipPackage);
+      }
+      if (!clipPackage) return sendError(res, 404, "No clip package is ready for a CapCut handoff.");
+      clipPackage.renderedArtifactId = latestArtifact.id;
+      const created = await createHandoffPackage({
+        ...body,
+        editProjectId: project.id,
+        clipPackageId: clipPackage.id,
+        renderId: latestArtifact.id
+      });
+      const result = await prepareHandoffPackage(created.handoff);
+      project.capcutHandoffId = result.handoff.id;
+      project.updatedAt = now();
+      project.autosavedAt = now();
+      await saveState();
+      return sendJson(res, created.reused ? 200 : 201, { handoff: publicHandoff(result.handoff), artifacts: result.artifacts });
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/media/sources") {
     return sendJson(res, 200, { sources: state.mediaSources.map(publicMediaSource) });
   }
 
-  const mediaSourceMatch = pathname.match(/^\/api\/media\/sources\/([^/]+)(?:\/(playback|metadata|thumbnails|frame))?$/);
+  if (req.method === "POST" && pathname === "/api/media/sources/upload") {
+    try {
+      const raw = await readRawBody(req, config.maxUploadBytes);
+      const parsed = parseMultipartBody(raw, req.headers["content-type"]);
+      const uploaded = await registerUploadedMedia({
+        file: parsed.files.file || Object.values(parsed.files)[0],
+        fields: parsed.fields
+      });
+      return sendJson(res, 201, uploaded);
+    } catch (error) {
+      await logEvent("media_upload_failed", "Media upload failed", { error: error.message });
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/media/sources") {
+    const body = await readJsonBody(req);
+    const filePath = cleanText(body.filePath);
+    const allowedRoots = [config.uploadDir, config.outputDir, path.join(PUBLIC_DIR, "demo")].map((root) => path.resolve(root));
+    const resolved = filePath ? path.resolve(filePath) : "";
+    if (!resolved || !allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
+      return sendError(res, 403, "Media registration only supports files in the approved upload, output, or practice-media folders.");
+    }
+    try {
+      const project = await createClipProject({
+        title: body.title || path.basename(resolved),
+        description: body.description,
+        mode: "real"
+      });
+      const source = await createMediaSourceFromFile({
+        filePath: resolved,
+        originalFilename: path.basename(resolved),
+        mimeType: body.mimeType || contentTypeFor(resolved).split(";")[0],
+        title: body.title || path.basename(resolved),
+        projectId: project.id,
+        mode: "real",
+        provenance: PROVENANCE.AUTHORIZED_UPLOAD,
+        permissionStatus: cleanText(body.permissionStatus) || "uploaded",
+        rightsStatus: cleanText(body.rightsStatus) || "operator_review_required"
+      });
+      Object.assign(project, {
+        sourceId: source.id,
+        activeSourceId: source.id,
+        status: "source_ready",
+        updatedAt: now(),
+        autosavedAt: now()
+      });
+      const candidate = defaultCandidateForSource(project, source);
+      await logEvent("media_registered", "Local media source registered", { projectId: project.id, sourceId: source.id });
+      await saveState();
+      return sendJson(res, 201, { project: publicClipProject(project), source: publicMediaSource(source), candidate });
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const mediaSourceMatch = pathname.match(/^\/api\/media\/sources\/([^/]+)(?:\/(playback|metadata|thumbnails|frame|waveform))?$/);
   if (mediaSourceMatch && req.method === "GET") {
     const [, sourceId, action = "detail"] = mediaSourceMatch;
     const source = findMediaSource(decodeURIComponent(sourceId));
@@ -4046,10 +4887,12 @@ async function handleApi(req, res, pathname, searchParams) {
       return sendJson(res, 200, {
         source: publicMediaSource(source),
         metadata: {
-          duration: source.duration,
+          duration: sourceDurationSeconds(source),
+          durationSeconds: sourceDurationSeconds(source),
           width: source.width,
           height: source.height,
           fps: source.fps,
+          frameRate: source.frameRate || parseFrameRate(source.fps),
           hasAudio: source.hasAudio,
           provenance: source.provenance,
           verified
@@ -4057,19 +4900,37 @@ async function handleApi(req, res, pathname, searchParams) {
       });
     }
     if (action === "thumbnails") {
+      const duration = sourceDurationSeconds(source) || 1;
+      const times = [0.12, 0.28, 0.44, 0.6, 0.76].map((pct) => Math.max(0, Math.min(duration - 0.1, duration * pct)));
       const frames = Array.from({ length: 5 }, (_, index) => ({
-        id: `demo_frame_${index + 1}`,
-        timestampSeconds: [3, 7, 12, 17, 21][index],
+        id: `${source.id}_frame_${index + 1}`,
+        timestampSeconds: Math.round(times[index] * 100) / 100,
         provenance: source.provenance,
-        url: demoFrameUrl(index)
+        url: `/api/media/sources/${encodeURIComponent(source.id)}/frame?t=${encodeURIComponent(times[index])}`
       }));
       return sendJson(res, 200, { sourceId: source.id, frames });
     }
     if (action === "frame") {
       const candidateId = cleanText(searchParams.get("candidateId"));
       const candidate = state.clipCandidates.find((item) => item.id === candidateId);
-      const index = Math.max(0, state.clipCandidates.filter((item) => item.sourceId === source.id).findIndex((item) => item.id === candidate?.id));
-      return streamFileWithRange(req, res, path.join(DEMO_FRAME_DIR, `frame-${(index % 5) + 1}.jpg`), "image/jpeg");
+      try {
+        const framePath = await extractSourceFrame(source, candidate, searchParams.get("t"));
+        return streamFileWithRange(req, res, framePath, "image/jpeg");
+      } catch (error) {
+        if (source.provenance === PROVENANCE.DEMO_SOURCE) {
+          const index = Math.max(0, state.clipCandidates.filter((item) => item.sourceId === source.id).findIndex((item) => item.id === candidate?.id));
+          return streamFileWithRange(req, res, path.join(DEMO_FRAME_DIR, `frame-${(index % 5) + 1}.jpg`), "image/jpeg");
+        }
+        return sendError(res, error.statusCode || 422, error.message);
+      }
+    }
+    if (action === "waveform") {
+      return sendJson(res, 501, {
+        sourceId: source.id,
+        status: "unavailable",
+        provenance: PROVENANCE.UNAVAILABLE,
+        message: "Waveform generation is not configured yet. The UI must not draw a fake waveform."
+      });
     }
     return sendJson(res, 200, { source: publicMediaSource(source) });
   }
@@ -4083,11 +4944,15 @@ async function handleApi(req, res, pathname, searchParams) {
       const sha256 = await fileSha256(source.filePath);
       Object.assign(source, {
         duration: metadata.duration,
+        durationSeconds: metadata.durationSeconds,
         width: metadata.width,
         height: metadata.height,
         fps: metadata.fps,
+        frameRate: metadata.frameRate,
         hasAudio: metadata.hasAudio,
         sha256,
+        fileSizeBytes: metadata.size,
+        status: "ready",
         probeStatus: "passed",
         verifiedAt: now(),
         playable: true,
@@ -4105,7 +4970,18 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
-  if (req.method === "POST" && pathname === "/api/media/candidates") {
+  if (req.method === "GET" && pathname === "/api/clip-candidates") {
+    const projectId = cleanText(searchParams.get("projectId"));
+    const sourceId = cleanText(searchParams.get("sourceId"));
+    const candidates = state.clipCandidates.filter((candidate) => {
+      if (projectId && candidate.projectId !== projectId) return false;
+      if (sourceId && candidate.sourceId !== sourceId) return false;
+      return true;
+    });
+    return sendJson(res, 200, { candidates });
+  }
+
+  if (req.method === "POST" && (pathname === "/api/media/candidates" || pathname === "/api/clip-candidates")) {
     const body = await readJsonBody(req);
     const source = findExistingMediaSource(cleanText(body.sourceId));
     if (!source) return sendError(res, 422, "Candidate generation blocked: no verified playable media.");
@@ -4113,13 +4989,16 @@ async function handleApi(req, res, pathname, searchParams) {
       await assertSourceIsPlayable(source);
       const start = Math.max(0, Number(body.startSeconds ?? body.timestampStartSeconds ?? 0));
       const end = Number(body.endSeconds ?? body.timestampEndSeconds ?? start + Number(body.durationSeconds || body.duration || 0));
+      const scoreValue = body.score == null ? null : Number(body.score);
+      const confidenceValue = cleanText(body.confidence) || null;
+      const id = cleanText(body.id) || newId("candidate");
       const candidate = {
-        id: cleanText(body.id) || newId("candidate"),
+        id,
         runId: cleanText(body.runId),
         streamerId: cleanText(body.streamerId || source.streamerId || DEMO_STREAMER_ID),
         sourceId: source.id,
         sourceClipId: cleanText(body.sourceClipId),
-        sourceType: source.sourceKind || source.provenance || PROVENANCE.VERIFIED_MEDIA,
+        sourceType: source.sourceType || source.sourceKind || source.provenance || PROVENANCE.VERIFIED_MEDIA,
         sourceProvenance: source.provenance,
         startSeconds: start,
         endSeconds: end,
@@ -4134,13 +5013,17 @@ async function handleApi(req, res, pathname, searchParams) {
         transcriptSnippet: cleanText(body.transcriptSnippet) || "Source transcript unavailable unless uploaded or extracted.",
         transcriptProvenance: body.transcriptSnippet ? PROVENANCE.USER_ENTERED : PROVENANCE.UNAVAILABLE,
         evidence: body.evidence || {},
+        measuredEvidence: Array.isArray(body.measuredEvidence) ? body.measuredEvidence : [],
         title: cleanText(body.title) || "Verified media candidate",
         category: cleanText(body.category || source.category || "Media"),
-        score: Number(body.score || 0),
+        qualityScore: Number.isFinite(scoreValue) ? scoreValue : null,
+        score: Number.isFinite(scoreValue) ? scoreValue : null,
+        confidence: confidenceValue,
         scoreComponents: body.scoreComponents || {},
         status: "candidate",
         provenance: source.provenance,
         creativeProvenance: PROVENANCE.USER_ENTERED,
+        thumbnailUrl: `/api/media/sources/${encodeURIComponent(source.id)}/frame?candidateId=${encodeURIComponent(id)}`,
         createdAt: now(),
         updatedAt: now()
       };
@@ -4159,6 +5042,34 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  const clipCandidateMatch = pathname.match(/^\/api\/clip-candidates\/([^/]+)$/);
+  if (clipCandidateMatch) {
+    const candidate = state.clipCandidates.find((item) => item.id === decodeURIComponent(clipCandidateMatch[1]));
+    if (!candidate) return sendError(res, 404, "Clip candidate not found");
+    if (req.method === "GET") {
+      return sendJson(res, 200, { candidate });
+    }
+    if (req.method === "PATCH") {
+      const body = await readJsonBody(req);
+      const source = findExistingMediaSource(candidate.sourceId);
+      const nextStart = body.startSeconds ?? body.timestampStartSeconds;
+      const nextEnd = body.endSeconds ?? body.timestampEndSeconds;
+      if (nextStart != null) candidate.startSeconds = candidate.timestampStartSeconds = Math.max(0, Number(nextStart));
+      if (nextEnd != null) candidate.endSeconds = candidate.timestampEndSeconds = Math.max(0, Number(nextEnd));
+      if (source) assertCandidateTimesValid(candidate, source);
+      candidate.timestampStart = secondsToTimestamp(candidate.timestampStartSeconds ?? candidate.startSeconds ?? 0);
+      candidate.timestampEnd = secondsToTimestamp(candidate.timestampEndSeconds ?? candidate.endSeconds ?? 0);
+      candidate.duration = Math.max(0, Number(candidate.timestampEndSeconds ?? candidate.endSeconds ?? 0) - Number(candidate.timestampStartSeconds ?? candidate.startSeconds ?? 0));
+      candidate.durationSeconds = candidate.duration;
+      candidate.title = cleanText(body.title) || candidate.title;
+      candidate.status = cleanText(body.status) || candidate.status;
+      candidate.updatedAt = now();
+      await logEvent("candidate_updated", "Clip candidate updated", { candidateId: candidate.id });
+      await saveState();
+      return sendJson(res, 200, { candidate });
+    }
+  }
+
   const mediaCandidateRenderMatch = pathname.match(/^\/api\/media\/candidates\/([^/]+)\/render$/);
   if (mediaCandidateRenderMatch && req.method === "POST") {
     const body = await readJsonBody(req);
@@ -4172,14 +5083,14 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
-  const mediaRenderJobAliasMatch = pathname.match(/^\/api\/media\/render-jobs\/([^/]+)$/);
+  const mediaRenderJobAliasMatch = pathname.match(/^\/api\/(?:media\/)?render-jobs\/([^/]+)$/);
   if (mediaRenderJobAliasMatch && req.method === "GET") {
     const job = (state.mediaJobs || []).find((item) => item.id === mediaRenderJobAliasMatch[1]);
     if (!job) return sendError(res, 404, "Media render job not found");
     return sendJson(res, 200, { job });
   }
 
-  const mediaArtifactMatch = pathname.match(/^\/api\/media\/artifacts\/([^/]+)$/);
+  const mediaArtifactMatch = pathname.match(/^\/api\/(?:media\/)?artifacts\/([^/]+)$/);
   if (mediaArtifactMatch && req.method === "GET") {
     const artifact = state.artifacts.find((item) => item.id === mediaArtifactMatch[1]);
     if (!artifact) return sendError(res, 404, "Media artifact not found");
@@ -4710,7 +5621,7 @@ async function handleApi(req, res, pathname, searchParams) {
     const body = await readJsonBody(req);
     const runMode = normalizeStatus(body.mode || "real", ["real", "demo"], "real");
     if (runMode === "demo") {
-      ensureClippingStudioProject();
+      const practice = await ensurePracticeProject();
       await logEvent("practice_watch_cycle", "Explicit Practice Mode watch cycle used bundled practice media", {
         label: "PRACTICE MEDIA — NOT A REAL STREAM"
       });
@@ -4719,7 +5630,7 @@ async function handleApi(req, res, pathname, searchParams) {
         mode: "demo",
         label: "PRACTICE MEDIA — NOT A REAL STREAM",
         results: state.clipCandidates
-          .filter((candidate) => candidate.provenance === PROVENANCE.DEMO_SOURCE || candidate.sourceProvenance === PROVENANCE.DEMO_SOURCE)
+          .filter((candidate) => candidate.projectId === practice.project.id)
           .map((candidate) => ({ candidate, demo: true })),
         dailyLimit: dailyLimitStatus()
       });

@@ -46,6 +46,25 @@ const twitchStatus = await api("/api/twitch/status");
 assert(twitchStatus.officialApiOnly === true, "Twitch status should declare official API only");
 assert(twitchStatus.rawTokensExposed === false, "Twitch status must not expose tokens");
 
+const integrations = await api("/api/integrations/status");
+assert(integrations.secretsExposed === false, "integration status must not expose secrets");
+assert(Array.isArray(integrations.integrations), "integration status should return an integrations array");
+assert(integrations.integrations.some((item) => item.id === "openai"), "integration matrix should include OpenAI");
+assert(integrations.integrations.some((item) => item.id === "twitch"), "integration matrix should include Twitch");
+assert(integrations.integrations.every((item) => item.secretsExposed === false), "connector records must not expose secrets");
+assert(integrations.modeSummary?.clipCandidates, "integration status should include real/practice mode counts");
+
+const readiness = await api("/api/readiness/audit");
+assert(readiness.secretsExposed === false, "readiness audit must not expose secrets");
+assert(Array.isArray(readiness.docs), "readiness audit should report docs");
+assert(Array.isArray(readiness.knownGaps), "readiness audit should report known gaps");
+
+const actionMatrix = await api("/api/readiness/action-matrix");
+assert(Array.isArray(actionMatrix.actions), "action matrix API should expose actions");
+
+const toolMap = await api("/api/agent101/tool-map");
+assert(Array.isArray(toolMap.tools), "Agent 101 tool map API should expose tools");
+
 await api("/api/demo/clear", { method: "POST", body: "{}" });
 
 const realRun = await api("/api/agent101/runs", {

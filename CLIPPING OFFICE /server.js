@@ -110,6 +110,7 @@ const stateDefaults = {
   handoffPackages: [],
   smokeTests: [],
   twitchValidation: null,
+  integrationChecks: {},
   logs: [],
   browser: {
     profile: null,
@@ -253,6 +254,7 @@ async function ensureStorage() {
     state.agentRuns ||= [];
     state.handoffPackages ||= [];
     state.smokeTests ||= [];
+    state.integrationChecks ||= {};
     state.logs ||= [];
     state.browser ||= structuredClone(stateDefaults.browser);
     state.browser.sessions ||= [];
@@ -1148,6 +1150,501 @@ function publicConfig() {
     objectStorageConfigured: Boolean(config.objectStorageBucket),
     uploadDir: config.uploadDir,
     outputDir: config.outputDir
+  };
+}
+
+function latestRecord(items, timeKeys = ["updatedAt", "createdAt", "timestamp"]) {
+  return [...(items || [])].sort((a, b) => {
+    const aTime = timeKeys.map((key) => Date.parse(a?.[key] || "") || 0).find(Boolean) || 0;
+    const bTime = timeKeys.map((key) => Date.parse(b?.[key] || "") || 0).find(Boolean) || 0;
+    return bTime - aTime;
+  })[0] || null;
+}
+
+function isPracticeStreamer(streamer) {
+  return Boolean(
+    streamer?.isDemo
+    || streamer?.permissionStatus === "demo_approved"
+    || streamer?.platform === "demo"
+    || /demo|practice/i.test(`${streamer?.id || ""} ${streamer?.sourceMode || ""}`)
+  );
+}
+
+function isPracticeSource(source) {
+  return Boolean(
+    source?.provenance === PROVENANCE.DEMO_SOURCE
+    || source?.sourceKind === "demo_media"
+    || source?.sourceType === "practice"
+    || source?.mode === "practice"
+    || /demo|practice/i.test(`${source?.id || ""} ${source?.label || ""}`)
+  );
+}
+
+function practiceReferenceSets() {
+  const streamerIds = new Set((state.streamers || []).filter(isPracticeStreamer).map((item) => item.id));
+  const sourceIds = new Set((state.mediaSources || []).filter(isPracticeSource).map((item) => item.id));
+  const sessionIds = new Set((state.streamSessions || [])
+    .filter((item) => streamerIds.has(item.streamerId) || /demo|practice/i.test(`${item.status || ""} ${item.mode || ""}`))
+    .map((item) => item.id));
+  const watchSessionIds = new Set((state.watchSessions || [])
+    .filter((item) => item.mode === "demo" || streamerIds.has(item.streamerId) || sourceIds.has(item.sourceId))
+    .map((item) => item.id));
+  const candidateIds = new Set((state.clipCandidates || [])
+    .filter((item) => (
+      item.provenance === PROVENANCE.DEMO_SOURCE
+      || item.sourceProvenance === PROVENANCE.DEMO_SOURCE
+      || streamerIds.has(item.streamerId)
+      || sessionIds.has(item.sessionId)
+      || watchSessionIds.has(item.watchSessionId)
+      || sourceIds.has(item.sourceId)
+      || /demo|practice/i.test(`${item.sourceType || ""} ${item.id || ""}`)
+    ))
+    .map((item) => item.id));
+  const packageIds = new Set((state.clipPackages || [])
+    .filter((item) => candidateIds.has(item.candidateId))
+    .map((item) => item.id));
+  const draftIds = new Set((state.postingDrafts || [])
+    .filter((item) => packageIds.has(item.clipPackageId))
+    .map((item) => item.id));
+  return { streamerIds, sourceIds, sessionIds, watchSessionIds, candidateIds, packageIds, draftIds };
+}
+
+function modeCount(items, isPractice) {
+  const rows = items || [];
+  const practice = rows.filter(isPractice).length;
+  return { real: rows.length - practice, practice, total: rows.length };
+}
+
+function productionModeSummary() {
+  const refs = practiceReferenceSets();
+  return {
+    streamers: modeCount(state.streamers, (item) => refs.streamerIds.has(item.id)),
+    streamSessions: modeCount(state.streamSessions, (item) => refs.sessionIds.has(item.id)),
+    watchSessions: modeCount(state.watchSessions, (item) => refs.watchSessionIds.has(item.id)),
+    mediaSources: modeCount(state.mediaSources, (item) => refs.sourceIds.has(item.id)),
+    clipCandidates: modeCount(state.clipCandidates, (item) => refs.candidateIds.has(item.id)),
+    clipPackages: modeCount(state.clipPackages, (item) => refs.packageIds.has(item.id)),
+    postingDrafts: modeCount(state.postingDrafts, (item) => refs.draftIds.has(item.id)),
+    approvals: modeCount(state.approvalRequests, (item) => (
+      refs.draftIds.has(item.linkedId)
+      || refs.packageIds.has(item.linkedId)
+      || refs.candidateIds.has(item.linkedId)
+      || refs.streamerIds.has(item.linkedId)
+      || item.linkedId === DEMO_PROJECT_ID
+    )),
+    artifacts: modeCount(state.artifacts, (item) => {
+      const content = item.content || {};
+      return (
+        item.provenance === PROVENANCE.DEMO_SOURCE
+        || content.provenance === PROVENANCE.DEMO_SOURCE
+        || refs.sourceIds.has(content.sourceId)
+        || refs.packageIds.has(content.clipPackageId)
+        || refs.candidateIds.has(content.candidateId)
+      );
+    }),
+    activeWatchSessions: (state.watchSessions || []).filter((item) => ACTIVE_WATCH_STATUSES.has(item.status)).length
+  };
+}
+
+function safeIntegrationCheck(id) {
+  const check = state.integrationChecks?.[id] || null;
+  if (!check) return null;
+  return {
+    status: check.status,
+    lastTestedAt: check.lastTestedAt,
+    lastSuccessAt: check.lastSuccessAt || null,
+    message: check.message || "",
+    error: check.error || ""
+  };
+}
+
+function rememberIntegrationCheck(id, result) {
+  state.integrationChecks ||= {};
+  state.integrationChecks[id] = {
+    status: result.status,
+    lastTestedAt: now(),
+    lastSuccessAt: result.status === "connected" || result.status === "local_ready" ? now() : state.integrationChecks[id]?.lastSuccessAt || null,
+    message: result.message || "",
+    error: result.error || ""
+  };
+  return safeIntegrationCheck(id);
+}
+
+function integrationRecord(input) {
+  const check = safeIntegrationCheck(input.id);
+  return {
+    id: input.id,
+    name: input.name,
+    category: input.category || "connector",
+    status: input.status,
+    configured: Boolean(input.configured),
+    connected: ["connected", "local_ready"].includes(input.status),
+    mode: input.mode || "server",
+    sourceOfTruth: input.sourceOfTruth || "backend",
+    lastTestedAt: input.lastTestedAt || check?.lastTestedAt || null,
+    lastSuccessAt: input.lastSuccessAt || check?.lastSuccessAt || null,
+    message: input.message || check?.message || "",
+    safeError: input.safeError || check?.error || "",
+    missingConfig: input.missingConfig || [],
+    capabilities: input.capabilities || [],
+    blockedActions: input.blockedActions || [],
+    nextAction: input.nextAction || "",
+    secretsExposed: false
+  };
+}
+
+async function runIntegrationCheck(id) {
+  if (id === "openai") {
+    try {
+      const result = await testOpenAI();
+      const status = result.live ? "connected" : "not_configured";
+      const check = rememberIntegrationCheck(id, { status, message: result.message });
+      await logEvent("integration_test", "OpenAI integration tested", { id, status });
+      await saveState();
+      return check;
+    } catch (error) {
+      const safeError = "OpenAI test failed. Check billing, credits, model access, or API key.";
+      rememberIntegrationCheck(id, { status: "error", message: safeError, error: safeError });
+      await logEvent("integration_test_failed", "OpenAI integration test failed", { id, error: error.message });
+      await saveState();
+      return safeIntegrationCheck(id);
+    }
+  }
+
+  if (id === "twitch") {
+    try {
+      const status = await twitchIntegrationStatus({ validate: true });
+      const normalized = status.status === "ready" ? "connected" : status.status === "not_configured" ? "not_configured" : "error";
+      const check = rememberIntegrationCheck(id, {
+        status: normalized,
+        message: status.message,
+        error: normalized === "error" ? "Twitch API validation failed." : ""
+      });
+      await logEvent("integration_test", "Twitch integration tested", { id, status: normalized });
+      await saveState();
+      return check;
+    } catch (error) {
+      rememberIntegrationCheck(id, { status: "error", message: "Twitch API validation failed.", error: "Twitch API validation failed." });
+      await logEvent("integration_test_failed", "Twitch integration test failed", { id, error: error.message });
+      await saveState();
+      return safeIntegrationCheck(id);
+    }
+  }
+
+  if (id === "kick") {
+    try {
+      if (!kickApiConfigured()) {
+        const check = rememberIntegrationCheck(id, {
+          status: "not_configured",
+          message: "Kick credentials are not configured."
+        });
+        await saveState();
+        return check;
+      }
+      const token = config.kickOAuthToken || (await getKickAppToken());
+      const check = rememberIntegrationCheck(id, {
+        status: token ? "connected" : "error",
+        message: token ? "Kick API token exchange succeeded." : "Kick token exchange did not return a token.",
+        error: token ? "" : "Kick token exchange did not return a token."
+      });
+      await logEvent("integration_test", "Kick integration tested", { id, status: check.status });
+      await saveState();
+      return check;
+    } catch (error) {
+      rememberIntegrationCheck(id, { status: "error", message: "Kick API validation failed.", error: "Kick API validation failed." });
+      await logEvent("integration_test_failed", "Kick integration test failed", { id, error: error.message });
+      await saveState();
+      return safeIntegrationCheck(id);
+    }
+  }
+
+  if (id === "media") {
+    const media = await mediaToolStatus();
+    const status = media.ffmpeg.configured && media.ffprobe.configured ? "local_ready" : "manual_handoff";
+    const check = rememberIntegrationCheck(id, { status, message: media.notes });
+    await logEvent("integration_test", "Media toolchain checked", { id, status });
+    await saveState();
+    return check;
+  }
+
+  return {
+    status: "unsupported",
+    lastTestedAt: now(),
+    message: "This connector is not testable yet.",
+    error: ""
+  };
+}
+
+async function buildIntegrationMatrix() {
+  const media = await mediaToolStatus();
+  const latestSmoke = latestRecord(state.smokeTests, ["createdAt", "startedAt", "completedAt"]);
+  const twitchValidation = state.twitchValidation || null;
+  const openaiCheck = safeIntegrationCheck("openai");
+  const twitchCheck = safeIntegrationCheck("twitch");
+  const kickCheck = safeIntegrationCheck("kick");
+  const mediaCheck = safeIntegrationCheck("media");
+  const browserPassed = latestSmoke?.checks?.some((check) => /browser|chromium|screenshot/i.test(check.name || check.id || "") && check.status === "passed");
+  const mediaReady = media.ffmpeg.configured && media.ffprobe.configured;
+
+  const integrations = [
+    integrationRecord({
+      id: "openai",
+      name: "OpenAI",
+      category: "ai",
+      configured: Boolean(config.openaiApiKey),
+      status: !config.openaiApiKey ? "not_configured" : openaiCheck?.status === "connected" ? "connected" : openaiCheck?.status === "error" ? "error" : "not_tested",
+      mode: config.aiProvider === "openai" ? "live_api" : "local_fallback",
+      message: !config.openaiApiKey
+        ? "No API key is configured. Local fallback remains active."
+        : openaiCheck?.message || "Configured server-side, but not tested in this runtime yet.",
+      missingConfig: config.openaiApiKey ? [] : ["OPENAI_API_KEY"],
+      capabilities: ["Agent 101 planning", "Scoring explanations", "Captions and briefs"],
+      blockedActions: ["Browser never receives the API key"],
+      nextAction: config.openaiApiKey ? "Run Test Connection" : "Add OPENAI_API_KEY in Railway or local env"
+    }),
+    integrationRecord({
+      id: "twitch",
+      name: "Twitch",
+      category: "provider",
+      configured: twitchApiConfigured(),
+      status: !twitchApiConfigured()
+        ? "not_configured"
+        : twitchValidation?.status === "ready" || twitchCheck?.status === "connected"
+          ? "connected"
+          : twitchCheck?.status === "error"
+            ? "error"
+            : "not_tested",
+      mode: "official_api",
+      message: twitchValidation?.message || twitchCheck?.message || (twitchApiConfigured()
+        ? "Configured, but this runtime has not validated the official API token yet."
+        : "Missing Twitch credentials."),
+      missingConfig: twitchApiConfigured() ? [] : ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET or TWITCH_OAUTH_TOKEN"],
+      capabilities: ["Official stream status checks", "Approved streamer monitoring", "Top streamer discovery"],
+      blockedActions: ["No scraping", "No clip creation without rights and user-token scope verification"],
+      nextAction: twitchApiConfigured() ? "Run Test Connection" : "Add Twitch env vars"
+    }),
+    integrationRecord({
+      id: "kick",
+      name: "Kick",
+      category: "provider",
+      configured: kickApiConfigured(),
+      status: !kickApiConfigured() ? "not_configured" : kickCheck?.status === "connected" ? "connected" : kickCheck?.status === "error" ? "error" : "not_tested",
+      mode: "official_api",
+      message: kickCheck?.message || (kickApiConfigured()
+        ? "Configured, but token exchange or live endpoint has not been tested in this runtime yet."
+        : "Missing Kick Client ID/Secret or OAuth token."),
+      missingConfig: kickApiConfigured() ? [] : ["KICK_CLIENT_ID", "KICK_CLIENT_SECRET"],
+      capabilities: ["Official Kick livestream lookup", "Streamer recommendation source"],
+      blockedActions: ["No scraping", "No posting or account changes"],
+      nextAction: kickApiConfigured() ? "Run Test Connection" : "Add Kick env vars"
+    }),
+    integrationRecord({
+      id: "media",
+      name: "Local Media Toolchain",
+      category: "media",
+      configured: true,
+      status: mediaCheck?.status || (mediaReady ? "local_ready" : "manual_handoff"),
+      mode: mediaReady ? "server_render" : "manual_handoff",
+      message: media.notes,
+      capabilities: mediaReady ? ["FFmpeg render jobs", "FFprobe verification", "Playable local artifacts"] : ["CapCut manual handoff"],
+      blockedActions: mediaReady ? ["No public upload"] : ["Automated local render unavailable until FFmpeg/FFprobe are installed"],
+      nextAction: mediaReady ? "Run a render smoke test" : "Install FFmpeg and FFprobe or use CapCut handoff"
+    }),
+    integrationRecord({
+      id: "browser",
+      name: "Browser Workspace",
+      category: "automation",
+      configured: config.browserEnabled,
+      status: !config.browserEnabled ? "not_configured" : browserPassed ? "connected" : "not_tested",
+      mode: config.browserHeadless ? "headless_screenshot" : "headed_local",
+      message: browserPassed
+        ? "Latest smoke test verified browser control."
+        : "Browser routes are present; run Browser Workspace smoke before relying on it.",
+      capabilities: ["Isolated supervised Chromium session", "Screenshots", "Operator handoff"],
+      blockedActions: ["No credential collection", "No external account changes without Human Gate"],
+      nextAction: config.browserEnabled ? "Run Browser smoke test" : "Set BROWSER_ENABLED=true"
+    }),
+    integrationRecord({
+      id: "capcut",
+      name: "CapCut",
+      category: "handoff",
+      configured: Boolean(config.capcutHandoffUrl),
+      status: "manual_handoff",
+      mode: "operator_controlled",
+      message: "Agent 101 can prepare CapCut briefs and handoff files, but the operator controls CapCut.",
+      capabilities: ["Cut list", "Caption track", "Export checklist"],
+      blockedActions: ["No direct CapCut account operation"],
+      nextAction: "Open handoff when a verified package exists"
+    }),
+    integrationRecord({
+      id: "posting-platforms",
+      name: "TikTok / Instagram / YouTube",
+      category: "publishing",
+      configured: false,
+      status: "gated",
+      mode: "human_gate_only",
+      message: "Posting drafts can be generated, but uploading and publishing are not implemented.",
+      capabilities: ["Draft captions", "Posting package", "Human Gate request"],
+      blockedActions: ["Public posting", "Uploads", "Account connection", "Spend"],
+      nextAction: "Approve connector design before adding OAuth/API"
+    }),
+    integrationRecord({
+      id: "storage",
+      name: "Storage",
+      category: "infrastructure",
+      configured: true,
+      status: config.objectStorageBucket ? "not_tested" : "local_only",
+      mode: config.objectStorageBucket ? "object_storage_configured" : "local_files",
+      message: config.objectStorageBucket
+        ? "Object storage is configured by env, but write/read has not been smoke-tested here."
+        : `Local uploads and outputs are stored under ${config.uploadDir} and ${config.outputDir}.`,
+      capabilities: ["Local upload metadata", "Local outputs", "Artifact records"],
+      blockedActions: config.objectStorageBucket ? ["No object writes until smoke-tested"] : ["No durable cloud storage until object storage is configured"],
+      nextAction: config.objectStorageBucket ? "Run storage smoke test" : "Configure object storage before production scale"
+    }),
+    integrationRecord({
+      id: "database",
+      name: "Database",
+      category: "infrastructure",
+      configured: Boolean(config.databaseUrl),
+      status: config.databaseUrl ? "not_tested" : "local_only",
+      mode: config.databaseUrl ? "database_configured" : "json_file",
+      message: config.databaseUrl
+        ? "DATABASE_URL exists, but this app still primarily uses local JSON state."
+        : "Current persistence is local JSON. Good for prototype, not multi-user production.",
+      capabilities: ["Persistent local app state"],
+      blockedActions: ["No multi-worker write safety until database migration"],
+      nextAction: "Plan database migration before true production traffic"
+    }),
+    integrationRecord({
+      id: "human-gate",
+      name: "Human Gate",
+      category: "safety",
+      configured: true,
+      status: "connected",
+      mode: "operator_review",
+      message: "Approval queue is available and remains mandatory for risky external actions.",
+      capabilities: ["Approve", "Send back", "Reject", "Audit decisions"],
+      blockedActions: ["Global unlocks", "Silent external actions"],
+      nextAction: "Review pending approvals"
+    })
+  ];
+
+  const summary = integrations.reduce((acc, item) => {
+    acc.total += 1;
+    acc[item.status] = (acc[item.status] || 0) + 1;
+    if (item.connected) acc.connected += 1;
+    if (["not_configured", "error", "not_tested"].includes(item.status)) acc.needsAttention += 1;
+    return acc;
+  }, { total: 0, connected: 0, needsAttention: 0 });
+
+  return {
+    generatedAt: now(),
+    secretsExposed: false,
+    modeSummary: productionModeSummary(),
+    summary,
+    integrations
+  };
+}
+
+function readinessDocsStatus() {
+  return [
+    "product-readiness-audit.md",
+    "action-matrix.md",
+    "integration-matrix.md",
+    "state-machine-map.md",
+    "agent101-tool-map.md",
+    "end-to-end-test-plan.md"
+  ].map((file) => ({
+    file: `docs/${file}`,
+    status: "tracked",
+    purpose: file.replace(".md", "").replaceAll("-", " ")
+  }));
+}
+
+function buildActionMatrixPayload() {
+  return {
+    generatedAt: now(),
+    rule: "Visible controls must be wired, disabled with reason, or removed.",
+    actions: [
+      { page: "Dashboard", actionId: "agent101-demo-workflow", route: "POST /api/agent101/run", status: "active", mode: "practice" },
+      { page: "Dashboard", actionId: "run-watch", route: "POST /api/watch/run", status: "active", mode: "real_or_practice" },
+      { page: "Stream Watchlist", actionId: "add-streamer", route: "POST /api/twitch/streamers", status: "active", mode: "real" },
+      { page: "Clip Radar", actionId: "preview-candidate", route: "local + /api/media/sources/:id/playback", status: "active_when_source_verified", mode: "real_or_practice" },
+      { page: "Clip Builder", actionId: "render-draft", route: "POST /api/media/candidates/:id/render", status: "active_when_media_ready", mode: "real_or_practice" },
+      { page: "Posting Queue", actionId: "create-draft", route: "POST /api/posting-drafts", status: "blocked_until_verified_clip", mode: "draft_only" },
+      { page: "Human Gate", actionId: "approve-sendback-reject", route: "POST /api/human-gate/*", status: "active", mode: "operator_review" },
+      { page: "Browser Workspace", actionId: "browser-control", route: "POST /api/browser/sessions/*", status: config.browserEnabled ? "active_requires_smoke" : "disabled", mode: "supervised" },
+      { page: "Integrations", actionId: "test-integration", route: "POST /api/integrations/:id/test", status: "active_for_supported_connectors", mode: "server_only" }
+    ]
+  };
+}
+
+function buildAgentToolMapPayload() {
+  return {
+    generatedAt: now(),
+    policy: "Agent 101 may run safe internal tools. Risky external tools create Human Gate approvals.",
+    tools: [
+      { id: "discover_streamers", route: "POST /api/agent101/runs", safety: "real_api_metadata_only", writes: ["discoveredStreamers", "logs"] },
+      { id: "add_demo_streamers", route: "POST /api/agent101/run", safety: "practice_only", writes: ["streamers", "logs"] },
+      { id: "run_watch_cycle", route: "POST /api/watch/run", safety: "approved_sources_only", writes: ["watchSessions", "watchEvents", "logs"] },
+      { id: "create_candidates", route: "POST /api/clip-candidates", safety: "requires_verified_source", writes: ["clipCandidates", "logs"] },
+      { id: "score_candidates", route: "POST /api/clips/candidates/score", safety: "safe_internal", writes: ["clipCandidates", "logs"] },
+      { id: "create_clip_package", route: "POST /api/clips/package", safety: "safe_internal", writes: ["clipPackages", "artifacts", "logs"] },
+      { id: "render_clip", route: "POST /api/media/candidates/:id/render", safety: "local_media_only", writes: ["mediaJobs", "artifacts", "logs"] },
+      { id: "create_posting_draft", route: "POST /api/posting-drafts", safety: "requires_verified_render", writes: ["postingDrafts", "logs"] },
+      { id: "request_approval", route: "POST /api/human-gate/requests", safety: "human_gate_required", writes: ["approvalRequests", "logs"] },
+      { id: "publish_external", route: "none", safety: "not_implemented_blocked", writes: [] }
+    ]
+  };
+}
+
+async function buildReadinessAudit() {
+  const integrations = await buildIntegrationMatrix();
+  const latestSmoke = latestRecord(state.smokeTests, ["createdAt", "startedAt", "completedAt"]);
+  const activeSessions = (state.watchSessions || []).filter((item) => ACTIVE_WATCH_STATUSES.has(item.status));
+  const failedSessions = (state.watchSessions || []).filter((item) => item.status === "failed").slice(0, 5);
+  const blockers = [];
+  if (!config.databaseUrl) blockers.push("Persistence is local JSON, not a production database.");
+  if (!config.objectStorageBucket) blockers.push("Object storage is not configured; artifacts are local files.");
+  if (!integrations.integrations.find((item) => item.id === "openai")?.connected) blockers.push("OpenAI has not been verified in this runtime.");
+  if (!integrations.integrations.find((item) => item.id === "twitch")?.connected && !integrations.integrations.find((item) => item.id === "kick")?.connected) {
+    blockers.push("No provider API has a verified connection for real live discovery.");
+  }
+
+  return {
+    generatedAt: now(),
+    readiness: blockers.length ? "needs_work" : "ready_for_supervised_beta",
+    blockers,
+    latestSmoke: latestSmoke ? {
+      id: latestSmoke.id,
+      status: latestSmoke.status,
+      createdAt: latestSmoke.createdAt,
+      summary: latestSmoke.summary || null
+    } : null,
+    modeSummary: integrations.modeSummary,
+    integrationSummary: integrations.summary,
+    activeWatchSessions: activeSessions.map((session) => ({
+      id: session.id,
+      status: session.status,
+      streamerId: session.streamerId,
+      mode: session.mode,
+      leaseOwner: session.leaseOwner || null,
+      heartbeatAt: session.heartbeatAt || null
+    })),
+    failedWatchSessions: failedSessions.map((session) => ({
+      id: session.id,
+      streamerId: session.streamerId,
+      reason: session.error || session.failureReason || "Unknown failure"
+    })),
+    docs: readinessDocsStatus(),
+    knownGaps: [
+      "Real source capture still requires verified provider permission and playable source records before candidates become production candidates.",
+      "Direct publishing/uploading remains intentionally unimplemented and Human Gate blocked.",
+      "Database and object storage migration are needed before multi-user production traffic.",
+      "CapCut is manual handoff until a connector design is approved."
+    ],
+    secretsExposed: false
   };
 }
 
@@ -5364,6 +5861,38 @@ async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "POST" && pathname === "/api/system/smoke-test") {
     const result = await runSystemSmokeTest();
     return sendJson(res, 200, { smokeTest: result });
+  }
+
+  if (req.method === "GET" && pathname === "/api/integrations/status") {
+    const matrix = await buildIntegrationMatrix();
+    return sendJson(res, 200, matrix);
+  }
+
+  const integrationTestMatch = pathname.match(/^\/api\/integrations\/([^/]+)\/test$/);
+  if (req.method === "POST" && integrationTestMatch) {
+    const id = cleanText(integrationTestMatch[1]);
+    const check = await runIntegrationCheck(id);
+    const matrix = await buildIntegrationMatrix();
+    const integration = matrix.integrations.find((item) => item.id === id) || null;
+    return sendJson(res, 200, {
+      id,
+      check,
+      integration,
+      secretsExposed: false
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/api/readiness/audit") {
+    const audit = await buildReadinessAudit();
+    return sendJson(res, 200, audit);
+  }
+
+  if (req.method === "GET" && pathname === "/api/readiness/action-matrix") {
+    return sendJson(res, 200, buildActionMatrixPayload());
+  }
+
+  if (req.method === "GET" && pathname === "/api/agent101/tool-map") {
+    return sendJson(res, 200, buildAgentToolMapPayload());
   }
 
   if (req.method === "POST" && pathname === "/api/agent101/browser/run") {

@@ -39,6 +39,8 @@ const state = {
   capcut: null,
   media: null,
   mediaSources: [],
+  integrations: null,
+  readiness: null,
   studio: null,
   studioTab: localStorage.getItem("studioTab") || "source",
   studioSeek: null,
@@ -364,7 +366,7 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, handoffs, smoke, studio, watchSessions, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, integrations, readiness, handoffs, smoke, studio, watchSessions, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
@@ -374,6 +376,8 @@ async function loadCore() {
     api("/api/capcut/status"),
     api("/api/media/status"),
     api("/api/media/sources"),
+    api("/api/integrations/status"),
+    api("/api/readiness/audit"),
     api("/api/handoffs"),
     api("/api/system/smoke-test"),
     api("/api/clipping-office/project"),
@@ -396,6 +400,8 @@ async function loadCore() {
     capcut,
     media,
     mediaSources: mediaSources.sources || [],
+    integrations,
+    readiness,
     handoffs: handoffs.handoffs || [],
     smokeTest: smoke.latest || null,
     studio,
@@ -3614,73 +3620,11 @@ function renderLogs() {
 }
 
 function renderIntegrations() {
-  const openaiReady = Boolean(state.openai?.configured);
-  const twitchReady = Boolean(state.twitch?.configured);
-  const kickReady = Boolean(state.kick?.configured);
-  const connectors = [
-    {
-      name: "OpenAI",
-      label: openaiReady ? "Live API" : "Local fallback",
-      tone: openaiReady ? "good" : "warn",
-      body: openaiReady
-        ? `Server can use ${state.openai?.model || state.config?.openaiModel || "the configured model"} without exposing keys to the browser.`
-        : "OpenAI key is not active here. StreamClipper stays usable through local/demo planning.",
-      action: "test-openai",
-      actionLabel: "Test OpenAI"
-    },
-    {
-      name: "Twitch",
-      label: twitchReady ? "Official API ready" : "API needed",
-      tone: twitchReady ? "good" : "warn",
-      body: twitchReady
-        ? "Streamer live checks can use the official Twitch API from the server."
-        : "Add Twitch Client ID and Client Secret or OAuth token in environment variables for real live checks.",
-      action: "test-twitch",
-      actionLabel: "Test Twitch"
-    },
-    {
-      name: "Kick",
-      label: kickReady ? "Official API ready" : "API needed",
-      tone: kickReady ? "good" : "warn",
-      body: kickReady
-        ? "Kick live checks can use the official Kick public API from the server."
-        : "Add Kick Client ID and Client Secret in environment variables for real Kick live checks.",
-      action: "test-kick",
-      actionLabel: "Test Kick"
-    },
-    {
-      name: "Browser handoff",
-      label: "Manual",
-      tone: "info",
-      body: "Agent 101 can prepare instructions and checklists. Login, account setup, and keys stay operator-controlled.",
-      jump: "watchlist",
-      actionLabel: "Streamer setup"
-    },
-    {
-      name: "CapCut",
-      label: "Manual handoff",
-      tone: "info",
-      body: "StreamClipper creates edit briefs, captions, cut lists, and export settings for you to run in CapCut.",
-      jump: "builder",
-      actionLabel: "Open builder"
-    },
-    {
-      name: "TikTok / YouTube",
-      label: "Human Gate",
-      tone: "warn",
-      body: "Posting packages can be drafted, but publishing remains blocked until you approve it.",
-      jump: "gate",
-      actionLabel: "Review gate"
-    },
-    {
-      name: "Local storage",
-      label: "Ready",
-      tone: "good",
-      body: `Outputs are written server-side. Current output folder: ${state.config?.outputDir || "configured local folder"}.`,
-      jump: "outputs",
-      actionLabel: "View outputs"
-    }
-  ];
+  const payload = state.integrations || {};
+  const connectors = payload.integrations || [];
+  const summary = payload.summary || {};
+  const modeSummary = payload.modeSummary || {};
+  const readiness = state.readiness || {};
 
   view.innerHTML = `
     <section class="integrations-page">
@@ -3688,12 +3632,13 @@ function renderIntegrations() {
         <div>
           <span class="eyebrow">Connector control</span>
           <h2>Integrations</h2>
-          <p>Everything sensitive stays server-side. External actions stay manual or Human Gate controlled until you approve a real connector.</p>
+          <p>Truthful runtime status for AI, provider APIs, browser automation, media tools, storage, and Human Gate. Secrets stay server-side.</p>
         </div>
         <div class="integration-summary">
-          ${integrationSummary("Live", Number(openaiReady) + Number(twitchReady) + Number(kickReady), "good")}
-          ${integrationSummary("Manual", 3, "info")}
-          ${integrationSummary("Gated", 1, "warn")}
+          ${integrationSummary("Connected", summary.connected || 0, "good")}
+          ${integrationSummary("Needs Check", summary.needsAttention || 0, "warn")}
+          ${integrationSummary("Real Candidates", modeSummary.clipCandidates?.real || 0, "info")}
+          ${integrationSummary("Practice Rows", modeSummary.clipCandidates?.practice || 0, "warn")}
         </div>
       </div>
 
@@ -3704,15 +3649,15 @@ function renderIntegrations() {
       <section class="panel integration-rules">
         <div class="toolbar">
           <div>
-            <h2>Safety Rules</h2>
-            <p class="muted">Agent 101 can prepare work, but these actions do not run without you.</p>
+            <h2>Production Readiness</h2>
+            <p class="muted">${esc(readiness.blockers?.[0] || "No critical blocker recorded by the readiness audit.")}</p>
           </div>
-          ${badge("Human Gate required", "warn")}
+          ${badge(labelize(readiness.readiness || "unchecked"), readiness.blockers?.length ? "warn" : "good")}
         </div>
         <div class="integration-rule-grid">
-          ${integrationRule("Allowed locally", "Research, organize clips, draft captions, create CapCut briefs, and package approvals.", "good")}
-          ${integrationRule("Never automatic", "Login, API key creation, account changes, posting, spending, or customer contact.", "bad")}
-          ${integrationRule("Where to configure", "Use Railway or local environment variables. No API keys belong in frontend JavaScript.", "info")}
+          ${integrationRule("Allowed locally", "Research, organize clips, draft captions, create CapCut briefs, save artifacts, and package approvals.", "good")}
+          ${integrationRule("Never automatic", "Login, API key creation, account changes, public posting, spending, deletion, or customer contact.", "bad")}
+          ${integrationRule("Mode separation", `${modeSummary.streamers?.real || 0} real streamer(s), ${modeSummary.streamers?.practice || 0} practice streamer(s). Practice never counts as production.`, "info")}
         </div>
       </section>
     </section>
@@ -3720,24 +3665,39 @@ function renderIntegrations() {
 }
 
 function renderIntegrationCard(connector) {
-  const button = connector.action
-    ? `<button type="button" data-action="${esc(connector.action)}">${esc(connector.actionLabel)}</button>`
-    : `<button type="button" data-nav-jump="${esc(connector.jump)}">${esc(connector.actionLabel)}</button>`;
+  const tone = integrationTone(connector.status);
+  const testable = ["openai", "twitch", "kick", "media"].includes(connector.id);
+  const details = [
+    connector.mode ? ["Mode", labelize(connector.mode)] : null,
+    connector.lastTestedAt ? ["Last test", fmtDate(connector.lastTestedAt)] : null,
+    connector.missingConfig?.length ? ["Missing", connector.missingConfig.join(", ")] : null
+  ].filter(Boolean);
   return `
-    <section class="panel integration-card integration-card-${esc(connector.tone)}">
+    <section class="panel integration-card integration-card-${esc(tone)}">
       <div>
         <span>${esc(initials(connector.name))}</span>
-        ${badge(connector.label, connector.tone)}
+        ${badge(labelize(connector.status), tone)}
       </div>
       <h3>${esc(connector.name)}</h3>
-      <p>${esc(connector.body)}</p>
-      ${button}
+      <p>${esc(connector.message || connector.nextAction || "No status message available.")}</p>
+      ${details.length ? `<div class="integration-facts">${details.map(([label, value]) => `<span><small>${esc(label)}</small><b>${esc(value)}</b></span>`).join("")}</div>` : ""}
+      ${connector.capabilities?.length ? `<div class="integration-tags">${connector.capabilities.slice(0, 3).map((item) => `<em>${esc(item)}</em>`).join("")}</div>` : ""}
+      ${connector.safeError ? `<p class="integration-error">${esc(connector.safeError)}</p>` : ""}
+      <button type="button" ${testable ? `data-test-integration="${esc(connector.id)}"` : "disabled"}>${testable ? "Test Connection" : esc(connector.nextAction || "Not testable")}</button>
     </section>
   `;
 }
 
 function integrationSummary(label, value, tone) {
   return `<span class="integration-summary-card ${esc(tone)}"><b>${esc(value)}</b><small>${esc(label)}</small></span>`;
+}
+
+function integrationTone(status) {
+  const text = String(status || "").toLowerCase();
+  if (/connected|local_ready/.test(text)) return "good";
+  if (/manual|gated|not_tested|local_only/.test(text)) return "warn";
+  if (/error|not_configured|unsupported/.test(text)) return "bad";
+  return "info";
 }
 
 function integrationRule(title, body, tone) {
@@ -4970,6 +4930,7 @@ document.addEventListener("click", async (event) => {
   const openAgentChat = target.closest("[data-open-agent-chat]");
   const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
+  const testIntegrationId = target.closest("[data-test-integration]")?.dataset.testIntegration;
   const watchSessionButton = target.closest("[data-watch-session-action]");
   const watchSessionAction = watchSessionButton?.dataset.watchSessionAction;
   const watchSessionId = watchSessionButton?.dataset.watchSessionId;
@@ -5017,6 +4978,12 @@ document.addEventListener("click", async (event) => {
     if (closePreview) {
       state.previewCandidateId = "";
       render();
+      return;
+    }
+    if (testIntegrationId) {
+      const result = await api(`/api/integrations/${encodeURIComponent(testIntegrationId)}/test`, { method: "POST", body: "{}" });
+      toast(result.check?.message || `${labelize(testIntegrationId)} test complete`, integrationTone(result.check?.status || result.integration?.status));
+      await refresh();
       return;
     }
     if (watchSessionAction && watchSessionId) {

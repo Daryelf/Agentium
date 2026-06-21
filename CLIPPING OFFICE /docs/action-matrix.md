@@ -29,9 +29,11 @@
 | Analytics | Overview | Tab | Show real-mode analytics | `renderAnalytics` | Local state | Active | None | Covered by nav behavior |
 | Analytics | Detailed tabs | Tabs | Drilldown analytics | None | Missing | Disabled | Drilldown pages | Not active |
 | Analytics | Export Report | Button | Export analytics report | None | Missing | Disabled | Report endpoint | Not active |
-| Integrations | Test OpenAI | Button | Test AI provider | `test-openai` | `POST /api/openai/test` | Active | Env configured for live | Needs env check |
-| Integrations | Test Twitch | Button | Test Twitch provider | `test-twitch` | `POST /api/twitch/test` | Active | Twitch vars | Needs env check |
-| Integrations | Test Kick | Button | Test Kick provider | `test-kick` | `POST /api/kick/test` | Active | Kick vars | Needs env check |
+| Integrations | Test Connection | Button | Test supported connector from backend | `data-test-integration` | `POST /api/integrations/:id/test` | Active for OpenAI/Twitch/Kick/media | Connector env or local tool | Covered by readiness API smoke |
+| Integrations | Status Matrix | Page data | Show truthful configured/tested/manual/gated status | `renderIntegrations` | `GET /api/integrations/status` | Active | None | Covered by smoke |
+| Readiness | Audit | API data | Summarize blockers, mode counts, docs, active sessions | API only | `GET /api/readiness/audit` | Active | None | Covered by smoke |
+| Readiness | Action Matrix | API data | Expose current action contracts | API only | `GET /api/readiness/action-matrix` | Active | None | Covered by smoke |
+| Agent 101 | Tool Map | API data | Expose safe/blocked tool registry | API only | `GET /api/agent101/tool-map` | Active | None | Covered by smoke |
 | Sidebar | Open Agent 101 | Button | Open persistent chat drawer | `data-open-agent-chat` | Local state + runner | Active | None | Covered by nav behavior |
 | Sidebar | Back to Argentum | Link | Return to main Control Floor | `/` | Main app route | Active | Parent route exists | Needs browser check |
 

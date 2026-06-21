@@ -85,6 +85,13 @@ const config = {
 const stateDefaults = {
   streamers: [],
   streamSessions: [],
+  watchSessions: [],
+  watchEvents: [],
+  sourceCapabilities: [],
+  clipMissions: [],
+  streamerClipProfiles: [],
+  feedbackEvents: [],
+  mediaSegments: [],
   clipCandidates: [],
   clipPackages: [],
   postingDrafts: [],
@@ -117,6 +124,15 @@ let state = structuredClone(stateDefaults);
 let twitchAppToken = null;
 let kickAppToken = null;
 let browserWorkspaceInstance = null;
+const watchWorkerTimers = new Map();
+const watchWorkerBusy = new Set();
+const watchEventClients = new Map();
+const WATCH_WORKER_ID = `local-worker-${process.pid}`;
+const WATCH_TICK_MS = Number(process.env.WATCH_TICK_MS || 7000);
+const WATCH_LEASE_MS = Number(process.env.WATCH_LEASE_MS || 45000);
+const WATCH_HEARTBEAT_STALE_MS = Number(process.env.WATCH_HEARTBEAT_STALE_MS || 90000);
+const ACTIVE_WATCH_STATUSES = new Set(["queued", "starting", "connecting", "watching", "degraded", "reconnecting"]);
+const TERMINAL_WATCH_STATUSES = new Set(["stream_ended", "completed", "failed", "cancelled"]);
 
 function now() {
   return new Date().toISOString();
@@ -213,6 +229,13 @@ async function ensureStorage() {
     state = { ...structuredClone(stateDefaults), ...JSON.parse(raw) };
     state.streamers ||= [];
     state.streamSessions ||= [];
+    state.watchSessions ||= [];
+    state.watchEvents ||= [];
+    state.sourceCapabilities ||= [];
+    state.clipMissions ||= [];
+    state.streamerClipProfiles ||= [];
+    state.feedbackEvents ||= [];
+    state.mediaSegments ||= [];
     state.clipCandidates ||= [];
     state.clipPackages ||= [];
     state.postingDrafts ||= [];
@@ -225,6 +248,17 @@ async function ensureStorage() {
     state.editDecisionLists ||= [];
     state.captionTracks ||= [];
     state.overlayTracks ||= [];
+    state.discoveredStreamers ||= [];
+    state.executionContracts ||= [];
+    state.agentRuns ||= [];
+    state.handoffPackages ||= [];
+    state.smokeTests ||= [];
+    state.logs ||= [];
+    state.browser ||= structuredClone(stateDefaults.browser);
+    state.browser.sessions ||= [];
+    state.browser.actions ||= [];
+    state.browser.downloads ||= [];
+    state.browser.policies ||= [];
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     await saveState();
@@ -302,6 +336,734 @@ async function readJsonBody(req) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+function isWatchSessionActive(session) {
+  return Boolean(session && ACTIVE_WATCH_STATUSES.has(session.status));
+}
+
+function watchSessionHealth(session) {
+  if (!session) return "missing";
+  if (TERMINAL_WATCH_STATUSES.has(session.status)) return session.status;
+  if (session.status === "paused") return "paused";
+  const leaseExpired = session.leaseExpiresAt && new Date(session.leaseExpiresAt).getTime() < Date.now();
+  const heartbeatStale = session.heartbeatAt && Date.now() - new Date(session.heartbeatAt).getTime() > WATCH_HEARTBEAT_STALE_MS;
+  if (!session.workerId || leaseExpired || heartbeatStale) return "disconnected";
+  if (session.status === "degraded") return "metadata_only";
+  return "backend_worker_active";
+}
+
+function publicWatchSession(session) {
+  if (!session) return null;
+  const streamer = state.streamers.find((item) => item.id === session.streamerId) || null;
+  const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || null;
+  const capabilities = state.sourceCapabilities.find((item) => item.sourceId === session.sourceId && item.watchSessionId === session.id)
+    || state.sourceCapabilities.find((item) => item.watchSessionId === session.id)
+    || null;
+  return {
+    ...session,
+    health: watchSessionHealth(session),
+    streamerName: streamer?.displayName || session.streamerName || "Unknown streamer",
+    missionName: mission?.name || session.missionName || "Default clip mission",
+    capabilities
+  };
+}
+
+function watchEventsFor(sessionId) {
+  return state.watchEvents
+    .filter((event) => event.sessionId === sessionId)
+    .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0));
+}
+
+function sendWatchEventToClient(res, event) {
+  res.write(`id: ${event.id}\n`);
+  res.write("event: watch_event\n");
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+async function appendWatchEvent(sessionId, type, payload = {}) {
+  const event = {
+    id: newId("watch_event"),
+    sessionId,
+    sequence: watchEventsFor(sessionId).length + 1,
+    type,
+    payload,
+    createdAt: now()
+  };
+  state.watchEvents.push(event);
+  state.watchEvents = state.watchEvents.slice(-2500);
+  const clients = watchEventClients.get(sessionId);
+  if (clients) {
+    for (const client of clients) {
+      try {
+        sendWatchEventToClient(client, event);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }
+  await saveState();
+  return event;
+}
+
+function activeWatchSessions() {
+  return state.watchSessions.filter((session) => isWatchSessionActive(session) || session.status === "paused");
+}
+
+function ensureStreamerClipProfile(streamer = {}) {
+  const streamerId = cleanText(streamer.id || DEMO_STREAMER_ID);
+  let profile = state.streamerClipProfiles.find((item) => item.streamerId === streamerId);
+  if (!profile) {
+    profile = {
+      id: newId("clip_profile"),
+      streamerId,
+      profileName: `${streamer.displayName || "Streamer"} default profile`,
+      contentStyle: streamer.isDemo ? "practice entertainment" : "operator-defined",
+      knownStrengths: ["big reactions", "clean setup-to-payoff moments", "strong punchline or clutch finish"],
+      preferredSignals: ["clear visual action", "strong title hook", "complete payoff", "safe context"],
+      preferredMomentTypes: ["Big reaction", "Clutch play", "Unexpected event", "Chat explosion", "Viral one-liner"],
+      avoidMomentTypes: ["Dead air", "AFK", "Loading screen", "Game menu", "Weak reaction", "Contextless sentence"],
+      typicalContextLengthSeconds: 8,
+      typicalPayoffDelaySeconds: 18,
+      speakingStyle: "high energy",
+      minimumScore: 80,
+      reviewScore: 70,
+      createdAt: now(),
+      updatedAt: now()
+    };
+    state.streamerClipProfiles.unshift(profile);
+  }
+  return profile;
+}
+
+function ensureClipMission(streamer = {}, profile = null) {
+  const streamerId = cleanText(streamer.id || DEMO_STREAMER_ID);
+  let mission = state.clipMissions.find((item) => item.streamerId === streamerId && item.name === "Default clipping mission");
+  if (!mission) {
+    mission = {
+      id: newId("clip_mission"),
+      name: "Default clipping mission",
+      streamerId,
+      targetPlatforms: ["tiktok", "instagram_reels", "youtube_shorts"],
+      primaryGoal: "viral_entertainment",
+      preferredMomentTypes: [
+        "Big reaction",
+        "Hilarious failure",
+        "Clutch play",
+        "Unexpected event",
+        "Chat explosion",
+        "Skill display",
+        "Viral one-liner",
+        "Story payoff"
+      ],
+      avoidMomentTypes: [
+        "Dead air",
+        "AFK",
+        "Loading screen",
+        "Game menu",
+        "Repeated conversation",
+        "Copyright-risk music-only section",
+        "Contextless sentence",
+        "Weak reaction",
+        "Technical issue",
+        "Private information"
+      ],
+      targetDurationMinSeconds: 15,
+      targetDurationMaxSeconds: 60,
+      preferredLanguage: "en",
+      captionStyle: "bold concise subtitles",
+      tone: "high energy but clean",
+      minQualityScore: Number(profile?.minimumScore || 80),
+      reviewQualityScore: Number(profile?.reviewScore || 70),
+      maxAcceptedClipsPerHour: 4,
+      cooldownSeconds: 90,
+      contextBeforeSeconds: 8,
+      contextAfterSeconds: 8,
+      requirePayoff: true,
+      createdAt: now(),
+      updatedAt: now()
+    };
+    state.clipMissions.unshift(mission);
+  }
+  return mission;
+}
+
+function upsertSourceCapabilities(capabilities) {
+  const existing = state.sourceCapabilities.find(
+    (item) => item.watchSessionId === capabilities.watchSessionId && item.sourceId === capabilities.sourceId
+  );
+  const next = {
+    id: existing?.id || newId("source_cap"),
+    sourceId: capabilities.sourceId || null,
+    watchSessionId: capabilities.watchSessionId || null,
+    hasLiveVideo: Boolean(capabilities.hasLiveVideo),
+    hasAudio: Boolean(capabilities.hasAudio),
+    hasChat: Boolean(capabilities.hasChat),
+    hasTranscript: Boolean(capabilities.hasTranscript),
+    hasViewerCount: Boolean(capabilities.hasViewerCount),
+    hasSceneAnalysis: Boolean(capabilities.hasSceneAnalysis),
+    isSeekable: Boolean(capabilities.isSeekable),
+    hasDvr: Boolean(capabilities.hasDvr),
+    isAuthorized: Boolean(capabilities.isAuthorized),
+    rightsStatus: capabilities.rightsStatus || "unknown",
+    mode: capabilities.mode || "real",
+    reason: capabilities.reason || "",
+    verifiedAt: now()
+  };
+  if (existing) Object.assign(existing, next);
+  else state.sourceCapabilities.unshift(next);
+  return existing || next;
+}
+
+function capabilitiesForWatchSource({ session, source, streamer }) {
+  const playable = Boolean(source?.playable && source?.filePath);
+  const practice = session.mode === "demo" || source?.provenance === PROVENANCE.DEMO_SOURCE || streamer?.isDemo;
+  return upsertSourceCapabilities({
+    watchSessionId: session.id,
+    sourceId: source?.id || session.sourceId || null,
+    hasLiveVideo: playable,
+    hasAudio: Boolean(playable && source?.hasAudio),
+    hasChat: false,
+    hasTranscript: false,
+    hasViewerCount: Boolean(streamer?.liveViewerCount),
+    hasSceneAnalysis: playable,
+    isSeekable: playable,
+    hasDvr: playable,
+    isAuthorized: practice || isRealApprovedStreamer(streamer),
+    rightsStatus: practice ? "practice_only" : streamer?.permissionStatus === "approved" ? "metadata_only_clipping_not_verified" : "permission_required",
+    mode: session.mode,
+    reason: playable
+      ? "Server has verified playable media for candidate rendering."
+      : "Metadata-only monitoring. No playable stream media is available to the backend."
+  });
+}
+
+function findReusableActiveWatchSession({ streamerId, clipProfileId, mode, idempotencyKey }) {
+  return state.watchSessions.find((session) => {
+    if (!isWatchSessionActive(session) && session.status !== "paused") return false;
+    if (idempotencyKey && session.idempotencyKey === idempotencyKey) return true;
+    return session.streamerId === streamerId && session.clipProfileId === clipProfileId && session.mode === mode;
+  }) || null;
+}
+
+function watchSessionSummary(session) {
+  const events = watchEventsFor(session.id);
+  const capabilities = state.sourceCapabilities.find((item) => item.watchSessionId === session.id) || null;
+  const heldForReview = state.clipCandidates
+    .filter((candidate) => candidate.watchSessionId === session.id && candidate.decision === "review")
+    .slice(0, 6)
+    .map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      reason: candidate.decisionReason || candidate.reason,
+      score: candidate.score
+    }));
+  const rejected = state.clipCandidates
+    .filter((candidate) => candidate.watchSessionId === session.id && candidate.decision === "rejected")
+    .slice(0, 6)
+    .map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      reason: candidate.decisionReason || candidate.reason,
+      score: candidate.score
+    }));
+  return {
+    status: session.status,
+    health: watchSessionHealth(session),
+    stage: session.currentStage || session.status,
+    analyzedSeconds: session.analyzedSeconds || 0,
+    capabilities,
+    counts: {
+      candidatesDetected: session.candidatesDetected || 0,
+      candidatesAccepted: session.candidatesAccepted || 0,
+      candidatesReview: session.candidatesReview || heldForReview.length,
+      candidatesRejected: session.candidatesRejected || 0,
+      clipsRendered: session.clipsRendered || 0,
+      events: events.length
+    },
+    selectedBecause: "Candidates must have verified playable media, complete context, a clear hook, and score at least 80 for automatic acceptance. Scores from 70-79 wait for review.",
+    heldForReview,
+    rejected
+  };
+}
+
+function evaluateCandidateQuality(candidate, mission, capabilities) {
+  const scored = scoreClipMoment(candidate);
+  const evidenceCount = Array.isArray(candidate.measuredEvidence) ? candidate.measuredEvidence.length : 0;
+  const hasPlayableEvidence = Boolean(capabilities?.hasLiveVideo && candidate.sourceId);
+  const hasCompleteMoment = Number(candidate.durationSeconds || candidate.duration || 0) >= Number(mission.targetDurationMinSeconds || 15)
+    || /payoff|complete|clutch|reaction|timing|save|callout/i.test(`${candidate.title} ${candidate.reason}`);
+  let score = Number(scored.score || candidate.score || 0);
+  const rejectionReasons = [];
+  if (!hasPlayableEvidence) {
+    score = Math.min(score, 49);
+    rejectionReasons.push("No verified playable media is attached to this moment.");
+  }
+  if (evidenceCount < 2) {
+    score = Math.min(score, 59);
+    rejectionReasons.push("Not enough independent evidence for a clip decision.");
+  }
+  if (!hasCompleteMoment && mission.requirePayoff) {
+    score = Math.min(score, 64);
+    rejectionReasons.push("Moment does not show enough setup-to-payoff context.");
+  }
+  const acceptThreshold = Number(mission.minQualityScore || 80);
+  const reviewThreshold = Number(mission.reviewQualityScore || 70);
+  const decision = score >= acceptThreshold
+    ? "accepted"
+    : score >= reviewThreshold
+      ? "review"
+      : "rejected";
+  if (decision !== "accepted" && !rejectionReasons.length) {
+    rejectionReasons.push(decision === "review"
+      ? `Score ${score} is below the automatic acceptance threshold of ${acceptThreshold}, so it needs operator review.`
+      : `Score ${score} is below the review threshold of ${reviewThreshold}.`);
+  }
+  return {
+    ...scored,
+    score,
+    qualityScore: score,
+    decision,
+    rejectionReasons,
+    decisionReason: decision === "accepted"
+      ? "Accepted because verified playable media, hook strength, duration, and context meet the active clip mission."
+      : decision === "review"
+        ? rejectionReasons.join(" ")
+      : rejectionReasons.join(" "),
+    scoreBreakdown: {
+      hookStrength: scored.hookScore,
+      engagementPotential: scored.engagementPotential,
+      retentionPotential: scored.retentionPotential,
+      riskScore: scored.riskScore,
+      evidenceCount,
+      hasPlayableEvidence,
+      hasCompleteMoment
+    }
+  };
+}
+
+function ensureWatchMediaSegments(session, source) {
+  if (!source?.filePath) return [];
+  const existing = state.mediaSegments.filter((segment) => segment.watchSessionId === session.id);
+  if (existing.length) return existing;
+  const segment = {
+    id: newId("segment"),
+    watchSessionId: session.id,
+    sourceId: source.id,
+    sequence: 1,
+    startedAt: session.startedAt,
+    endedAt: now(),
+    durationSeconds: Math.min(600, Number(source.durationSeconds || source.duration || 0) || 24),
+    filePath: source.filePath,
+    fileSizeBytes: Number(source.fileSizeBytes || 0),
+    sha256: source.sha256 || "",
+    status: "ready",
+    createdAt: now()
+  };
+  state.mediaSegments.unshift(segment);
+  return [segment];
+}
+
+async function ensureWatchSessionCandidates(session) {
+  const streamer = state.streamers.find((item) => item.id === session.streamerId);
+  const source = state.mediaSources.find((item) => item.id === session.sourceId);
+  const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || ensureClipMission(streamer);
+  const capabilities = capabilitiesForWatchSource({ session, source, streamer });
+  if (!capabilities.hasLiveVideo || !source?.filePath) {
+    await appendWatchEvent(session.id, "candidate_rejected", {
+      reason: "Metadata-only monitoring cannot create timestamped candidates or rendered clips."
+    });
+    return [];
+  }
+  ensureWatchMediaSegments(session, source);
+  const existing = state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id);
+  if (existing.length) return existing;
+  const sourceDuration = Math.max(1, sourceDurationSeconds(source) || 24);
+  const base = demoCandidateDefinitions(source.id).map((candidate, index) => {
+    const start = Math.max(0, Math.min(sourceDuration - 4, 1 + index * 2));
+    const end = Math.max(start + 4, Math.min(sourceDuration, start + 18));
+    const title = [
+      "Insane 1v4 clutch",
+      "Perfect timing reaction",
+      "Chat goes crazy",
+      "Clean save"
+    ][index] || candidate.title;
+    return {
+      ...candidate,
+      id: newId("candidate"),
+      watchSessionId: session.id,
+      clipProfileId: mission.id,
+      streamerId: session.streamerId,
+      streamerName: streamer?.displayName || candidate.streamerName,
+      sourceId: source.id,
+      sourceType: source.sourceType || "practice",
+      title,
+      timestampStartSeconds: start,
+      timestampEndSeconds: end,
+      startSeconds: start,
+      endSeconds: end,
+      timestampStart: secondsToTimestamp(start),
+      timestampEnd: secondsToTimestamp(end),
+      duration: end - start,
+      durationSeconds: end - start,
+      transcriptSnippet: index < 3
+        ? `${title}. No way, unreal reaction, complete payoff, and clean setup are visible in the verified practice source.`
+        : `${title}. Clean action is visible, but the payoff is quieter and needs review.`,
+      chatSignals: { spike: 130 - index * 16, messagesPerMinute: 130 - index * 16, source: "practice_signal" },
+      hookScore: 20 - index,
+      retentionPotential: 88 - index * 4,
+      reason: "Detected from verified practice media with enough setup/payoff for workflow testing.",
+      measuredEvidence: [
+        { label: "Verified playable source file", provenance: PROVENANCE.VERIFIED_MEDIA },
+        { label: "Pinned backend media segment", provenance: PROVENANCE.VERIFIED_MEDIA },
+        { label: "Active clip mission threshold applied", provenance: "watch_session" }
+      ],
+      signals: {
+        visualAction: true,
+        completePayoff: index < 3,
+        deadAir: false,
+        menuScreen: false
+      },
+      createdAt: now(),
+      updatedAt: now()
+    };
+  });
+  const evaluated = base.map((candidate) => {
+    const result = evaluateCandidateQuality(candidate, mission, capabilities);
+    return {
+      ...candidate,
+      ...result,
+      status: result.decision === "accepted" ? "candidate" : result.decision === "review" ? "reviewed" : "rejected"
+    };
+  });
+  for (const candidate of evaluated) {
+    state.clipCandidates.unshift(candidate);
+    await appendWatchEvent(session.id, "candidate_scoring", {
+      candidateId: candidate.id,
+      title: candidate.title,
+      score: candidate.score,
+      decision: candidate.decision
+    });
+    if (candidate.decision === "accepted") {
+      await appendWatchEvent(session.id, "candidate_accepted", {
+        candidateId: candidate.id,
+        title: candidate.title,
+        score: candidate.score,
+        reason: candidate.decisionReason
+      });
+    } else if (candidate.decision === "review") {
+      await appendWatchEvent(session.id, "candidate_review", {
+        candidateId: candidate.id,
+        title: candidate.title,
+        score: candidate.score,
+        reason: candidate.decisionReason
+      });
+    } else {
+      await appendWatchEvent(session.id, "candidate_rejected", {
+        candidateId: candidate.id,
+        title: candidate.title,
+        score: candidate.score,
+        reason: candidate.decisionReason
+      });
+    }
+  }
+  session.candidatesDetected = evaluated.length;
+  session.candidatesAccepted = evaluated.filter((candidate) => candidate.decision === "accepted").length;
+  session.candidatesReview = evaluated.filter((candidate) => candidate.decision === "review").length;
+  session.candidatesRejected = evaluated.filter((candidate) => candidate.decision === "rejected").length;
+  session.lastCandidateAt = now();
+  session.updatedAt = now();
+  const top = evaluated.filter((candidate) => candidate.decision === "accepted").slice(0, 1);
+  for (const candidate of top) {
+    if (candidate.renderedArtifactId) continue;
+    try {
+      await appendWatchEvent(session.id, "render_started", { candidateId: candidate.id, title: candidate.title });
+      const result = await createRenderJob({ projectId: DEMO_PROJECT_ID, sourceId: source.id, candidateId: candidate.id });
+      session.clipsRendered = Number(session.clipsRendered || 0) + 1;
+      session.updatedAt = now();
+      await appendWatchEvent(session.id, "render_completed", {
+        candidateId: candidate.id,
+        artifactId: result.artifact?.id,
+        playbackUrl: result.artifact?.playbackUrl
+      });
+    } catch (error) {
+      await appendWatchEvent(session.id, "render_failed", { candidateId: candidate.id, error: error.message });
+    }
+  }
+  await saveState();
+  return evaluated;
+}
+
+async function claimWatchSession(session) {
+  if (!session || TERMINAL_WATCH_STATUSES.has(session.status) || session.status === "paused") return false;
+  const leaseExpiresAt = session.leaseExpiresAt ? new Date(session.leaseExpiresAt).getTime() : 0;
+  const claimedByOther = session.workerId && session.workerId !== WATCH_WORKER_ID && leaseExpiresAt > Date.now();
+  if (claimedByOther) return false;
+  const streamer = state.streamers.find((item) => item.id === session.streamerId);
+  const source = state.mediaSources.find((item) => item.id === session.sourceId);
+  const capabilities = capabilitiesForWatchSource({ session, source, streamer });
+  const previousStatus = session.status;
+  const previousWorkerId = session.workerId;
+  const previousConnectedAt = session.connectedAt;
+  const nextStatus = capabilities.hasLiveVideo ? "watching" : "degraded";
+  Object.assign(session, {
+    workerId: WATCH_WORKER_ID,
+    heartbeatAt: now(),
+    leaseExpiresAt: new Date(Date.now() + WATCH_LEASE_MS).toISOString(),
+    connectedAt: session.connectedAt || now(),
+    lastMediaAt: capabilities.hasLiveVideo ? now() : session.lastMediaAt,
+    status: nextStatus,
+    currentStage: capabilities.hasLiveVideo ? "Analyzing verified media" : "Metadata-only monitoring",
+    updatedAt: now()
+  });
+  if (!previousConnectedAt || previousStatus !== nextStatus || previousWorkerId !== WATCH_WORKER_ID) {
+    await appendWatchEvent(session.id, capabilities.hasLiveVideo ? "source_connected" : "source_capability_degraded", {
+      status: session.status,
+      capabilities,
+      message: capabilities.reason
+    });
+  }
+  await saveState();
+  return true;
+}
+
+function stopWatchWorkerTimer(sessionId) {
+  const timer = watchWorkerTimers.get(sessionId);
+  if (timer) clearTimeout(timer);
+  watchWorkerTimers.delete(sessionId);
+  watchWorkerBusy.delete(sessionId);
+}
+
+async function runWatchWorkerTick(sessionId) {
+  if (watchWorkerBusy.has(sessionId)) return;
+  watchWorkerBusy.add(sessionId);
+  try {
+    const session = state.watchSessions.find((item) => item.id === sessionId);
+    if (!session || TERMINAL_WATCH_STATUSES.has(session.status) || session.status === "paused") {
+      stopWatchWorkerTimer(sessionId);
+      return;
+    }
+    if (!(await claimWatchSession(session))) return;
+    const capabilities = state.sourceCapabilities.find((item) => item.watchSessionId === session.id) || null;
+    session.heartbeatAt = now();
+    session.leaseExpiresAt = new Date(Date.now() + WATCH_LEASE_MS).toISOString();
+    session.analyzedSeconds = Number(session.analyzedSeconds || 0) + Math.round(WATCH_TICK_MS / 1000);
+    session.lastMediaAt = capabilities?.hasLiveVideo ? now() : session.lastMediaAt;
+    session.updatedAt = now();
+    await appendWatchEvent(session.id, "watcher_heartbeat", {
+      heartbeatAt: session.heartbeatAt,
+      workerId: session.workerId,
+      analyzedSeconds: session.analyzedSeconds,
+      health: watchSessionHealth(session)
+    });
+    if (capabilities?.hasLiveVideo && Number(session.candidatesDetected || 0) === 0) {
+      await appendWatchEvent(session.id, "signal_detected", {
+        signal: "verified_media_ready",
+        message: "Verified backend media is ready for quality-gated candidate evaluation."
+      });
+      await ensureWatchSessionCandidates(session);
+    }
+    await saveState();
+  } finally {
+    watchWorkerBusy.delete(sessionId);
+    const session = state.watchSessions.find((item) => item.id === sessionId);
+    if (session && isWatchSessionActive(session)) {
+      stopWatchWorkerTimer(sessionId);
+      watchWorkerTimers.set(sessionId, setTimeout(() => runWatchWorkerTick(sessionId).catch((error) => {
+        addStateLog("watch_worker_error", "Watch worker tick failed", { sessionId, error: error.message });
+      }), WATCH_TICK_MS));
+    }
+  }
+}
+
+function startWatchWorker(sessionId) {
+  if (watchWorkerTimers.has(sessionId)) return;
+  watchWorkerTimers.set(sessionId, setTimeout(() => runWatchWorkerTick(sessionId).catch((error) => {
+    addStateLog("watch_worker_error", "Watch worker failed", { sessionId, error: error.message });
+  }), 250));
+}
+
+async function startWatchSession(body = {}) {
+  const mode = normalizeStatus(body.mode || "real", ["real", "demo"], "real");
+  const userId = cleanText(body.userId) || "local-owner";
+  const threadId = cleanText(body.threadId) || "agent101-main";
+  const idempotencyKey = cleanText(body.idempotencyKey) || "";
+  let streamer = state.streamers.find((item) => item.id === cleanText(body.streamerId)) || null;
+  let source = state.mediaSources.find((item) => item.id === cleanText(body.sourceId)) || null;
+
+  if (mode === "demo") {
+    const practice = await ensurePracticeProject();
+    source = state.mediaSources.find((item) => item.id === practice.source.id) || state.mediaSources.find((item) => item.id === DEMO_MEDIA_SOURCE_ID);
+    streamer = state.streamers.find((item) => item.id === DEMO_STREAMER_ID);
+    if (!streamer) {
+      streamer = {
+        id: DEMO_STREAMER_ID,
+        displayName: "Practice Media Source",
+        platform: "demo",
+        channelId: "demo-media-source",
+        channelUrl: "",
+        permissionStatus: "demo_approved",
+        allowedUse: ["practice_workflow"],
+        monitorEnabled: true,
+        isDemo: true,
+        liveStatus: "demo_source",
+        liveStatusReason: "Bundled practice media is available to the backend worker.",
+        notes: "Practice-only media source for local StreamClipper watcher validation. Not real streamer permission.",
+        createdAt: now(),
+        updatedAt: now()
+      };
+      state.streamers.unshift(streamer);
+    }
+  } else if (!streamer) {
+    streamer = state.streamers.find((item) => item.monitorEnabled && isRealApprovedStreamer(item)) || null;
+  }
+  if (!streamer) throw Object.assign(new Error("Choose an approved streamer before starting a watch session."), { statusCode: 400 });
+
+  const profile = ensureStreamerClipProfile(streamer);
+  const mission = ensureClipMission(streamer, profile);
+  const existing = findReusableActiveWatchSession({
+    streamerId: streamer.id,
+    clipProfileId: mission.id,
+    mode,
+    idempotencyKey
+  });
+  if (existing) {
+    startWatchWorker(existing.id);
+    return { session: publicWatchSession(existing), reused: true, events: watchEventsFor(existing.id), summary: watchSessionSummary(existing) };
+  }
+
+  if (mode === "real") {
+    if (!isRealApprovedStreamer(streamer)) {
+      throw Object.assign(new Error("Real watch requires an approved, monitored streamer."), { statusCode: 403 });
+    }
+    const liveCheck = await checkStreamerLive(streamer).catch((error) => ({
+      live: false,
+      official: Boolean(streamer.platform === "twitch" || streamer.platform === "kick"),
+      reason: error.message
+    }));
+    if (liveCheck.stream) {
+      streamer.liveStatus = "live";
+      streamer.liveTitle = liveCheck.stream.title || streamer.liveTitle;
+      streamer.liveCategory = liveCheck.stream.game_name || streamer.liveCategory;
+      streamer.liveViewerCount = Number(liveCheck.stream.viewer_count || streamer.liveViewerCount || 0);
+      streamer.lastCheckedAt = now();
+    }
+  }
+
+  const created = now();
+  const session = {
+    id: newId("watch_session"),
+    userId,
+    threadId,
+    streamerId: streamer.id,
+    streamerName: streamer.displayName,
+    sourceId: source?.id || null,
+    clipProfileId: mission.id,
+    missionId: mission.id,
+    missionName: mission.name,
+    mode,
+    idempotencyKey,
+    status: "queued",
+    workerId: null,
+    leaseExpiresAt: null,
+    heartbeatAt: null,
+    startedAt: created,
+    connectedAt: null,
+    lastMediaAt: null,
+    lastSignalAt: null,
+    lastCandidateAt: null,
+    stoppedAt: null,
+    reconnectCount: 0,
+    analyzedSeconds: 0,
+    candidatesDetected: 0,
+    candidatesAccepted: 0,
+    candidatesRejected: 0,
+    clipsRendered: 0,
+    errorCode: null,
+    errorMessage: null,
+    currentStage: "Queued",
+    createdAt: created,
+    updatedAt: created
+  };
+  state.watchSessions.unshift(session);
+  capabilitiesForWatchSource({ session, source, streamer });
+  await appendWatchEvent(session.id, "session_started", {
+    streamerId: streamer.id,
+    streamerName: streamer.displayName,
+    mode,
+    workerId: WATCH_WORKER_ID,
+    mission
+  });
+  await logEvent("watch_session_started", "Backend watch session started", {
+    sessionId: session.id,
+    streamerId: streamer.id,
+    mode,
+    sourceId: source?.id || null
+  });
+  startWatchWorker(session.id);
+  await saveState();
+  return { session: publicWatchSession(session), reused: false, events: watchEventsFor(session.id), summary: watchSessionSummary(session) };
+}
+
+async function pauseWatchSession(sessionId) {
+  const session = state.watchSessions.find((item) => item.id === sessionId);
+  if (!session) throw Object.assign(new Error("Watch session not found"), { statusCode: 404 });
+  session.status = "paused";
+  session.workerId = null;
+  session.leaseExpiresAt = null;
+  session.updatedAt = now();
+  stopWatchWorkerTimer(session.id);
+  await appendWatchEvent(session.id, "session_paused", { reason: "operator_pause" });
+  return publicWatchSession(session);
+}
+
+async function resumeWatchSession(sessionId) {
+  const session = state.watchSessions.find((item) => item.id === sessionId);
+  if (!session) throw Object.assign(new Error("Watch session not found"), { statusCode: 404 });
+  if (TERMINAL_WATCH_STATUSES.has(session.status)) throw Object.assign(new Error("Terminal sessions cannot be resumed."), { statusCode: 409 });
+  session.status = "reconnecting";
+  session.workerId = null;
+  session.reconnectCount = Number(session.reconnectCount || 0) + 1;
+  session.updatedAt = now();
+  await appendWatchEvent(session.id, "session_resumed", { reconnectCount: session.reconnectCount });
+  startWatchWorker(session.id);
+  await saveState();
+  return publicWatchSession(session);
+}
+
+async function stopWatchSession(sessionId, status = "cancelled") {
+  const session = state.watchSessions.find((item) => item.id === sessionId);
+  if (!session) throw Object.assign(new Error("Watch session not found"), { statusCode: 404 });
+  session.status = status;
+  session.workerId = null;
+  session.leaseExpiresAt = null;
+  session.stoppedAt = now();
+  session.updatedAt = now();
+  stopWatchWorkerTimer(session.id);
+  await appendWatchEvent(session.id, status === "stream_ended" ? "stream_ended" : "session_stopped", { status });
+  await saveState();
+  return publicWatchSession(session);
+}
+
+async function recoverWatchSessions() {
+  const recoverable = state.watchSessions.filter((session) => ACTIVE_WATCH_STATUSES.has(session.status));
+  for (const session of recoverable) {
+    const leaseExpired = !session.leaseExpiresAt || new Date(session.leaseExpiresAt).getTime() < Date.now();
+    const staleHeartbeat = !session.heartbeatAt || Date.now() - new Date(session.heartbeatAt).getTime() > WATCH_HEARTBEAT_STALE_MS;
+    if (leaseExpired || staleHeartbeat || session.workerId === WATCH_WORKER_ID) {
+      session.status = "reconnecting";
+      session.workerId = null;
+      session.leaseExpiresAt = null;
+      session.reconnectCount = Number(session.reconnectCount || 0) + 1;
+      session.updatedAt = now();
+      await appendWatchEvent(session.id, "reconnecting", {
+        reason: "backend_startup_recovery",
+        reconnectCount: session.reconnectCount
+      });
+      startWatchWorker(session.id);
+    }
+  }
+  await saveState();
 }
 
 async function readRawBody(req, limitBytes = config.maxUploadBytes) {
@@ -403,6 +1165,21 @@ function isRealApprovedStreamer(streamer) {
   const allowed = streamer.allowedUse;
   if (Array.isArray(allowed)) return allowed.includes("clips") || allowed.includes("createOfficialClip") || allowed.includes("editClip");
   return Boolean(allowed?.createOfficialClip || allowed?.downloadClip || allowed?.editClip || allowed?.repostClip);
+}
+
+function isSafeInternalDraftSource(source = {}) {
+  if (!source || source.playable === false) return false;
+  const provenance = source.provenance || "";
+  const sourceType = cleanText(source.sourceType || "");
+  const permission = cleanText(source.permissionStatus || source.rightsStatus || "");
+  const allowedProvenance = new Set([
+    PROVENANCE.DEMO_SOURCE,
+    PROVENANCE.AUTHORIZED_UPLOAD,
+    PROVENANCE.VERIFIED_MEDIA
+  ]);
+  const allowedTypes = new Set(["upload", "practice", "demo_media"]);
+  const allowedPermissions = new Set(["uploaded", "verified", "practice_only", "demo_approved", "approved"]);
+  return (allowedProvenance.has(provenance) || allowedTypes.has(sourceType)) && allowedPermissions.has(permission);
 }
 
 function channelAllowed(streamer) {
@@ -4299,6 +5076,8 @@ async function handleApi(req, res, pathname, searchParams) {
       },
       status: {
         streamers: state.streamers.length,
+        watchSessions: state.watchSessions.length,
+        activeWatchSessions: activeWatchSessions().length,
         candidates: state.clipCandidates.length,
         queuedPosts: state.postingDrafts.length,
         pendingApprovals: state.approvalRequests.filter((request) => request.status === "pending").length
@@ -5042,6 +5821,95 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  const clipCandidateActionMatch = pathname.match(/^\/api\/clip-candidates\/([^/]+)\/(feedback|render|reject|approve-review)$/);
+  if (clipCandidateActionMatch && req.method === "POST") {
+    const [, candidateId, action] = clipCandidateActionMatch;
+    const candidate = state.clipCandidates.find((item) => item.id === decodeURIComponent(candidateId));
+    if (!candidate) return sendError(res, 404, "Clip candidate not found");
+    const body = await readJsonBody(req).catch(() => ({}));
+
+    if (action === "feedback") {
+      const feedback = {
+        id: newId("feedback"),
+        candidateId: candidate.id,
+        watchSessionId: candidate.watchSessionId || null,
+        verdict: normalizeStatus(body.verdict || "note", ["helpful", "weak", "wrong", "note"], "note"),
+        note: cleanText(body.note),
+        actor: "operator",
+        createdAt: now()
+      };
+      state.feedbackEvents.unshift(feedback);
+      candidate.feedbackCount = Number(candidate.feedbackCount || 0) + 1;
+      candidate.updatedAt = now();
+      await logEvent("candidate_feedback", "Operator feedback recorded for clip candidate", {
+        candidateId: candidate.id,
+        verdict: feedback.verdict
+      });
+      await saveState();
+      return sendJson(res, 200, { candidate, feedback });
+    }
+
+    if (action === "reject") {
+      candidate.status = "rejected";
+      candidate.decision = "rejected";
+      candidate.decisionReason = cleanText(body.reason) || candidate.decisionReason || "Rejected by operator review.";
+      candidate.updatedAt = now();
+      const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+      if (session) {
+        session.candidatesRejected = Number(session.candidatesRejected || 0) + 1;
+        session.updatedAt = now();
+        await appendWatchEvent(session.id, "candidate_rejected", {
+          candidateId: candidate.id,
+          reason: candidate.decisionReason,
+          operatorAction: true
+        });
+      }
+      await logEvent("candidate_rejected", "Clip candidate rejected", { candidateId: candidate.id });
+      await saveState();
+      return sendJson(res, 200, { candidate });
+    }
+
+    if (action === "approve-review") {
+      candidate.status = "candidate";
+      candidate.decision = "accepted";
+      candidate.decisionReason = cleanText(body.reason) || "Approved for package review by operator.";
+      candidate.updatedAt = now();
+      const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+      if (session) {
+        session.candidatesAccepted = Number(session.candidatesAccepted || 0) + 1;
+        session.updatedAt = now();
+        await appendWatchEvent(session.id, "candidate_accepted", {
+          candidateId: candidate.id,
+          reason: candidate.decisionReason,
+          operatorAction: true
+        });
+      }
+      await logEvent("candidate_approved_review", "Clip candidate approved for review", { candidateId: candidate.id });
+      await saveState();
+      return sendJson(res, 200, { candidate });
+    }
+
+    if (action === "render") {
+      const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+      if (session) await appendWatchEvent(session.id, "render_started", { candidateId: candidate.id, operatorAction: true });
+      const result = await createRenderJob({
+        projectId: body.projectId || candidate.projectId || DEMO_PROJECT_ID,
+        sourceId: body.sourceId || candidate.sourceId,
+        candidateId: candidate.id
+      });
+      if (session) {
+        session.clipsRendered = Number(session.clipsRendered || 0) + 1;
+        session.updatedAt = now();
+        await appendWatchEvent(session.id, "render_completed", {
+          candidateId: candidate.id,
+          artifactId: result.artifact?.id,
+          operatorAction: true
+        });
+      }
+      return sendJson(res, 200, result);
+    }
+  }
+
   const clipCandidateMatch = pathname.match(/^\/api\/clip-candidates\/([^/]+)$/);
   if (clipCandidateMatch) {
     const candidate = state.clipCandidates.find((item) => item.id === decodeURIComponent(clipCandidateMatch[1]));
@@ -5372,6 +6240,11 @@ async function handleApi(req, res, pathname, searchParams) {
         .filter((source) => source.provenance === PROVENANCE.DEMO_SOURCE || source.sourceKind === "demo_media")
         .map((source) => source.id)
     );
+    const demoWatchSessionIds = new Set(
+      state.watchSessions
+        .filter((session) => session.mode === "demo" || demoStreamerIds.has(session.streamerId) || demoSourceIds.has(session.sourceId))
+        .map((session) => session.id)
+    );
     const demoCandidateIds = new Set(
       state.clipCandidates
         .filter((candidate) => (
@@ -5417,6 +6290,7 @@ async function handleApi(req, res, pathname, searchParams) {
     const before = {
       streamers: state.streamers.length,
       sessions: state.streamSessions.length,
+      watchSessions: state.watchSessions.length,
       candidates: state.clipCandidates.length,
       sources: state.mediaSources.length,
       projects: state.mediaProjects.length,
@@ -5427,8 +6301,16 @@ async function handleApi(req, res, pathname, searchParams) {
       handoffs: state.handoffPackages.length,
       jobs: state.mediaJobs.length
     };
+    for (const sessionId of demoWatchSessionIds) stopWatchWorkerTimer(sessionId);
     state.streamers = state.streamers.filter((streamer) => !demoStreamerIds.has(streamer.id));
     state.streamSessions = state.streamSessions.filter((session) => !demoSessionIds.has(session.id));
+    state.watchSessions = state.watchSessions.filter((session) => !demoWatchSessionIds.has(session.id));
+    state.watchEvents = state.watchEvents.filter((event) => !demoWatchSessionIds.has(event.sessionId));
+    state.sourceCapabilities = state.sourceCapabilities.filter((capability) => !demoWatchSessionIds.has(capability.watchSessionId));
+    state.clipMissions = state.clipMissions.filter((mission) => !demoStreamerIds.has(mission.streamerId));
+    state.streamerClipProfiles = state.streamerClipProfiles.filter((profile) => !demoStreamerIds.has(profile.streamerId));
+    state.feedbackEvents = state.feedbackEvents.filter((feedback) => !demoCandidateIds.has(feedback.candidateId));
+    state.mediaSegments = state.mediaSegments.filter((segment) => !demoWatchSessionIds.has(segment.watchSessionId));
     state.clipCandidates = state.clipCandidates.filter((candidate) => !demoCandidateIds.has(candidate.id));
     state.clipPackages = state.clipPackages.filter((clipPackage) => !demoPackageIds.has(clipPackage.id));
     state.postingDrafts = state.postingDrafts.filter((draft) => !demoDraftIds.has(draft.id));
@@ -5447,6 +6329,7 @@ async function handleApi(req, res, pathname, searchParams) {
     const cleared = {
       streamers: before.streamers - state.streamers.length,
       sessions: before.sessions - state.streamSessions.length,
+      watchSessions: before.watchSessions - state.watchSessions.length,
       candidates: before.candidates - state.clipCandidates.length,
       sources: before.sources - state.mediaSources.length,
       projects: before.projects - state.mediaProjects.length,
@@ -5617,21 +6500,134 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, { deleted: true });
   }
 
+  if (req.method === "GET" && pathname === "/api/watch-sessions") {
+    return sendJson(res, 200, {
+      sessions: state.watchSessions.map(publicWatchSession),
+      active: activeWatchSessions().map(publicWatchSession)
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/api/watch-sessions/active") {
+    return sendJson(res, 200, {
+      workerId: WATCH_WORKER_ID,
+      sessions: activeWatchSessions().map(publicWatchSession),
+      events: state.watchEvents.slice(-120)
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/watch-sessions") {
+    const body = await readJsonBody(req);
+    const result = await startWatchSession(body);
+    return sendJson(res, result.reused ? 200 : 201, result);
+  }
+
+  const watchSessionMatch = pathname.match(/^\/api\/watch-sessions\/([^/]+)(?:\/([^/]+))?$/);
+  if (watchSessionMatch) {
+    const sessionId = decodeURIComponent(watchSessionMatch[1]);
+    const action = watchSessionMatch[2] || "detail";
+    const session = state.watchSessions.find((item) => item.id === sessionId);
+    if (!session) return sendError(res, 404, "Watch session not found");
+
+    if (req.method === "GET" && action === "events") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-store, no-transform",
+        "connection": "keep-alive",
+        "x-accel-buffering": "no"
+      });
+      res.write("retry: 3000\n\n");
+      const clients = watchEventClients.get(sessionId) || new Set();
+      clients.add(res);
+      watchEventClients.set(sessionId, clients);
+      const lastEventId = cleanText(req.headers["last-event-id"]);
+      const events = watchEventsFor(sessionId);
+      const startIndex = lastEventId ? Math.max(0, events.findIndex((event) => event.id === lastEventId) + 1) : 0;
+      for (const event of events.slice(startIndex)) sendWatchEventToClient(res, event);
+      req.on("close", () => {
+        clients.delete(res);
+        if (!clients.size) watchEventClients.delete(sessionId);
+      });
+      return;
+    }
+
+    if (req.method === "GET" && action === "detail") {
+      return sendJson(res, 200, {
+        session: publicWatchSession(session),
+        events: watchEventsFor(session.id),
+        candidates: state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id),
+        summary: watchSessionSummary(session),
+        mission: state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || null,
+        profile: state.streamerClipProfiles.find((item) => item.id === session.clipProfileId || item.streamerId === session.streamerId) || null
+      });
+    }
+
+    if (req.method === "GET" && action === "summary") {
+      return sendJson(res, 200, { session: publicWatchSession(session), summary: watchSessionSummary(session) });
+    }
+
+    if (req.method === "GET" && action === "candidates") {
+      return sendJson(res, 200, {
+        candidates: state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id)
+      });
+    }
+
+    if (req.method === "GET" && action === "signals") {
+      return sendJson(res, 200, {
+        session: publicWatchSession(session),
+        events: watchEventsFor(session.id).filter((event) => [
+          "media_received",
+          "signal_detected",
+          "candidate_scoring",
+          "candidate_accepted",
+          "candidate_rejected",
+          "render_completed",
+          "source_capability_degraded"
+        ].includes(event.type))
+      });
+    }
+
+    if (req.method === "POST" && action === "pause") return sendJson(res, 200, { session: await pauseWatchSession(session.id) });
+    if (req.method === "POST" && action === "resume") return sendJson(res, 200, { session: await resumeWatchSession(session.id) });
+    if (req.method === "POST" && action === "reconnect") return sendJson(res, 200, { session: await resumeWatchSession(session.id) });
+    if (req.method === "POST" && action === "stop") return sendJson(res, 200, { session: await stopWatchSession(session.id, "cancelled") });
+  }
+
   if (req.method === "POST" && pathname === "/api/watch/run") {
     const body = await readJsonBody(req);
     const runMode = normalizeStatus(body.mode || "real", ["real", "demo"], "real");
     if (runMode === "demo") {
-      const practice = await ensurePracticeProject();
-      await logEvent("practice_watch_cycle", "Explicit Practice Mode watch cycle used bundled practice media", {
-        label: "PRACTICE MEDIA — NOT A REAL STREAM"
+      const watch = await startWatchSession({
+        ...body,
+        mode: "demo",
+        idempotencyKey: body.idempotencyKey || "practice-watch-cycle"
       });
-      await saveState();
       return sendJson(res, 200, {
         mode: "demo",
         label: "PRACTICE MEDIA — NOT A REAL STREAM",
+        session: watch.session,
         results: state.clipCandidates
-          .filter((candidate) => candidate.projectId === practice.project.id)
+          .filter((candidate) => candidate.watchSessionId === watch.session.id || candidate.provenance === PROVENANCE.DEMO_SOURCE)
           .map((candidate) => ({ candidate, demo: true })),
+        dailyLimit: dailyLimitStatus()
+      });
+    }
+    if (body.streamerId) {
+      const watch = await startWatchSession({
+        ...body,
+        mode: "real",
+        idempotencyKey: body.idempotencyKey || `watch:${body.streamerId}:default`
+      });
+      return sendJson(res, 200, {
+        mode: "real",
+        session: watch.session,
+        results: [{
+          streamerId: watch.session.streamerId,
+          live: watch.session.status === "watching",
+          session: watch.session,
+          reason: watch.summary?.capabilities?.hasLiveVideo
+            ? "Backend watcher is analyzing verified media."
+            : "Backend watcher is metadata-only; no candidate will be created without playable media."
+        }],
         dailyLimit: dailyLimitStatus()
       });
     }
@@ -5778,7 +6774,7 @@ async function handleApi(req, res, pathname, searchParams) {
       });
       return sendError(res, 422, error.message);
     }
-    if (source.provenance !== PROVENANCE.DEMO_SOURCE && !isRealApprovedStreamer(streamer)) {
+    if (!isSafeInternalDraftSource(source) && !isRealApprovedStreamer(streamer)) {
       await logEvent("permission_blocked", "Package blocked for unapproved streamer", { candidateId: candidate.id });
       return sendError(res, 403, "Streamer permission is not approved");
     }
@@ -6159,7 +7155,7 @@ async function handleRequest(req, res) {
   }
 }
 
-const readyPromise = ensureStorage();
+const readyPromise = ensureStorage().then(recoverWatchSessions);
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await readyPromise;

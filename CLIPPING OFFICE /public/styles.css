@@ -8878,3 +8878,127 @@ h1 {
     display: none;
   }
 }
+
+.watch-session-panel {
+  display: grid;
+  gap: 14px;
+  border-color: rgba(34, 211, 238, 0.22);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(34, 211, 238, 0.12), transparent 32%),
+    radial-gradient(circle at 92% 10%, rgba(139, 92, 246, 0.14), transparent 30%),
+    rgba(4, 10, 24, 0.82);
+}
+
+.watch-session-panel.idle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.watch-session-main,
+.watch-session-actions,
+.watch-session-truth,
+.watch-session-feed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.watch-session-main {
+  justify-content: space-between;
+}
+
+.watch-session-main h2 {
+  margin: 3px 0 4px;
+  font-size: 1.1rem;
+  letter-spacing: 0;
+}
+
+.watch-session-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.watch-session-actions .danger {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.watch-session-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(86px, 1fr));
+  gap: 8px;
+}
+
+.watch-session-grid span,
+.watch-session-feed span {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 12px;
+  background: rgba(2, 8, 20, 0.62);
+}
+
+.watch-session-grid b,
+.watch-session-feed b {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-session-grid em,
+.watch-session-feed em {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-session-truth {
+  flex-wrap: wrap;
+}
+
+.watch-session-truth span {
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(2, 8, 20, 0.64);
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
+.watch-session-truth span.good {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.watch-session-truth span.warn {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.watch-session-truth span.bad {
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.28);
+}
+
+.watch-session-feed {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+@media (max-width: 1180px) {
+  .watch-session-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .watch-session-feed {
+    grid-template-columns: 1fr;
+  }
+}

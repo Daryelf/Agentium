@@ -27,6 +27,12 @@ const state = {
   approvals: [],
   artifacts: [],
   logs: [],
+  watchSessions: [],
+  activeWatchSessions: [],
+  watchEvents: [],
+  watchHydrated: false,
+  watchEventSource: null,
+  watchEventSourceSessionId: "",
   handoffs: [],
   smokeTest: null,
   browser: null,
@@ -47,6 +53,7 @@ const state = {
   agentRunBusy: false,
   agentChatOpen: false,
   selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
+  selectedWatchSessionId: localStorage.getItem("selectedWatchSessionId") || "",
   previewCandidateId: "",
   selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
   selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
@@ -357,7 +364,7 @@ function toast(message, tone = "info") {
 }
 
 async function loadCore() {
-  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, handoffs, smoke, studio, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
+  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, handoffs, smoke, studio, watchSessions, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
     api("/api/health"),
     api("/api/config"),
     api("/api/openai/status"),
@@ -370,6 +377,7 @@ async function loadCore() {
     api("/api/handoffs"),
     api("/api/system/smoke-test"),
     api("/api/clipping-office/project"),
+    api("/api/watch-sessions/active"),
     api("/api/twitch/streamers"),
     api("/api/clips/candidates"),
     api("/api/clips/packages"),
@@ -391,6 +399,10 @@ async function loadCore() {
     handoffs: handoffs.handoffs || [],
     smokeTest: smoke.latest || null,
     studio,
+    watchSessions: watchSessions.sessions || [],
+    activeWatchSessions: watchSessions.sessions || [],
+    watchEvents: watchSessions.events || [],
+    watchHydrated: true,
     streamers: streamers.streamers,
     candidates: candidates.candidates,
     packages: packages.packages,
@@ -399,7 +411,55 @@ async function loadCore() {
     artifacts: artifacts.artifacts,
     logs: logs.logs
   });
+  if (!state.selectedWatchSessionId || !state.watchSessions.some((session) => session.id === state.selectedWatchSessionId)) {
+    state.selectedWatchSessionId = state.watchSessions[0]?.id || "";
+    if (state.selectedWatchSessionId) localStorage.setItem("selectedWatchSessionId", state.selectedWatchSessionId);
+  }
+  connectWatchSessionEvents();
   updateStatus(posts.dailyLimit);
+}
+
+function connectWatchSessionEvents() {
+  const sessionId = state.selectedWatchSessionId || state.activeWatchSessions[0]?.id || "";
+  if (!sessionId || typeof EventSource === "undefined") {
+    if (state.watchEventSource) state.watchEventSource.close();
+    state.watchEventSource = null;
+    state.watchEventSourceSessionId = "";
+    return;
+  }
+  if (state.watchEventSource && state.watchEventSourceSessionId === sessionId) return;
+  if (state.watchEventSource) state.watchEventSource.close();
+  const source = new EventSource(appUrl(`/api/watch-sessions/${encodeURIComponent(sessionId)}/events`));
+  state.watchEventSource = source;
+  state.watchEventSourceSessionId = sessionId;
+  source.addEventListener("watch_event", (event) => {
+    try {
+      const parsed = JSON.parse(event.data);
+      state.watchEvents = [...state.watchEvents.filter((item) => item.id !== parsed.id), parsed].slice(-160);
+      if (parsed.type === "watcher_heartbeat") {
+        const session = state.activeWatchSessions.find((item) => item.id === parsed.sessionId);
+        if (session) {
+          session.heartbeatAt = parsed.payload?.heartbeatAt || session.heartbeatAt;
+          session.analyzedSeconds = parsed.payload?.analyzedSeconds ?? session.analyzedSeconds;
+          session.health = parsed.payload?.health || session.health;
+        }
+      }
+      if (["candidate_accepted", "candidate_rejected", "render_completed", "source_capability_degraded", "session_stopped"].includes(parsed.type)) {
+        window.clearTimeout(connectWatchSessionEvents.refreshTimer);
+        connectWatchSessionEvents.refreshTimer = window.setTimeout(() => loadCore().then(() => {
+          renderNav();
+          render();
+        }).catch(() => {}), 600);
+      } else if (state.view === "dashboard") {
+        render();
+      }
+    } catch {
+      // Ignore malformed event payloads; the next refresh will resync state.
+    }
+  });
+  source.onerror = () => {
+    if (state.view === "dashboard") render();
+  };
 }
 
 function updateStatus(limit) {
@@ -641,6 +701,7 @@ function renderDashboard() {
       </section>
     ` : ""}
     ${renderAgentRunPanel()}
+    ${renderWatchSessionPanel()}
     <div class="metric-strip">
       ${metric("Watched Streams", watched, `${streamers.length} real total`, "CAM", "good")}
       ${metric("Approved Streamers", approved, `${liveNow} live now`, "PRO", "violet")}
@@ -752,6 +813,82 @@ function renderAgentRunPanel() {
       ${recentSteps.length ? `<div class="agent-run-steps">${recentSteps.map((step) => `
         <span class="${esc(step.status)}"><b>${esc(step.tool)}</b><em>${esc(step.message)}</em></span>
       `).join("")}</div>` : ""}
+    </section>
+  `;
+}
+
+function renderWatchSessionPanel() {
+  const sessions = state.activeWatchSessions || [];
+  const selected = sessions.find((session) => session.id === state.selectedWatchSessionId) || sessions[0] || null;
+  if (!state.watchHydrated) {
+    return `
+      <section class="panel watch-session-panel">
+        <span class="eyebrow">Watcher Service</span>
+        <h2>Checking backend watcher...</h2>
+      </section>
+    `;
+  }
+  if (!selected) {
+    return `
+      <section class="panel watch-session-panel idle">
+        <div>
+          <span class="eyebrow">Watcher Service</span>
+          <h2>No active watch session</h2>
+          <p class="muted">Start a watch session when you want Agent 101 to monitor approved media. Nothing runs in the browser.</p>
+        </div>
+        <button class="primary" data-action="run-watch">Start watcher</button>
+      </section>
+    `;
+  }
+  const capabilities = selected.capabilities || {};
+  const activeEvents = state.watchEvents.filter((event) => event.sessionId === selected.id).slice(-5).reverse();
+  const health = selected.health || "backend_worker_active";
+  const statusLabel = health === "backend_worker_active"
+    ? "WATCHING — BACKEND WORKER ACTIVE"
+    : health === "metadata_only"
+      ? "METADATA-ONLY MONITORING"
+      : health === "disconnected"
+        ? "WATCHER DISCONNECTED"
+        : String(health).replaceAll("_", " ").toUpperCase();
+  const canPause = ["watching", "degraded", "reconnecting", "connecting", "queued"].includes(selected.status);
+  const canResume = selected.status === "paused";
+  return `
+    <section class="panel watch-session-panel active">
+      <div class="watch-session-main">
+        <div>
+          <span class="eyebrow">Watcher Service</span>
+          <h2>${esc(statusLabel)}</h2>
+          <p class="muted">${esc(selected.streamerName || "Unknown streamer")} · ${esc(selected.missionName || "Default mission")} · ${esc(selected.id)}</p>
+        </div>
+        <div class="watch-session-actions">
+          ${canPause ? `<button data-watch-session-action="pause" data-watch-session-id="${esc(selected.id)}">Pause</button>` : ""}
+          ${canResume ? `<button data-watch-session-action="resume" data-watch-session-id="${esc(selected.id)}">Resume</button>` : ""}
+          <button data-watch-session-action="reconnect" data-watch-session-id="${esc(selected.id)}">Reconnect</button>
+          <button class="danger" data-watch-session-action="stop" data-watch-session-id="${esc(selected.id)}">Stop</button>
+        </div>
+      </div>
+      <div class="watch-session-grid">
+        <span><b>${esc(selected.currentStage || selected.status)}</b><em>Current stage</em></span>
+        <span><b>${Math.round(Number(selected.analyzedSeconds || 0) / 60)}m</b><em>Analyzed</em></span>
+        <span><b>${esc(fmtDate(selected.heartbeatAt))}</b><em>Heartbeat</em></span>
+        <span><b>${esc(fmtDate(selected.lastMediaAt))}</b><em>Last media</em></span>
+        <span><b>${esc(selected.reconnectCount || 0)}</b><em>Reconnects</em></span>
+        <span><b>${esc(selected.candidatesDetected || 0)}</b><em>Detected</em></span>
+        <span><b>${esc(selected.candidatesAccepted || 0)}</b><em>Accepted</em></span>
+        <span><b>${esc(selected.candidatesRejected || 0)}</b><em>Rejected</em></span>
+        <span><b>${esc(selected.clipsRendered || 0)}</b><em>Rendered</em></span>
+      </div>
+      <div class="watch-session-truth">
+        <span class="${capabilities.hasLiveVideo ? "good" : "warn"}">${capabilities.hasLiveVideo ? "Video source verified" : "No playable video source"}</span>
+        <span class="${capabilities.hasAudio ? "good" : "neutral"}">${capabilities.hasAudio ? "Audio available" : "No audio signal"}</span>
+        <span class="${capabilities.hasChat ? "good" : "neutral"}">${capabilities.hasChat ? "Chat connected" : "No chat feed"}</span>
+        <span class="${capabilities.isAuthorized ? "good" : "bad"}">${capabilities.isAuthorized ? "Authorized" : "Permission required"}</span>
+      </div>
+      <div class="watch-session-feed">
+        ${activeEvents.length ? activeEvents.map((event) => `
+          <span><b>${esc(event.type.replaceAll("_", " "))}</b><em>${esc(event.payload?.message || event.payload?.reason || event.payload?.title || event.createdAt)}</em></span>
+        `).join("") : `<span><b>No watcher events yet</b><em>The worker will report source, signal, candidate, and render events here.</em></span>`}
+      </div>
     </section>
   `;
 }
@@ -4248,8 +4385,26 @@ async function refresh() {
 }
 
 async function runWatch() {
-  const result = await api("/api/watch/run", { method: "POST", body: "{}" });
-  toast(`Watch cycle complete: ${result.results.length} streamers checked`, "good");
+  const streamer = selectedStreamer();
+  const realReady = streamer && !isPracticeStreamer(streamer);
+  const body = realReady
+    ? {
+        mode: "real",
+        streamerId: streamer.id,
+        idempotencyKey: `watch:${streamer.id}:default`
+      }
+    : {
+        mode: "demo",
+        idempotencyKey: "practice-watch-cycle"
+      };
+  const result = await api("/api/watch-sessions", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+  state.selectedWatchSessionId = result.session?.id || state.selectedWatchSessionId;
+  if (state.selectedWatchSessionId) localStorage.setItem("selectedWatchSessionId", state.selectedWatchSessionId);
+  const health = result.session?.health || result.session?.status || "started";
+  toast(`${result.reused ? "Reconnected watcher" : "Started backend watcher"}: ${health.replaceAll("_", " ")}`, "good");
   await refresh();
 }
 
@@ -4815,6 +4970,9 @@ document.addEventListener("click", async (event) => {
   const openAgentChat = target.closest("[data-open-agent-chat]");
   const closeAgentChat = target.closest("[data-close-agent-chat]");
   const action = target.closest("[data-action]")?.dataset.action;
+  const watchSessionButton = target.closest("[data-watch-session-action]");
+  const watchSessionAction = watchSessionButton?.dataset.watchSessionAction;
+  const watchSessionId = watchSessionButton?.dataset.watchSessionId;
   const browserAction = target.closest("[data-browser-action]")?.dataset.browserAction;
   const browserTab = target.closest("[data-browser-tab]")?.dataset.browserTab;
   const browserShot = target.closest("[data-browser-shot]");
@@ -4859,6 +5017,12 @@ document.addEventListener("click", async (event) => {
     if (closePreview) {
       state.previewCandidateId = "";
       render();
+      return;
+    }
+    if (watchSessionAction && watchSessionId) {
+      await api(`/api/watch-sessions/${encodeURIComponent(watchSessionId)}/${watchSessionAction}`, { method: "POST", body: "{}" });
+      toast(`Watcher ${watchSessionAction} requested`, "good");
+      await refresh();
       return;
     }
     if (browserTab) {

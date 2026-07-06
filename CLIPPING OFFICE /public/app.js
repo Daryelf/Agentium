@@ -1,75 +1,67 @@
-const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: "grid", group: "core" },
-  { id: "watchlist", label: "Stream Watchlist", icon: "broadcast", group: "core", count: "streamers", tone: "neutral" },
-  { id: "radar", label: "Clip Radar", icon: "radar", group: "core", count: "candidates", tone: "info" },
-  { id: "builder", label: "Clip Builder", icon: "scissors", group: "core" },
-  { id: "browser", label: "Browser Workspace", icon: "browser", group: "core" },
-  { id: "queue", label: "Posting Queue", icon: "queue", group: "core", count: "queue", tone: "warn" },
-  { id: "gate", label: "Human Gate", icon: "shield", group: "core", count: "gate", tone: "pink" },
-  { id: "outputs", label: "Outputs", icon: "folder", group: "records" },
-  { id: "analytics", label: "Analytics", icon: "chart", group: "records" },
-  { id: "logs", label: "Logs", icon: "document", group: "records" },
-  { id: "settings", label: "Settings", icon: "settings", group: "admin" },
-  { id: "integrations", label: "Integrations", icon: "plug", group: "admin" }
-];
+const apiBasePath = window.location.pathname.startsWith("/apps/clipping-office")
+  ? "/apps/clipping-office"
+  : "";
+const verticalShortWorkflowId = "vertical_916_auto_frame_blur_background_bottom_sticker";
+
+function loadSavedWorkflowInputs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("capcutWorkflowInputs") || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 const state = {
-  view: "dashboard",
   config: null,
-  health: null,
-  openai: null,
-  twitch: null,
-  kick: null,
-  streamers: [],
-  candidates: [],
-  packages: [],
-  drafts: [],
-  approvals: [],
-  artifacts: [],
-  logs: [],
-  watchSessions: [],
-  activeWatchSessions: [],
-  watchEvents: [],
-  watchHydrated: false,
-  watchEventSource: null,
-  watchEventSourceSessionId: "",
-  handoffs: [],
-  smokeTest: null,
-  browser: null,
-  capcut: null,
-  media: null,
-  mediaSources: [],
-  integrations: null,
-  readiness: null,
-  studio: null,
-  studioTab: localStorage.getItem("studioTab") || "source",
-  studioSeek: null,
-  studioBusy: false,
-  browserBusy: false,
-  smokeBusy: false,
-  smokeModalOpen: false,
-  browserScreenshotStamp: 0,
-  recommendations: [],
-  recommendationsMessage: "",
-  agentRun: null,
-  agentRunBusy: false,
-  agentChatOpen: false,
-  selectedCandidateId: localStorage.getItem("selectedCandidateId") || "",
-  selectedWatchSessionId: localStorage.getItem("selectedWatchSessionId") || "",
-  previewCandidateId: "",
-  selectedStreamerId: localStorage.getItem("selectedStreamerId") || "",
-  selectedApprovalId: localStorage.getItem("selectedApprovalId") || ""
+  twitch: { configured: false, status: "checking" },
+  kick: { configured: false, status: "checking" },
+  streams: [],
+  clips: [],
+  lastQuery: "",
+  visibleCount: 5,
+  selectedStreamKey: "",
+  loading: false,
+  capcut: {
+    status: null,
+    teach: null,
+    macros: [],
+    workflows: [],
+    planner: null,
+    replay: null,
+    macroName: localStorage.getItem("capcutMacroName") || "vertical_916_blur_background_sticker",
+    workflowInputs: loadSavedWorkflowInputs(),
+    selectedBuilderClipId: localStorage.getItem("capcutSelectedBuilderClipId") || "",
+    selectedBuilderClip: null,
+    workflowInputStatus: null,
+    agentStatus: null,
+    snapshotBusy: false,
+    lastTeachSnapshotAt: 0,
+    loading: false,
+    dragMacroId: "",
+    // Macro Library starts collapsed so the Determinism Monitor gets focus;
+    // both remember the operator's last choice.
+    macroLibraryCollapsed: localStorage.getItem("capcutMacroLibraryCollapsed") !== "false",
+    monitorCollapsed: localStorage.getItem("capcutMonitorCollapsed") === "true",
+    error: ""
+  },
+  watch: {
+    stream: null,
+    streamer: null,
+    session: null,
+    events: [],
+    detailOpen: false,
+    keywordOpen: false,
+    loading: false,
+    error: ""
+  },
+  watchPollTimer: null
 };
 
 const $ = (selector) => document.querySelector(selector);
-const view = $("#view");
-const appBasePath = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
-const apiBasePath = appBasePath === "" ? "" : appBasePath;
 
-function appUrl(path) {
-  const normalized = String(path || "");
-  if (!apiBasePath || normalized.startsWith("http")) return normalized;
-  return `${apiBasePath}${normalized.startsWith("/") ? normalized : `/${normalized}`}`;
+function apiUrl(path) {
+  return `${apiBasePath}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function esc(value) {
@@ -81,5083 +73,2773 @@ function esc(value) {
     .replaceAll("'", "&#039;");
 }
 
-function fmtDate(value) {
-  if (!value) return "Never";
-  return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function formatNumber(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat().format(number);
 }
 
-function badge(text, tone = "neutral") {
-  return `<span class="pill ${tone}">${esc(text)}</span>`;
-}
-
-function streamerName(id) {
-  return state.streamers.find((streamer) => streamer.id === id)?.displayName || "Unknown streamer";
-}
-
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function countWhere(items, predicate) {
-  return items.filter(predicate).length;
-}
-
-function isPracticeStreamer(streamer) {
-  return Boolean(
-    streamer?.isDemo
-    || streamer?.permissionStatus === "demo_approved"
-    || streamer?.platform === "demo"
-    || /^demo_/.test(String(streamer?.liveStatus || ""))
-    || /demo|practice/i.test(String(streamer?.channelId || ""))
-  );
-}
-
-function isPracticeCandidate(candidate) {
-  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-  return Boolean(
-    candidate?.provenance === "DEMO_SOURCE"
-    || candidate?.sourceProvenance === "DEMO_SOURCE"
-    || /demo|practice|synthetic/i.test(String(candidate?.sourceType || ""))
-    || isPracticeStreamer(streamer)
-  );
-}
-
-function isPracticePackage(clipPackage) {
-  const candidate = state.candidates.find((item) => item.id === clipPackage?.candidateId);
-  return isPracticeCandidate(candidate);
-}
-
-function isPracticeDraft(draft) {
-  const clipPackage = state.packages.find((item) => item.id === draft?.clipPackageId);
-  return isPracticePackage(clipPackage);
-}
-
-function isPracticeApproval(approval) {
-  if (!approval) return false;
-  if (approval.linkedId === "project_clipping_office_main") return true;
-  const draft = state.drafts.find((item) => item.id === approval.linkedId);
-  const clipPackage = state.packages.find((item) => item.id === approval.linkedId);
-  const candidate = state.candidates.find((item) => item.id === approval.linkedId);
-  const streamer = state.streamers.find((item) => item.id === approval.linkedId);
-  return isPracticeDraft(draft) || isPracticePackage(clipPackage) || isPracticeCandidate(candidate) || isPracticeStreamer(streamer);
-}
-
-function isPracticeArtifact(artifact) {
-  const content = artifact?.content || {};
-  const candidate = state.candidates.find((item) => item.id === content.candidateId);
-  const clipPackage = state.packages.find((item) => item.id === content.clipPackageId);
-  return Boolean(
-    artifact?.provenance === "DEMO_SOURCE"
-    || content.provenance === "DEMO_SOURCE"
-    || /demo|practice/i.test(String(artifact?.title || ""))
-    || isPracticeCandidate(candidate)
-    || isPracticePackage(clipPackage)
-  );
-}
-
-function realStreamers() {
-  return state.streamers.filter((streamer) => !isPracticeStreamer(streamer));
-}
-
-function practiceStreamers() {
-  return state.streamers.filter(isPracticeStreamer);
-}
-
-function realCandidates() {
-  return state.candidates.filter((candidate) => !isPracticeCandidate(candidate));
-}
-
-function practiceCandidates() {
-  return state.candidates.filter(isPracticeCandidate);
-}
-
-function realPackages() {
-  return state.packages.filter((clipPackage) => !isPracticePackage(clipPackage));
-}
-
-function realDrafts() {
-  return state.drafts.filter((draft) => !isPracticeDraft(draft));
-}
-
-function realApprovals() {
-  return state.approvals.filter((approval) => !isPracticeApproval(approval));
-}
-
-function realArtifacts() {
-  return state.artifacts.filter((artifact) => !isPracticeArtifact(artifact));
-}
-
-function practiceArtifacts() {
-  return state.artifacts.filter(isPracticeArtifact);
-}
-
-function hasPracticeData() {
-  return Boolean(
-    practiceStreamers().length
-    || practiceCandidates().length
-    || countWhere(state.packages, isPracticePackage)
-    || countWhere(state.drafts, isPracticeDraft)
-    || countWhere(state.approvals, isPracticeApproval)
-    || practiceArtifacts().length
-  );
-}
-
-function disabledAttr(disabled, reason = "Unavailable") {
-  return disabled ? `disabled aria-disabled="true" title="${esc(reason)}"` : "";
-}
-
-function isPermissionReady(streamer) {
-  return ["approved", "demo_approved"].includes(streamer?.permissionStatus);
-}
-
-function dailyLimitValue() {
-  const approvedToday = countWhere(
-    realDrafts(),
-    (draft) => draft.approvalStatus === "approved" && (draft.approvedAt || draft.updatedAt || draft.createdAt || "").slice(0, 10) === todayKey()
-  );
-  return {
-    approvedToday,
-    limit: state.config?.postDailyLimit || 20,
-    pct: Math.min(100, Math.round((approvedToday / (state.config?.postDailyLimit || 20)) * 100))
-  };
-}
-
-function candidateTone(score) {
-  if (score >= 90) return "good";
-  if (score >= 60) return "warn";
-  return "info";
-}
-
-function initials(label) {
-  return String(label || "SC")
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function sparkline(seed = 0) {
-  return Array.from({ length: 12 }, (_, index) => {
-    const value = 16 + ((seed + index * 13) % 34);
-    return `<i style="height:${value}%"></i>`;
-  }).join("");
-}
-
-function resolvedThumbnailUrl(value) {
-  const url = String(value || "").trim();
-  if (!url) return "";
-  return url.replaceAll("{width}", "640").replaceAll("{height}", "360");
-}
-
-function candidateById(id) {
-  return state.candidates.find((candidate) => candidate.id === id) || null;
-}
-
-function bestCandidateForStreamer(streamerId) {
-  return state.candidates
-    .filter((candidate) => candidate.streamerId === streamerId)
-    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
-}
-
-function candidateThumbnailUrl(candidate) {
-  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-  return resolvedThumbnailUrl(candidate?.thumbnailUrl || candidate?.thumbnail || streamer?.liveThumbnailUrl || streamer?.thumbnailUrl || streamer?.thumbnail);
-}
-
-function streamThumbnailUrl(streamer) {
-  return resolvedThumbnailUrl(streamer?.liveThumbnailUrl || streamer?.thumbnailUrl || streamer?.thumbnail);
-}
-
-function mediaTitle(value, fallback = "Stream preview") {
-  return esc(String(value || fallback).slice(0, 42));
-}
-
-function previewFrame({
-  label = "LIVE",
-  title = "Clip preview",
-  subtitle = "",
-  timestamp = "00:00",
-  end = "00:30",
-  index = 0,
-  imageUrl = "",
-  candidateId = "",
-  className = "",
-  score = 0
-} = {}) {
-  const progress = Math.max(14, Math.min(88, Number(score || 0)));
-  return `
-    <div class="media-frame ${esc(className)} thumb-${index % 5}">
-      ${imageUrl ? `<img src="${esc(imageUrl)}" alt="" loading="lazy">` : ""}
-      <span class="media-badge">${esc(label)}</span>
-      ${candidateId
-        ? `<button class="media-play" type="button" data-preview-candidate="${esc(candidateId)}" aria-label="Play ${mediaTitle(title)}">Play</button>`
-        : `<span class="media-play locked" aria-hidden="true">Preview</span>`}
-      <div class="media-copy">
-        <strong>${mediaTitle(title)}</strong>
-        ${subtitle ? `<small>${esc(subtitle).slice(0, 58)}</small>` : ""}
-      </div>
-      <div class="media-timeline">
-        <b>${esc(timestamp)}</b>
-        <i><span style="width:${progress}%"></span></i>
-        <em>${esc(end)}</em>
-      </div>
-      <div class="media-bars">${sparkline(index * 11 + Number(score || 0))}</div>
-    </div>
-  `;
-}
-
-function miniThumb(label, index = 0) {
-  return previewFrame({
-    label: "LIVE",
-    title: label,
-    subtitle: `${(index + 1) * 3}.${index + 7}K watching`,
-    index,
-    className: "clip-thumb"
-  });
-}
-
-function renderSidebarOps() {
-  $("#sidebar-ops").innerHTML = `
-    <button class="sidebar-agent-chat-card" type="button" data-open-agent-chat aria-label="Open Agent 101 chat">
-      <span class="agent-chat-mark">A</span>
-      <div>
-        <strong>Open Agent 101</strong>
-        <small>Ask, run, and track work</small>
-      </div>
-      <span class="agent-chat-arrow" aria-hidden="true">Chat</span>
-    </button>
-    <a class="sidebar-return-card" href="/" aria-label="Back to Argentum">
-      <span class="return-mark">A</span>
-      <div>
-        <strong>Back to Argentum</strong>
-        <small>Return to Control Floor</small>
-      </div>
-      <span class="return-arrow" aria-hidden="true">Go</span>
-    </a>
-  `;
+function formatSeconds(value) {
+  const seconds = Math.max(0, Math.round(Number(value || 0)));
+  const mins = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return mins ? `${mins}:${String(rem).padStart(2, "0")}` : `${rem}s`;
 }
 
 async function api(path, options = {}) {
-  const isFormData = options.body instanceof FormData;
-  const response = await fetch(appUrl(path), {
-    ...options,
-    headers: isFormData
-      ? { ...(options.headers || {}) }
-      : {
-          "content-type": "application/json",
-          ...(options.headers || {})
-        }
-  });
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(json.error || `${response.status} ${response.statusText}`);
-  return json;
-}
-
-function toast(message, tone = "info") {
-  const node = $("#toast");
-  node.hidden = false;
-  node.textContent = message;
-  node.style.borderLeftColor = tone === "bad" ? "var(--red)" : tone === "good" ? "var(--green)" : "var(--cyan)";
-  window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => {
-    node.hidden = true;
-  }, 4200);
-}
-
-async function loadCore() {
-  const [health, config, openai, twitch, kick, browser, capcut, media, mediaSources, integrations, readiness, handoffs, smoke, studio, watchSessions, streamers, candidates, packages, posts, approvals, artifacts, logs] = await Promise.all([
-    api("/api/health"),
-    api("/api/config"),
-    api("/api/openai/status"),
-    api("/api/twitch/status"),
-    api("/api/kick/status"),
-    api("/api/browser/profile"),
-    api("/api/capcut/status"),
-    api("/api/media/status"),
-    api("/api/media/sources"),
-    api("/api/integrations/status"),
-    api("/api/readiness/audit"),
-    api("/api/handoffs"),
-    api("/api/system/smoke-test"),
-    api("/api/clipping-office/project"),
-    api("/api/watch-sessions/active"),
-    api("/api/twitch/streamers"),
-    api("/api/clips/candidates"),
-    api("/api/clips/packages"),
-    api("/api/posts/queue"),
-    api("/api/human-gate/approvals"),
-    api("/api/artifacts"),
-    api("/api/logs")
-  ]);
-  Object.assign(state, {
-    health,
-    config,
-    openai,
-    twitch,
-    kick,
-    browser,
-    capcut,
-    media,
-    mediaSources: mediaSources.sources || [],
-    integrations,
-    readiness,
-    handoffs: handoffs.handoffs || [],
-    smokeTest: smoke.latest || null,
-    studio,
-    watchSessions: watchSessions.sessions || [],
-    activeWatchSessions: watchSessions.sessions || [],
-    watchEvents: watchSessions.events || [],
-    watchHydrated: true,
-    streamers: streamers.streamers,
-    candidates: candidates.candidates,
-    packages: packages.packages,
-    drafts: posts.drafts,
-    approvals: approvals.approvals,
-    artifacts: artifacts.artifacts,
-    logs: logs.logs
-  });
-  if (!state.selectedWatchSessionId || !state.watchSessions.some((session) => session.id === state.selectedWatchSessionId)) {
-    state.selectedWatchSessionId = state.watchSessions[0]?.id || "";
-    if (state.selectedWatchSessionId) localStorage.setItem("selectedWatchSessionId", state.selectedWatchSessionId);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+  try {
+    const response = await fetch(apiUrl(path), {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const json = contentType.includes("application/json")
+      ? await response.json().catch(() => ({}))
+      : {};
+    if (!response.ok) throw new Error(json.error || json.message || `${response.status} ${response.statusText}`);
+    return json;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  connectWatchSessionEvents();
-  updateStatus(posts.dailyLimit);
 }
 
-function connectWatchSessionEvents() {
-  const sessionId = state.selectedWatchSessionId || state.activeWatchSessions[0]?.id || "";
-  if (!sessionId || typeof EventSource === "undefined") {
-    if (state.watchEventSource) state.watchEventSource.close();
-    state.watchEventSource = null;
-    state.watchEventSourceSessionId = "";
+function normalizeTwitchStream(stream) {
+  return {
+    id: stream.id || stream.streamId || `twitch:${stream.userLogin || stream.channelId || stream.displayName}`,
+    platform: "twitch",
+    displayName: stream.displayName || stream.userName || stream.userLogin || "Twitch streamer",
+    channelId: stream.userLogin || stream.channelId || stream.providerUserId || "",
+    channelUrl: stream.userLogin ? `https://www.twitch.tv/${stream.userLogin}` : stream.channelUrl || "",
+    title: stream.title || "Live on Twitch",
+    category: stream.gameName || stream.category || "Twitch",
+    viewerCount: Number(stream.viewerCount || 0),
+    thumbnail: stream.thumbnailUrl || stream.thumbnail || "",
+    startedAt: stream.startedAt || "",
+    source: "Official Twitch API",
+    liveVerified: true
+  };
+}
+
+function normalizeRecommendation(item) {
+  return {
+    id: `${item.platform}:${item.channelId || item.displayName}`,
+    platform: item.platform || "twitch",
+    displayName: item.displayName || item.channelId || "Live streamer",
+    channelId: item.channelId || "",
+    channelUrl: item.channelUrl || "",
+    title: item.title || `Live on ${item.platform || "stream"}`,
+    category: item.category || item.gameName || item.platform || "Live",
+    viewerCount: Number(item.viewerCount || 0),
+    thumbnail: item.thumbnail || item.thumbnailUrl || "",
+    startedAt: item.startedAt || "",
+    source: item.source || "Official provider API",
+    liveVerified: item.liveVerified !== false && item.sourceType === "official_live"
+  };
+}
+
+function mergeStreams(...groups) {
+  const seen = new Set();
+  return groups
+    .flat()
+    .filter(Boolean)
+    .filter((stream) => {
+      const key = `${stream.platform}:${String(stream.channelId || stream.displayName).toLowerCase()}`;
+      if (!stream.liveVerified || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => Number(b.viewerCount || 0) - Number(a.viewerCount || 0));
+}
+
+function matchesQuery(stream, query) {
+  if (!query) return true;
+  const haystack = [
+    stream.displayName,
+    stream.channelId,
+    stream.title,
+    stream.category,
+    stream.platform
+  ].join(" ").toLowerCase();
+  return haystack.includes(query.toLowerCase());
+}
+
+function streamKey(stream = {}) {
+  return `${stream.platform}:${stream.channelId || stream.displayName}`.toLowerCase();
+}
+
+function streamFromWatchSession(session = {}, streamer = {}) {
+  const thumbnail = String(streamer.liveThumbnailUrl || streamer.thumbnail || "")
+    .replace("{width}", "480")
+    .replace("{height}", "270");
+  return {
+    id: session.id || streamer.id || "",
+    platform: streamer.platform || "twitch",
+    displayName: streamer.displayName || session.streamerName || "Watched stream",
+    channelId: streamer.channelId || streamer.displayName || session.streamerName || "",
+    channelUrl: streamer.channelUrl || "",
+    title: streamer.liveTitle || session.title || session.currentStage || "Live stream",
+    category: streamer.liveCategory || session.category || "Live",
+    viewerCount: Number(streamer.liveViewerCount || session.viewerCount || 0),
+    thumbnail,
+    source: "Active backend watcher",
+    liveVerified: true
+  };
+}
+
+function setPill(provider, status) {
+  const pill = $(`#${provider}-pill`);
+  const count = $(`#${provider}-live-count`);
+  const label = $(`#${provider}-connection-status`);
+  if (!pill || !count || !label) return;
+
+  const providerStreams = state.streams.filter((stream) => stream.platform === provider);
+  count.textContent = String(providerStreams.length);
+  if (status.configured) {
+    pill.dataset.state = providerStreams.length ? "live" : "configured";
+    label.textContent = providerStreams.length ? "live" : "ready";
+  } else if (status.error) {
+    pill.dataset.state = "error";
+    label.textContent = "error";
+  } else {
+    pill.dataset.state = "offline";
+    label.textContent = "not configured";
+  }
+}
+
+function renderStatus(message = "") {
+  const node = $("#search-status");
+  if (!node) return;
+  node.textContent = message;
+}
+
+function thumbnailUrl(stream) {
+  return String(stream.thumbnail || "")
+    .replaceAll("{width}", "640")
+    .replaceAll("{height}", "360");
+}
+
+function streamCard(stream) {
+  const thumb = thumbnailUrl(stream);
+  const initials = String(stream.displayName || "S").slice(0, 2).toUpperCase();
+  const key = streamKey(stream);
+  const selected = state.selectedStreamKey === key;
+  return `
+    <article class="stream-card ${selected ? "selected" : ""}">
+      <div class="stream-thumb">
+        ${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span>${esc(initials)}</span>`}
+      </div>
+      <div class="stream-card-body">
+        <div class="stream-card-top">
+          <span class="platform-badge ${esc(stream.platform)}">${esc(stream.platform.toUpperCase())}</span>
+          <strong>${formatNumber(stream.viewerCount)} watching</strong>
+        </div>
+        <h2>${esc(stream.displayName)}</h2>
+        <p>${esc(stream.title)}</p>
+        <div class="stream-meta">
+          <span>${esc(stream.category)}</span>
+          <span>${esc(stream.source)}</span>
+        </div>
+        <div class="stream-actions">
+          ${stream.channelUrl ? `<a href="${esc(stream.channelUrl)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+          <button type="button" data-watch-streamer="${esc(key)}">${selected ? "Watching" : "Watch"}</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderStreams() {
+  const query = state.lastQuery.trim();
+  const rows = state.streams.filter((stream) => matchesQuery(stream, query));
+  const visibleRows = rows.slice(0, state.visibleCount);
+  const grid = $("#stream-results");
+  if (!grid) return;
+
+  setPill("twitch", state.twitch);
+  setPill("kick", state.kick);
+
+  if (state.loading) {
+    grid.innerHTML = `<div class="empty-state">Searching live streams...</div>`;
     return;
   }
-  if (state.watchEventSource && state.watchEventSourceSessionId === sessionId) return;
-  if (state.watchEventSource) state.watchEventSource.close();
-  const source = new EventSource(appUrl(`/api/watch-sessions/${encodeURIComponent(sessionId)}/events`));
-  state.watchEventSource = source;
-  state.watchEventSourceSessionId = sessionId;
-  source.addEventListener("watch_event", (event) => {
-    try {
-      const parsed = JSON.parse(event.data);
-      state.watchEvents = [...state.watchEvents.filter((item) => item.id !== parsed.id), parsed].slice(-160);
-      if (parsed.type === "watcher_heartbeat") {
-        const session = state.activeWatchSessions.find((item) => item.id === parsed.sessionId);
-        if (session) {
-          session.heartbeatAt = parsed.payload?.heartbeatAt || session.heartbeatAt;
-          session.analyzedSeconds = parsed.payload?.analyzedSeconds ?? session.analyzedSeconds;
-          session.health = parsed.payload?.health || session.health;
-        }
-      }
-      if (["candidate_accepted", "candidate_rejected", "render_completed", "source_capability_degraded", "session_stopped"].includes(parsed.type)) {
-        window.clearTimeout(connectWatchSessionEvents.refreshTimer);
-        connectWatchSessionEvents.refreshTimer = window.setTimeout(() => loadCore().then(() => {
-          renderNav();
-          render();
-        }).catch(() => {}), 600);
-      } else if (state.view === "dashboard") {
-        render();
-      }
-    } catch {
-      // Ignore malformed event payloads; the next refresh will resync state.
+
+  if (!rows.length) {
+    const providerText = state.twitch.configured || state.kick.configured
+      ? "No live streams matched that search. Try a creator, category, or leave search blank."
+      : "Twitch/Kick credentials are not configured in this runtime.";
+    grid.innerHTML = `<div class="empty-state">${esc(providerText)}</div>`;
+    return;
+  }
+
+  grid.innerHTML = `
+    ${visibleRows.map(streamCard).join("")}
+    ${state.visibleCount < rows.length ? `
+      <div class="more-row">
+        <button type="button" data-more-streams>More</button>
+        <span>${visibleRows.length} of ${rows.length} shown</span>
+      </div>
+    ` : ""}
+  `;
+  renderStatus(`${visibleRows.length} of ${rows.length} live stream${rows.length === 1 ? "" : "s"} shown`);
+  renderWatchArea();
+  renderClipsArea();
+}
+
+async function loadProviderStatus() {
+  const [config, twitch, kick] = await Promise.all([
+    api("/api/config").catch(() => null),
+    api("/api/twitch/status?validate=false").catch((error) => ({ configured: false, error: error.message })),
+    api("/api/kick/status").catch((error) => ({ configured: false, error: error.message }))
+  ]);
+  state.config = config;
+  state.twitch = twitch;
+  state.kick = kick;
+  setPill("twitch", twitch);
+  setPill("kick", kick);
+}
+
+async function searchStreams() {
+  const input = $("#stream-search-input");
+  const button = $("#stream-search-button");
+  state.lastQuery = input?.value || "";
+  state.visibleCount = 5;
+  state.loading = true;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Searching";
+  }
+  renderStatus("Searching official provider APIs...");
+  renderStreams();
+
+  try {
+    await loadProviderStatus();
+    const requests = [];
+    if (state.twitch.configured) {
+      requests.push(
+        api("/api/twitch/live-streams?count=30")
+          .then((result) => (result.streams || []).map(normalizeTwitchStream))
+      );
     }
-  });
-  source.onerror = () => {
-    if (state.view === "dashboard") render();
-  };
+    if (state.kick.configured || state.twitch.configured) {
+      requests.push(
+        api("/api/streamers/recommendations?platform=all&limit=30")
+          .then((result) => (result.recommendations || []).map(normalizeRecommendation))
+      );
+    }
+
+    const settled = await Promise.allSettled(requests);
+    const streams = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    const errors = settled.filter((result) => result.status === "rejected").map((result) => result.reason?.message).filter(Boolean);
+    state.streams = mergeStreams(streams);
+    if (errors.length && !state.streams.length) {
+      renderStatus(errors[0]);
+    } else {
+      renderStatus(`${state.streams.length} live stream${state.streams.length === 1 ? "" : "s"} found`);
+    }
+  } catch (error) {
+    state.streams = [];
+    renderStatus(error.message || "Search failed");
+  } finally {
+    state.loading = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Search";
+    }
+    renderStreams();
+  }
 }
 
-function updateStatus(limit) {
-  $("#api-status").className = "pill good";
-  $("#api-status").textContent = "API online";
-  $("#openai-status").className = `pill ${state.openai?.configured ? "good" : "warn"}`;
-  $("#openai-status").textContent = state.openai?.configured ? "OpenAI live" : "OpenAI local";
-  const streamApisReady = Boolean(state.twitch?.configured || state.kick?.configured);
-  $("#twitch-status").className = `pill ${streamApisReady ? "good" : "warn"}`;
-  $("#twitch-status").textContent = streamApiStatusLabel();
-  $("#limit-status").className = `pill ${limit?.blocked ? "bad" : limit?.warning ? "warn" : "info"}`;
-  $("#limit-status").textContent = `${limit?.approvedToday ?? 0}/${limit?.limit ?? 20} approved`;
-  renderSidebarOps();
+function findStreamByKey(key) {
+  return state.streams.find((stream) => streamKey(stream) === String(key || "").toLowerCase()) || null;
 }
 
-function streamApiStatusLabel() {
-  const twitchReady = Boolean(state.twitch?.configured);
-  const kickReady = Boolean(state.kick?.configured);
-  if (twitchReady && kickReady) return "Twitch + Kick ready";
-  if (kickReady) return "Kick ready";
-  if (twitchReady) return "Twitch ready";
-  return "Stream API needed";
-}
-
-function renderNav() {
-  let lastGroup = "";
-  $("#nav").innerHTML = navItems
-    .map((item) => {
-      const { id, label, icon, group, route = id, tone = "" } = item;
-      const count = navCount(item.count);
-      const divider = lastGroup && lastGroup !== group ? `<span class="nav-divider"></span>` : "";
-      lastGroup = group;
-      return `
-        ${divider}
-        <button class="${state.view === id ? "active" : ""}" data-nav="${route}" data-nav-id="${id}">
-          <span class="nav-glyph nav-${esc(icon)}" aria-hidden="true">${navIcon(icon)}</span>
-          <em>${esc(label)}</em>
-          ${count ? `<b class="${esc(tone)}">${esc(count)}</b>` : ""}
-        </button>
-      `;
+async function upsertStreamer(stream, { monitorEnabled = false } = {}) {
+  return api("/api/twitch/streamers", {
+    method: "POST",
+    body: JSON.stringify({
+      platform: stream.platform,
+      displayName: stream.displayName,
+      channelId: stream.channelId,
+      channelUrl: stream.channelUrl,
+      liveStatus: "live",
+      permissionStatus: "approved",
+      monitorEnabled,
+      allowedUse: ["clips", "edits", "reposts"],
+      notes: `Added from live stream search. ${stream.viewerCount} viewers.`
     })
-    .join("");
-  $("#nav").onclick = (event) => {
-    const button = event.target.closest("[data-nav]");
-    if (!button) return;
-    setView(button.dataset.nav);
-  };
+  });
 }
 
-function navCount(key) {
-  if (key === "streamers") return realStreamers().length || "";
-  if (key === "candidates") return realCandidates().length || "";
-  if (key === "queue") return countWhere(realDrafts(), (draft) => draft.approvalStatus === "pending") || "";
-  if (key === "gate") return countWhere(realApprovals(), (approval) => approval.status === "pending") || "";
+function latestSignalEvents() {
+  return (state.watch.events || []).filter((event) =>
+    ["chat_spike_detected", "chat_keyword_detected", "tension_emote_spike", "recording_window_low_score", "recording_window_created", "candidate_review", "source_capture_completed", "source_connected", "source_capability_degraded"].includes(event.type)
+  ).slice(-10).reverse();
+}
+
+function watchEventLabel(event = {}) {
+  return String(event.type || "signal").replaceAll("_", " ");
+}
+
+function watchEventMessage(event = {}) {
+  const payload = event.payload || {};
+  return payload.message
+    || payload.reason
+    || payload.matchedKeywords?.join(", ")
+    || payload.keywords?.join(", ")
+    || "Signal logged";
+}
+
+function watchStatusText(session, stage) {
+  if (state.watch.error) return "Needs attention";
+  if (!session) return stage;
+  if (session.status === "watching") return "Watching";
+  return session.status || stage;
+}
+
+function watchMediaStatus(capabilities = {}) {
+  if (capabilities.hasLiveVideo && capabilities.hasAudio) return "Verified video + audio";
+  if (capabilities.hasLiveVideo) return "Verified video";
+  return "Recorder waiting";
+}
+
+function uniqueKeywords(items = []) {
+  const seen = new Set();
+  return items
+    .flatMap((item) => Array.isArray(item) ? item : [item])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function detectedWatchKeywords(session, events = []) {
+  const eventKeywords = (events || []).flatMap((event) => {
+    const payload = event.payload || {};
+    return [
+      payload.keyword,
+      payload.matchedKeyword,
+      payload.matchedKeywords,
+      payload.keywords
+    ];
+  });
+  return uniqueKeywords([session?.lastChatKeyword, eventKeywords]);
+}
+
+function allWatchKeywords(session, keywords = [], events = []) {
+  return uniqueKeywords([detectedWatchKeywords(session, events), keywords]);
+}
+
+function topWatchKeywords(session, keywords = [], events = [], limit = 5) {
+  return allWatchKeywords(session, keywords, events).slice(0, limit);
+}
+
+function watchKeywordStatus(session, keywords = [], events = []) {
+  const topKeywords = topWatchKeywords(session, keywords, events, 5);
+  return topKeywords.length ? topKeywords.join(", ") : "No keywords armed";
+}
+
+function renderKeywordModal({ session, events, keywords }) {
+  if (!state.watch.keywordOpen) return "";
+  const detected = detectedWatchKeywords(session, events);
+  const topKeywords = topWatchKeywords(session, keywords, events, 5);
+  const allKeywords = allWatchKeywords(session, keywords, events);
+  return `
+    <div class="watch-modal" data-keywords-modal>
+      <div class="watch-modal-card keyword-card" role="dialog" aria-modal="true" aria-label="Watch keywords">
+        <div class="watch-modal-head">
+          <div>
+            <span class="watch-kicker">Keyword Intelligence</span>
+            <h3>Watch triggers</h3>
+            <p>Top triggers are shown in the watch bar. The full armed list stays available here.</p>
+          </div>
+          <button type="button" class="icon-close" data-close-keywords aria-label="Close keywords">&times;</button>
+        </div>
+        <div class="keyword-section">
+          <h4>Top 5 now</h4>
+          <div class="keyword-cloud hot">
+            ${topKeywords.length ? topKeywords.map((keyword) => `<span>${esc(keyword)}</span>`).join("") : `<span>No keywords armed</span>`}
+          </div>
+        </div>
+        <div class="keyword-section">
+          <h4>Detected in this watch</h4>
+          <div class="keyword-cloud detected">
+            ${detected.length ? detected.map((keyword) => `<span>${esc(keyword)}</span>`).join("") : `<span>No live keyword hits yet</span>`}
+          </div>
+        </div>
+        <div class="keyword-section">
+          <h4>All armed keywords</h4>
+          <div class="keyword-cloud">
+            ${allKeywords.length ? allKeywords.map((keyword) => `<span>${esc(keyword)}</span>`).join("") : `<span>No configured keyword list found</span>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWatchDetailModal({ stream, session, events, score, chatPpm, keywords, capabilities }) {
+  if (!state.watch.detailOpen) return "";
+  const recentClips = currentClips().slice(0, 5);
+  return `
+    <div class="watch-modal" data-watch-detail-modal>
+      <div class="watch-modal-card" role="dialog" aria-modal="true" aria-label="Watch details">
+        <div class="watch-modal-head">
+          <div>
+            <span class="watch-kicker">Signal Detail</span>
+            <h3>${esc(stream.displayName)}</h3>
+            <p>${esc(stream.title || "Live stream")}</p>
+          </div>
+          <button type="button" class="icon-close" data-close-watch-detail aria-label="Close details">&times;</button>
+        </div>
+        <div class="watch-modal-grid">
+          <div>
+            <small>Status</small>
+            <strong>${esc(watchStatusText(session, session?.currentStage || "Ready"))}</strong>
+            <span>${esc(session?.currentStage || "Waiting for watcher")}</span>
+          </div>
+          <div>
+            <small>Clip signal</small>
+            <strong>${score}%</strong>
+            ${renderSignalMeter(score)}
+          </div>
+          <div>
+            <small>Chat velocity</small>
+            <strong>${formatNumber(chatPpm)}/min</strong>
+            <span>${esc(watchKeywordStatus(session, keywords, events))}</span>
+          </div>
+          <div>
+            <small>Video/audio</small>
+            <strong>${esc(watchMediaStatus(capabilities))}</strong>
+            <span>${capabilities.hasLiveVideo ? "Local MP4 source ready" : "Waiting for recorder buffer"}</span>
+          </div>
+        </div>
+        <div class="watch-modal-section">
+          <h4>Chat + Capture Signals</h4>
+          <div class="watch-events detail">
+            ${events.length ? events.map((event) => `
+              <span>
+                <b>${esc(watchEventLabel(event))}</b>
+                <em>${esc(watchEventMessage(event))}</em>
+              </span>
+            `).join("") : `<span><b>Waiting</b><em>No chat spike or capture signal has been logged yet.</em></span>`}
+          </div>
+        </div>
+        <div class="watch-modal-section">
+          <h4>Saved Clip Windows</h4>
+          <div class="watch-mini-clips">
+            ${recentClips.length ? recentClips.map((clip) => `
+              <span>
+                <b>${esc(clip.title || "Clip window")}</b>
+                <em>${esc(clipStatusLabel(clip))} · ${formatSeconds(clip.durationSeconds || clip.duration || 30)} · ${Number(clip.score || 0) || 0}%</em>
+              </span>
+            `).join("") : `<span><b>No MP4 yet</b><em>Capture is armed for the next qualifying window.</em></span>`}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function currentClips() {
+  const sessionId = state.watch.session?.id || "";
+  const streamerId = state.watch.streamer?.id || "";
+  if (!sessionId && !streamerId) return [];
+  return (state.clips || [])
+    .filter((clip) => {
+      if (clipApprovedForBuilder(clip) || clipDeclined(clip)) return false;
+      if (sessionId && clip.watchSessionId === sessionId) return true;
+      if (streamerId && clip.streamerId === streamerId) return true;
+      return false;
+    })
+    .sort((a, b) => String(b.createdAt || b.updatedAt || "").localeCompare(String(a.createdAt || a.updatedAt || "")))
+    .slice(0, 10);
+}
+
+function clipPlaybackUrl(clip = {}) {
+  if (clip.mediaPlayable && clip.sourceId) return apiUrl(`/api/media/sources/${encodeURIComponent(clip.sourceId)}/playback`);
+  if (clip.playbackUrl) return apiUrl(clip.playbackUrl);
   return "";
 }
 
-function navIcon(icon) {
-  const icons = {
-    grid: `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>`,
-    broadcast: `<svg viewBox="0 0 24 24"><path d="M8 8a6 6 0 0 0 0 8"/><path d="M16 8a6 6 0 0 1 0 8"/><circle cx="12" cy="12" r="2"/><path d="M5 5a10 10 0 0 0 0 14"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>`,
-    radar: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 12h8"/><path d="M12 4v3"/><path d="M4 12h3"/></svg>`,
-    scissors: `<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 20 18"/><path d="M8 15.5 20 6"/></svg>`,
-    queue: `<svg viewBox="0 0 24 24"><path d="M4 6h14"/><path d="M4 12h16"/><path d="M4 18h12"/><path d="M19 6v5"/></svg>`,
-    shield: `<svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.5-2.7 7.6-7 10-4.3-2.4-7-5.5-7-10V6l7-3Z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10 11V9.5a2 2 0 0 1 4 0V11"/></svg>`,
-    folder: `<svg viewBox="0 0 24 24"><path d="M3 7.5h7l2 2h9v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>`,
-    chart: `<svg viewBox="0 0 24 24"><path d="M5 20V9"/><path d="M12 20V4"/><path d="M19 20v-7"/></svg>`,
-    document: `<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"/><path d="M14 3v4h4"/><path d="M9 12h6"/><path d="M9 16h5"/></svg>`,
-    settings: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="m4.8 4.8 2.1 2.1"/><path d="m17.1 17.1 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m4.8 19.2 2.1-2.1"/><path d="m17.1 6.9 2.1-2.1"/></svg>`,
-    plug: `<svg viewBox="0 0 24 24"><path d="M9 3v6"/><path d="M15 3v6"/><path d="M7 9h10v3a5 5 0 0 1-10 0Z"/><path d="M12 17v4"/></svg>`,
-    browser: `<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/><path d="M7 7h.01"/><path d="M10 7h.01"/><path d="M7 13h5"/><path d="M7 16h8"/></svg>`,
-    team: `<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="10" r="2"/><path d="M15 16a5 5 0 0 1 6 4"/></svg>`
-  };
-  return icons[icon] || icons.grid;
+function clipStatusLabel(clip = {}) {
+  if (clip.builderApproved || clip.builderStatus === "approved" || clip.status === "builder_ready") return "Builder ready";
+  if (clip.mediaPlayable || clip.bufferStatus === "verified_media_window") return "MP4 saved";
+  if (clip.bufferStatus === "source_pending") return "Waiting for MP4";
+  return clip.status || clip.decision || "Tracking";
 }
 
-function setView(id) {
-  state.view = id;
-  const label = navItems.find((item) => item.id === id)?.label || "Dashboard";
-  $("#view-title").textContent = label;
-  $("#view-subtitle").textContent = subtitleFor(id);
-  renderNav();
-  render();
-  if (id === "browser") {
-    loadBrowserState()
-      .then(() => {
-        if (state.view !== "browser") return;
-        renderNav();
-        render();
-      })
-      .catch((error) => toast(error.message, "bad"));
-  }
+function clipApprovedForBuilder(clip = {}) {
+  return Boolean(clip.builderApproved || clip.builderStatus === "approved" || clip.status === "builder_ready");
 }
 
-function subtitleFor(id) {
-  return {
-    dashboard: "System status and daily queue",
-    watchlist: "Streamer permissions and monitoring",
-    radar: "Detected moments and scoring",
-    builder: "9:16 packages and CapCut handoffs",
-    browser: "Supervised browser and manual tool handoffs",
-    queue: "Draft-only social packages",
-    gate: "Review and approve critical actions before they go live",
-    outputs: "Exported briefs and caption files",
-    analytics: "Agent and streamer operating intelligence",
-    logs: "System event trail",
-    settings: "Backend status and limits",
-    integrations: "Server-side connectors and manual handoffs"
-  }[id];
+function clipDeclined(clip = {}) {
+  return Boolean(clip.operatorDeclined || clip.declinedAt || clip.status === "rejected" || clip.decision === "rejected");
 }
 
-function render() {
-  const renderers = {
-    dashboard: renderDashboard,
-    watchlist: renderWatchlist,
-    radar: renderRadar,
-    builder: renderBuilder,
-    browser: renderBrowserWorkspace,
-    queue: renderQueue,
-    gate: renderGate,
-    outputs: renderOutputs,
-    analytics: renderAnalytics,
-    logs: renderLogs,
-    settings: renderSettings,
-    integrations: renderIntegrations
-  };
-  const renderer = renderers[state.view] || renderDashboard;
-  try {
-    renderer();
-    view.insertAdjacentHTML("beforeend", renderClipPreviewModal());
-    view.insertAdjacentHTML("beforeend", renderAgentChatDrawer());
-    queueMicrotask(hydrateStudioPlayers);
-  } catch (error) {
-    console.error(error);
-    view.innerHTML = `<section class="panel">${empty(`Could not open ${state.view}: ${error.message}`)}</section>`;
-  }
-}
-
-function renderAgentChatDrawer() {
-  if (!state.agentChatOpen) return "";
-  const run = state.agentRun || {};
-  const status = state.agentRunBusy ? "running" : run.status || "ready";
-  const progress = state.agentRunBusy ? Math.max(8, Number(run.progress || 8)) : Number(run.progress || 0);
-  const counts = run.counts || {};
-  const recentSteps = (run.steps || []).slice(-5);
-  const recentLogs = state.logs.slice(0, 5);
-  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "needs_approval" ? "warn" : status === "running" ? "info" : "neutral";
+function renderClipItem(clip) {
+  const playback = clipPlaybackUrl(clip);
+  const score = Number(clip.score || clip.qualityScore || 0);
+  const approved = clipApprovedForBuilder(clip);
   return `
-    <div class="agent-chat-overlay" role="dialog" aria-modal="true" aria-label="Agent 101 chat">
-      <section class="agent-chat-drawer">
-        <header class="agent-chat-header">
-          <div>
-            <span class="eyebrow">Agent 101 command chat</span>
-            <h2>Ask Agent 101 to run safe work</h2>
-            <p>Drafts, clip candidates, packages, CapCut briefs, posting drafts, logs, and Human Gate requests.</p>
-          </div>
-          <button class="icon-button" type="button" data-close-agent-chat aria-label="Close Agent 101 chat">×</button>
-        </header>
-
-        <div class="agent-chat-status">
-          ${badge(status, statusTone)}
-          <span><b>${esc(run.currentStep || "Ready")}</b><small>Current step</small></span>
-          <span><b>${esc(counts.candidates || 0)}</b><small>Candidates</small></span>
-          <span><b>${esc(counts.artifacts || 0)}</b><small>Artifacts</small></span>
-        </div>
-        <div class="agent-chat-progress"><span style="width:${Math.min(100, Math.max(0, progress))}%"></span></div>
-
-        <div class="agent-chat-thread" aria-live="polite">
-          <article class="chat-bubble agent">
-            <b>Agent 101</b>
-            <p>${esc(run.summary || "I am ready. Tell me what clipping work to run. Safe internal draft work can run now; posting and uploads stay behind Human Gate.")}</p>
-          </article>
-          ${recentSteps.length ? recentSteps.map((step) => `
-            <article class="chat-bubble system ${esc(step.status || "")}">
-              <b>${esc(step.tool || "Step")}</b>
-              <p>${esc(step.message || step.status || "Updated")}</p>
-            </article>
-          `).join("") : ""}
-          ${recentLogs.length ? `
-            <div class="agent-chat-log">
-              <span>Latest activity</span>
-              ${recentLogs.map((log) => `<p><b>${esc(log.module || "System")}</b> ${esc(log.event || log.details || "Updated")}</p>`).join("")}
-            </div>
-          ` : ""}
-        </div>
-
-        <form id="global-agent101-command-form" class="agent-chat-form">
-          <textarea name="goal" rows="3" placeholder="Tell Agent 101 what to run, e.g. find 5 practice streams and make clip candidates"></textarea>
-          <div>
-            <button type="button" data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run practice workflow</button>
-            <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Send</button>
-          </div>
-        </form>
-      </section>
-    </div>
-  `;
-}
-
-function renderDashboard() {
-  const streamers = realStreamers();
-  const candidates = realCandidates();
-  const drafts = realDrafts();
-  const approvals = realApprovals();
-  const watched = countWhere(streamers, (item) => item.monitorEnabled);
-  const approved = countWhere(streamers, (streamer) => streamer.permissionStatus === "approved");
-  const liveNow = countWhere(streamers, (item) => String(item.liveStatus || "").includes("live"));
-  const pendingCandidates = countWhere(candidates, (candidate) => candidate.status === "candidate");
-  const highScore = countWhere(candidates, (candidate) => Number(candidate.score || 0) >= 60);
-  const ready = countWhere(candidates, (candidate) => candidate.status === "packaged");
-  const queuedToday = countWhere(drafts, (draft) => (draft.createdAt || "").slice(0, 10) === todayKey());
-  const awaitingApproval = countWhere(drafts, (draft) => draft.approvalStatus === "pending");
-  const pendingApprovals = countWhere(approvals, (approval) => approval.status === "pending");
-  const practice = {
-    streamers: practiceStreamers().length,
-    candidates: practiceCandidates().length,
-    drafts: countWhere(state.drafts, isPracticeDraft),
-    approvals: countWhere(state.approvals, isPracticeApproval)
-  };
-  const approvedToday = dailyLimitValue().approvedToday;
-  view.innerHTML = `
-    <div class="dashboard-hero">
+    <article class="clip-item ${playback ? "ready" : "pending"} ${approved ? "approved" : ""}">
       <div>
-        <span class="eyebrow">Realtime AI clipping desk</span>
-        <h2>StreamClipper Command</h2>
-        <p>Monitor approved creators, score moments, build 9:16 packages, and hold every risky external step at Human Gate.</p>
+        <span>${esc(clipStatusLabel(clip))}</span>
+        <strong>${esc(clip.title || "Clip window")}</strong>
+        <small>${esc(clip.streamerName || "Watched stream")} · ${formatSeconds(clip.durationSeconds || clip.duration || state.config?.recordingWindowSeconds || 30)} · ${score ? `${score}% signal` : "scoring pending"} · target 9:16</small>
       </div>
-      <div class="hero-actions">
-        <button class="primary" data-action="agent101-demo-workflow">Run Practice Workflow</button>
-        <button data-action="run-watch">Run Watch Cycle</button>
-        <button data-action="seed-demo">Start Practice Project</button>
-        ${practice.streamers || practice.candidates ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
-      </div>
-    </div>
-    ${practice.streamers || practice.candidates || practice.drafts || practice.approvals ? `
-      <section class="practice-banner">
-        <strong>PRACTICE MEDIA — NOT A REAL STREAM</strong>
-        <span>${practice.streamers} practice streamer(s), ${practice.candidates} practice candidate(s), ${practice.drafts} draft(s), ${practice.approvals} approval item(s). These are excluded from real dashboard counts.</span>
-        <button data-action="clear-demo">Clear Practice Data</button>
-      </section>
-    ` : ""}
-    ${renderAgentRunPanel()}
-    ${renderWatchSessionPanel()}
-    <div class="metric-strip">
-      ${metric("Watched Streams", watched, `${streamers.length} real total`, "CAM", "good")}
-      ${metric("Approved Streamers", approved, `${liveNow} live now`, "PRO", "violet")}
-      ${metric("Clip Candidates", pendingCandidates, `${highScore} high score`, "AI", "info")}
-      ${metric("Ready Packages", ready, `${awaitingApproval} for review`, "PKG", "warn")}
-      ${metric("Posts Queued Today", queuedToday, `${approvedToday} approved`, "OUT", "good")}
-      ${metric("Human Gate", pendingApprovals, "Pending decisions", "GATE", "violet")}
-    </div>
-    <div class="dashboard-main">
-      <section class="panel live-desk">
-        <div class="toolbar">
-          <div>
-            <h2>Live Desk</h2>
-            <p class="muted">Realtime stream monitoring</p>
-          </div>
-          <div class="actions">
-            <button class="primary" data-action="run-watch">Run Watch Cycle</button>
-            <button data-nav-jump="gate">Open Human Gate</button>
-          </div>
-        </div>
-        ${renderLiveDesk()}
-      </section>
-      <section class="panel candidate-rail">
-        <div class="toolbar">
-          <h2>Top Clip Candidates</h2>
-          <button data-nav-jump="radar">View all</button>
-        </div>
-        ${renderTopCandidates()}
-      </section>
-    </div>
-    <div class="dashboard-lower">
-      <section class="panel funnel-panel">
-        <div class="toolbar">
-          <h2>Clip Funnel</h2>
-          <span class="pill info">Today</span>
-        </div>
-        ${renderFunnel({ watched, moments: candidates.length, highScore, ready, approved: approvedToday })}
-      </section>
-      <section class="panel activity-panel">
-        <div class="toolbar">
-          <h2>Activity Feed</h2>
-          <button data-nav-jump="logs">View all</button>
-        </div>
-        ${renderActivityFeed(5)}
-      </section>
-      <section class="panel system-panel">
-        <div class="toolbar">
-          <h2>System Status</h2>
-          <span class="pill good">Operational</span>
-        </div>
-        ${renderSystemTiles()}
-      </section>
-    </div>
-    <section class="panel quick-command">
-      <h2>Quick Actions</h2>
-      <div class="quick-grid">
-        <button data-nav-jump="watchlist"><span>A</span><b>Add Streamer</b><small>Monitor a channel</small></button>
-        <button data-action="run-watch"><span>R</span><b>Run Watch Cycle</b><small>Scan approved streams</small></button>
-        <button data-nav-jump="builder"><span>P</span><b>Create Clip Package</b><small>Build new package</small></button>
-        <button data-nav-jump="browser"><span>B</span><b>Browser Workspace</b><small>Open supervised tools</small></button>
-        <button data-nav-jump="gate"><span>G</span><b>Open Human Gate</b><small>Review approvals</small></button>
-        <button data-nav-jump="queue"><span>Q</span><b>Posting Queue</b><small>Manage drafts</small></button>
-        <button data-nav-jump="outputs"><span>O</span><b>View Outputs</b><small>Browse exports</small></button>
-      </div>
-    </section>
-  `;
-}
-
-function renderAgentRunPanel() {
-  const run = state.agentRun || {};
-  const status = state.agentRunBusy ? "running" : run.status || "idle";
-  const progress = state.agentRunBusy ? Math.max(8, Number(run.progress || 8)) : Number(run.progress || 0);
-  const counts = run.counts || {};
-  const steps = run.steps || [];
-  const recentSteps = steps.slice(-5);
-  const statusTone = status === "completed" ? "good" : status === "blocked" || status === "error" ? "bad" : status === "needs_approval" ? "warn" : status === "running" ? "info" : "neutral";
-  return `
-    <section class="panel agent-run-panel">
-      <div class="agent-run-head">
-        <div>
-          <span class="eyebrow">Agent 101 Runner</span>
-          <h2>Safe internal clipping workflow</h2>
-          <p class="muted">${esc(run.summary || "Run explicit Practice Mode tasks without logging in, uploading, publishing, spending, or changing accounts.")}</p>
-        </div>
-        ${badge(status === "idle" ? "Idle" : status, statusTone)}
-      </div>
-      <div class="agent-run-bar">
-        <span style="width:${Math.min(100, Math.max(0, progress))}%"></span>
-      </div>
-      <div class="agent-run-grid">
-        <span><b>${esc(run.currentStep || "Ready")}</b><em>Current step</em></span>
-        <span><b>${esc(counts.candidates || 0)}</b><em>New candidates</em></span>
-        <span><b>${esc(counts.packages || 0)}</b><em>New packages</em></span>
-        <span><b>${esc(counts.approvals || 0)}</b><em>Human Gate items</em></span>
-        <span><b>${esc(counts.artifacts || 0)}</b><em>Artifacts</em></span>
-      </div>
-      <form id="agent101-command-form" class="agent-run-command">
-        <input name="goal" placeholder="Tell Agent 101 what to run, e.g. test the Clips Office and package the top 3 clips">
-        <button class="primary" type="submit" ${state.agentRunBusy ? "disabled" : ""}>Run Agent 101</button>
-      </form>
-      <div class="agent-run-actions">
-        <button data-action="agent101-demo-workflow" ${state.agentRunBusy ? "disabled" : ""}>Run practice clipping workflow</button>
-        <button data-action="agent101-add-demo-streamers" ${state.agentRunBusy ? "disabled" : ""}>Add 5 practice streamers</button>
-        <button data-action="agent101-watch-cycle" ${state.agentRunBusy ? "disabled" : ""}>Run watch cycle</button>
-        <button data-action="agent101-create-candidates" ${state.agentRunBusy ? "disabled" : ""}>Generate clip candidates</button>
-        <button data-action="agent101-package-top3" ${state.agentRunBusy ? "disabled" : ""}>Package top 3 clips</button>
-        <button data-action="agent101-human-gate" ${state.agentRunBusy ? "disabled" : ""}>Send drafts to Human Gate</button>
-      </div>
-      ${recentSteps.length ? `<div class="agent-run-steps">${recentSteps.map((step) => `
-        <span class="${esc(step.status)}"><b>${esc(step.tool)}</b><em>${esc(step.message)}</em></span>
-      `).join("")}</div>` : ""}
-    </section>
-  `;
-}
-
-function renderWatchSessionPanel() {
-  const sessions = state.activeWatchSessions || [];
-  const selected = sessions.find((session) => session.id === state.selectedWatchSessionId) || sessions[0] || null;
-  if (!state.watchHydrated) {
-    return `
-      <section class="panel watch-session-panel">
-        <span class="eyebrow">Watcher Service</span>
-        <h2>Checking backend watcher...</h2>
-      </section>
-    `;
-  }
-  if (!selected) {
-    return `
-      <section class="panel watch-session-panel idle">
-        <div>
-          <span class="eyebrow">Watcher Service</span>
-          <h2>No active watch session</h2>
-          <p class="muted">Start a watch session when you want Agent 101 to monitor approved media. Nothing runs in the browser.</p>
-        </div>
-        <button class="primary" data-action="run-watch">Start watcher</button>
-      </section>
-    `;
-  }
-  const capabilities = selected.capabilities || {};
-  const activeEvents = state.watchEvents.filter((event) => event.sessionId === selected.id).slice(-5).reverse();
-  const health = selected.health || "backend_worker_active";
-  const statusLabel = health === "backend_worker_active"
-    ? "WATCHING — BACKEND WORKER ACTIVE"
-    : health === "metadata_only"
-      ? "METADATA-ONLY MONITORING"
-      : health === "disconnected"
-        ? "WATCHER DISCONNECTED"
-        : String(health).replaceAll("_", " ").toUpperCase();
-  const canPause = ["watching", "degraded", "reconnecting", "connecting", "queued"].includes(selected.status);
-  const canResume = selected.status === "paused";
-  return `
-    <section class="panel watch-session-panel active">
-      <div class="watch-session-main">
-        <div>
-          <span class="eyebrow">Watcher Service</span>
-          <h2>${esc(statusLabel)}</h2>
-          <p class="muted">${esc(selected.streamerName || "Unknown streamer")} · ${esc(selected.missionName || "Default mission")} · ${esc(selected.id)}</p>
-        </div>
-        <div class="watch-session-actions">
-          ${canPause ? `<button data-watch-session-action="pause" data-watch-session-id="${esc(selected.id)}">Pause</button>` : ""}
-          ${canResume ? `<button data-watch-session-action="resume" data-watch-session-id="${esc(selected.id)}">Resume</button>` : ""}
-          <button data-watch-session-action="reconnect" data-watch-session-id="${esc(selected.id)}">Reconnect</button>
-          <button class="danger" data-watch-session-action="stop" data-watch-session-id="${esc(selected.id)}">Stop</button>
-        </div>
-      </div>
-      <div class="watch-session-grid">
-        <span><b>${esc(selected.currentStage || selected.status)}</b><em>Current stage</em></span>
-        <span><b>${Math.round(Number(selected.analyzedSeconds || 0) / 60)}m</b><em>Analyzed</em></span>
-        <span><b>${esc(fmtDate(selected.heartbeatAt))}</b><em>Heartbeat</em></span>
-        <span><b>${esc(fmtDate(selected.lastMediaAt))}</b><em>Last media</em></span>
-        <span><b>${esc(selected.reconnectCount || 0)}</b><em>Reconnects</em></span>
-        <span><b>${esc(selected.candidatesDetected || 0)}</b><em>Detected</em></span>
-        <span><b>${esc(selected.candidatesAccepted || 0)}</b><em>Accepted</em></span>
-        <span><b>${esc(selected.candidatesRejected || 0)}</b><em>Rejected</em></span>
-        <span><b>${esc(selected.clipsRendered || 0)}</b><em>Rendered</em></span>
-      </div>
-      <div class="watch-session-truth">
-        <span class="${capabilities.hasLiveVideo ? "good" : "warn"}">${capabilities.hasLiveVideo ? "Video source verified" : "No playable video source"}</span>
-        <span class="${capabilities.hasAudio ? "good" : "neutral"}">${capabilities.hasAudio ? "Audio available" : "No audio signal"}</span>
-        <span class="${capabilities.hasChat ? "good" : "neutral"}">${capabilities.hasChat ? "Chat connected" : "No chat feed"}</span>
-        <span class="${capabilities.isAuthorized ? "good" : "bad"}">${capabilities.isAuthorized ? "Authorized" : "Permission required"}</span>
-      </div>
-      <div class="watch-session-feed">
-        ${activeEvents.length ? activeEvents.map((event) => `
-          <span><b>${esc(event.type.replaceAll("_", " "))}</b><em>${esc(event.payload?.message || event.payload?.reason || event.payload?.title || event.createdAt)}</em></span>
-        `).join("") : `<span><b>No watcher events yet</b><em>The worker will report source, signal, candidate, and render events here.</em></span>`}
-      </div>
-    </section>
-  `;
-}
-
-function metric(label, value, detail = "", icon = "SC", tone = "info") {
-  return `
-    <section class="panel metric metric-${esc(tone)}">
-      <span class="metric-icon">${esc(icon)}</span>
-      <div>
-        <span>${esc(label)}</span>
-        <strong>${esc(value)}</strong>
-        <small>${esc(detail)}</small>
-      </div>
-    </section>
-  `;
-}
-
-function renderLiveDesk() {
-  const streamers = realStreamers();
-  const practice = practiceStreamers();
-  if (!streamers.length) {
-    return `
-      <div class="empty-mission">
-        <strong>No real streamers loaded yet</strong>
-        <p>Add approved creators manually to use Real Mode. Practice Mode is available for safe local testing and is excluded from real metrics.</p>
-        <div class="actions">
-          <button class="primary" data-nav-jump="watchlist">Add Real Streamer</button>
-          <button data-action="seed-demo">Start Practice Project</button>
-          ${practice.length ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
-        </div>
-        ${practice.length ? `<small class="practice-inline">PRACTICE MEDIA — NOT A REAL STREAM: ${practice.length} practice streamer(s) currently loaded.</small>` : ""}
-      </div>
-    `;
-  }
-  const cards = streamers.slice(0, 5).map((streamer, index) => {
-    const relatedCandidate = bestCandidateForStreamer(streamer.id);
-    const status = liveStatusMeta(streamer);
-    return `
-    <article class="stream-card" data-select-streamer="${esc(streamer.id)}">
-      ${previewFrame({
-        label: streamer.liveStatus === "live" ? "LIVE" : status.label,
-        title: streamer.liveTitle || `${streamer.displayName} stream`,
-        subtitle: streamer.liveCategory || streamer.notes || "Local monitored source",
-        timestamp: relatedCandidate?.timestampStart || "00:00:00",
-        end: relatedCandidate?.timestampEnd || `${relatedCandidate?.duration || 30}s`,
-        index,
-        imageUrl: streamThumbnailUrl(streamer),
-        candidateId: relatedCandidate?.id || "",
-        className: "clip-thumb stream-thumb",
-        score: relatedCandidate?.score || streamer.liveViewerCount || index * 8
-      })}
-      <div class="stream-meta">
-        <strong>${esc(streamer.displayName)}</strong>
-        ${permissionBadge(streamer.permissionStatus)}
-      </div>
-      <p>${esc(status.label)} · ${esc(streamer.platform)}${streamer.liveViewerCount ? ` · ${Number(streamer.liveViewerCount).toLocaleString()} viewers` : ""}</p>
-      <div class="stream-foot">
-        <span>${fmtDate(streamer.lastCheckedAt)}</span>
-        <span class="spark">${sparkline(index * 7)}</span>
-      </div>
-    </article>
-  `;
-  }).join("");
-  return `
-    <div class="stream-grid">
-      ${cards}
-      <button class="add-stream-card" data-nav-jump="watchlist"><b>+</b><span>Add Streamer</span><small>Monitor a new channel</small></button>
-    </div>
-    ${practice.length ? `<div class="practice-inline">PRACTICE MEDIA — NOT A REAL STREAM: ${practice.length} practice streamer(s) are available from Practice Mode.</div>` : ""}
-  `;
-}
-
-function renderTopCandidates() {
-  const real = [...realCandidates()].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-  const practice = [...practiceCandidates()].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-  const usingPractice = !real.length && practice.length;
-  const candidates = (usingPractice ? practice : real).slice(0, 5);
-  if (!candidates.length) return empty("No real candidates yet. Add an approved streamer and run a watch cycle, or start a Practice Project.");
-  return `<div class="candidate-list">${candidates.map((candidate, index) => `
-    <article class="candidate-row" data-select-candidate="${candidate.id}">
-      ${radarThumb(candidate, index + 2)}
-      <span class="candidate-score ${candidateTone(Number(candidate.score || 0))}">${Number(candidate.score || 0)}</span>
-      <div>
-        <strong>${esc(candidate.title)}</strong>
-        <small>${esc(streamerName(candidate.streamerId))} · ${esc(candidate.category || "Clip")}</small>
-        <em>${esc(candidate.timestampStart)} · ${esc(candidate.duration || 30)}s</em>
-      </div>
-      <span class="spark">${sparkline(Number(candidate.score || 0))}</span>
-    </article>
-  `).join("")}</div>${usingPractice ? practiceNotice("Practice candidates are shown because no real candidates exist yet.") : ""}`;
-}
-
-function renderFunnel({ watched, moments, highScore, ready, approved }) {
-  const rows = [
-    ["Streams Watched", watched, "funnel-1"],
-    ["Moments Detected", moments, "funnel-2"],
-    ["Strong Score (60+)", highScore, "funnel-3"],
-    ["Packages Created", ready, "funnel-4"],
-    ["Approved", approved, "funnel-5"]
-  ];
-  return `
-    <div class="funnel">
-      <div class="funnel-shape">
-        ${rows.map((row) => `<i class="${row[2]}"></i>`).join("")}
-      </div>
-      <div class="funnel-legend">
-        ${rows.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderActivityFeed(limit = 5) {
-  const logs = state.logs.slice(0, limit);
-  if (!logs.length) return empty("No activity yet");
-  return `<div class="activity-list">${logs.map((log, index) => `
-    <article>
-      <span>${esc(log.type?.slice(0, 2).toUpperCase() || "LG")}</span>
-      <p>${esc(log.message)}</p>
-      <time>${fmtDate(log.createdAt)}</time>
-    </article>
-  `).join("")}</div>`;
-}
-
-function renderSystemTiles() {
-  const tiles = [
-    ["Twitch API", state.twitch?.configured ? "Connected" : "Needs vars", state.twitch?.configured ? "good" : "warn"],
-    ["Kick API", state.kick?.configured ? "Connected" : "Needs vars", state.kick?.configured ? "good" : "warn"],
-    ["OpenAI API", state.openai?.configured ? "Connected" : "Local fallback", state.openai?.configured ? "good" : "warn"],
-    ["Storage", "Healthy", "good"],
-    ["Human Gate", countWhere(realApprovals(), (approval) => approval.status === "pending") ? "Reviewing" : "Ready", "info"]
-  ];
-  return `<div class="system-grid">${tiles.map(([label, value, tone]) => `
-    <span class="system-tile ${esc(tone)}"><b>${esc(label)}</b><em>${esc(value)}</em></span>
-  `).join("")}</div>`;
-}
-
-function renderWatchlist() {
-  const streamers = realStreamers();
-  const practice = practiceStreamers();
-  const liveCount = countWhere(streamers, isStreamerLive);
-  const monitoringCount = countWhere(streamers, (streamer) => streamer.monitorEnabled);
-  const offlineCount = countWhere(streamers, isStreamerConfirmedOffline);
-  const pendingCount = countWhere(streamers, (streamer) => streamer.permissionStatus === "pending");
-  const blockedCount = countWhere(streamers, (streamer) => streamer.permissionStatus === "blocked");
-  const selected = selectedStreamer();
-  view.innerHTML = `
-    <section class="watchlist-page">
-      ${practice.length ? practiceNotice(`${practice.length} practice streamer(s) are hidden from the Real Mode table and can be cleared safely.`, true) : ""}
-      <div class="watchlist-tabs">
-        <button class="active">All Streamers <b>${streamers.length}</b></button>
-        <button>Live Now <b>${liveCount}</b></button>
-        <button>Monitoring <b>${monitoringCount}</b></button>
-        <button>Offline <b>${offlineCount}</b></button>
-        <button>Pending <b>${pendingCount}</b></button>
-      </div>
-
-      <div class="watchlist-actions">
-        <button data-action="test-twitch">Import from Twitch</button>
-        <button class="primary" data-focus-add-streamer>Add Streamer</button>
-      </div>
-
-      <div class="watchlist-stats">
-        ${watchStat("Total Streamers", streamers.length, "real records", "TEAM", "warn")}
-        ${watchStat("Live Right Now", liveCount, `${streamers.length ? Math.round((liveCount / streamers.length) * 100) : 0}% of real total`, "LIVE", "bad")}
-        ${watchStat("Monitoring", monitoringCount, "Actively watching", "EYE", "info")}
-        ${watchStat("Pending Approval", pendingCount, "Needs review", "CLK", "warn")}
-        ${watchStat("Blocked", blockedCount, "No blocked channels", "SHD", "neutral")}
-      </div>
-
-      ${renderStreamerScout()}
-
-      <div class="watchlist-shell">
-        <section class="panel streamer-directory">
-          <div class="watchlist-filterbar">
-            <label class="stream-search">Search streamers <input placeholder="Search streamers..." aria-label="Search streamers"></label>
-            <select aria-label="Platform filter"><option>Platform: All</option><option>Twitch</option><option>YouTube</option><option>Kick</option></select>
-            <select aria-label="Status filter"><option>Status: All</option><option>Monitoring</option><option>Paused</option></select>
-            <select aria-label="Permission filter"><option>Permission: All</option><option>Approved</option><option>Pending</option></select>
-            <select aria-label="Sort filter"><option>Sort: Last Checked</option><option>Sort: Candidates</option><option>Sort: Name</option></select>
-          </div>
-          ${streamers.length ? renderStreamerTable(true, streamers) : empty("No real streamers added. Use Add Streamer for production records or Start Practice Project for local testing.")}
-        </section>
-
-        <aside class="panel streamer-inspector">
-          ${selected ? renderStreamerInspector(selected) : empty("Select or add a streamer")}
-        </aside>
-      </div>
-
-      <div class="watchlist-bottom">
-        <section class="panel add-streamer-panel" id="add-streamer-panel">
-          <div class="section-head">
-            <span class="panel-icon">TW</span>
-            <div>
-              <h2>Add Streamer</h2>
-              <p class="muted">Add a new channel to monitor.</p>
-            </div>
-          </div>
-          ${renderCompactStreamerForm()}
-        </section>
-        <section class="panel monitoring-panel">
-          <h2>Monitoring Settings</h2>
-          <div class="settings-rows">
-            <span><b>Check Interval</b><em>60 seconds</em></span>
-            <span><b>Clip Detection</b><em>Enabled</em></span>
-            <span><b>Min Clip Score</b><em>60</em></span>
-            <span><b>Max Clips / Day</b><em>${state.config?.postDailyLimit || 20}</em></span>
-          </div>
-        </section>
-        <section class="panel watchlist-quick-actions">
-          <h2>Quick Actions</h2>
-          <button class="primary" data-action="run-watch">Run Watch Cycle Now</button>
-          <button data-nav-jump="radar">View Clip Radar</button>
-          <button data-action="seed-demo">Start Practice Project</button>
-          ${practice.length ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
-          <button data-nav-jump="settings">API Connections</button>
-        </section>
-      </div>
-    </section>
-  `;
-}
-
-function renderStreamerTable(editable, rows = state.streamers) {
-  const sortedStreamers = [...rows].sort((a, b) => {
-    const liveDelta = Number(isStreamerLive(b)) - Number(isStreamerLive(a));
-    if (liveDelta) return liveDelta;
-    return String(b.lastCheckedAt || "").localeCompare(String(a.lastCheckedAt || ""));
-  });
-  return `
-    <div class="watch-table-wrap">
-      <table class="watch-table">
-        <thead>
-          <tr>
-            <th><span class="select-box"></span></th>
-            <th>Streamer</th>
-            <th>Platform</th>
-            <th>Status</th>
-            <th>Permission</th>
-            <th>Live Status</th>
-            <th>Last Checked</th>
-            <th>Clip Candidates</th>
-            ${editable ? "<th>Actions</th>" : ""}
-          </tr>
-        </thead>
-        <tbody>
-          ${sortedStreamers.map((streamer, index) => `
-            <tr class="${selectedStreamer()?.id === streamer.id ? "selected" : ""}" data-select-streamer="${streamer.id}">
-              <td><span class="select-box"></span></td>
-              <td>
-                <div class="streamer-cell">
-                  <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer.displayName))}</span>
-                  <div>
-                    <strong>${esc(streamer.displayName)} ${isPracticeStreamer(streamer) ? "<em>practice</em>" : "<em>verified</em>"}</strong>
-                    <small>${esc(streamer.channelId || streamer.channelUrl || "local channel")}</small>
-                  </div>
-                </div>
-              </td>
-              <td>${platformBadge(streamer.platform)}</td>
-              <td>${streamer.monitorEnabled ? badge("Monitoring", "good") : badge("Paused", "info")}</td>
-              <td>${permissionBadge(streamer.permissionStatus)}</td>
-              <td>${liveBadge(streamer)}</td>
-              <td>${fmtDate(streamer.lastCheckedAt)}</td>
-              <td>
-                <div class="candidate-mini">
-                  <b>${streamerCandidateCount(streamer.id)}</b>
-                  <span class="spark">${sparkline(index * 11)}</span>
-                </div>
-              </td>
-              ${editable ? `<td><div class="actions">
-                <button data-toggle-monitor="${streamer.id}">${streamer.monitorEnabled ? "Pause" : "Monitor"}</button>
-                <button data-check-streamer="${streamer.id}">Check</button>
-                <button data-approve-streamer="${streamer.id}">OK</button>
-                <button class="danger" data-delete-streamer="${streamer.id}">Del</button>
-              </div></td>` : ""}
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function watchStat(label, value, detail, icon, tone = "info") {
-  return `
-    <section class="panel watch-stat watch-stat-${esc(tone)}">
-      <span>${esc(icon)}</span>
-      <div>
-        <small>${esc(label)}</small>
-        <strong>${esc(value)}</strong>
-        <em>${esc(detail)}</em>
-      </div>
-    </section>
-  `;
-}
-
-function renderStreamerScout() {
-  const hasRecommendations = state.recommendations.length > 0;
-  return `
-    <section class="panel streamer-scout-panel">
-      <div class="scout-head">
-        <div>
-          <span class="eyebrow">Agent 101 Streamer Scout</span>
-          <h2>Find creators worth monitoring</h2>
-          <p class="muted">${esc(state.recommendationsMessage || "Agent 101 can scan configured Kick/Twitch live directories, score streamer fit, and prepare a monitored shortlist for your approval.")}</p>
-        </div>
-        <div class="scout-actions">
-          <select id="scout-platform" aria-label="Scout platform">
-            <option value="all">Kick + Twitch</option>
-            <option value="kick">Kick only</option>
-            <option value="twitch">Twitch only</option>
-          </select>
-          <button class="primary" data-action="scout-streamers">Scout streamers</button>
-        </div>
-      </div>
-      <div class="scout-provider-row">
-        ${badge(state.kick?.configured ? "Kick ready" : "Kick vars needed", state.kick?.configured ? "good" : "warn")}
-        ${badge(state.twitch?.configured ? "Twitch ready" : "Twitch vars needed", state.twitch?.configured ? "good" : "warn")}
-        ${badge("Human approval before monitoring", "info")}
-      </div>
-      <div class="scout-recommendations">
-        ${hasRecommendations ? state.recommendations.map(renderStreamerRecommendation).join("") : empty("No scout run yet. Click Scout streamers after provider variables finish deploying.")}
-      </div>
-    </section>
-  `;
-}
-
-function renderStreamerRecommendation(item, index) {
-  return `
-    <article class="scout-card">
-      <div class="scout-rank">
-        <span>${index + 1}</span>
-        <b>${esc(item.score || 0)}</b>
-      </div>
-      <div class="scout-copy">
-        <div class="scout-title-row">
-          <strong>${esc(item.displayName)}</strong>
-          ${platformBadge(item.platform)}
-        </div>
-        <p>${esc(item.title || item.reason || "Recommended for review")}</p>
-        <small>${esc(item.category || "General")} - ${Number(item.viewerCount || 0).toLocaleString()} viewers - ${esc(item.source || "Agent 101")}</small>
-        <em>${esc(item.reason || "Good candidate for supervised monitoring.")}</em>
-      </div>
-      <button data-add-recommendation="${index}">Add to monitoring</button>
-    </article>
-  `;
-}
-
-function renderCompactStreamerForm() {
-  return `
-    <form id="streamer-form" class="streamer-mini-form">
-      <input name="displayName" required placeholder="Twitch channel name or URL">
-      <select name="platform">
-        <option value="twitch">Twitch</option>
-        <option value="youtube_live">YouTube</option>
-        <option value="kick">Kick</option>
-        <option value="other">Other</option>
-      </select>
-      <input name="channelId" placeholder="Channel login, optional if URL is pasted">
-      <input name="channelUrl" placeholder="Channel URL">
-      <select name="permissionStatus">
-        <option value="approved">approved</option>
-        <option value="pending">pending</option>
-        <option value="blocked">blocked</option>
-      </select>
-      <select name="monitorEnabled">
-        <option value="true">monitoring on</option>
-        <option value="false">monitoring off</option>
-      </select>
-      <div class="hidden-checks">
-        <label><input type="checkbox" name="allowedUse" value="clips" checked>clips</label>
-        <label><input type="checkbox" name="allowedUse" value="edits" checked>edits</label>
-        <label><input type="checkbox" name="allowedUse" value="reposts">reposts</label>
-      </div>
-      <textarea name="notes" placeholder="Permission source, owner notes, highlight style"></textarea>
-      <button class="primary" type="submit">Add</button>
-    </form>
-  `;
-}
-
-function selectedStreamer() {
-  const selected = state.streamers.find((streamer) => streamer.id === state.selectedStreamerId);
-  if (selected && !isPracticeStreamer(selected)) return selected;
-  return realStreamers()[0] || state.streamers[0] || null;
-}
-
-function streamerCandidateCount(streamerId) {
-  return countWhere(state.candidates, (candidate) => candidate.streamerId === streamerId);
-}
-
-function isStreamerLive(streamer) {
-  return streamer?.liveStatus === "live" || streamer?.liveStatus === "demo_live";
-}
-
-function isStreamerConfirmedOffline(streamer) {
-  return streamer?.liveStatus === "offline" || streamer?.liveStatus === "offline_or_demo" || streamer?.liveStatus === "demo_offline";
-}
-
-function liveStatusMeta(streamer) {
-  const status = streamer?.liveStatus || "unknown";
-  if (status === "live") return { label: "LIVE", className: "is-live" };
-  if (status === "demo_live") return { label: "PRACTICE", className: "is-live" };
-  if (status === "offline" || status === "offline_or_demo" || status === "demo_offline") return { label: "OFFLINE", className: "is-offline" };
-  if (status === "api_not_configured") return { label: "API NEEDED", className: "needs-api" };
-  if (status === "api_error") return { label: "CHECK FAILED", className: "has-error" };
-  if (status === "blocked") return { label: "BLOCKED", className: "is-blocked" };
-  if (status === "unsupported") return { label: "UNSUPPORTED", className: "is-blocked" };
-  return { label: "CHECK NEEDED", className: "needs-check" };
-}
-
-function liveSourceLabel(streamer) {
-  if (streamer?.platform === "kick") return state.kick?.configured ? "Official Kick API" : "Needs Kick API vars";
-  if (streamer?.platform === "twitch") return state.twitch?.configured ? "Official Twitch API" : "Needs Twitch API vars";
-  return streamer?.isDemo || streamer?.permissionStatus === "demo_approved" ? "Practice source" : "Manual source";
-}
-
-function platformBadge(platform) {
-  const label = platform === "youtube_live" ? "YouTube" : platform || "Twitch";
-  return `<span class="platform-badge">${esc(label)}</span>`;
-}
-
-function liveBadge(streamer) {
-  const { label, className } = liveStatusMeta(streamer);
-  return `<span class="live-badge ${esc(className)}" title="${esc(streamer.liveStatusReason || "")}">${esc(label)}</span>`;
-}
-
-function renderStreamerInspector(streamer) {
-  const status = liveStatusMeta(streamer);
-  return `
-    <div class="inspector-profile">
-      <span class="creator-avatar large">${esc(initials(streamer.displayName))}</span>
-      <div>
-        <h2>${esc(streamer.displayName)}</h2>
-        <p>${esc(streamer.channelId || "local channel")} · ${streamerCandidateCount(streamer.id)} candidates</p>
-      </div>
-      <span class="live-badge ${esc(status.className)}" title="${esc(streamer.liveStatusReason || "")}">${esc(status.label)}</span>
-    </div>
-    <div class="inspector-tabs">
-      <span class="active">Overview</span>
-      <span>Permissions</span>
-      <span>History</span>
-      <span>Settings</span>
-    </div>
-    <div class="inspector-section">
-      <h3>Channel Info</h3>
-      <div class="inspector-kv">
-        <span>Channel ID</span><b>${esc(streamer.channelId || "not set")}</b>
-        <span>Platform</span><b>${esc(streamer.platform)}</b>
-        <span>Partner Status</span><b>${isPermissionReady(streamer) ? "Ready" : "Needs review"}</b>
-        <span>Language</span><b>English</b>
-        <span>Live source</span><b>${esc(liveSourceLabel(streamer))}</b>
-        <span>Last check</span><b>${esc(fmtDate(streamer.lastCheckedAt))}</b>
-      </div>
-    </div>
-    <div class="inspector-section">
-      <h3>Performance</h3>
-      <div class="performance-grid">
-        <span><b>${streamerCandidateCount(streamer.id)}</b><em>Candidates</em></span>
-        <span><b>${streamer.monitorEnabled ? "On" : "Off"}</b><em>Monitor</em></span>
-        <span><b>${(streamer.allowedUse || []).length}</b><em>Allowed uses</em></span>
-      </div>
-      <div class="wide-spark">${sparkline(streamerCandidateCount(streamer.id) * 13)}</div>
-    </div>
-    <div class="inspector-section">
-      <h3>Monitoring Settings</h3>
-      <div class="toggle-list">
-        <span>Monitor Live Streams <b class="${streamer.monitorEnabled ? "on" : ""}"></b></span>
-        <span>Monitor VODs <b class="on"></b></span>
-        <span>Detect Clips Automatically <b class="on"></b></span>
-      </div>
-    </div>
-    <div class="inspector-section">
-      <h3>Notes</h3>
-      <p class="note-box">${esc(streamer.notes || "High energy variety streamer. Good for reaction and highlight clips.")}</p>
-    </div>
-  `;
-}
-
-function permissionBadge(status) {
-  if (status === "approved") return badge("approved", "good");
-  if (status === "demo_approved") return badge("practice", "info");
-  if (status === "blocked") return badge("blocked", "bad");
-  return badge("pending", "warn");
-}
-
-function renderRadar() {
-  const selected = selectedCandidate();
-  const real = realCandidates();
-  const practice = practiceCandidates();
-  const showingPractice = !real.length && practice.length;
-  const visibleCandidates = showingPractice ? practice : real;
-  const sorted = [...visibleCandidates].sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-  const highScore = countWhere(visibleCandidates, (candidate) => Number(candidate.score || 0) >= 70);
-  const ready = countWhere(visibleCandidates, (candidate) => candidate.status === "packaged");
-  const reviewed = countWhere(visibleCandidates, (candidate) => ["reviewed", "packaged", "rejected"].includes(candidate.status));
-  const dismissed = countWhere(visibleCandidates, (candidate) => candidate.status === "rejected");
-  view.innerHTML = `
-    <section class="radar-page">
-      ${showingPractice ? practiceNotice("Practice candidates are visible because no real clip candidates exist yet. They are not counted as production clips.", true) : practice.length ? practiceNotice(`${practice.length} practice candidate(s) are hidden from Real Mode counts.`, true) : ""}
-      <div class="radar-tabs">
-        <button class="active">${showingPractice ? "Practice Candidates" : "All Candidates"} <b>${visibleCandidates.length}</b></button>
-        <button>High Score <b>${highScore}</b></button>
-        <button>Ready to Package <b>${ready}</b></button>
-        <button>Reviewed <b>${reviewed}</b></button>
-        <button>Dismissed <b>${dismissed}</b></button>
-      </div>
-
-      <div class="radar-shell">
-        <section class="panel radar-board">
-          <div class="radar-filterbar">
-            <label class="stream-search radar-search">Search clips <input placeholder="Search clips..." aria-label="Search clips"></label>
-            <select aria-label="Platform filter"><option>Platform: All</option><option>Twitch</option><option>YouTube</option></select>
-            <select aria-label="Streamer filter"><option>Streamer: All</option>${(showingPractice ? practiceStreamers() : realStreamers()).map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}</select>
-            <select aria-label="Score filter"><option>Score: All</option><option>70+</option><option>90+</option></select>
-            <select aria-label="Duration filter"><option>Duration: All</option><option>Short</option><option>Ideal</option><option>Long</option></select>
-            <select aria-label="Status filter"><option>Status: All</option><option>New</option><option>Packaged</option><option>Rejected</option></select>
-          </div>
-
-          ${sorted.length ? renderRadarTable(sorted) : empty("No real clip candidates yet. Run a watch cycle after adding approved streamers, or start a Practice Project.")}
-        </section>
-
-        <aside class="panel radar-inspector">
-          ${selected ? renderCandidateInspector(selected) : empty("Select a clip candidate")}
-        </aside>
-      </div>
-
-      <div class="radar-footer">
-        <span>${selected ? `1 selected` : `${visibleCandidates.length} ${showingPractice ? "practice " : ""}candidates`}</span>
-        <div class="actions">
-          <button data-action="run-watch">Run Watch Cycle</button>
-          <button data-score-candidate="${selected?.id || ""}" ${selected ? "" : "disabled"}>Mark Reviewed</button>
-          <button class="primary" data-package-candidate="${selected?.id || ""}" ${selected ? "" : "disabled"}>Create Package${selected ? " (1)" : ""}</button>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderRadarTable(candidates) {
-  return `
-    <div class="radar-table-wrap">
-      <table class="radar-table">
-        <thead>
-          <tr>
-            <th><span class="select-box"></span></th>
-            <th>Clip Candidate</th>
-            <th>Streamer / Stream</th>
-            <th>Score</th>
-            <th>Hook Strength</th>
-            <th>Engagement</th>
-            <th>Duration</th>
-            <th>Detected</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${candidates.map((candidate, index) => renderRadarRow(candidate, index)).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderRadarRow(candidate, index) {
-  const selected = selectedCandidate()?.id === candidate.id;
-  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const score = Number(candidate.score || 0);
-  const duration = Number(candidate.duration || 0);
-  const hook = Number(candidate.hookScore || 0);
-  return `
-    <tr class="${selected ? "selected" : ""}" data-select-candidate="${candidate.id}">
-      <td><span class="select-box ${selected ? "checked" : ""}"></span></td>
-      <td>
-        <div class="radar-candidate-cell">
-          ${radarThumb(candidate, index)}
-          <div>
-            <strong>${esc(candidate.title || "Untitled clip")}</strong>
-            <span>${candidateTags(candidate, index)}</span>
-            <small>${esc(candidate.transcriptSnippet || candidate.reason || "Candidate needs transcript context.").slice(0, 84)}</small>
-          </div>
-        </div>
-      </td>
-      <td>
-        <div class="radar-streamer-cell">
-          <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
-          <div>
-            <strong>${esc(streamer?.displayName || "Unknown streamer")} <em>${isPracticeCandidate(candidate) ? "practice" : "verified"}</em></strong>
-            <small>${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice stream" : "Clip"))}${streamer?.liveStatus ? ` · ${liveLabel(streamer.liveStatus)}` : ""}</small>
-          </div>
-        </div>
-      </td>
-      <td>${scoreRing(score)}</td>
-      <td>
-        <div class="hook-cell">
-          <b>${hook}</b>
-          <span>Hook score</span>
-          <i style="width:${Math.max(8, Math.min(100, hook))}%"></i>
-        </div>
-      </td>
-      <td>
-        <div class="engagement-cell">
-          <b>${formatEngagement(candidate, index)}</b>
-          <span>Chat spike</span>
-          <em>${sparkline(score + index * 7)}</em>
-        </div>
-      </td>
-      <td><b>${duration || 30}s</b><small class="${durationLabelTone(duration)}">${durationLabel(duration)}</small></td>
-      <td><b>${timeAgo(candidate.updatedAt || candidate.createdAt)}</b><small>${candidate.sourceType || "Live"}</small></td>
-      <td>${candidateStatusBadge(candidate.status)}</td>
-      <td>
-        <div class="radar-row-actions">
-          <button data-preview-candidate="${candidate.id}">Play</button>
-          <button data-package-candidate="${candidate.id}">Box</button>
-          <button data-reject-candidate="${candidate.id}">...</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
-function renderCandidateCard(candidate) {
-  return `
-    <article class="item-card">
-      <div class="item-head">
-        <div>
-          <h3>${esc(candidate.title)}</h3>
-          <p>${esc(streamerName(candidate.streamerId))} · ${esc(candidate.category || "Uncategorized")} · ${esc(candidate.timestampStart)}-${esc(candidate.timestampEnd)}</p>
-        </div>
-        ${badge(candidate.status, candidate.status === "packaged" ? "good" : "info")}
-      </div>
-      <div class="scorebar"><span style="width:${Number(candidate.score || 0)}%"></span></div>
-      <div class="kv">
-        <span>Score</span><span>${candidate.score || 0}/100</span>
-        <span>Hook strength</span><span>${candidate.hookScore || 0}</span>
-        <span>Risk score</span><span>${candidate.riskScore || 0}</span>
-        <span>Reason</span><span>${esc(candidate.reason)}</span>
-      </div>
-      <div class="actions">
-        <button data-select-candidate="${candidate.id}">Select</button>
-        <button class="primary" data-package-candidate="${candidate.id}">Package</button>
-        <button data-score-candidate="${candidate.id}">Rescore</button>
-        <button class="danger" data-reject-candidate="${candidate.id}">Reject</button>
+      <div class="clip-actions">
+        ${playback ? `<a href="${esc(playback)}" target="_blank" rel="noreferrer">View MP4</a>` : `<button type="button" disabled>Pending</button>`}
+        ${playback ? `<button type="button" data-approve-clip="${esc(clip.id)}" ${approved ? "disabled" : ""}>${approved ? "Approved" : "Approve"}</button>` : ""}
+        <button type="button" class="decline" data-decline-clip="${esc(clip.id)}">Decline</button>
       </div>
     </article>
   `;
 }
 
-function selectedCandidate() {
-  const selected = state.candidates.find((item) => item.id === state.selectedCandidateId);
-  const real = realCandidates();
-  if (selected && (!isPracticeCandidate(selected) || !real.length)) return selected;
-  return [...(real.length ? real : practiceCandidates())].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+function builderClips() {
+  return (state.clips || []).filter((clip) => clipApprovedForBuilder(clip) && !clipDeclined(clip));
 }
 
-function radarThumb(candidate, index = 0) {
-  const start = candidate.timestampStart || "00:00";
-  const end = candidate.timestampEnd || "00:30";
-  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const isDemo = isPracticeCandidate(candidate);
-  return previewFrame({
-    label: isDemo ? "PRACTICE" : candidate.sourceProvenance === "UNAVAILABLE" ? "UNAVAILABLE" : "SOURCE",
-    title: candidate.title || "Clip preview",
-    subtitle: `${streamer?.displayName || "Stream"} · ${candidate.category || "Clip"}`,
-    timestamp: start,
-    end,
-    index,
-    imageUrl: candidateThumbnailUrl(candidate),
-    candidateId: candidate.id,
-    className: "radar-thumb",
-    score: candidate.score
-  });
-}
-
-function candidateTags(candidate, index = 0) {
-  const labels = [
-    candidate.category || "Clip",
-    Number(candidate.score || 0) >= 85 ? "High Energy" : index % 2 ? "Clean Hook" : "Review"
-  ];
-  return labels.map((label) => `<em>${esc(label)}</em>`).join("");
-}
-
-function liveLabel(value) {
-  if (value === "live") return "Live now";
-  if (value === "offline") return "Offline by Twitch API";
-  if (value === "api_not_configured") return "Needs Twitch API";
-  if (value === "api_error") return "Twitch check failed";
-  if (String(value || "").startsWith("demo")) return "Practice mode";
-  return String(value || "Not checked");
-}
-
-function scoreRing(score) {
-  const tone = score >= 90 ? "excellent" : score >= 80 ? "strong" : score >= 70 ? "good" : "watch";
-  const label = score >= 90 ? "Exceptional" : score >= 80 ? "Very good" : score >= 70 ? "Good" : "Review";
-  return `<div class="score-ring score-${tone}" style="--score:${Math.max(0, Math.min(100, score))}"><b>${score}</b><small>${label}</small></div>`;
-}
-
-function formatEngagement(candidate, index = 0) {
-  if (candidate?.chatSignals?.source === "UNAVAILABLE" || (candidate?.viewerCount == null && candidate?.sourceProvenance === "DEMO_SOURCE")) {
-    return "Unavailable";
-  }
-  const spike = Number(candidate.chatSignals?.spike || candidate.chatSignals?.messagesPerMinute || 0);
-  const fallback = Number(candidate.score || 0) * 94 + index * 730;
-  const value = spike ? spike * 420 : fallback;
-  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 1 : 1)}K` : String(Math.round(value));
-}
-
-function durationLabel(duration) {
-  if (!duration) return "Ideal";
-  if (duration < 20) return "Short";
-  if (duration <= 60) return "Ideal";
-  return "Long";
-}
-
-function durationLabelTone(duration) {
-  const label = durationLabel(duration);
-  return label === "Ideal" ? "good-text" : label === "Short" ? "info-text" : "warn-text";
-}
-
-function timeAgo(value) {
-  if (!value) return "Now";
-  const diff = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(diff) || diff < 0) return "Now";
-  const minutes = Math.round(diff / 60000);
-  if (minutes < 1) return "Now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-function shortTime(value) {
-  if (!value) return "now";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "now";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function candidateStatusBadge(status) {
-  if (status === "packaged") return badge("Packaged", "good");
-  if (status === "rejected") return badge("Dismissed", "bad");
-  if (status === "reviewed") return badge("Reviewed", "info");
-  return badge("New", "warn");
-}
-
-function renderCandidateInspector(candidate) {
-  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const score = Number(candidate.score || 0);
-  const hook = Number(candidate.hookScore || 0);
-  const engagement = formatEngagement(candidate, 2);
-  return `
-    <div class="inspector-head">
-      <h2>Selected Clip</h2>
-      <button class="ghost" data-nav-jump="builder">Open Builder</button>
-    </div>
-    ${radarThumb(candidate, 1)}
-    <div class="selected-title">
-      <div>
-        <h3>${esc(candidate.title || "Untitled clip")}</h3>
-        <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice" : "Clip"))} · ${timeAgo(candidate.updatedAt || candidate.createdAt)}</p>
-      </div>
-      ${scoreRing(score)}
-    </div>
-    <div class="inspector-tabs">
-      <span class="active">Overview</span>
-      <span>Transcript</span>
-      <span>Chat Moments</span>
-      <span>Analysis</span>
-    </div>
-    <div class="inspector-section">
-      <h3>Why this clip is strong</h3>
-      <p>${esc(candidate.reason || "Candidate scored from engagement, transcript energy, hook potential, length, context, and risk.")}</p>
-      <div class="clip-metrics">
-        <span><b>${hook}</b><em>Hook Strength</em></span>
-        <span><b>${esc(engagement)}</b><em>Engagement</em></span>
-        <span><b>${candidate.confidence || "medium"}</b><em>Confidence</em></span>
-      </div>
-    </div>
-    <div class="inspector-section">
-      <h3>Transcript Preview</h3>
-      <p class="transcript-box">${esc(candidate.transcriptSnippet || "Transcript will appear here after the clip has audio or chat context.")}</p>
-    </div>
-    <div class="inspector-section compact-actions">
-      <h3>Quick Actions</h3>
-      <button class="primary" data-package-candidate="${candidate.id}">Create Clip Package</button>
-      <button data-nav-jump="builder">Preview in Builder</button>
-      <button data-score-candidate="${candidate.id}">Rescore</button>
-      <button class="danger" data-reject-candidate="${candidate.id}">Dismiss</button>
-    </div>
-    <div class="inspector-section">
-      <h3>Clip Details</h3>
-      <div class="inspector-kv">
-        <span>Source</span><b>${esc(candidate.sourceType || (isPracticeCandidate(candidate) ? "practice" : "unknown"))}</b>
-        <span>Resolution</span><b>1080x1920</b>
-        <span>Duration</span><b>${candidate.duration || 30}s</b>
-        <span>Risk</span><b>${candidate.riskScore || 0}/100</b>
-      </div>
-    </div>
-  `;
-}
-
-function renderClipPreviewModal() {
-  const candidate = candidateById(state.previewCandidateId);
-  if (!candidate) return "";
-  const streamer = state.streamers.find((item) => item.id === candidate.streamerId);
-  const source = state.studio?.source?.id === candidate.sourceId
-    ? state.studio.source
-    : (state.mediaSources || []).find((item) => item.id === candidate.sourceId) || null;
-  const plan = selectedClipPackage(candidate)?.packagePlan || fallbackPackagePlan(candidate);
-  const score = Number(candidate.score || 0);
-  const hook = Number(candidate.hookScore || 0);
-  return `
-    <div class="clip-preview-overlay" role="dialog" aria-modal="true" aria-label="Clip preview">
-      <section class="clip-preview-modal">
-        <div class="preview-head">
-          <div>
-            <span class="eyebrow">Local draft preview</span>
-            <h2>${esc(candidate.title || "Clip preview")}</h2>
-            <p>${esc(streamer?.displayName || "Unknown streamer")} · ${esc(candidate.category || (isPracticeCandidate(candidate) ? "Practice stream" : "Clip"))} · ${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || `${candidate.duration || 30}s`)}</p>
-          </div>
-          <button class="icon-button" data-close-preview aria-label="Close preview">×</button>
-        </div>
-        <div class="preview-body">
-          <div class="preview-player">
-            ${source?.playbackUrl ? `
-              <div class="clip-preview-video-wrap">
-                ${source.provenance === "DEMO_SOURCE" ? `<span class="demo-ribbon">PRACTICE MEDIA — NOT A REAL STREAM</span>` : ""}
-                <video class="studio-player clip-preview-video" src="${esc(appUrl(source.playbackUrl))}" controls playsinline preload="metadata" data-studio-video data-start="${esc(candidateStartSeconds(candidate))}"></video>
-              </div>
-            ` : previewFrame({
-              label: isPracticeCandidate(candidate) ? "PRACTICE" : "LIVE CLIP",
-              title: plan.thumbnailText || plan.hook || candidate.title,
-              subtitle: "Source data unavailable. Playable media is required for final clipping.",
-              timestamp: candidate.timestampStart || "00:00",
-              end: candidate.timestampEnd || `${candidate.duration || 30}s`,
-              index: score,
-              imageUrl: candidateThumbnailUrl(candidate),
-              candidateId: "",
-              className: "clip-preview-frame",
-              score
-            })}
-            <div class="preview-transport">
-              <button type="button" data-preview-open-builder="${esc(candidate.id)}">Open builder</button>
-              <span>${esc(candidate.timestampStart || "00:00")} / ${candidate.duration || 30}s</span>
-              <i><b style="width:${Math.max(20, Math.min(92, score))}%"></b></i>
-            </div>
-          </div>
-          <aside class="preview-detail">
-            <div class="preview-score-row">
-              ${scoreRing(score)}
-              <span><b>${hook}</b><em>Hook strength</em></span>
-              <span><b>${formatEngagement(candidate, 3)}</b><em>Chat signal</em></span>
-            </div>
-            <section>
-              <h3>What Agent 101 sees</h3>
-              <p>${esc(candidate.reason || "This candidate is evaluated from hook strength, chat spike, duration, category fit, title potential, retention potential, and safety risk.")}</p>
-            </section>
-            <section>
-              <h3>Transcript and chat context</h3>
-              <p class="transcript-box">${esc(candidate.transcriptSnippet || "No transcript captured yet. Run another watch cycle or add source notes to improve this preview.")}</p>
-            </section>
-            <section>
-              <h3>Draft package target</h3>
-              <ul class="preview-checklist">
-                <li>9:16 vertical clip</li>
-                <li>1080x1920 export handoff</li>
-                <li>${candidate.duration || 30}s target duration</li>
-                <li>Human Gate before posting</li>
-              </ul>
-            </section>
-            <div class="preview-actions">
-              <button class="primary" data-preview-open-builder="${esc(candidate.id)}">Open in Builder</button>
-              <button data-package-candidate="${esc(candidate.id)}">Create Package</button>
-              <button data-close-preview>Close</button>
-            </div>
-          </aside>
-        </div>
-      </section>
-    </div>
-  `;
-}
-
-function renderBuilder() {
-  const studio = state.studio || {};
-  const source = studio.source;
-  const candidates = studio.candidates?.length
-    ? studio.candidates
-    : state.candidates.filter((candidate) => candidate.sourceId);
-  const candidate = studioSelectedCandidate(candidates);
-  if (candidate && candidate.id !== state.selectedCandidateId) {
-    state.selectedCandidateId = candidate.id;
-    localStorage.setItem("selectedCandidateId", candidate.id);
-  }
-  const project = studio.project || {};
-  const renderJobs = studio.renderJobs || [];
-  const activeJob = renderJobs.find((job) => job.candidateId === candidate?.id && job.status !== "cancelled");
-  const readiness = projectReadiness(project);
-  const renderedArtifact = activeJob?.artifactId
-    ? state.artifacts.find((artifact) => artifact.id === activeJob.artifactId)
-    : candidate?.renderedArtifactId
-      ? state.artifacts.find((artifact) => artifact.id === candidate.renderedArtifactId)
-      : null;
-  const tabs = [
-    ["source", "Source"],
-    ["candidate", "Candidate"],
-    ["vertical", "9:16 Preview"],
-    ["rendered", "Rendered Draft"],
-    ["capcut", "CapCut Workspace"]
-  ];
-  view.innerHTML = `
-    <section class="builder-page studio-page">
-      <div class="studio-topbar panel">
-        <div>
-          <span class="eyebrow">Clipping Office</span>
-          <h2>${esc(project.title || "Clipping Office Main Workspace")}</h2>
-          <p>Media-first workspace. Agent 101 can draft, score, package, and prepare handoffs from verified playable source media.</p>
-        </div>
-        <div class="studio-status">
-          ${provenancePill(source?.provenance || "UNAVAILABLE")}
-          ${badge(project.mode === "practice" ? "Practice project" : "Real project", project.mode === "practice" ? "warn" : "good")}
-          ${badge(state.media?.mode === "local_render_ready" ? "Render ready" : "Render setup needed", state.media?.mode === "local_render_ready" ? "good" : "warn")}
-          <button class="primary slim" data-studio-action="render-draft" ${readiness.canRender && !state.studioBusy ? "" : "disabled"}>${state.studioBusy ? "Working..." : "Render draft"}</button>
-        </div>
-      </div>
-
-      ${source?.playable ? renderStudioProjectSummary(project, source, candidate, activeJob) : renderMediaUploadPanel()}
-
-      <div class="studio-shell">
-        <section class="panel studio-main">
-          <div class="studio-tabbar">
-            ${tabs.map(([id, label]) => `<button class="${state.studioTab === id ? "active" : ""}" data-studio-tab="${id}">${esc(label)}</button>`).join("")}
-          </div>
-          ${renderStudioStage(source, candidate, renderedArtifact)}
-          ${renderSourceTruth(source, studio.unavailable)}
-          ${renderStudioTransport(source, candidate, candidates)}
-        </section>
-
-        <aside class="panel studio-inspector">
-          ${renderStudioInspector(source, candidate, activeJob)}
-        </aside>
-      </div>
-
-      <section class="panel studio-bottom">
-        ${renderStudioTimeline(source, candidate, candidates)}
-        ${renderStudioCandidateRail(candidates, candidate)}
-        ${renderStudioAssetDock(studio, activeJob)}
-      </section>
-    </section>
-  `;
-}
-
-function renderStudioProjectSummary(project = {}, source, candidate, activeJob) {
-  const readiness = projectReadiness(project);
-  return `
-    <section class="panel studio-project-summary">
-      <div>
-        <span class="eyebrow">${esc(sourceTruthLabel(source))}</span>
-        <strong>${esc(source?.title || source?.displayName || "Playable source")}</strong>
-        <small>${esc(source?.originalFilename || source?.storagePath || "Verified source")} · ${Math.round(sourceDurationSeconds(source))}s · ${esc(source?.width || "?")}×${esc(source?.height || "?")}</small>
-      </div>
-      <div>
-        <span class="eyebrow">Selected clip</span>
-        <strong>${esc(candidate?.title || "No candidate selected")}</strong>
-        <small>${esc(candidate?.timestampStart || "00:00")} to ${esc(candidate?.timestampEnd || "00:00")} · ${Math.round(candidateEndSeconds(candidate) - candidateStartSeconds(candidate)) || 0}s</small>
-      </div>
-      <div>
-        <span class="eyebrow">Readiness</span>
-        <strong>${readiness.canRender ? "Ready to render" : "Needs setup"}</strong>
-        <small>${esc(readiness.canRender ? "Source, range, and candidate are valid." : (readiness.renderReasons || ["Project needs source setup."])[0])}</small>
-      </div>
-      <div>
-        <span class="eyebrow">Project state</span>
-        <strong>${esc(project.status || "empty")}</strong>
-        <small>${esc(autosaveLabel(project))}${activeJob ? ` · ${esc(activeJob.status)}` : ""}</small>
-      </div>
-    </section>
-  `;
-}
-
-function studioSelectedCandidate(candidates = []) {
-  return candidates.find((item) => item.id === state.selectedCandidateId)
-    || candidates.find((item) => item.id === state.studio?.project?.selectedCandidateId)
-    || candidates[0]
+function selectedBuilderClip() {
+  const clips = builderClips();
+  return clips.find((clip) => clip.id === state.capcut.selectedBuilderClipId)
+    || state.capcut.selectedBuilderClip
+    || clips[0]
     || null;
 }
 
-function provenancePill(value) {
-  const label = value === "DEMO_SOURCE" ? "PRACTICE MEDIA" : String(value || "UNAVAILABLE").replaceAll("_", " ");
-  const tone = value === "DEMO_SOURCE" ? "warn" : value === "VERIFIED_MEDIA" || value === "AUTHORIZED_UPLOAD" ? "good" : "neutral";
-  return `<span class="provenance-pill ${tone}">${esc(label)}</span>`;
+function fileNameFromPath(value = "") {
+  const clean = String(value || "").split(/[?#]/)[0];
+  return clean.split(/[\\/]/).filter(Boolean).pop() || clean || "";
 }
 
-function candidateStartSeconds(candidate) {
-  return Number(candidate?.timestampStartSeconds ?? parseTimestamp(candidate?.timestampStart) ?? 0);
+function workflowInputReady(inputs = state.capcut.workflowInputs || {}) {
+  return Boolean(inputs.projectName && inputs.outputProjectFolder);
 }
 
-function parseTimestamp(value) {
-  if (typeof value === "number") return value;
-  const parts = String(value || "").split(":").map(Number).filter((part) => !Number.isNaN(part));
-  if (!parts.length) return 0;
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return parts[0];
+function boolLabel(value) {
+  return value ? "yes" : "no";
 }
 
-function sourcePlaybackUrl(source) {
-  return source?.playbackUrl ? appUrl(source.playbackUrl) : "";
-}
-
-function sourceDurationSeconds(source) {
-  return Number(source?.durationSeconds ?? source?.duration ?? 0) || 0;
-}
-
-function candidateEndSeconds(candidate) {
-  return Number(candidate?.timestampEndSeconds ?? candidate?.endSeconds ?? candidateStartSeconds(candidate) + Number(candidate?.durationSeconds ?? candidate?.duration ?? 0)) || 0;
-}
-
-function candidateScoreValue(candidate) {
-  const value = candidate?.qualityScore ?? candidate?.score;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function candidateScoreBadge(candidate) {
-  const score = candidateScoreValue(candidate);
-  if (score == null) return `<span class="score-empty">Not scored</span>`;
-  return scoreRing(score);
-}
-
-function sourceTruthLabel(source) {
-  if (!source) return "No source";
-  if (source.provenance === "DEMO_SOURCE") return "PRACTICE MEDIA";
-  if (source.provenance === "AUTHORIZED_UPLOAD") return "VERIFIED UPLOAD";
-  if (source.provenance === "VERIFIED_MEDIA") return "VERIFIED MEDIA";
-  return String(source.provenance || "UNAVAILABLE").replaceAll("_", " ");
-}
-
-function projectReadiness(project = {}) {
-  return project.readiness || {
-    canRender: false,
-    canPackage: false,
-    canCapCut: false,
-    canHumanGate: false,
-    renderReasons: ["Project is not ready."]
-  };
-}
-
-function autosaveLabel(project = {}) {
-  if (!project.autosavedAt && !project.updatedAt) return "Not saved";
-  const value = project.autosavedAt || project.updatedAt;
-  return `Saved ${shortTime(value)}`;
-}
-
-function renderMediaUploadPanel() {
+function renderCapCutStatusValue(label, value, detail = "", displayValue = null) {
+  const normalized = String(displayValue ?? boolLabel(value)).toLowerCase();
+  const statusClass = normalized === "yes" || normalized === "granted" || normalized === "running" ? "good" : (normalized === "unknown" ? "unknown" : "bad");
   return `
-    <form id="media-upload-form" class="media-upload-form" enctype="multipart/form-data">
-      <div>
-        <span class="eyebrow">Real Project</span>
-        <h3>Upload approved source media</h3>
-        <p>Add a playable MP4/WebM/MOV that you own or are allowed to use. The server verifies it with FFprobe before editing.</p>
-      </div>
-      <label>
-        <span>Project title</span>
-        <input name="title" placeholder="e.g. Stream highlight package" autocomplete="off">
-      </label>
-      <label class="media-file-drop">
-        <input name="file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" required>
-        <strong>Select video file</strong>
-        <small>Keys stay server-side. Source path is never exposed.</small>
-      </label>
-      <button class="primary" type="submit">Upload and verify</button>
-    </form>
-  `;
-}
-
-function studioCandidateThumb(candidate, index = 0) {
-  return appUrl(candidate?.thumbnailUrl || `/api/media/sources/${encodeURIComponent(candidate?.sourceId || "media_demo_clipping_source")}/frame?candidateId=${encodeURIComponent(candidate?.id || "")}&v=${index}`);
-}
-
-function renderStudioStage(source, candidate, renderedArtifact) {
-  if (!source?.playable) {
-    return `
-      <div class="studio-empty-stage">
-        <span class="eyebrow">No verified source</span>
-        <h3>Start a Clip Project</h3>
-        <p>No playable media source is selected. Add approved media for Real Mode, open a verified Clip Radar candidate, or start Practice Mode deliberately.</p>
-        <div class="empty-actions">
-          <button class="primary" data-nav-jump="watchlist">Add approved streamer</button>
-          <button data-nav-jump="radar">Open Clip Radar</button>
-          <button data-action="seed-demo">Start Practice Project</button>
-        </div>
-      </div>
-    `;
-  }
-  const src = sourcePlaybackUrl(source);
-  const mode = state.studioTab || "source";
-  if (mode === "rendered") {
-    const renderedUrl = renderedArtifact?.playbackUrl || renderedArtifact?.url;
-    return renderedUrl ? `
-      <div class="studio-stage rendered-stage">
-        <video class="studio-player" src="${esc(appUrl(renderedUrl))}" controls playsinline preload="metadata"></video>
-      </div>
-    ` : `
-      <div class="studio-empty-stage">
-        <h3>No rendered draft yet</h3>
-        <p>Render the selected candidate to create a real MP4 artifact.</p>
-        <button class="primary" data-studio-action="render-draft" ${candidate ? "" : "disabled"}>Render selected candidate</button>
-      </div>
-    `;
-  }
-  if (mode === "capcut") {
-    const readiness = projectReadiness(state.studio?.project || {});
-    return `
-      <div class="studio-capcut-stage">
-        <div>
-          <span class="eyebrow">Manual Handoff</span>
-          <h3>CapCut Workspace</h3>
-          <p>${esc(readiness.canCapCut ? "Verified MP4 is ready for a supervised CapCut handoff. Editing stays operator-controlled." : "Render a verified 9:16 MP4 before preparing the CapCut handoff.")}</p>
-        </div>
-        <button class="primary" data-action="create-capcut" ${readiness.canCapCut ? "" : "disabled"}>Prepare handoff package</button>
-        <button data-studio-action="capcut-open" ${readiness.canCapCut ? "" : "disabled"}>Open CapCut workspace</button>
-      </div>
-    `;
-  }
-  const vertical = mode === "vertical";
-  const clipLabel = mode === "candidate" && candidate ? `${candidate.timestampStart} - ${candidate.timestampEnd}` : "Full source";
-  return `
-    <div class="studio-stage ${vertical ? "vertical-mode" : ""}">
-      ${source.provenance === "DEMO_SOURCE" ? `<div class="demo-ribbon">PRACTICE MEDIA — NOT A REAL STREAM</div>` : ""}
-      <video
-        class="studio-player ${vertical ? "studio-vertical-player" : ""}"
-        src="${esc(src)}"
-        controls
-        playsinline
-        preload="metadata"
-        data-studio-video
-        data-start="${esc(candidateStartSeconds(candidate))}"
-      ></video>
-      <div class="studio-stage-meta">
-        <span>${esc(mode === "candidate" ? candidate?.title || "Selected candidate" : source.title || "Source")}</span>
-        <b>${esc(clipLabel)}</b>
-      </div>
-    </div>
-  `;
-}
-
-function renderSourceTruth(source, unavailable = {}) {
-  return `
-    <div class="source-truth">
-      <span><b>Source</b>${esc(source?.title || "Source data unavailable")}</span>
-      <span><b>Provenance</b>${esc(sourceTruthLabel(source))}</span>
-      <span><b>Rights</b>${esc(source?.rightsStatus || "unavailable")}</span>
-      <span><b>Transcript</b>${esc(source?.transcriptStatus || "UNAVAILABLE")}</span>
-      <span><b>Media</b>${source?.playable ? `${Math.round(sourceDurationSeconds(source))}s · ${esc(source.width || "?")}×${esc(source.height || "?")}` : "Not verified"}</span>
-      <span><b>Checksum</b>${source?.sha256 ? esc(`${source.sha256.slice(0, 10)}...`) : "Not available"}</span>
-      <span><b>Live metrics</b>${esc(unavailable?.liveMetrics || "Source data unavailable")}</span>
-    </div>
-  `;
-}
-
-function renderStudioTransport(source, candidate, candidates = []) {
-  const index = candidates.findIndex((item) => item.id === candidate?.id);
-  const prev = candidates[index - 1]?.id || "";
-  const next = candidates[index + 1]?.id || "";
-  return `
-    <div class="studio-transport">
-      <button data-studio-select-candidate="${esc(prev)}" ${prev ? "" : "disabled"}>Previous</button>
-      <button data-studio-action="replay" ${source?.playable ? "" : "disabled"}>Replay</button>
-      <button data-studio-action="mark-start" ${candidate ? "" : "disabled"}>Set start</button>
-      <button data-studio-action="mark-end" ${candidate ? "" : "disabled"}>Set end</button>
-      <button data-studio-action="capture-frame" ${candidate ? "" : "disabled"}>Capture frame</button>
-      <button data-studio-select-candidate="${esc(next)}" ${next ? "" : "disabled"}>Next</button>
-    </div>
-  `;
-}
-
-function renderStudioInspector(source, candidate, activeJob) {
-  if (!candidate) return empty("Select a playable candidate or start a project with a verified source.");
-  const packageReady = state.packages.some((item) => item.candidateId === candidate.id);
-  const readiness = projectReadiness(state.studio?.project || {});
-  const transcript = candidate.transcriptProvenance === "UNAVAILABLE"
-    ? "Source data unavailable. No transcript has been extracted from this media."
-    : candidate.transcriptSnippet;
-  return `
-    <div class="studio-inspector-head">
-      <div>
-        <span class="eyebrow">Agent 101 Clip Inspector</span>
-        <h2>${esc(candidate.title || "Selected candidate")}</h2>
-        <p>${esc(candidate.timestampStart || "00:00")} to ${esc(candidate.timestampEnd || "00:00")} · ${esc(candidate.duration || 0)}s</p>
-      </div>
-      ${candidateScoreBadge(candidate)}
-    </div>
-    <div class="studio-inspector-grid">
-      <span><b>${esc(candidate.sourceProvenance || source?.provenance || "UNAVAILABLE")}</b><em>Source proof</em></span>
-      <span><b>${esc(candidate.creativeProvenance || "AI_GENERATED")}</b><em>Creative text</em></span>
-      <span><b>${candidate.viewerCount == null ? "Unavailable" : esc(candidate.viewerCount)}</b><em>Viewers</em></span>
-      <span><b>${esc(candidate.confidence || (isPracticeCandidate(candidate) ? "practice" : "unknown"))}</b><em>Confidence</em></span>
-    </div>
-    <section class="studio-inspector-section">
-      <h3>Evidence breakdown</h3>
-      <p>${esc(candidate.reason || "Candidate has playable media but needs verified context before external use.")}</p>
-      <div class="clip-metrics">
-        <span><b>${candidate.hookScore == null ? "Not scored" : esc(candidate.hookScore)}</b><em>Hook</em></span>
-        <span><b>${esc(candidate.retentionPotential || "Unavailable")}</b><em>Retention</em></span>
-        <span><b>${candidate.riskScore == null ? "Unknown" : esc(candidate.riskScore)}</b><em>Risk</em></span>
-      </div>
-    </section>
-    <section class="studio-inspector-section">
-      <h3>Transcript</h3>
-      <p class="transcript-box">${esc(transcript)}</p>
-    </section>
-    <section class="studio-inspector-section">
-      <h3>AI creative drafts</h3>
-      <div class="creative-drafts">
-        <span><b>AI title draft</b>${esc(candidate.suggestedTitle || candidate.title)}</span>
-        <span><b>AI hook draft</b>${esc(candidate.suggestedHook || candidate.title)}</span>
-        <span><b>Caption status</b>${candidate.transcriptProvenance === "UNAVAILABLE" ? "Needs source transcript or notes" : "Draftable"}</span>
-      </div>
-    </section>
-    ${activeJob ? `
-      <section class="studio-inspector-section">
-        <h3>Render job</h3>
-        <p>${esc(activeJob.currentStep || activeJob.status)}</p>
-        <div class="progress"><span style="width:${Math.min(100, Number(activeJob.progress || 0))}%"></span></div>
-        ${activeJob.error ? `<p class="mini-error">${esc(activeJob.error)}</p>` : ""}
-      </section>
-    ` : ""}
-    <div class="studio-action-stack">
-      <button class="primary" data-studio-action="render-draft" ${disabledAttr(!(readiness.canRender && !state.studioBusy), readiness.renderReasons?.[0] || "Select a playable media source first")}>Render 9:16 draft</button>
-      <button data-package-candidate="${esc(candidate.id)}" ${readiness.canPackage ? "" : "disabled"}>Create clip package</button>
-      <button data-action="create-capcut" ${readiness.canCapCut ? "" : "disabled"}>Prepare CapCut handoff</button>
-      <button data-studio-action="capcut-open" ${readiness.canCapCut ? "" : "disabled"}>Open CapCut workspace</button>
-      <button data-nav-jump="gate">Human Gate</button>
-    </div>
-  `;
-}
-
-function renderStudioTimeline(source, candidate, candidates = []) {
-  const duration = Math.max(1, sourceDurationSeconds(source) || 24);
-  return `
-    <div class="studio-timeline">
-      <div class="studio-section-head">
-        <span class="eyebrow">Timeline</span>
-        <strong>${esc(source?.displayName || source?.title || "No source")}</strong>
-      </div>
-      <div class="studio-timebar">
-        ${candidates.map((item) => {
-          const start = Math.max(0, (candidateStartSeconds(item) / duration) * 100);
-          const width = Math.max(2, ((candidateEndSeconds(item) - candidateStartSeconds(item) || Number(item.duration || 4)) / duration) * 100);
-          return `<button class="${item.id === candidate?.id ? "active" : ""}" style="left:${start}%;width:${Math.min(100 - start, width)}%" data-studio-select-candidate="${esc(item.id)}" title="${esc(item.title)}"></button>`;
-        }).join("")}
-      </div>
-      <div class="studio-timeline-note">${source?.playable ? `Verified ${Math.round(duration)}s source. Waveform extraction is not generated yet.` : "No playable source loaded."}</div>
-    </div>
-  `;
-}
-
-function renderStudioCandidateRail(candidates = [], selected) {
-  return `
-    <div class="studio-rail">
-      <div class="studio-section-head">
-        <span class="eyebrow">Candidate Rail</span>
-        <strong>${candidates.length} playable moments</strong>
-      </div>
-      <div class="studio-candidate-strip">
-        ${candidates.map((candidate, index) => `
-          <button class="studio-candidate-card ${candidate.id === selected?.id ? "active" : ""}" data-studio-select-candidate="${esc(candidate.id)}">
-            <img src="${esc(studioCandidateThumb(candidate, index))}" alt="">
-            <span>${provenancePill(candidate.sourceProvenance || candidate.provenance || "UNAVAILABLE")}</span>
-            <strong>${esc(candidate.title || "Untitled candidate")}</strong>
-            <small>${esc(candidate.timestampStart || "00:00")} · ${esc(candidate.duration || 0)}s</small>
-            <em>${candidateScoreValue(candidate) == null ? "Not scored" : `${candidateScoreValue(candidate)} score`}</em>
-          </button>
-        `).join("") || empty("No playable candidates yet. Add or upload media first.")}
-      </div>
-    </div>
-  `;
-}
-
-function renderStudioAssetDock(studio = {}, activeJob) {
-  const source = studio.source;
-  const artifacts = studio.artifacts || [];
-  const readiness = projectReadiness(studio.project || {});
-  return `
-    <div class="studio-assets">
-      <div class="studio-section-head">
-        <span class="eyebrow">Assets & Outputs</span>
-        <strong>${artifacts.length} saved</strong>
-      </div>
-      <div class="studio-asset-grid">
-        <span><b>Source video</b>${esc(source?.playable ? source.originalFilename || source.title : "Unavailable")}</span>
-        <span><b>Transcript</b>${esc(source?.transcriptStatus || "UNAVAILABLE")}</span>
-        <span><b>Latest render</b>${esc(activeJob?.status || "No render yet")}</span>
-        <span><b>CapCut</b>${readiness.canCapCut ? "Verified MP4 ready" : "Render required"}</span>
-        ${artifacts.slice(0, 4).map((artifact) => `<span><b>${esc(artifact.kind || artifact.type)}</b>${esc(artifact.title)}</span>`).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function selectedClipPackage(candidate = selectedCandidate()) {
-  if (!candidate) return null;
-  return state.packages.find((item) => item.candidateId === candidate.id) || null;
-}
-
-function fallbackPackagePlan(candidate) {
-  const title = candidate?.suggestedTitle || candidate?.title || "Stream clip draft";
-  const hook = candidate?.suggestedHook || candidate?.title || "Watch this moment";
-  return {
-    title,
-    hook,
-    captionOverlays: [`${hook}?`, "No way.", "Watch the end."],
-    cutInstructions: ["Start before the reaction beat.", "Remove dead air.", "End on the payoff."],
-    captions: {
-      tiktok: `${hook}\n\n${title}\n\n#streamer #clips #gaming`
-    },
-    hashtags: ["#streamer", "#clips", "#gaming", "#viral"]
-  };
-}
-
-function builderStep(number, label, active) {
-  return `
-    <span class="${active ? "active" : ""}">
-      <b>${number}</b>
-      ${esc(label)}
-      ${active && number < 4 ? "<em>OK</em>" : ""}
+    <span class="${statusClass}">
+      <small>${esc(label)}</small>
+      <b>${esc(displayValue ?? boolLabel(value))}</b>
+      ${detail ? `<em>${esc(detail)}</em>` : ""}
     </span>
   `;
 }
 
-function renderTimeline(candidate) {
-  return `
-    <div class="timeline-strip">
-      <button>‹</button>
-      <div class="waveform">${Array.from({ length: 24 }, (_, index) => `<i style="height:${18 + ((index * 17 + Number(candidate.score || 0)) % 58)}%"></i>`).join("")}</div>
-      <div class="frame-reel">${Array.from({ length: 7 }, (_, index) => `<span class="thumb-${index % 5}"></span>`).join("")}</div>
-      <button>›</button>
-    </div>
-  `;
-}
-
-function renderHookSuggestions(plan, candidate) {
-  const choices = [
-    plan.hook || candidate.title,
-    `${candidate.title || "This moment"} is the save`,
-    "When chat realizes what happened",
-    "This is why the timing matters",
-    "The cleanest moment from the stream"
-  ].filter(Boolean);
-  return `
-    <div class="hook-list">
-      ${choices.map((choice, index) => `
-        <label class="${index === 0 ? "active" : ""}">
-          <input type="radio" ${index === 0 ? "checked" : ""} disabled>
-          <span>${esc(choice)}</span>
-        </label>
-      `).join("")}
-    </div>
-    <button data-score-candidate="${candidate.id}">Generate More</button>
-  `;
-}
-
-function renderPhonePreview(candidate, plan, size = "") {
-  const title = plan.thumbnailText || plan.hook || candidate.title || "Clip draft";
-  const imageUrl = candidateThumbnailUrl(candidate);
-  return `
-    <div class="phone-preview ${size}">
-      <div class="phone-video thumb-${Math.abs(String(candidate.id || "").length) % 5}">
-        ${imageUrl ? `<img src="${esc(imageUrl)}" alt="" loading="lazy">` : ""}
-        <span>ACE</span>
-        <strong>${esc(title.toUpperCase().slice(0, 22))}</strong>
-        <button type="button" data-preview-candidate="${esc(candidate.id)}" aria-label="Play ${esc(candidate.title || "clip")}">Play</button>
-      </div>
-      <div class="phone-controls">
-        <span>▶</span>
-        <b>${esc(candidate.timestampStart || "0:12")} / ${candidate.duration || 30}s</b>
-        <i></i>
-        <span>▣</span>
-      </div>
-    </div>
-  `;
-}
-
-function nextStep(label, done, status) {
-  return `
-    <div class="next-step ${done ? "done" : ""}">
-      <span>${done ? "✓" : "□"}</span>
-      <b>${esc(label)}</b>
-      <em>${esc(status)}</em>
-    </div>
-  `;
-}
-
-function renderMomentTile(candidate, index) {
-  return `
-    <button class="moment-tile ${candidate.id === state.selectedCandidateId ? "active" : ""}" data-select-candidate="${candidate.id}">
-      ${radarThumb(candidate, index)}
-      <strong>${esc(candidate.title || "Clip moment")}</strong>
-      <span>${candidate.score || 0}</span>
-    </button>
-  `;
-}
-
-function renderDraftSummary(draft) {
-  return `
-    <div class="kv">
-      <span>Platform</span><span>${esc(draft.platform)}</span>
-      <span>Caption</span><span>${esc(draft.caption)}</span>
-      <span>Approval</span><span>${esc(draft.approvalStatus)}</span>
-      <span>Upload</span><span>${esc(draft.platformStatus)}</span>
-    </div>
-  `;
-}
-
-function renderQueue() {
-  const real = realDrafts();
-  const practice = state.drafts.filter(isPracticeDraft);
-  const showingPractice = !real.length && practice.length;
-  const drafts = showingPractice ? practice : real;
-  const limit = dailyLimitValue();
-  const pending = countWhere(drafts, (draft) => draft.approvalStatus === "pending");
-  const approved = countWhere(drafts, (draft) => draft.approvalStatus === "approved");
-  const rejected = countWhere(drafts, (draft) => draft.approvalStatus === "rejected");
-  const sendBack = countWhere(drafts, (draft) => draft.approvalStatus === "send_back");
-  const scheduled = countWhere(drafts, (draft) => Boolean(draft.scheduledFor) || draft.status === "queued");
-  const visibleApprovals = showingPractice ? state.approvals.filter(isPracticeApproval) : realApprovals();
-  const needsApproval = countWhere(visibleApprovals, (approval) => approval.status === "pending" && approval.type === "posting_draft");
-  view.innerHTML = `
-    <section class="queue-page">
-      ${showingPractice ? practiceNotice("Practice posting drafts are shown because no real posting drafts exist. Nothing here has been posted externally.", true) : practice.length ? practiceNotice(`${practice.length} practice posting draft(s) are hidden from Real Mode counts.`, true) : ""}
-      <div class="queue-tabs">
-        ${queueTab("Queue", pending, true)}
-        ${queueTab("Scheduled", scheduled)}
-        ${queueTab("Approved", approved)}
-        ${queueTab("Needs review", needsApproval)}
-        ${queueTab("Returned", sendBack + rejected)}
-      </div>
-
-      <div class="queue-shell">
-        <section class="panel queue-board">
-          <div class="queue-filterbar">
-            <select aria-label="All platforms">
-              <option>All Platforms</option>
-              <option>TikTok</option>
-              <option>Instagram Reels</option>
-              <option>YouTube Shorts</option>
-            </select>
-            <select aria-label="All status">
-              <option>All Status</option>
-              <option>Awaiting approval</option>
-              <option>Approved queue</option>
-              <option>Returned</option>
-            </select>
-            <select aria-label="All streamers">
-              <option>All Streamers</option>
-              ${(showingPractice ? practiceStreamers() : realStreamers()).map((streamer) => `<option>${esc(streamer.displayName)}</option>`).join("")}
-            </select>
-            <select aria-label="All dates">
-              <option>All Dates</option>
-              <option>Today</option>
-              <option>This week</option>
-            </select>
-            <input aria-label="Search posts" placeholder="Search posts..." readonly>
-            <button data-action="refresh">Refresh</button>
-          </div>
-
-          <div class="queue-table-wrap">
-            <table class="queue-table">
-              <thead>
-                <tr>
-                  <th>Clip / Title</th>
-                  <th>Streamer</th>
-                  <th>Platform</th>
-                  <th>Scheduled for</th>
-                  <th>Status</th>
-                  <th>Potential</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${drafts.length ? drafts.map((draft, index) => renderQueueRow(draft, index)).join("") : `<tr><td colspan="7">${empty("No posting drafts yet. Build a clip package first.")}</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-
-          <footer class="queue-footer">
-            <span>Showing ${drafts.length ? `1 to ${Math.min(8, drafts.length)} of ${drafts.length}` : "0"} posts</span>
-            <div class="pager"><button class="active">1</button><button ${drafts.length > 8 ? "" : "disabled"}>2</button><button ${drafts.length > 16 ? "" : "disabled"}>Next</button></div>
-          </footer>
-        </section>
-
-        <aside class="queue-side">
-          <section class="panel queue-calendar">
-            <div class="section-head compact">
-              <h2>Post Calendar</h2>
-              <button data-action="refresh">Today</button>
-            </div>
-            ${renderPostCalendar(drafts)}
-          </section>
-
-          <section class="panel queue-summary">
-            <div class="section-head compact">
-              <h2>Queue Overview</h2>
-              <span>Today</span>
-            </div>
-            ${queueSummaryLine("Awaiting approval", pending, "info")}
-            ${queueSummaryLine("Approved queue", approved, "good")}
-            ${queueSummaryLine("Returned or blocked", sendBack + rejected, "bad")}
-            <div class="daily-meter">
-              <b>${limit.approvedToday} / ${limit.limit}</b>
-              <span>Daily approval limit</span>
-              <i><em style="width:${limit.pct}%"></em></i>
-              <small>${limit.pct}% used</small>
-            </div>
-          </section>
-
-          <section class="panel queue-actions">
-            <h2>Quick Actions</h2>
-            <button class="primary" data-nav-jump="builder">Create New Post</button>
-            <button data-nav-jump="builder">Build from Clip Package</button>
-            <button data-nav-jump="gate">Open Human Gate</button>
-            <button data-nav-jump="outputs">View Outputs</button>
-          </section>
-
-          <section class="panel queue-settings">
-            <h2>Posting Rules</h2>
-            <div class="settings-list">
-              <span><b>Daily approvals</b><em>${limit.limit}</em></span>
-              <span><b>Auto publish</b><em>Locked</em></span>
-              <span><b>Best-time scheduling</b><em>Draft only</em></span>
-              <span><b>Human approval</b><em>Required</em></span>
-            </div>
-          </section>
-        </aside>
-      </div>
-    </section>
-  `;
-}
-
-function queueTab(label, count, active = false) {
-  return `<button class="${active ? "active" : ""}">${esc(label)} <b>${count}</b></button>`;
-}
-
-function renderQueueRow(draft, index) {
-  const candidate = draftCandidate(draft);
-  const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-  const score = Number(candidate?.score || 68 + ((index * 7) % 28));
-  return `
-    <tr>
-      <td>
-        <div class="queue-clip-cell">
-          ${queueThumb(draft, candidate, index)}
-          <div>
-            <strong>${esc(draft.thumbnailText || candidate?.title || "Posting draft")}</strong>
-            <p>${esc(draft.caption || candidate?.transcriptSnippet || "Draft caption waiting for approval.")}</p>
-            <span>${(draft.hashtags || []).slice(0, 3).map((tag) => `<em>${esc(tag.replace("#", ""))}</em>`).join("")}</span>
-          </div>
-        </div>
-      </td>
-      <td>${queueStreamerCell(streamer, index)}</td>
-      <td>${queuePlatformCell(draft.platform)}</td>
-      <td>${queueScheduleCell(draft, index)}</td>
-      <td>${queueApprovalBadge(draft)}</td>
-      <td>${scoreRing(score)}<small>${formatEngagement(candidate || {}, index)} est. views</small></td>
-      <td>
-        <div class="queue-row-actions">
-          <button data-request-post="${draft.id}">Request</button>
-          <button data-nav-jump="builder">Preview</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
-function draftPackage(draft) {
-  return state.packages.find((item) => item.id === draft.clipPackageId) || null;
-}
-
-function draftCandidate(draft) {
-  const clipPackage = draftPackage(draft);
-  return state.candidates.find((item) => item.id === clipPackage?.candidateId) || null;
-}
-
-function queueThumb(draft, candidate, index) {
-  const start = candidate?.timestampStart || "00:00";
-  const duration = candidate?.duration || 30;
-  return `
-    <div class="queue-thumb thumb-${index % 5}">
-      <span>${esc(start.slice(0, 5))}</span>
-      <button data-nav-jump="builder">Play</button>
-      <em>${duration}s</em>
-    </div>
-  `;
-}
-
-function queueStreamerCell(streamer, index) {
-  return `
-    <div class="queue-streamer-cell">
-      <span class="creator-avatar avatar-${index % 6}">${esc(initials(streamer?.displayName || "SC"))}</span>
-      <div>
-        <strong>${esc(streamer?.displayName || "Unknown")}</strong>
-        <small>${esc(streamer?.category || streamer?.platform || (isPracticeStreamer(streamer) ? "Practice channel" : "Channel"))}</small>
-      </div>
-    </div>
-  `;
-}
-
-function queuePlatformCell(platform) {
-  const label = platform === "instagram_reels" ? "Instagram Reels" : platform === "youtube_shorts" ? "YouTube Shorts" : "TikTok";
-  const icon = platform === "instagram_reels" ? "IG" : platform === "youtube_shorts" ? "YT" : "TT";
-  return `
-    <div class="queue-platform-cell">
-      <span class="platform-icon">${esc(icon)}</span>
-      <div>
-        <strong>${esc(label)}</strong>
-        <small>@streamclipper</small>
-      </div>
-    </div>
-  `;
-}
-
-function queueScheduleCell(draft, index) {
-  if (draft.scheduledFor) {
-    return `<b>${esc(fmtDate(draft.scheduledFor))}</b><small>Draft schedule</small>`;
+function macroStepTitle(step = {}) {
+  if (step.type === "capcut/importSourceVideo") return "Legacy system import";
+  if (step.type === "scroll") return "Scroll inside CapCut";
+  if (step.type === "wait") {
+    const waitMs = Number.isFinite(Number(step.ms)) ? Math.max(0, Math.min(120000, Math.round(Number(step.ms)))) : 0;
+    return `Wait ${waitMs}ms`;
   }
-  const date = new Date(draft.createdAt || Date.now());
-  date.setHours(19 + (index % 3), index % 2 ? 30 : 0, 0, 0);
-  return `<b>${esc(date.toLocaleDateString([], { month: "short", day: "numeric" }))}</b><small>${esc(date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</small>`;
+  return step.description || step.type || "Macro step";
 }
 
-function queueApprovalBadge(draft) {
-  if (draft.approvalStatus === "approved") return `${badge("Approved", "good")}<small>Ready after manual handoff</small>`;
-  if (draft.approvalStatus === "rejected") return `${badge("Blocked", "bad")}<small>Stopped by Human Gate</small>`;
-  if (draft.approvalStatus === "send_back") return `${badge("Revise", "warn")}<small>Needs edits</small>`;
-  return `${badge("Queued", "info")}<small>Approval required</small>`;
-}
-
-function renderPostCalendar(drafts) {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const first = new Date(year, month, 1);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const startOffset = first.getDay();
-  const buckets = new Map();
-  drafts.forEach((draft, index) => {
-    const base = new Date(draft.scheduledFor || draft.createdAt || Date.now());
-    const day = Number.isFinite(base.getTime()) ? base.getDate() : ((index % daysInMonth) + 1);
-    buckets.set(day, (buckets.get(day) || 0) + 1);
-  });
-  const cells = [];
-  for (let i = 0; i < startOffset; i += 1) cells.push(`<span class="muted-day"></span>`);
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const count = buckets.get(day) || 0;
-    cells.push(`<span class="${count ? "has-posts" : ""} ${day === now.getDate() ? "today" : ""}">${day}${count ? `<em>${count}</em>` : ""}</span>`);
+function macroStepDetail(step = {}) {
+  if (step.type === "capcut/importSourceVideo") {
+    return "Legacy import step. New training records clip selection manually instead.";
   }
-  return `
-    <div class="calendar-month">${esc(now.toLocaleDateString([], { month: "long", year: "numeric" }))}</div>
-    <div class="calendar-weekdays">${["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((day) => `<b>${day}</b>`).join("")}</div>
-    <div class="calendar-grid">${cells.join("")}</div>
-    <div class="calendar-legend">
-      <span><i class="info-dot"></i>Queued</span>
-      <span><i class="good-dot"></i>Approved</span>
-      <span><i class="bad-dot"></i>Limit locked</span>
-    </div>
-  `;
-}
-
-function queueSummaryLine(label, value, tone) {
-  return `<div class="queue-summary-line ${tone}"><span>${esc(label)}</span><b>${value}</b></div>`;
-}
-
-function renderDraftCard(draft) {
-  return `
-    <article class="item-card">
-      <div class="item-head">
-        <div>
-          <h3>${esc(draft.platform)}</h3>
-          <p>${esc(draft.caption)}</p>
-        </div>
-        ${badge(draft.approvalStatus, draft.approvalStatus === "approved" ? "good" : draft.approvalStatus === "rejected" ? "bad" : "warn")}
-      </div>
-      <div class="kv">
-        <span>Status</span><span>${esc(draft.status)}</span>
-        <span>Platform</span><span>${esc(draft.platformStatus)}</span>
-        <span>Thumbnail</span><span>${esc(draft.thumbnailText)}</span>
-        <span>Hashtags</span><span>${esc((draft.hashtags || []).join(" "))}</span>
-      </div>
-      <div class="actions">
-        <button data-request-post="${draft.id}">Request Approval</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderGate() {
-  const real = realApprovals();
-  const practice = state.approvals.filter(isPracticeApproval);
-  const showingPractice = !real.length && practice.length;
-  const approvals = showingPractice ? practice : real;
-  const pending = approvals.filter((approval) => approval.status === "pending");
-  const selected = selectedApproval(pending);
-  const postApprovals = countWhere(pending, (approval) => approval.type === "posting_draft" || approval.type === "clip_package");
-  const streamerAccess = countWhere(pending, (approval) => approval.type === "streamer_permission");
-  const accountApi = countWhere(pending, (approval) => approval.type === "connector_setup" || approval.type === "account_api");
-  const highRisk = countWhere(pending, (approval) => approval.riskLevel === "high");
-  const mediumRisk = countWhere(pending, (approval) => approval.riskLevel === "medium");
-  const lowRisk = countWhere(pending, (approval) => approval.riskLevel === "low");
-  const recentDecisions = approvals.filter((approval) => approval.status !== "pending").slice(0, 4);
-  view.innerHTML = `
-    <section class="gate-page">
-      ${showingPractice ? practiceNotice("Practice approvals are shown because no real Human Gate items exist. They are local review exercises only.", true) : practice.length ? practiceNotice(`${practice.length} practice approval item(s) are hidden from Real Mode counts.`, true) : ""}
-      <div class="gate-metrics">
-        ${gateMetric("Pending Decisions", pending.length, "Needs your review", "violet")}
-        ${gateMetric("High Risk", highRisk, "Requires attention", "amber")}
-        ${gateMetric("Posts Awaiting Approval", postApprovals, "Ready to review", "info")}
-        ${gateMetric("Auto-Approved", 0, "Low-risk actions", "good")}
-      </div>
-
-      <div class="gate-shell">
-        <section class="panel gate-board">
-          <div class="gate-tabs">
-            ${gateTab("All", pending.length, true)}
-            ${gateTab("Posts", postApprovals)}
-            ${gateTab("Streamer Access", streamerAccess)}
-            ${gateTab("Account & API", accountApi)}
-            ${gateTab("System Actions", 0)}
-          </div>
-          <div class="gate-filterbar">
-            <input aria-label="Search approvals" placeholder="Search approvals..." readonly>
-            <button data-action="refresh">Refresh</button>
-            <select aria-label="Newest first">
-              <option>Newest First</option>
-              <option>Highest Risk</option>
-              <option>Oldest First</option>
-            </select>
-          </div>
-          <div class="gate-table-wrap">
-            <table class="gate-table">
-              <thead>
-                <tr>
-                  <th>Request</th>
-                  <th>Type</th>
-                  <th>Risk</th>
-                  <th>Requested by</th>
-                  <th>Created</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${pending.length ? pending.map((approval, index) => renderGateRow(approval, index, selected?.id)).join("") : `<tr><td colspan="7">${empty("No pending approvals. Human Gate is clear.")}</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <aside class="gate-side">
-          <section class="panel gate-summary">
-            <h2>Approval Queue Summary</h2>
-            <div class="risk-donut" style="--high:${highRisk}; --medium:${mediumRisk}; --low:${lowRisk}; --total:${Math.max(1, pending.length)}">
-              <b>${pending.length}</b>
-              <small>Total Pending</small>
-            </div>
-            <div class="risk-list">
-              ${riskLine("High Risk", highRisk, "high")}
-              ${riskLine("Medium Risk", mediumRisk, "medium")}
-              ${riskLine("Low Risk", lowRisk, "low")}
-              ${riskLine("Info", Math.max(0, pending.length - highRisk - mediumRisk - lowRisk), "info")}
-            </div>
-            <div class="risk-breakdown">
-              <span>Posting Content <b>${postApprovals}</b></span>
-              <span>Streamer Access <b>${streamerAccess}</b></span>
-              <span>Account & API <b>${accountApi}</b></span>
-              <span>System Actions <b>0</b></span>
-            </div>
-          </section>
-
-          <section class="panel gate-decisions">
-            <h2>Recent Decisions</h2>
-            ${recentDecisions.length ? recentDecisions.map(renderDecisionLine).join("") : empty("No decisions recorded yet")}
-          </section>
-        </aside>
-      </div>
-
-      ${selected ? renderApprovalDetail(selected) : ""}
-    </section>
-  `;
-}
-
-function selectedApproval(pending) {
-  const selected = pending.find((approval) => approval.id === state.selectedApprovalId && approval.status === "pending");
-  if (selected) return selected;
-  const fallback = pending[0] || null;
-  if (fallback) {
-    state.selectedApprovalId = fallback.id;
-    localStorage.setItem("selectedApprovalId", fallback.id);
+  const phasePrefix = step.phaseLabel ? `${step.phaseLabel} · ` : "";
+  const semantic = step.semanticTarget || {};
+  const semanticDetail = semantic.label
+    ? `target "${semantic.label}"${semantic.region ? ` in ${semantic.region.replace(/_/g, " ")}` : ""}`
+    : semantic.region
+      ? `target region ${semantic.region.replace(/_/g, " ")}`
+      : "";
+  if (step.type === "scroll") {
+    const target = Number.isFinite(Number(step.xRatio)) && Number.isFinite(Number(step.yRatio))
+      ? `CapCut ${Math.round(Number(step.xRatio) * 100)}%, ${Math.round(Number(step.yRatio) * 100)}%`
+      : `${Math.round(Number(step.x || 0))}, ${Math.round(Number(step.y || 0))}`;
+    return `${phasePrefix}${[semanticDetail, `scroll ${Math.round(Number(step.deltaX || 0))}, ${Math.round(Number(step.deltaY || 0))} at ${target}`].filter(Boolean).join(" · ")}`;
   }
-  return fallback;
-}
-
-function gateMetric(label, value, sublabel, tone) {
-  return `
-    <article class="panel gate-metric ${tone}">
-      <span>${tone.slice(0, 2).toUpperCase()}</span>
-      <strong>${value}</strong>
-      <div>
-        <b>${esc(label)}</b>
-        <small>${esc(sublabel)}</small>
-      </div>
-    </article>
-  `;
-}
-
-function gateTab(label, count, active = false) {
-  return `<button class="${active ? "active" : ""}">${esc(label)} <b>${count}</b></button>`;
-}
-
-function approvalContext(approval) {
-  if (!approval) return {};
-  if (approval.type === "posting_draft") {
-    const draft = state.drafts.find((item) => item.id === approval.linkedId) || approval.evidence?.draft;
-    const candidate = draft ? draftCandidate(draft) : null;
-    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-    return { draft, candidate, streamer, platform: draft?.platform, title: candidate?.title || draft?.thumbnailText || approval.title };
-  }
-  if (approval.type === "clip_package") {
-    const clipPackage = state.packages.find((item) => item.id === approval.linkedId);
-    const candidate = state.candidates.find((item) => item.id === (clipPackage?.candidateId || approval.evidence?.candidateId));
-    const streamer = state.streamers.find((item) => item.id === (candidate?.streamerId || approval.evidence?.streamerId));
-    return { clipPackage, candidate, streamer, platform: "package", title: clipPackage?.packagePlan?.title || candidate?.title || approval.title };
-  }
-  if (approval.type === "streamer_permission") {
-    const streamer = state.streamers.find((item) => item.id === approval.linkedId || item.id === approval.evidence?.streamerId);
-    return { streamer, title: streamer?.displayName || approval.title, platform: streamer?.platform };
-  }
-  return { title: approval.title };
-}
-
-function approvalTypeLabel(type) {
-  if (type === "posting_draft") return "Post Approval";
-  if (type === "clip_package") return "Clip Package";
-  if (type === "streamer_permission") return "Streamer Access";
-  if (type === "connector_setup") return "Account & API";
-  return type.replaceAll("_", " ");
-}
-
-function renderGateRow(approval, index, selectedId) {
-  const context = approvalContext(approval);
-  const score = Number(context.candidate?.score || 72 + ((index * 9) % 24));
-  return `
-    <tr class="${approval.id === selectedId ? "selected" : ""}">
-      <td>
-        <button class="gate-request-cell" data-select-approval="${approval.id}">
-          ${queueThumb(context.draft || {}, context.candidate, index)}
-          <span>
-            <strong>${esc(context.title || approval.title)}</strong>
-            <small>${esc(approval.type === "posting_draft" ? `Post to ${platformName(context.platform)}` : approval.title)}</small>
-          </span>
-        </button>
-      </td>
-      <td>${gateTypeCell(approval, context)}</td>
-      <td>${riskBadge(approval.riskLevel)}</td>
-      <td>${esc(context.streamer?.displayName || "Agent 101")}</td>
-      <td>${timeAgo(approval.createdAt)}</td>
-      <td>${badge("Pending", "warn")}<small>Waiting decision</small></td>
-      <td>
-        <div class="gate-row-actions">
-          <button data-select-approval="${approval.id}">Review</button>
-          <button data-gate-approve="${approval.id}">Approve</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
-function gateTypeCell(approval, context) {
-  const icon = context.platform === "instagram_reels" ? "IG" : context.platform === "youtube_shorts" ? "YT" : context.platform === "tiktok" ? "TT" : approval.type === "streamer_permission" ? "TW" : "PK";
-  return `
-    <div class="gate-type-cell">
-      <span>${esc(icon)}</span>
-      <b>${esc(approvalTypeLabel(approval.type))}</b>
-    </div>
-  `;
-}
-
-function platformName(platform) {
-  if (platform === "instagram_reels") return "Instagram Reels";
-  if (platform === "youtube_shorts") return "YouTube Shorts";
-  if (platform === "tiktok") return "TikTok";
-  if (platform === "multi_platform") return "TikTok/Reels/Shorts";
-  if (platform === "package") return "Posting Queue";
-  return platform || "manual handoff";
-}
-
-function riskBadge(risk) {
-  const normalized = risk || "medium";
-  const tone = normalized === "high" ? "bad" : normalized === "low" ? "good" : "warn";
-  return badge(normalized[0].toUpperCase() + normalized.slice(1), tone);
-}
-
-function riskLine(label, count, tone) {
-  return `<span class="${tone}"><i></i>${esc(label)}<b>${count}</b></span>`;
-}
-
-function renderDecisionLine(approval) {
-  const good = approval.status === "approved";
-  return `
-    <article>
-      <span class="${good ? "good" : "bad"}">${good ? "✓" : "×"}</span>
-      <div>
-        <b>${esc(approval.status === "send_back" ? "Sent back" : approval.status)}</b>
-        <small>${esc(approval.title)}</small>
-      </div>
-      <time>${timeAgo(approval.decidedAt || approval.createdAt)}</time>
-    </article>
-  `;
-}
-
-function renderApprovalCard(approval) {
-  return `
-    <article class="item-card">
-      <div class="item-head">
-        <div>
-          <h3>${esc(approval.title)}</h3>
-          <p>${esc(approval.type)} · ${fmtDate(approval.createdAt)}</p>
-        </div>
-        ${badge(approval.status, approval.status === "approved" ? "good" : approval.status === "rejected" ? "bad" : approval.status === "pending" ? "warn" : "info")}
-      </div>
-      <div class="kv">
-        <span>Risk</span><span>${esc(approval.riskLevel)}</span>
-        <span>Linked</span><span>${esc(approval.linkedId)}</span>
-      </div>
-      <div class="actions">
-        <button class="primary" data-gate-approve="${approval.id}" ${approval.status !== "pending" ? "disabled" : ""}>Approve</button>
-        <button data-gate-sendback="${approval.id}" ${approval.status !== "pending" ? "disabled" : ""}>Send Back</button>
-        <button class="danger" data-gate-reject="${approval.id}" ${approval.status !== "pending" ? "disabled" : ""}>Reject</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderApprovalDetail(approval) {
-  const context = approvalContext(approval);
-  const draft = context.draft;
-  const candidate = context.candidate;
-  const score = Number(candidate?.score || 86);
-  const platform = platformName(context.platform || draft?.platform);
-  return `
-    <section class="panel gate-detail">
-      <div class="gate-detail-head">
-        <button data-nav-jump="gate">Back to Human Gate</button>
-        <div>
-          <h2>${esc(approval.type === "posting_draft" ? "Approve Post" : approvalTypeLabel(approval.type))}</h2>
-          <p>${esc(approval.title)} · ${esc(approval.riskLevel || "medium")} risk</p>
-        </div>
-        ${riskBadge(approval.riskLevel)}
-      </div>
-
-      <div class="gate-detail-grid">
-        <section class="gate-preview-card">
-          <h3>Approval Preview</h3>
-          ${renderPhonePreview(candidate || { title: context.title, duration: draft?.duration || 30 }, fallbackPackagePlan(candidate || { title: context.title }), "large")}
-          <div class="preview-meta">
-            <span><b>Resolution</b>1080x1920</span>
-            <span><b>Duration</b>${candidate?.duration || 30}s</span>
-            <span><b>Mode</b>Draft only</span>
-          </div>
-        </section>
-
-        <section class="gate-detail-card">
-          <h3>Request Details</h3>
-          <div class="detail-kv">
-            <span>Title / Hook</span><b>${esc(context.title || approval.title)}</b>
-            <span>Platform</span><b>${esc(platform)}</b>
-            <span>Created By</span><b>${esc(context.streamer?.displayName || "Agent 101")}</b>
-            <span>Scheduled For</span><b>${esc(draft?.scheduledFor ? fmtDate(draft.scheduledFor) : "Manual handoff after approval")}</b>
-            <span>Visibility</span><b>Blocked until approved</b>
-          </div>
-          <h3>Caption & Hashtags</h3>
-          <p class="gate-caption">${esc(draft?.caption || candidate?.transcriptSnippet || "No caption draft attached yet.")}</p>
-          <div class="hashtag-cloud">${(draft?.hashtags || ["#streamer", "#clips", "#gaming"]).slice(0, 8).map((tag) => `<span>${esc(tag)}</span>`).join("")}</div>
-        </section>
-
-        <section class="gate-analysis-card">
-          <h3>AI Analysis</h3>
-          ${scoreRing(score)}
-          <div class="analysis-bars">
-            ${analysisBar("Hook Strength", Math.min(100, score + 3))}
-            ${analysisBar("Engagement Potential", Math.min(100, score + 1))}
-            ${analysisBar("Brand Safety", approval.riskLevel === "high" ? 62 : 88)}
-            ${analysisBar("Retention Potential", Math.min(100, score + 2))}
-          </div>
-          <p>Agent 101 says this can continue only as an approved draft/manual handoff. External posting remains locked.</p>
-        </section>
-
-        <section class="gate-risk-card">
-          <h3>Risk Assessment</h3>
-          ${riskItem("Content Type", approval.riskLevel === "high" ? "Medium" : "Low")}
-          ${riskItem("Copyright Risk", "Review")}
-          ${riskItem("Community Guidelines", approval.riskLevel === "high" ? "Review" : "Low")}
-          ${riskItem("External Action", "Blocked")}
-        </section>
-
-        <section class="gate-approval-actions">
-          <h3>Approval Actions</h3>
-          <button class="primary" data-gate-approve="${approval.id}">Approve & Add to Queue</button>
-          <button data-gate-sendback="${approval.id}">Send Back for Changes</button>
-          <button class="danger" data-gate-reject="${approval.id}">Reject</button>
-          <textarea readonly>Add note about this decision...</textarea>
-        </section>
-      </div>
-
-      <div class="gate-timeline">
-        ${timelineStep("Package created", true)}
-        ${timelineStep("AI analysis completed", true)}
-        ${timelineStep("Submitted for approval", true)}
-        ${timelineStep("Operator decision", false)}
-      </div>
-    </section>
-  `;
-}
-
-function analysisBar(label, value) {
-  return `<span><b>${esc(label)}</b><i><em style="width:${value}%"></em></i><small>${value}/100</small></span>`;
-}
-
-function riskItem(label, value) {
-  const tone = value === "Low" ? "good" : value === "Blocked" ? "bad" : "warn";
-  return `<span><b>${esc(label)}</b>${badge(value, tone)}</span>`;
-}
-
-function timelineStep(label, done) {
-  return `<span class="${done ? "done" : ""}"><i>${done ? "✓" : "·"}</i>${esc(label)}</span>`;
-}
-
-function renderOutputs() {
-  const allOutputs = buildOutputRows();
-  const realOutputs = allOutputs.filter((output) => !output.practice);
-  const practiceOutputs = allOutputs.filter((output) => output.practice);
-  const showingPractice = !realOutputs.length && practiceOutputs.length;
-  const outputs = showingPractice ? practiceOutputs : realOutputs;
-  const counts = outputCounts(outputs);
-  const recent = outputs.slice(0, 4);
-  const total = outputs.length;
-  const storagePct = Math.min(100, Math.max(0, Math.round((outputs.length / Math.max(1, allOutputs.length || outputs.length || 1)) * 100)));
-  view.innerHTML = `
-    <div class="outputs-page">
-      <section class="outputs-main">
-        ${showingPractice ? practiceNotice("Practice outputs are shown because no real outputs exist yet. They are local draft artifacts only.", true) : practiceOutputs.length ? practiceNotice(`${practiceOutputs.length} practice output(s) are hidden from Real Mode counts.`, true) : ""}
-        <div class="output-tabs">
-          ${outputTab("All Outputs", total, "all", true)}
-          ${outputTab("Clip Packages", counts.clipPackage, "clip_package")}
-          ${outputTab("Videos", counts.video, "video")}
-          ${outputTab("Captions", counts.captions, "captions")}
-          ${outputTab("CapCut Briefs", counts.capcutBrief, "capcut")}
-          ${outputTab("Post Drafts", counts.postDraft, "draft")}
-          ${outputTab("Thumbnails", counts.thumbnail, "thumbnail")}
-        </div>
-
-        <div class="outputs-filterbar">
-          <input placeholder="Search outputs..." aria-label="Search outputs">
-          <select aria-label="Streamer filter"><option>All Streamers</option></select>
-          <select aria-label="Type filter"><option>All Types</option></select>
-          <select aria-label="Status filter"><option>All Status</option></select>
-          <button type="button" ${disabledAttr(true, "Date filtering is not wired yet")}>Date Range</button>
-          <select aria-label="Sort outputs"><option>Sort: Newest</option></select>
-          <button type="button" aria-label="Grid view" ${disabledAttr(true, "Grid view is not wired yet")}>▦</button>
-          <button type="button" aria-label="List view" ${disabledAttr(true, "List view is the current view")}>☰</button>
-        </div>
-
-        <div class="outputs-table-wrap">
-          ${outputs.length ? renderOutputsTable(outputs.slice(0, 10)) : empty("No exported outputs yet")}
-        </div>
-
-        <div class="outputs-footer">
-          <span>${total ? `Showing 1 to ${Math.min(10, total)} of ${total} outputs` : "No outputs to show"}</span>
-          <div class="outputs-pages"><b>1</b><span>2</span><span>3</span><em>...</em><span>${Math.max(1, Math.ceil(total / 10))}</span><button type="button">›</button></div>
-          <label>Show <select><option>10</option><option>25</option></select> per page</label>
-        </div>
-      </section>
-
-      <aside class="outputs-side">
-        <section class="outputs-card output-overview-card">
-          <h2>Outputs Overview</h2>
-          <div class="outputs-donut" style="--clip:${percent(counts.clipPackage, total)}; --video:${percent(counts.video, total)}; --captions:${percent(counts.captions, total)}; --capcut:${percent(counts.capcutBrief, total)}; --draft:${percent(counts.postDraft, total)}">
-            <b>${total}</b>
-            <small>Total Outputs</small>
-          </div>
-          <div class="output-legend">
-            ${outputLegend("Clip Packages", counts.clipPackage, "purple")}
-            ${outputLegend("Videos", counts.video, "blue")}
-            ${outputLegend("Captions", counts.captions, "green")}
-            ${outputLegend("CapCut Briefs", counts.capcutBrief, "amber")}
-            ${outputLegend("Post Drafts", counts.postDraft, "red")}
-            ${outputLegend("Thumbnails", counts.thumbnail, "slate")}
-          </div>
-        </section>
-
-        <section class="outputs-card storage-card">
-          <h2>Storage Usage</h2>
-          <div><span>${storagePct}% visible</span><span>${outputs.length} visible artifact rows</span></div>
-          <i><em style="width:${storagePct}%"></em></i>
-          <button type="button" ${disabledAttr(true, "Storage manager is not wired yet")}>Manage Storage</button>
-        </section>
-
-        <section class="outputs-card">
-          <h2>Quick Actions</h2>
-          <div class="output-actions">
-            <button type="button" ${disabledAttr(true, "Bulk export endpoint is not wired yet")}>Export Multiple <span>›</span></button>
-            <button type="button" ${disabledAttr(true, "Report generation endpoint is not wired yet")}>Generate Report <span>›</span></button>
-            <button type="button" ${disabledAttr(true, "Storage cleanup requires a persisted storage policy first")}>Clean Up Old Files <span>›</span></button>
-          </div>
-        </section>
-
-        <section class="outputs-card">
-          <h2>Recent Exports</h2>
-          <div class="recent-exports">
-            ${recent.map(renderRecentExport).join("") || empty("No recent exports")}
-          </div>
-          <button class="ghost" type="button" ${disabledAttr(true, "Export archive view is not wired yet")}>View all exports →</button>
-        </section>
-      </aside>
-    </div>
-  `;
-}
-
-function buildOutputRows() {
-  const rows = [];
-  state.packages.forEach((clipPackage, index) => {
-    const candidate = state.candidates.find((item) => item.id === clipPackage.candidateId);
-    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-    rows.push({
-      id: clipPackage.id,
-      title: clipPackage.packagePlan?.title || candidate?.title || "Clip package",
-      subtitle: clipPackage.packagePlan?.hook || candidate?.transcriptSnippet || "9:16 package ready for review.",
-      type: "Clip Package",
-      typeKey: "clip_package",
-      badge: `${clipPackage.format || "9:16"} Vertical`,
-      status: clipPackage.approvalStatus === "approved" ? "Completed" : "Pending Review",
-      statusTone: clipPackage.approvalStatus === "approved" ? "good" : "warn",
-      createdAt: clipPackage.createdAt,
-      size: `${clipPackage.artifacts?.length || 0} files`,
-      streamer,
-      candidate,
-      icon: "PKG",
-      thumbClass: `thumb-${index % 5}`,
-      url: clipPackage.artifacts?.[0]?.url || "",
-      practice: isPracticePackage(clipPackage)
-    });
-  });
-
-  state.drafts.forEach((draft, index) => {
-    const clipPackage = draftPackage(draft);
-    const candidate = draftCandidate(draft);
-    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-    rows.push({
-      id: draft.id,
-      title: draft.thumbnailText || candidate?.title || "Post draft",
-      subtitle: draft.caption || "Caption, hashtags, and posting package.",
-      type: "Post Draft",
-      typeKey: "post_draft",
-      badge: platformName(draft.platform),
-      status: draft.approvalStatus === "approved" ? "Completed" : draft.approvalStatus === "pending" ? "Queued" : "Draft",
-      statusTone: draft.approvalStatus === "approved" ? "good" : draft.approvalStatus === "pending" ? "warn" : "info",
-      createdAt: draft.createdAt,
-      size: "Draft",
-      streamer,
-      candidate,
-      icon: "TXT",
-      thumbClass: `thumb-${(index + 2) % 5}`,
-      url: clipPackage?.artifacts?.[0]?.url || "",
-      practice: isPracticeDraft(draft)
-    });
-  });
-
-  state.artifacts.forEach((artifact, index) => {
-    const linkedPackage = state.packages.find((item) => (item.artifacts || []).some((entry) => entry.id === artifact.id));
-    const candidate = state.candidates.find((item) => item.id === linkedPackage?.candidateId);
-    const streamer = state.streamers.find((item) => item.id === candidate?.streamerId);
-    const meta = artifactMeta(artifact);
-    rows.push({
-      id: artifact.id,
-      title: meta.title,
-      subtitle: meta.subtitle,
-      type: meta.type,
-      typeKey: artifact.kind,
-      badge: meta.badge,
-      status: "Completed",
-      statusTone: "good",
-      createdAt: artifact.createdAt,
-      size: artifact.size ? formatBytes(artifact.size) : meta.size,
-      streamer,
-      candidate,
-      icon: meta.icon,
-      thumbClass: meta.thumb ? `thumb-${index % 5}` : "",
-      url: artifact.url,
-      practice: isPracticeArtifact(artifact)
-    });
-  });
-
-  return rows.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-}
-
-function outputCounts(rows) {
-  return {
-    clipPackage: countWhere(rows, (row) => row.typeKey === "clip_package"),
-    video: countWhere(rows, (row) => row.typeKey === "video_export"),
-    captions: countWhere(rows, (row) => row.typeKey === "captions"),
-    capcutBrief: countWhere(rows, (row) => row.typeKey === "capcut_brief"),
-    postDraft: countWhere(rows, (row) => row.typeKey === "post_draft"),
-    thumbnail: countWhere(rows, (row) => row.typeKey === "thumbnail")
-  };
-}
-
-function renderOutputsTable(outputs) {
-  return `
-    <table class="outputs-table">
-      <thead>
-        <tr>
-          <th>Output</th>
-          <th>Streamer</th>
-          <th>Type</th>
-          <th>Status</th>
-          <th>Created</th>
-          <th>Size</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${outputs.map((output, index) => renderOutputRow(output, index)).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderOutputRow(output, index) {
-  return `
-    <tr>
-      <td>
-        <div class="output-name-cell">
-          ${output.thumbClass ? `<div class="output-thumb ${output.thumbClass}"><span>${esc(output.candidate?.timestampStart?.slice(0, 5) || "00:30")}</span><b>${esc(output.icon)}</b></div>` : `<div class="output-file-icon ${outputTypeClass(output.typeKey)}">${esc(output.icon)}</div>`}
-          <div>
-            <strong>${esc(output.title)}</strong>
-            <p>${esc(output.subtitle)}</p>
-            ${output.badge ? `<em>${esc(output.badge)}</em>` : ""}
-            ${output.practice ? `<em class="practice-mark">PRACTICE</em>` : ""}
-          </div>
-        </div>
-      </td>
-      <td>${queueStreamerCell(output.streamer, index)}</td>
-      <td><span class="output-type ${outputTypeClass(output.typeKey)}">${esc(output.type)}</span></td>
-      <td><span class="output-status ${output.statusTone}">${esc(output.status)}</span><small>${output.statusTone === "warn" ? "Needs review" : output.statusTone === "info" ? "Editing in progress" : "Ready to use"}</small></td>
-      <td>${fmtDate(output.createdAt)}</td>
-      <td>${esc(output.size || "Stored")}</td>
-      <td>
-        <div class="output-row-actions">
-          ${output.url ? `<a href="${esc(appUrl(output.url))}" download title="Download">↓</a>` : `<button type="button" title="Download disabled" disabled>↓</button>`}
-          <button type="button" data-nav-jump="builder" title="Open in builder">↗</button>
-          <button type="button" ${disabledAttr(true, "More output actions are not wired yet")}>...</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
-function artifactMeta(artifact) {
-  const ext = artifact.filename?.split(".").pop()?.toUpperCase() || "FILE";
-  const clean = cleanOutputTitle(artifact.filename || "Artifact");
-  if (artifact.kind === "captions") return { type: "Captions", title: clean, subtitle: "Auto-generated caption file.", badge: ext, icon: ext, size: "Caption file" };
-  if (artifact.kind === "capcut_brief") return { type: "CapCut Brief", title: clean, subtitle: "Editing instructions and timeline handoff.", badge: ext, icon: ext, size: "Brief" };
-  if (artifact.kind === "clip_package") return { type: "Clip Package", title: clean, subtitle: "Structured package JSON with hook, cuts, captions, and approval checklist.", badge: ext, icon: "JSON", size: "Package" };
-  if (artifact.kind === "thumbnail") return { type: "Thumbnail", title: clean, subtitle: "Thumbnail preview image.", badge: ext, icon: ext, size: "Image", thumb: true };
-  if (artifact.kind === "video_export") return { type: "Video Export", title: clean, subtitle: "Rendered video export.", badge: ext, icon: ext, size: "Video", thumb: true };
-  return { type: artifact.kind || "Artifact", title: clean, subtitle: "Stored generated output.", badge: ext, icon: ext, size: "Stored" };
-}
-
-function cleanOutputTitle(filename) {
-  return String(filename || "Output")
-    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/, "")
-    .replace(/\.[a-z0-9]+$/i, "")
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function outputTab(label, count, icon, active = false) {
-  return `
-    <button class="${active ? "active" : ""}" type="button">
-      <span class="output-tab-icon ${esc(icon)}">${esc(iconLabel(icon))}</span>
-      <em>${esc(label)}</em>
-      <b>${esc(count)}</b>
-    </button>
-  `;
-}
-
-function iconLabel(icon) {
-  return {
-    all: "ALL",
-    clip_package: "PKG",
-    video: "VID",
-    captions: "CC",
-    capcut: "CC",
-    draft: "DR",
-    thumbnail: "IMG"
-  }[icon] || "OUT";
-}
-
-function outputLegend(label, value, tone) {
-  return `<span><i class="${esc(tone)}"></i><em>${esc(label)}</em><b>${esc(value)}</b></span>`;
-}
-
-function renderRecentExport(output) {
-  const inner = `
-    <span class="${outputTypeClass(output.typeKey)}">${esc(output.icon)}</span>
-    <div>
-      <strong>${esc(output.title)}</strong>
-      <small>${timeAgo(output.createdAt)} · ${esc(output.size || "Stored")}</small>
-    </div>
-    <b>✓</b>
-  `;
-  if (!output.url) return `<article class="recent-export disabled" title="No downloadable file is attached yet">${inner}</article>`;
-  return `
-    <a class="recent-export" href="${esc(appUrl(output.url))}" download>
-      ${inner}
-    </a>
-  `;
-}
-
-function percent(value, total) {
-  if (!total) return 0;
-  return Math.round((value / total) * 100);
-}
-
-function renderAnalytics() {
-  const stats = analyticsStats();
-  const topStreamers = analyticsStreamerRows().slice(0, 6);
-  const realApprovalTotal = realApprovals().length;
-  const queuePressure = realApprovalTotal ? percent(stats.pendingApprovals, realApprovalTotal) : 0;
-  const approvalAccuracy = percent(stats.approvedDecisions, Math.max(1, stats.decidedApprovals));
-  view.innerHTML = `
-    <section class="analytics-page">
-      ${hasPracticeData() ? practiceNotice("Practice rows are excluded from these Real Mode analytics. Use the Dashboard practice banner to clear them.", true) : ""}
-      <div class="analytics-tabs">
-        <button class="active">Overview</button>
-        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Agent 101</button>
-        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Streamers</button>
-        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>Human Gate</button>
-        <button type="button" ${disabledAttr(true, "Detailed analytics tabs are not wired yet")}>System</button>
-        <button type="button" ${disabledAttr(true, "Custom analytics ranges are not wired yet")}>Custom</button>
-      </div>
-      <button class="analytics-export" type="button" ${disabledAttr(true, "Report export needs a persisted report endpoint first")}>Export Report</button>
-
-      <div class="analytics-metrics">
-        ${analyticsMetric("Agent workload", stats.agentWorkload, `${stats.pendingApprovals} decisions waiting`, "AG", queuePressure > 50 ? "warn" : "good")}
-        ${analyticsMetric("Streamers watched", stats.monitoredStreamers, `${stats.approvedStreamers} approved`, "ST", "info")}
-        ${analyticsMetric("Agent-created outputs", stats.agentOutputs, `${stats.artifacts} artifacts stored`, "OUT", "violet")}
-        ${analyticsMetric("Approval accuracy", `${approvalAccuracy}%`, `${stats.blockedApprovals} blocked / sent back`, "OK", approvalAccuracy >= 80 ? "good" : "warn")}
-        ${analyticsMetric("Streamer signal quality", `${stats.averageCandidateScore}/100`, `${stats.highScoreCandidates} high-signal moments`, "QS", stats.averageCandidateScore >= 70 ? "good" : "info")}
-        ${analyticsMetric("Safety gate load", `${queuePressure}%`, `${stats.pendingApprovals} of ${state.approvals.length} approvals open`, "HG", queuePressure > 45 ? "warn" : "good")}
-      </div>
-
-      <div class="analytics-grid-primary">
-        <section class="panel analytics-wide">
-          <div class="toolbar">
-            <div>
-              <h2>Agent 101 Performance Over Time</h2>
-              <p class="muted">Work created, approvals received, and streamer checks from real local activity.</p>
-            </div>
-            <select aria-label="Analytics range"><option>7D</option><option>30D</option></select>
-          </div>
-          ${renderAgentTimeline()}
-        </section>
-        <section class="panel analytics-donut-card">
-          <h2>Agent Work Mix</h2>
-          ${renderAnalyticsDonut([
-            ["Tasks", realDrafts().length, "#38bdf8"],
-            ["Approvals", realApprovalTotal, "#a855f7"],
-            ["Outputs", realArtifacts().length, "#22c55e"],
-            ["Logs", Math.min(state.logs.length, 250), "#f59e0b"]
-          ], "Agent Work")}
-        </section>
-        <section class="panel analytics-time-card">
-          <h2>Operator Time Saved</h2>
-          <strong>${stats.savedHours}h ${stats.savedMinutes}m</strong>
-          <p class="muted">Estimated from draft packages, generated files, and monitored stream checks.</p>
-          ${analyticsMiniChart("time", [32, 38, 45, 40, 52, 56, 61, 58, 67, 72, 69, 78])}
-        </section>
-      </div>
-
-      <div class="analytics-grid-secondary">
-        <section class="panel top-streamers-card">
-          <div class="toolbar">
-            <h2>Top Streamers For Agent 101</h2>
-            <button data-nav-jump="watchlist">View streamers</button>
-          </div>
-          ${renderAnalyticsStreamerTable(topStreamers)}
-        </section>
-        <section class="panel decision-card">
-          <h2>Human Gate Decisions</h2>
-          ${renderAnalyticsDonut([
-            ["Pending", stats.pendingApprovals, "#a855f7"],
-            ["Approved", stats.approvedApprovals, "#22c55e"],
-            ["Blocked", stats.blockedApprovals, "#ef4444"],
-            ["Other", Math.max(0, realApprovalTotal - stats.pendingApprovals - stats.approvedApprovals - stats.blockedApprovals), "#64748b"]
-          ], "Decisions")}
-        </section>
-        <section class="panel quality-card">
-          <h2>Agent And Streamer Quality</h2>
-          <div class="quality-ring" style="--score:${stats.averageCandidateScore}">
-            <strong>${stats.averageCandidateScore}</strong>
-            <span>/100</span>
-          </div>
-          <div class="quality-bars">
-            ${qualityBar("Streamer permission coverage", percent(stats.approvedStreamers, realStreamers().length))}
-            ${qualityBar("Monitoring coverage", percent(stats.monitoredStreamers, realStreamers().length))}
-            ${qualityBar("High-signal candidate rate", percent(stats.highScoreCandidates, realCandidates().length))}
-            ${qualityBar("Approval completion", percent(stats.decidedApprovals, realApprovalTotal))}
-          </div>
-        </section>
-      </div>
-
-      <div class="analytics-grid-tertiary">
-        <section class="panel system-health-card">
-          <h2>Agent System Health</h2>
-          <div class="analytics-health-grid">
-            ${healthTile("Provider", state.openai?.configured ? "OpenAI live" : "Local fallback", state.openai?.configured ? "good" : "warn")}
-            ${healthTile("Stream API", state.twitch?.configured || state.kick?.configured ? streamApiStatusLabel() : "API needed", state.twitch?.configured || state.kick?.configured ? "good" : "warn")}
-            ${healthTile("Queue health", stats.pendingApprovals ? "Review needed" : "Clear", stats.pendingApprovals ? "warn" : "good")}
-            ${healthTile("Agent safety", "Approval gated", "good")}
-          </div>
-        </section>
-        <section class="panel feature-card">
-          <h2>Agent Capability Usage</h2>
-          ${usageBar("Stream monitoring", percent(stats.monitoredStreamers, Math.max(1, realStreamers().length)))}
-          ${usageBar("Clip scoring", percent(realCandidates().length, Math.max(1, realCandidates().length + 20)))}
-          ${usageBar("Approval packaging", percent(realApprovalTotal, Math.max(1, realApprovalTotal + 15)))}
-          ${usageBar("Output generation", percent(realArtifacts().length, Math.max(1, realArtifacts().length + 25)))}
-        </section>
-        <section class="panel insight-card">
-          <h2>Insights</h2>
-          ${analyticsInsight("Agent 101 is busiest at Human Gate", `${stats.pendingApprovals} items need a decision before external posting can move.`)}
-          ${analyticsInsight("Streamer data is the main signal source", `${stats.monitoredStreamers} monitored streamers are feeding the agent's candidate radar.`)}
-          ${analyticsInsight("Safety is holding correctly", "Publishing and account changes remain blocked until an operator approves them.")}
-        </section>
-      </div>
-    </section>
-  `;
-}
-
-function analyticsStats() {
-  const streamers = realStreamers();
-  const candidates = realCandidates();
-  const packages = realPackages();
-  const drafts = realDrafts();
-  const approvals = realApprovals();
-  const artifacts = realArtifacts();
-  const monitoredStreamers = countWhere(streamers, (streamer) => streamer.monitorEnabled);
-  const approvedStreamers = countWhere(streamers, (streamer) => streamer.permissionStatus === "approved");
-  const pendingApprovals = countWhere(approvals, (approval) => approval.status === "pending");
-  const approvedApprovals = countWhere(approvals, (approval) => approval.status === "approved");
-  const blockedApprovals = countWhere(approvals, (approval) => ["blocked", "rejected", "sent_back"].includes(approval.status));
-  const decidedApprovals = approvals.length - pendingApprovals;
-  const scores = candidates.map((candidate) => Number(candidate.score || 0)).filter(Boolean);
-  const averageCandidateScore = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0;
-  const highScoreCandidates = countWhere(candidates, (candidate) => Number(candidate.score || 0) >= 70);
-  const agentWorkload = drafts.length + approvals.length + packages.length;
-  const agentOutputs = packages.length + artifacts.length;
-  const savedMinutesTotal = Math.max(0, packages.length * 18 + artifacts.length * 6 + monitoredStreamers * 4);
-  return {
-    monitoredStreamers,
-    approvedStreamers,
-    pendingApprovals,
-    approvedApprovals,
-    blockedApprovals,
-    decidedApprovals,
-    approvedDecisions: approvedApprovals,
-    averageCandidateScore,
-    highScoreCandidates,
-    agentWorkload,
-    agentOutputs,
-    artifacts: artifacts.length,
-    savedHours: Math.floor(savedMinutesTotal / 60),
-    savedMinutes: savedMinutesTotal % 60
-  };
-}
-
-function analyticsMetric(label, value, detail, icon, tone = "info") {
-  return `
-    <section class="panel analytics-metric analytics-metric-${esc(tone)}">
-      <span>${esc(icon)}</span>
-      <div>
-        <em>${esc(label)}</em>
-        <strong>${esc(value)}</strong>
-        <small>${esc(detail)}</small>
-      </div>
-    </section>
-  `;
-}
-
-function analyticsStreamerRows() {
-  const candidates = realCandidates();
-  const approvals = realApprovals();
-  return realStreamers()
-    .map((streamer, index) => {
-      const streamerCandidates = candidates.filter((candidate) => candidate.streamerId === streamer.id);
-      const streamerApprovals = approvals.filter((approval) => approval.evidence?.streamerId === streamer.id);
-      const avgScore = streamerCandidates.length
-        ? Math.round(streamerCandidates.reduce((sum, candidate) => sum + Number(candidate.score || 0), 0) / streamerCandidates.length)
-        : 0;
-      return {
-        streamer,
-        index,
-        candidates: streamerCandidates.length,
-        avgScore,
-        approvals: streamerApprovals.length,
-        approved: isPermissionReady(streamer),
-        monitored: streamer.monitorEnabled,
-        lastCheckedAt: streamer.lastCheckedAt
-      };
-    })
-    .sort((a, b) => (b.avgScore + b.candidates * 2 + b.approvals) - (a.avgScore + a.candidates * 2 + a.approvals));
-}
-
-function renderAnalyticsStreamerTable(rows) {
-  if (!rows.length) return empty("No streamer analytics yet");
-  return `
-    <table class="analytics-streamer-table">
-      <thead>
-        <tr>
-          <th>Streamer</th>
-          <th>Agent signal</th>
-          <th>Permission</th>
-          <th>Checks</th>
-          <th>Quality</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((row) => `
-          <tr>
-            <td>${queueStreamerCell(row.streamer, row.index)}</td>
-            <td><strong>${esc(row.candidates)}</strong><small>candidate signals</small></td>
-            <td>${badge(row.approved ? "Approved" : "Needs review", row.approved ? "good" : "warn")}</td>
-            <td><strong>${esc(row.lastCheckedAt ? timeAgo(row.lastCheckedAt) : "Never")}</strong><small>${row.monitored ? "Monitoring" : "Paused"}</small></td>
-            <td><span class="signal-bar"><i style="width:${Math.min(100, row.avgScore)}%"></i></span><b>${esc(row.avgScore || 0)}</b></td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderAgentTimeline() {
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
-    const key = date.toISOString().slice(0, 10);
-    return {
-      label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
-      drafts: countWhere(state.drafts, (item) => (item.createdAt || "").slice(0, 10) === key),
-      approvals: countWhere(state.approvals, (item) => (item.createdAt || "").slice(0, 10) === key),
-      logs: countWhere(state.logs, (item) => (item.createdAt || "").slice(0, 10) === key)
-    };
-  });
-  const max = Math.max(1, ...days.flatMap((day) => [day.drafts, day.approvals, Math.round(day.logs / 4)]));
-  const path = (key, yBase) => days.map((day, index) => {
-    const value = key === "logs" ? Math.round(day.logs / 4) : day[key];
-    const x = Math.round((index / (days.length - 1)) * 100);
-    const y = Math.round(yBase - (value / max) * 54);
-    return `${x},${y}`;
-  }).join(" ");
-  return `
-    <div class="agent-timeline">
-      <svg viewBox="0 0 100 80" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="${path("approvals", 66)}" fill="none" stroke="#a855f7" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
-        <polyline points="${path("drafts", 66)}" fill="none" stroke="#38bdf8" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
-        <polyline points="${path("logs", 66)}" fill="none" stroke="#22c55e" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
-      </svg>
-      <div class="timeline-legend"><span><i class="cyan"></i>Drafts</span><span><i class="violet"></i>Approvals</span><span><i class="green"></i>Agent events</span></div>
-      <div class="timeline-days">${days.map((day) => `<span>${esc(day.label)}</span>`).join("")}</div>
-    </div>
-  `;
-}
-
-function renderAnalyticsDonut(items, centerLabel) {
-  const total = Math.max(1, items.reduce((sum, item) => sum + item[1], 0));
-  let running = 0;
-  const stops = items.map(([label, value, color]) => {
-    const start = running;
-    running += percent(value, total);
-    return `${color} ${start}% ${Math.min(100, running)}%`;
-  }).join(", ");
-  return `
-    <div class="analytics-donut-wrap">
-      <div class="analytics-donut" style="background: radial-gradient(circle, #06101b 0 52%, transparent 53%), conic-gradient(${esc(stops)});">
-        <strong>${items.reduce((sum, item) => sum + item[1], 0)}</strong>
-        <span>${esc(centerLabel)}</span>
-      </div>
-      <div class="analytics-legend">
-        ${items.map(([label, value, color]) => `<span><i style="background:${esc(color)}"></i><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function analyticsMiniChart(id, values) {
-  const max = Math.max(1, ...values);
-  const points = values.map((value, index) => `${Math.round((index / (values.length - 1)) * 100)},${Math.round(50 - (value / max) * 42)}`).join(" ");
-  return `
-    <svg class="analytics-mini-chart" viewBox="0 0 100 54" preserveAspectRatio="none" aria-labelledby="${esc(id)}">
-      <polyline points="${points}" fill="none" stroke="#a855f7" stroke-width="2.2" vector-effect="non-scaling-stroke"></polyline>
-    </svg>
-  `;
-}
-
-function qualityBar(label, value) {
-  return `<span><b>${esc(label)}</b><i><em style="width:${Math.min(100, Math.max(0, value))}%"></em></i><strong>${esc(value)}%</strong></span>`;
-}
-
-function healthTile(label, value, tone) {
-  return `<span class="analytics-health ${esc(tone)}"><b>${esc(label)}</b><strong>${esc(value)}</strong></span>`;
-}
-
-function usageBar(label, value) {
-  return `<span class="usage-row"><b>${esc(label)}</b><i><em style="width:${Math.min(100, Math.max(0, value))}%"></em></i><strong>${esc(value)}%</strong></span>`;
-}
-
-function analyticsInsight(title, body) {
-  return `<article><span>AI</span><div><strong>${esc(title)}</strong><p>${esc(body)}</p></div></article>`;
-}
-
-function formatBytes(bytes) {
-  const value = Number(bytes || 0);
-  if (!value) return "Stored";
-  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
-  return `${value} B`;
-}
-
-function outputTypeClass(type) {
-  if (type === "captions") return "captions";
-  if (type === "capcut_brief") return "capcut";
-  if (type === "post_draft") return "draft";
-  if (type === "thumbnail") return "thumbnail";
-  if (type === "video_export") return "video";
-  return "package";
-}
-
-function renderLogs() {
-  const rows = buildLogRows();
-  const stats = logStats(rows);
-  const total = rows.length;
-  view.innerHTML = `
-    <div class="logs-page">
-      <section class="logs-main">
-        <div class="logs-metrics">
-          ${logMetric("All Events", total, `${Math.max(0, Math.round((stats.success / Math.max(1, total)) * 100))}% successful`, "all", "violet")}
-          ${logMetric("Info", stats.info, `${percent(stats.info, total)}%`, "info", "info")}
-          ${logMetric("Success", stats.success, `${percent(stats.success, total)}%`, "success", "good")}
-          ${logMetric("Warning", stats.warning, `${percent(stats.warning, total)}%`, "warning", "warn")}
-          ${logMetric("Error", stats.error, `${percent(stats.error, total)}%`, "error", "bad")}
-          ${logMetric("Critical", stats.critical, `${percent(stats.critical, total)}%`, "critical", "critical")}
-        </div>
-
-        <div class="logs-filterbar">
-          <label class="logs-search">Search logs <input placeholder="Search logs, events, or details..." aria-label="Search logs"></label>
-          <select aria-label="Log type filter"><option>All Types</option><option>Info</option><option>Success</option><option>Warning</option><option>Error</option></select>
-          <select aria-label="Module filter"><option>All Modules</option><option>Stream Watchlist</option><option>Clip Radar</option><option>Clip Builder</option><option>Posting Queue</option><option>Human Gate</option></select>
-          <select aria-label="Streamer filter"><option>All Streamers</option></select>
-          <select aria-label="Status filter"><option>All Status</option><option>Resolved</option><option>Needs review</option></select>
-          <button type="button">${esc(logDateRange(rows))}</button>
-          <button type="button">Export</button>
-        </div>
-
-        <section class="panel logs-table-panel">
-          ${rows.length ? renderLogsTable(rows.slice(0, 10)) : empty("No log entries")}
-        </section>
-
-        <div class="logs-footer">
-          <span>Showing 1 to ${Math.min(10, total)} of ${total} logs</span>
-          <div class="logs-pages"><b>1</b><span>2</span><span>3</span><em>...</em><span>${Math.max(1, Math.ceil(total / 10))}</span><button type="button">›</button></div>
-          <label>Show <select><option>10</option><option>25</option></select> per page</label>
-        </div>
-      </section>
-
-      <aside class="logs-side">
-        <section class="outputs-card logs-level-card">
-          <h2>Logs by Level</h2>
-          <div class="logs-donut" style="--info-end:${percent(stats.info, total)}; --success-end:${percent(stats.info + stats.success, total)}; --warning-end:${percent(stats.info + stats.success + stats.warning, total)}; --error-end:${percent(stats.info + stats.success + stats.warning + stats.error, total)}">
-            <b>${total}</b>
-            <small>Total Logs</small>
-          </div>
-          <div class="output-legend">
-            ${outputLegend("Info", stats.info, "blue")}
-            ${outputLegend("Success", stats.success, "green")}
-            ${outputLegend("Warning", stats.warning, "amber")}
-            ${outputLegend("Error", stats.error, "red")}
-            ${outputLegend("Critical", stats.critical, "purple")}
-          </div>
-        </section>
-
-        <section class="outputs-card logs-chart-card">
-          <div class="toolbar">
-            <h2>Activity Timeline</h2>
-            <select aria-label="Activity timeline range"><option>Events</option><option>Warnings</option><option>Errors</option></select>
-          </div>
-          ${renderLogTimeline(rows)}
-        </section>
-
-        <section class="outputs-card logs-filter-card">
-          <div class="toolbar">
-            <h2>Log Filters</h2>
-            <button class="ghost" type="button">Clear All</button>
-          </div>
-          <label>Search <input placeholder="Search logs..."></label>
-          <label>Type <select><option>All Types</option><option>Info</option><option>Success</option><option>Warning</option><option>Error</option></select></label>
-          <label>Module <select><option>All Modules</option><option>Clip Builder</option><option>Human Gate</option><option>System</option></select></label>
-          <label>Status <select><option>All Status</option><option>Resolved</option><option>Needs review</option></select></label>
-          <label>Date Range <input value="${esc(logDateRange(rows))}" readonly></label>
-          <button class="primary" type="button">Apply Filters</button>
-        </section>
-      </aside>
-    </div>
-  `;
-}
-
-function renderIntegrations() {
-  const payload = state.integrations || {};
-  const connectors = payload.integrations || [];
-  const summary = payload.summary || {};
-  const modeSummary = payload.modeSummary || {};
-  const readiness = state.readiness || {};
-
-  view.innerHTML = `
-    <section class="integrations-page">
-      <div class="integration-hero panel">
-        <div>
-          <span class="eyebrow">Connector control</span>
-          <h2>Integrations</h2>
-          <p>Truthful runtime status for AI, provider APIs, browser automation, media tools, storage, and Human Gate. Secrets stay server-side.</p>
-        </div>
-        <div class="integration-summary">
-          ${integrationSummary("Connected", summary.connected || 0, "good")}
-          ${integrationSummary("Needs Check", summary.needsAttention || 0, "warn")}
-          ${integrationSummary("Real Candidates", modeSummary.clipCandidates?.real || 0, "info")}
-          ${integrationSummary("Practice Rows", modeSummary.clipCandidates?.practice || 0, "warn")}
-        </div>
-      </div>
-
-      <div class="integration-grid">
-        ${connectors.map(renderIntegrationCard).join("")}
-      </div>
-
-      <section class="panel integration-rules">
-        <div class="toolbar">
-          <div>
-            <h2>Production Readiness</h2>
-            <p class="muted">${esc(readiness.blockers?.[0] || "No critical blocker recorded by the readiness audit.")}</p>
-          </div>
-          ${badge(labelize(readiness.readiness || "unchecked"), readiness.blockers?.length ? "warn" : "good")}
-        </div>
-        <div class="integration-rule-grid">
-          ${integrationRule("Allowed locally", "Research, organize clips, draft captions, create CapCut briefs, save artifacts, and package approvals.", "good")}
-          ${integrationRule("Never automatic", "Login, API key creation, account changes, public posting, spending, deletion, or customer contact.", "bad")}
-          ${integrationRule("Mode separation", `${modeSummary.streamers?.real || 0} real streamer(s), ${modeSummary.streamers?.practice || 0} practice streamer(s). Practice never counts as production.`, "info")}
-        </div>
-      </section>
-    </section>
-  `;
-}
-
-function renderIntegrationCard(connector) {
-  const tone = integrationTone(connector.status);
-  const testable = ["openai", "twitch", "kick", "media"].includes(connector.id);
-  const details = [
-    connector.mode ? ["Mode", labelize(connector.mode)] : null,
-    connector.lastTestedAt ? ["Last test", fmtDate(connector.lastTestedAt)] : null,
-    connector.missingConfig?.length ? ["Missing", connector.missingConfig.join(", ")] : null
-  ].filter(Boolean);
-  return `
-    <section class="panel integration-card integration-card-${esc(tone)}">
-      <div>
-        <span>${esc(initials(connector.name))}</span>
-        ${badge(labelize(connector.status), tone)}
-      </div>
-      <h3>${esc(connector.name)}</h3>
-      <p>${esc(connector.message || connector.nextAction || "No status message available.")}</p>
-      ${details.length ? `<div class="integration-facts">${details.map(([label, value]) => `<span><small>${esc(label)}</small><b>${esc(value)}</b></span>`).join("")}</div>` : ""}
-      ${connector.capabilities?.length ? `<div class="integration-tags">${connector.capabilities.slice(0, 3).map((item) => `<em>${esc(item)}</em>`).join("")}</div>` : ""}
-      ${connector.safeError ? `<p class="integration-error">${esc(connector.safeError)}</p>` : ""}
-      <button type="button" ${testable ? `data-test-integration="${esc(connector.id)}"` : "disabled"}>${testable ? "Test Connection" : esc(connector.nextAction || "Not testable")}</button>
-    </section>
-  `;
-}
-
-function integrationSummary(label, value, tone) {
-  return `<span class="integration-summary-card ${esc(tone)}"><b>${esc(value)}</b><small>${esc(label)}</small></span>`;
-}
-
-function integrationTone(status) {
-  const text = String(status || "").toLowerCase();
-  if (/connected|local_ready/.test(text)) return "good";
-  if (/manual|gated|not_tested|local_only/.test(text)) return "warn";
-  if (/error|not_configured|unsupported/.test(text)) return "bad";
-  return "info";
-}
-
-function integrationRule(title, body, tone) {
-  return `<article class="integration-rule ${esc(tone)}"><b>${esc(title)}</b><p>${esc(body)}</p></article>`;
-}
-
-function buildLogRows() {
-  return state.logs.map((log, index) => {
-    const meta = logMeta(log);
-    const linked = linkedLogEntity(log);
-    return {
-      ...log,
-      ...meta,
-      detailsLabel: detailLabel(log, linked),
-      streamer: linked.streamer,
-      user: linked.user || "System",
-      index
-    };
-  });
-}
-
-function logStats(rows) {
-  return {
-    info: countWhere(rows, (row) => row.level === "info"),
-    success: countWhere(rows, (row) => row.level === "success"),
-    warning: countWhere(rows, (row) => row.level === "warning"),
-    error: countWhere(rows, (row) => row.level === "error"),
-    critical: countWhere(rows, (row) => row.level === "critical")
-  };
-}
-
-function logMeta(log) {
-  const type = String(log.type || "info");
-  const message = `${type} ${log.message || ""}`.toLowerCase();
-  let level = "info";
-  if (/critical|fatal|breach|panic/.test(message)) level = "critical";
-  else if (/error|fail|exceeded|invalid|denied/.test(message)) level = "error";
-  else if (/warning|warn|retry|pending|approval_requested|blocked|low/.test(message)) level = "warning";
-  else if (/created|completed|approved|captions|capcut|package|saved|export/.test(message)) level = "success";
-
-  let module = "System";
-  let icon = "SYS";
-  if (/watch|streamer|stream|twitch/.test(message)) {
-    module = type.includes("twitch") ? "Twitch API" : "Stream Watchlist";
-    icon = type.includes("twitch") ? "TW" : "SW";
-  } else if (/candidate|score|clip_detect|moment|radar/.test(message)) {
-    module = "Clip Radar";
-    icon = "RD";
-  } else if (/clip|package|caption|capcut|builder/.test(message)) {
-    module = "Clip Builder";
-    icon = "CB";
-  } else if (/post|draft|queue/.test(message)) {
-    module = "Posting Queue";
-    icon = "PQ";
-  } else if (/approval|gate|review/.test(message)) {
-    module = "Human Gate";
-    icon = "HG";
-  } else if (/artifact|output|export/.test(message)) {
-    module = "Outputs";
-    icon = "OUT";
-  } else if (/openai|ai/.test(message)) {
-    module = "OpenAI";
-    icon = "AI";
-  }
-
-  return {
-    level,
-    module,
-    icon,
-    event: eventTitle(type, log.message)
-  };
-}
-
-function eventTitle(type, message) {
-  if (message) return message;
-  return String(type || "event")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function linkedLogEntity(log) {
-  const details = log.details || {};
-  const candidate = state.candidates.find((item) => item.id === details.candidateId);
-  const clipPackage = state.packages.find((item) => item.id === details.clipPackageId || item.id === details.packageId);
-  const draft = state.drafts.find((item) => item.id === details.draftId);
-  const approval = state.approvals.find((item) => item.id === details.approvalId);
-  const draftCandidateRef = draft ? draftCandidate(draft) : null;
-  const packageCandidate = clipPackage ? state.candidates.find((item) => item.id === clipPackage.candidateId) : null;
-  const streamerId = details.streamerId || candidate?.streamerId || draftCandidateRef?.streamerId || packageCandidate?.streamerId;
-  const streamer = state.streamers.find((item) => item.id === streamerId);
-  return {
-    candidate,
-    clipPackage,
-    draft,
-    approval,
-    streamer,
-    user: details.operator || details.user
-  };
-}
-
-function detailLabel(log, linked) {
-  const details = log.details || {};
-  if (linked.candidate?.title) return linked.candidate.title;
-  if (linked.clipPackage?.packagePlan?.title) return linked.clipPackage.packagePlan.title;
-  if (linked.draft?.platform) return `Post draft: ${platformName(linked.draft.platform)}`;
-  if (linked.approval?.title) return linked.approval.title;
-  const first = Object.entries(details)[0];
-  if (first) return `${first[0]}: ${first[1]}`;
-  return "System event";
-}
-
-function logMetric(label, value, detail, icon, tone) {
-  return `
-    <section class="panel log-metric log-metric-${esc(tone)}">
-      <span>${esc(iconLabelForLog(icon))}</span>
-      <div>
-        <em>${esc(label)}</em>
-        <strong>${esc(value)}</strong>
-        <small>${esc(detail)}</small>
-      </div>
-    </section>
-  `;
-}
-
-function iconLabelForLog(icon) {
-  return {
-    all: "ALL",
-    info: "i",
-    success: "✓",
-    warning: "!",
-    error: "!",
-    critical: "C"
-  }[icon] || "LG";
-}
-
-function renderLogsTable(rows) {
-  return `
-    <table class="logs-table">
-      <thead>
-        <tr>
-          <th>Time (local)</th>
-          <th>Type</th>
-          <th>Module</th>
-          <th>Event</th>
-          <th>Details</th>
-          <th>Streamer</th>
-          <th>User / System</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(renderLogRow).join("")}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderLogRow(row) {
-  return `
-    <tr>
-      <td><strong>${esc(new Date(row.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))}</strong><small>${esc(new Date(row.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))}</small></td>
-      <td>${logLevelBadge(row.level)}</td>
-      <td><span class="log-module ${esc(row.level)}"><b>${esc(row.icon)}</b>${esc(row.module)}</span></td>
-      <td><strong>${esc(row.event)}</strong><small>${esc(String(row.type || "event").replaceAll("_", " "))}</small></td>
-      <td><span class="log-detail-chip">${esc(row.detailsLabel)}</span></td>
-      <td>${row.streamer ? queueStreamerCell(row.streamer, row.index) : `<span class="muted">-</span>`}</td>
-      <td>${esc(row.user || "System")}</td>
-    </tr>
-  `;
-}
-
-function logLevelBadge(level) {
-  const labels = {
-    info: "Info",
-    success: "Success",
-    warning: "Warning",
-    error: "Error",
-    critical: "Critical"
-  };
-  return `<span class="log-level ${esc(level)}">${esc(labels[level] || "Info")}</span>`;
-}
-
-function logDateRange(rows) {
-  if (!rows.length) return "No dates";
-  const dates = rows.map((row) => new Date(row.createdAt)).filter((date) => !Number.isNaN(date.getTime()));
-  if (!dates.length) return "No dates";
-  const timestamps = dates.map((date) => date.getTime());
-  const newest = new Date(Math.max(...timestamps));
-  const oldest = new Date(Math.min(...timestamps));
-  const options = { month: "short", day: "numeric", year: "numeric" };
-  return `${oldest.toLocaleDateString([], options)} - ${newest.toLocaleDateString([], options)}`;
-}
-
-function renderLogTimeline(rows) {
-  const buckets = Array.from({ length: 18 }, (_, index) => {
-    const count = rows.filter((row) => (row.index + index) % 18 === index).length;
-    return Math.max(8, Math.min(96, 18 + count * 5 + ((index * 17) % 34)));
-  });
-  const points = buckets.map((value, index) => `${Math.round((index / (buckets.length - 1)) * 100)},${100 - value}`).join(" ");
-  return `
-    <div class="logs-chart">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="logAreaGradient" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#a855f7" stop-opacity="0.55"/>
-            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <polygon points="0,100 ${points} 100,100" fill="url(#logAreaGradient)"></polygon>
-        <polyline points="${points}" fill="none" stroke="#a855f7" stroke-width="2.4" vector-effect="non-scaling-stroke"></polyline>
-      </svg>
-      <div><span>${esc(logDateRange(rows).split(" - ")[0] || "")}</span><span>${esc(logDateRange(rows).split(" - ")[1] || "")}</span></div>
-    </div>
-  `;
-}
-
-function renderSettings() {
-  const safeConfig = {
-    aiProvider: state.config?.aiProvider,
-    aiMode: state.config?.aiMode,
-    openaiModel: state.config?.openaiModel,
-    openaiConfigured: state.config?.openaiConfigured,
-    twitchConfigured: state.config?.twitchConfigured,
-    twitchRedirectConfigured: state.config?.twitchRedirectConfigured,
-    twitchAllowedChannels: state.config?.twitchAllowedChannels,
-    kickConfigured: state.config?.kickConfigured,
-    kickOAuthTokenConfigured: state.config?.kickOAuthTokenConfigured,
-    postDailyLimit: state.config?.postDailyLimit,
-    browserEnabled: state.config?.browserEnabled,
-    browserMode: state.config?.browserMode,
-    browserViewport: state.config?.browserViewport,
-    capcutManualHandoff: state.config?.capcutManualHandoff,
-    outputDir: state.config?.outputDir
-  };
-  view.innerHTML = `
-    <div class="grid cols-2">
-      <section class="panel">
-        <div class="toolbar">
-          <h2>Connections</h2>
-          <div class="actions">
-            <button data-action="test-openai">Test OpenAI</button>
-            <button data-action="test-twitch">Test Twitch</button>
-            <button data-action="test-kick">Test Kick</button>
-          </div>
-        </div>
-        <div class="kv">
-          <span>OpenAI</span><span>${state.openai?.configured ? "configured" : "not configured"}</span>
-          <span>Twitch</span><span>${state.twitch?.configured ? "configured" : "not configured"}</span>
-          <span>Kick</span><span>${state.kick?.configured ? "configured" : "not configured"}</span>
-          <span>Browser</span><span>${state.browser?.enabled ? "enabled" : "disabled"}</span>
-          <span>Official API</span><span>${state.twitch?.officialApiOnly ? "yes" : "no"}</span>
-          <span>Secrets</span><span>server-side only</span>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="toolbar">
-          <h2>Browser & Tools</h2>
-          <div class="actions">
-            <button data-nav-jump="browser">Open Browser Workspace</button>
-            <button data-browser-action="reset-profile">Reset Browser Profile</button>
-          </div>
-        </div>
-        <div class="kv">
-          <span>Browser mode</span><span>${esc(state.browser?.mode || "headless_screenshot")}</span>
-          <span>CapCut</span><span>${esc(state.capcut?.status || "manual_handoff")}</span>
-          <span>FFmpeg</span><span>${state.media?.ffmpeg?.configured ? "available" : "not available"}</span>
-          <span>FFprobe</span><span>${state.media?.ffprobe?.configured ? "available" : "not available"}</span>
-          <span>Policy</span><span>${esc((state.browser?.policies || []).length)} allowlisted domains</span>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Runtime</h2>
-        <pre class="codebox">${esc(JSON.stringify(safeConfig, null, 2))}</pre>
-      </section>
-    </div>
-  `;
-}
-
-function labelize(value) {
-  return String(value || "")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function statusTone(value) {
-  const text = String(value || "").toLowerCase();
-  if (/ready|passed|connected|human_review|package_ready|capcut_open|completed/.test(text)) return "good";
-  if (/warning|pending|manual|human|paused|draft|preparing/.test(text)) return "warn";
-  if (/failed|error|blocked|cancelled|missing|rejected/.test(text)) return "bad";
-  return "neutral";
-}
-
-function getActiveHandoff() {
-  return (state.handoffs || []).find((handoff) => handoff.active) || (state.handoffs || [])[0] || null;
-}
-
-function renderPreflightList(handoff) {
-  const checks = handoff?.preflight?.checks || [];
-  return `
-    <div class="handoff-check-list">
-      ${checks.slice(0, 8).map((check) => `
-        <span class="${check.passed ? "ok" : "warn"}">
-          <b>${check.passed ? "OK" : "!"}</b>
-          <em>${esc(check.label)}</em>
-        </span>
-      `).join("") || empty("No preflight checks yet")}
-    </div>
-  `;
-}
-
-function renderActiveHandoff(handoff) {
-  if (!handoff) {
-    return `
-      <section class="panel browser-card active-handoff-card">
-        <h2>Active Handoff</h2>
-        ${empty("Select or package a clip to prepare a supervised CapCut handoff.")}
-        <button class="stretch" data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare latest package</button>
-      </section>
-    `;
-  }
-  return `
-    <section class="panel browser-card active-handoff-card">
-      <div class="browser-card-title">
-        <h2>Active Handoff</h2>
-        ${badge(labelize(handoff.status), statusTone(handoff.status))}
-      </div>
-      <article class="active-handoff-summary">
-        <div class="handoff-thumb ${handoff.thumbnail ? "" : "blank"}">
-          ${handoff.thumbnail ? `<img src="${esc(handoff.thumbnail)}" alt="">` : `<span>SC</span>`}
-        </div>
-        <div>
-          <strong>${esc(handoff.clipPackage?.title || "CapCut handoff")}</strong>
-          <p>${esc(handoff.creator?.displayName || "Creator pending")} · ${esc(handoff.outputDuration || 0)}s output</p>
-        </div>
-      </article>
-      <div class="kv compact">
-        <span>Render</span><span>${esc(handoff.renderStatus)}</span>
-        <span>Captions</span><span>${esc(handoff.captionStatus)}</span>
-        <span>Package</span><span>${esc(handoff.packageStatus)}</span>
-        <span>Expires</span><span>${fmtDate(handoff.expiresAt)}</span>
-      </div>
-      ${renderPreflightList(handoff)}
-      <div class="browser-card-actions">
-        <button data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare package</button>
-        <button class="primary" data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut</button>
-        <button data-browser-action="cancel-handoff" ${state.browserBusy ? "disabled" : ""}>Cancel</button>
-      </div>
-    </section>
-  `;
-}
-
-function renderSmokeModal() {
-  if (!state.smokeModalOpen) return "";
-  const smoke = state.smokeTest;
-  const checks = smoke?.checks || [];
-  return `
-    <div class="modal-backdrop smoke-backdrop" role="presentation">
-      <section class="smoke-modal" role="dialog" aria-modal="true" aria-label="System smoke test">
-        <header>
-          <div>
-            <span class="eyebrow">System diagnostics</span>
-            <h2>Smoke Test</h2>
-            <p>Real checks for the API, media tools, supervised browser, CapCut DNS, and state storage. Warnings stay warnings.</p>
-          </div>
-          <button aria-label="Close smoke test" data-smoke-close>×</button>
-        </header>
-        <div class="smoke-summary">
-          ${badge(state.smokeBusy ? "Running" : labelize(smoke?.status || "Not run"), state.smokeBusy ? "warn" : statusTone(smoke?.status))}
-          <span><b>${esc(smoke?.durationMs ?? "--")}ms</b><small>Duration</small></span>
-          <span><b>${esc(checks.filter((check) => check.status === "failed").length)}</b><small>Failed</small></span>
-          <span><b>${esc(checks.filter((check) => check.status === "warning").length)}</b><small>Warnings</small></span>
-        </div>
-        <div class="smoke-checks">
-          ${state.smokeBusy && !checks.length ? `
-            ${["API", "FFmpeg", "Chromium", "CapCut DNS"].map((label) => `
-              <article class="running"><span></span><strong>${label}</strong><p>Running...</p></article>
-            `).join("")}
-          ` : checks.map((check) => `
-            <article class="${esc(check.status)}">
-              <span></span>
-              <div>
-                <strong>${esc(check.label)}</strong>
-                <p>${esc(check.message)}</p>
-                ${check.technical ? `<code>${esc(check.technical).slice(0, 280)}</code>` : ""}
-              </div>
-              <em>${esc(check.durationMs)}ms</em>
-            </article>
-          `).join("") || empty("Run the smoke test to see diagnostics.")}
-        </div>
-        <footer>
-          <button data-smoke-copy ${smoke ? "" : "disabled"}>Copy diagnostic report</button>
-          <button class="primary" data-smoke-retry ${state.smokeBusy ? "disabled" : ""}>${state.smokeBusy ? "Running..." : "Retry smoke test"}</button>
-        </footer>
-      </section>
-    </div>
-  `;
-}
-
-function renderBrowserTabs(active) {
-  const tabs = active?.tabs || [];
-  if (!tabs.length) {
-    return `<div class="browser-tab-strip empty-tabs"><span>No tabs yet</span><button data-browser-action="new-tab" ${active ? "" : "disabled"}>+ New tab</button></div>`;
-  }
-  return `
-    <div class="browser-tab-strip" role="tablist" aria-label="Browser tabs">
-      ${tabs.map((tab) => `
-        <button class="browser-tab ${tab.active ? "active" : ""}" data-browser-tab="${esc(tab.id)}" title="${esc(tab.url || tab.title)}">
-          <span class="tab-dot ${tab.loading ? "loading" : ""}"></span>
-          <b>${esc(tab.title || tab.hostname || "New tab")}</b>
-          <small>${esc(tab.hostname || "blank")}</small>
-        </button>
-      `).join("")}
-      <button class="browser-tab-add" data-browser-action="new-tab" aria-label="New browser tab">+</button>
-    </div>
-  `;
-}
-
-function renderBrowserTaskRail(active, handoff) {
-  const browser = state.browser || {};
-  const actions = browser.actions || [];
-  const currentStep = active?.privacyShield?.active
-    ? "Human sign-in or sensitive step"
-    : active?.controlMode === "agent_assisted"
-      ? "Agent assisted observation"
-      : active
-        ? "Human controlled browser"
-        : "No active browser";
-  const nextAction = active?.privacyShield?.active
-    ? "Complete the sensitive step manually, then take human control again."
-    : handoff?.status === "PACKAGE_READY"
-      ? "Open CapCut and use the prepared handoff files."
-      : handoff
-        ? "Prepare the handoff package before opening CapCut."
-        : "Start a browser session or package a clip for CapCut.";
-  const activeTask = browser.tasks?.[0];
-  return `
-    <aside class="browser-side browser-task-rail">
-      <section class="panel browser-card browser-task-card">
-        <div class="browser-card-title">
-          <h2>Current Task</h2>
-          ${badge(active?.state || "Offline", statusTone(active?.state || "offline"))}
-        </div>
-        <div class="browser-task-hero">
-          <strong>${esc(activeTask?.goal || handoff?.clipPackage?.title || "Supervised browser workspace")}</strong>
-          <p>${esc(currentStep)}</p>
-        </div>
-        <div class="kv">
-          <span>Controller</span><span>${esc(active?.controlMode || "offline")}</span>
-          <span>Policy</span><span>${esc(active?.policyMode || "none")}</span>
-          <span>Domain</span><span>${esc(active?.currentHostname || "No domain")}</span>
-          <span>Linked handoff</span><span>${esc(handoff?.id ? handoff.status : "None")}</span>
-          <span>Last activity</span><span>${fmtDate(active?.lastActivityAt)}</span>
-        </div>
-        ${active?.lastError ? `<p class="browser-error">${esc(active.lastError)}</p>` : ""}
-      </section>
-
-      <section class="panel browser-card browser-next-action">
-        <h2>Next Action</h2>
-        <p>${esc(nextAction)}</p>
-        <div class="browser-card-actions two">
-          <button data-browser-action="take-control" ${active ? "" : "disabled"}>Take control</button>
-          <button data-browser-action="${active?.controlMode === "paused" ? "resume" : "pause"}" ${active ? "" : "disabled"}>${active?.controlMode === "paused" ? "Resume" : "Pause"}</button>
-        </div>
-      </section>
-
-      ${renderActiveHandoff(handoff)}
-
-      <section class="panel browser-card compact-card">
-        <div class="browser-card-title">
-          <h2>Action Timeline</h2>
-          <button data-browser-action="run-diagnostics">Diagnostics</button>
-        </div>
-        <div class="activity-list browser-activity-list">
-          ${actions.slice(0, 8).map((action) => `
-            <article>
-              <span>BR</span>
-              <p>${esc((action.action || action.actionType || "browser event").replaceAll("_", " "))}</p>
-              <time>${fmtDate(action.createdAt)}</time>
-            </article>
-          `).join("") || empty("No browser actions yet")}
-        </div>
-      </section>
-    </aside>
-  `;
-}
-
-function renderBrowserAssetDock(handoff, downloads) {
-  const artifactIds = new Set(handoff?.artifactIds || []);
-  const handoffArtifacts = state.artifacts.filter((artifact) => artifactIds.has(artifact.id));
-  return `
-    <section class="panel browser-asset-dock">
-      <div class="browser-dock-header">
-        <div>
-          <span class="eyebrow">Project asset dock</span>
-          <h2>CapCut Handoff Files</h2>
-        </div>
-        <div class="browser-dock-actions">
-          <button data-browser-action="prepare-handoff" ${state.browserBusy ? "disabled" : ""}>Prepare handoff</button>
-          <button class="primary" data-browser-action="open-capcut" ${state.browserBusy ? "disabled" : ""}>Open CapCut</button>
-        </div>
-      </div>
-      <div class="browser-asset-grid">
-        ${handoffArtifacts.map((artifact) => `
-          <article class="browser-asset">
-            <span>${esc((artifact.format || artifact.type || "file").toUpperCase())}</span>
-            <strong>${esc(artifact.title || artifact.filename || artifact.id)}</strong>
-            <small>${esc(artifact.fileSizeBytes ? `${Math.round(artifact.fileSizeBytes / 1024)} KB` : artifact.status || "artifact")}</small>
-            ${artifact.url ? `<a href="${esc(appUrl(artifact.url))}" download>Download</a>` : `<em>Saved</em>`}
-          </article>
-        `).join("") || empty("No prepared handoff files yet. Package a verified clip, then prepare the handoff.")}
-      </div>
-      <div class="browser-download-row">
-        <strong>Recent downloads</strong>
-        ${downloads.slice(0, 4).map((download) => `<span>${esc(download.suggestedFilename || download.filename)} <em>${fmtDate(download.createdAt)}</em></span>`).join("") || `<span>No browser downloads detected yet.</span>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderBrowserWorkspace() {
-  const browser = state.browser || {};
-  const active = browser.activeSession || (browser.sessions || []).find((session) => !["closed", "stopped"].includes(session.status)) || null;
-  const policies = browser.policies || [];
-  const downloads = browser.downloads || [];
-  const handoff = getActiveHandoff();
-  const screenshotUrl = active
-    ? appUrl(`/api/browser/sessions/${active.id}/screenshot?stamp=${state.browserScreenshotStamp || Date.now()}`)
+  const relativePoint = Number.isFinite(Number(step.xRatio)) && Number.isFinite(Number(step.yRatio))
+    ? `CapCut ${Math.round(Number(step.xRatio) * 100)}%, ${Math.round(Number(step.yRatio) * 100)}%`
     : "";
-  const mediaReady = state.media?.ffmpeg?.configured && state.media?.ffprobe?.configured;
-  const sessionStatus = active?.state || (active?.status ? labelize(active.status).toUpperCase() : "NOT_STARTED");
-  view.innerHTML = `
-    <section class="browser-workspace browser-workspace-v2">
-      <header class="browser-topbar">
-        <div>
-          <span class="eyebrow">Browser Workspace</span>
-          <h2>Supervised tool browser</h2>
-          <p>Real server-side Chromium, persistent profile, human handoff for sensitive pages, and CapCut-ready assets.</p>
-        </div>
-        <div class="browser-status-chips">
-          ${badge(`Worker ${browser.enabled ? "on" : "off"}`, browser.enabled ? "good" : "bad")}
-          ${badge(sessionStatus, statusTone(sessionStatus))}
-          ${badge(`Controller ${active?.controlMode || "offline"}`, active?.controlMode === "paused" ? "warn" : "info")}
-          ${badge(`CapCut ${state.capcut?.status || "manual"}`, "neutral")}
-          ${badge(mediaReady ? "Media ready" : "Media check", mediaReady ? "good" : "warn")}
-        </div>
-      </header>
+  const relativeDrag = Number.isFinite(Number(step.fromXRatio)) && Number.isFinite(Number(step.toXRatio))
+    ? `CapCut ${Math.round(Number(step.fromXRatio) * 100)}% -> ${Math.round(Number(step.toXRatio) * 100)}%`
+    : "";
+  const detail = [
+    semanticDetail,
+    step.type,
+    step.keys?.length ? step.keys.join("+") : "",
+    step.type === "wait" && Number.isFinite(Number(step.ms)) ? `${Math.max(0, Math.min(120000, Math.round(Number(step.ms))))}ms` : "",
+    relativePoint || relativeDrag || (Number.isFinite(Number(step.x)) ? `${Math.round(step.x)}, ${Math.round(step.y || 0)}` : ""),
+    step.activeWindowTitle || step.activeApp || ""
+  ].filter(Boolean).join(" · ");
+  return `${phasePrefix}${detail}`;
+}
 
-      <div class="browser-layout">
-        <section class="panel browser-stage browser-stage-v2">
-          ${renderBrowserTabs(active)}
-          <form id="browser-url-form" class="browser-toolbar browser-toolbar-v2">
-            <button type="button" data-browser-action="back" ${active ? "" : "disabled"} title="Back">‹</button>
-            <button type="button" data-browser-action="forward" ${active ? "" : "disabled"} title="Forward">›</button>
-            <button type="button" data-browser-action="refresh" ${active ? "" : "disabled"} title="Refresh">↻</button>
-            <button type="button" data-browser-action="stop-loading" ${active ? "" : "disabled"} title="Stop loading">×</button>
-            <input name="url" value="${esc(active?.currentUrl || "")}" placeholder="https://www.twitch.tv/directory or https://kick.com">
-            <span class="browser-domain-chip ${active?.policyMode || "none"}">${esc(active?.currentHostname || "No domain")}</span>
-            <button class="primary" type="submit" ${active ? "" : "disabled"}>Go</button>
-          </form>
-
-          <div class="browser-viewport-shell">
-            <div class="browser-viewport ${active ? "" : "empty"}" data-browser-viewport>
-              ${active ? `
-                <img src="${esc(screenshotUrl)}" alt="Live browser screenshot for ${esc(active.title || "workspace")}" data-browser-shot draggable="false">
-                <span class="browser-controller-badge">${esc(active.controlMode || "human_control")}</span>
-                ${active.privacyShield?.active ? `
-                  <div class="browser-privacy-shield">
-                    <strong>Sensitive page detected</strong>
-                    <p>${esc(active.privacyShield.reason || "Agent 101 is paused. Human control is required.")}</p>
-                  </div>
-                ` : ""}
-              ` : `
-                <div class="browser-empty-state">
-                  <strong>No browser session</strong>
-                  <p>Start an isolated Chromium workspace to use approved web tools. No fake browser is displayed here.</p>
-                  <div>
-                    <button class="primary" data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>Start Browser</button>
-                    <button data-browser-action="run-diagnostics">Run Diagnostics</button>
-                  </div>
-                </div>
-              `}
-            </div>
-          </div>
-
-          <div class="browser-input-bridge">
-            <form id="browser-type-form">
-              <input name="text" placeholder="Type into the focused browser field..." ${active?.controlMode === "human_control" ? "" : "disabled"}>
-              <button type="submit" ${active?.controlMode === "human_control" ? "" : "disabled"}>Type</button>
-              <button type="button" data-browser-action="browser-enter" ${active?.controlMode === "human_control" ? "" : "disabled"}>Enter</button>
-              <button type="button" data-browser-action="browser-scroll" ${active?.controlMode === "human_control" ? "" : "disabled"}>Scroll</button>
-            </form>
-            <div class="browser-control-buttons">
-              <button data-browser-action="start-session" ${state.browserBusy ? "disabled" : ""}>${active ? "Restore" : "Start"}</button>
-              <button data-browser-action="new-tab" ${active ? "" : "disabled"}>New tab</button>
-              <button data-browser-action="close-tab" ${active?.activeTabId ? "" : "disabled"}>Close tab</button>
-              <button data-browser-action="take-control" ${active ? "" : "disabled"}>Take control</button>
-              <button data-browser-action="give-agent-control" ${active && !active.privacyShield?.active ? "" : "disabled"}>Agent assisted</button>
-              <button data-browser-action="restart-session" ${active ? "" : "disabled"}>Restart</button>
-              <button data-browser-action="end-session" ${active ? "" : "disabled"}>End</button>
-            </div>
-          </div>
-        </section>
-
-        ${renderBrowserTaskRail(active, handoff)}
-      </div>
-
-      ${renderBrowserAssetDock(handoff, downloads)}
-
-      <section class="panel browser-policy-dock">
-        <div class="browser-card-title">
-          <h2>Domain Policies</h2>
-          <span>${esc(policies.length)} reviewed</span>
-        </div>
-        <div class="browser-policy-list horizontal">
-          ${policies.slice(0, 10).map((policy) => `
-            <span>
-              <b>${esc(policy.domain)}</b>
-              <em>${esc(policy.mode)}</em>
-            </span>
-          `).join("") || empty("No browser policies loaded")}
-        </div>
-      </section>
-    </section>
-    ${renderSmokeModal()}
+function macroStepScreenshot(step = {}, key = "screenshotBefore", label = "Before") {
+  const screenshot = step[key] || {};
+  return screenshot.url ? `
+    <figure>
+      <img src="${esc(apiUrl(screenshot.url))}" alt="${esc(label)} step screenshot">
+      <figcaption>${esc(label)}</figcaption>
+    </figure>
+  ` : `
+    <div class="step-shot-empty">${esc(label)} screenshot missing</div>
   `;
 }
 
-function empty(label) {
-  return `<div class="empty">${esc(label)}</div>`;
+function teachVisionShots(teach = {}, steps = []) {
+  const shots = [];
+  for (const snapshot of teach.liveSnapshots || []) {
+    if (snapshot?.screenshot?.url) {
+      shots.push({
+        id: snapshot.id || snapshot.screenshot.id,
+        label: snapshot.phaseLabel || snapshot.label || "Teaching",
+        detail: `${snapshot.reason || "snapshot"} · ${Number(snapshot.stepCount || 0)} steps`,
+        createdAt: snapshot.createdAt || snapshot.screenshot.createdAt || "",
+        screenshot: snapshot.screenshot
+      });
+    }
+  }
+  for (const [index, step] of steps.entries()) {
+    const screenshot = step.screenshotAfter || step.screenshotBefore || null;
+    if (screenshot?.url) {
+      shots.push({
+        id: `${index}-${screenshot.id || "step"}`,
+        label: `Step ${index + 1}`,
+        detail: macroStepTitle(step),
+        createdAt: screenshot.createdAt || step.timestamp || "",
+        screenshot
+      });
+    }
+  }
+  const unique = new Map();
+  for (const shot of shots) unique.set(shot.screenshot.url, shot);
+  return Array.from(unique.values())
+    .sort((a, b) => Date.parse(a.createdAt || "") - Date.parse(b.createdAt || ""))
+    .slice(-12);
 }
 
-function practiceNotice(message, includeClear = false) {
+function renderTeachingVisionPanel(teach = {}, steps = [], recording = false) {
+  const shots = teachVisionShots(teach, steps);
+  const latest = shots.at(-1);
   return `
-    <div class="practice-inline">
-      <strong>PRACTICE MEDIA — NOT A REAL STREAM</strong>
-      <span>${esc(message)}</span>
-      ${includeClear ? `<button data-action="clear-demo">Clear Practice Data</button>` : ""}
+    <section class="teaching-vision">
+      <div class="teaching-vision-head">
+        <div>
+          <span class="watch-kicker">Teaching Vision</span>
+          <h3>${latest ? "Latest CapCut frame" : "No teaching frames yet"}</h3>
+        </div>
+        <button type="button" data-teach-snapshot ${state.capcut.snapshotBusy ? "disabled" : ""}>Capture now</button>
+      </div>
+      <div class="teaching-vision-main">
+        ${latest?.screenshot?.url ? `
+          <figure>
+            <img src="${esc(apiUrl(latest.screenshot.url))}" alt="Latest CapCut teaching screenshot">
+            <figcaption>
+              <strong>${esc(latest.label)}</strong>
+              <span>${esc(latest.detail)}${recording ? " · recording" : ""}</span>
+            </figcaption>
+          </figure>
+        ` : `
+          <div class="capcut-shot-empty">Start recording or capture the CapCut screen.</div>
+        `}
+        <div class="vision-strip">
+          ${shots.length ? shots.map((shot) => `
+            <span title="${esc(`${shot.label} · ${shot.detail}`)}">
+              <img src="${esc(apiUrl(shot.screenshot.url))}" alt="${esc(shot.label)}">
+              <small>${esc(shot.label)}</small>
+            </span>
+          `).join("") : `
+            <span class="vision-empty">Waiting for CapCut frames</span>
+          `}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMacroStep(step, index) {
+  const title = macroStepTitle(step);
+  const recording = Boolean(state.capcut.teach?.recording);
+  const replay = activeReplayForTeach();
+  const stepNumber = index + 1;
+  const statusClass = macroStepStatusClass(stepNumber, replay);
+  const detail = macroStepDetail(step);
+  const waitMs = Number.isFinite(Number(step.ms)) ? Math.max(0, Math.min(120000, Math.round(Number(step.ms)))) : 0;
+  return `
+    <li class="${statusClass}">
+      <b>${index + 1}</b>
+      <span>
+        <strong>${esc(title)}</strong>
+        <small>${esc(detail)}</small>
+        ${step.type === "wait" ? `
+          <span class="macro-step-wait">
+            <small>Wait ms</small>
+            <input type="number" min="0" max="120000" step="100" value="${waitMs}" data-wait-step-ms="${index}" ${recording ? "disabled" : ""} />
+            <button type="button" data-update-wait-step="${index}" ${recording ? "disabled" : ""}>Save wait</button>
+          </span>
+        ` : ""}
+        <span class="macro-step-actions">
+          ${["click", "doubleClick"].includes(step.type) ? `<button type="button" data-target-teach-step="${index}" ${recording ? "disabled" : ""}>Set target</button>` : ""}
+          <button type="button" data-delete-teach-step="${index}" ${recording ? "disabled" : ""}>Delete</button>
+          <button type="button" class="danger" data-trim-teach-step="${index}" ${recording ? "disabled" : ""}>Delete from here</button>
+        </span>
+      </span>
+    </li>
+  `;
+}
+
+function activeReplayForTeach() {
+  const replay = state.capcut.replay || null;
+  const teach = state.capcut.teach || {};
+  if (!replay) return null;
+  if (!replay.running && !["failed", "cancelled", "complete", "needs_review"].includes(replay.status)) return null;
+  if (!teach.savedMacroId && !teach.name) return replay;
+  if (teach.savedMacroId && replay.macroId && teach.savedMacroId !== replay.macroId) return null;
+  if (!teach.savedMacroId && teach.name && replay.macroName && teach.name !== replay.macroName) return null;
+  return replay;
+}
+
+function macroStepStatusClass(stepNumber, replay = null) {
+  if (!replay) return "";
+  if (Number(replay.failedStepIndex || 0) === stepNumber) return "failed";
+  if (replay.running && Number(replay.currentStepIndex || 0) === stepNumber) return "running";
+  const log = Array.isArray(replay.log) ? replay.log : [];
+  const event = log.find((item) => Number(item.index) + 1 === stepNumber);
+  if (event?.status?.includes?.("failed")) return "failed";
+  if (event?.status) return "done";
+  if (replay.running && Number(replay.currentStepIndex || 0) > stepNumber) return "done";
+  return "";
+}
+
+function renderReplayStepStrip() {
+  const replay = activeReplayForTeach();
+  if (!replay) return "";
+  const current = Math.max(0, Number(replay.currentStepIndex || 0));
+  const total = Math.max(0, Number(replay.totalSteps || 0));
+  const failed = Number(replay.failedStepIndex || 0);
+  const title = failed
+    ? `Stopped at step ${failed}${total ? ` of ${total}` : ""}`
+    : replay.running
+      ? `Running step ${current || 1}${total ? ` of ${total}` : ""}`
+      : `${replay.status || "Replay"}${current ? ` at step ${current}` : ""}${total ? ` of ${total}` : ""}`;
+  const detail = failed
+    ? `${replay.failedStepDescription || replay.currentStepDescription || "Step failed"}${replay.failedStepError ? `: ${replay.failedStepError}` : ""}`
+    : replay.currentStepDescription || replay.stopReason || "Waiting for the next macro action";
+  return `
+    <div class="replay-step-strip ${failed ? "failed" : replay.running ? "running" : "idle"}">
+      <div>
+        <small>${esc(replay.macroName || "CapCut macro")}</small>
+        <strong>${esc(title)}</strong>
+        <span>${esc(detail)}</span>
+      </div>
+      <b>${esc(replay.currentStepStatus || replay.status || "idle")}</b>
     </div>
   `;
 }
 
-async function refresh() {
-  await loadCore();
-  renderNav();
-  render();
+function renderStepInspector(steps = []) {
+  const replay = activeReplayForTeach();
+  if (!replay || !steps.length) return "";
+  const failed = Number(replay.failedStepIndex || 0);
+  const current = Number(replay.currentStepIndex || 0);
+  const stepNumber = failed || current;
+  if (!stepNumber) return "";
+  const step = steps[stepNumber - 1];
+  if (!step) return "";
+  const context = steps
+    .map((item, index) => ({ item, index }))
+    .filter(({ index }) => Math.abs(index - (stepNumber - 1)) <= 2);
+  return `
+    <div class="step-inspector ${failed ? "failed" : "running"}">
+      <div class="step-inspector-head">
+        <div>
+          <small>${failed ? "Stopped step" : "Current step"}</small>
+          <strong>Step ${stepNumber}: ${esc(macroStepTitle(step))}</strong>
+          <span>${esc(macroStepDetail(step) || "No extra metadata saved for this step")}</span>
+        </div>
+        <div class="step-inspector-actions">
+          <button type="button" data-retry-macro-step="${stepNumber - 1}">${failed ? "Retry from this step" : "Run from here"}</button>
+          <button type="button" data-delete-teach-step="${stepNumber - 1}">Delete step</button>
+          <button type="button" class="danger" data-trim-teach-step="${stepNumber - 1}">Delete from here</button>
+        </div>
+      </div>
+      <div class="step-shots">
+        ${macroStepScreenshot(step, "screenshotBefore", "Before step")}
+        ${macroStepScreenshot(step, "screenshotAfter", "After step")}
+      </div>
+      <div class="step-context">
+        ${context.map(({ item, index }) => `
+          <span class="${index + 1 === stepNumber ? "active" : ""}">
+            <b>${index + 1}</b>
+            <em>${esc(macroStepTitle(item))}</em>
+          </span>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
-async function runWatch() {
-  const streamer = selectedStreamer();
-  const realReady = streamer && !isPracticeStreamer(streamer);
-  const body = realReady
+function teachPhaseStatusLabel(phase = {}) {
+  if (phase.status === "complete") return "Complete";
+  if (phase.status === "recording") return "Recording";
+  if (phase.status === "skipped") return "Skipped";
+  if (phase.stepCount) return "Draft";
+  return phase.mode === "system" ? "Ready" : "Not taught";
+}
+
+function renderTeachPhaseCoach(teach = {}, steps = [], recording = false) {
+  const phases = teach.teachPlan || [];
+  if (!phases.length) return "";
+  const activePhaseId = teach.activePhaseId || "";
+  const unassignedCount = steps.filter((step) => !step.phaseId).length;
+  return `
+    <div class="phase-coach">
+      <div class="phase-coach-head">
+        <div>
+          <strong>Teach in phases</strong>
+          <span>Record one clean section at a time. If one section breaks, re-record only that section.</span>
+        </div>
+        ${activePhaseId ? `<b>Current: ${esc(phases.find((phase) => phase.id === activePhaseId)?.label || activePhaseId)}</b>` : `<b>Ready</b>`}
+      </div>
+      <div class="phase-grid">
+        ${phases.map((phase, index) => {
+          const status = teachPhaseStatusLabel(phase);
+          const isActive = activePhaseId === phase.id;
+          const isRecording = recording && isActive;
+          const hasSteps = Number(phase.stepCount || 0) > 0;
+          const disabledByOtherRecording = recording && !isActive;
+          return `
+            <article class="phase-card ${isActive ? "active" : ""} ${phase.status || "pending"}">
+              <div class="phase-title">
+                <b>${index + 1}</b>
+                <span>
+                  <strong>${esc(phase.label)}</strong>
+                  <small>${esc(status)}${phase.required ? " · required" : " · optional"}${hasSteps ? ` · ${Number(phase.stepCount)} steps` : ""}</small>
+                </span>
+              </div>
+              <p>${esc(phase.goal || phase.operatorPrompt || "")}</p>
+              <div class="phase-actions">
+                ${phase.mode === "system" ? `
+                  <button type="button" data-teach-phase-action="start" data-teach-phase-id="${esc(phase.id)}" ${recording ? "disabled" : ""}>${phase.status === "complete" ? "Run Again" : "Run Step"}</button>
+                ` : isRecording ? `
+                  <button type="button" data-teach-phase-action="complete" data-teach-phase-id="${esc(phase.id)}">Finish Phase</button>
+                ` : `
+                  <button type="button" data-teach-phase-action="start" data-teach-phase-id="${esc(phase.id)}" ${disabledByOtherRecording ? "disabled" : ""}>${hasSteps ? "Record More" : "Record Phase"}</button>
+                `}
+                ${hasSteps && !isRecording ? `<button type="button" data-teach-phase-action="retry" data-teach-phase-id="${esc(phase.id)}" ${recording ? "disabled" : ""}>Re-record</button>` : ""}
+                ${!phase.required && phase.status !== "skipped" && !isRecording ? `<button type="button" data-teach-phase-action="skip" data-teach-phase-id="${esc(phase.id)}" ${recording ? "disabled" : ""}>Skip</button>` : ""}
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+      ${unassignedCount ? `
+        <div class="phase-warning">
+          <strong>${unassignedCount} older unassigned step${unassignedCount === 1 ? "" : "s"}</strong>
+          <span>These came from the old flat recorder. Use phase Re-record to replace them with clean sections.</span>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function workflowInputValue(key) {
+  return state.capcut.workflowInputs?.[key] || "";
+}
+
+function workflowById(id) {
+  return (state.capcut.workflows || []).find((workflow) => workflow.id === id) || {
+    id,
+    name: id,
+    inputs: ["projectName", "outputProjectFolder"],
+    optionalInputs: ["stickerPath"],
+    trainingInstructions: [],
+    checkpoints: [],
+    trainedMacro: null,
+    lastRun: null
+  };
+}
+
+function workflowInputLabel(key) {
+  return ({
+    sourceVideoPath: "Optional clip context",
+    stickerPath: "Optional sticker image",
+    projectName: "CapCut project name",
+    outputProjectFolder: "Save project folder"
+  })[key] || key;
+}
+
+function workflowInputPlaceholder(key) {
+  return ({
+    sourceVideoPath: "Optional Builder clip reference",
+    stickerPath: "Leave blank unless you want a PNG/JPG sticker",
+    projectName: "Auto-filled project name",
+    outputProjectFolder: "Auto-filled CapCut projects folder"
+  })[key] || `{{${key}}}`;
+}
+
+function renderTrainingCoach() {
+  const workflow = workflowById(verticalShortWorkflowId);
+  const trained = Boolean(workflow.trainedMacro);
+  const recording = Boolean(state.capcut.teach?.recording);
+  const connected = state.capcut.status?.latestScreenshot?.target === "capcut_window";
+  const clip = selectedBuilderClip();
+  const inputsReady = workflowInputReady();
+  const missing = state.capcut.workflowInputStatus?.missingInputs || [];
+  const steps = [
+    { label: "Pick training clip", done: Boolean(clip), detail: clip?.title || "Choose a Builder clip, then click it manually in CapCut" },
+    { label: "Connect CapCut", done: connected, detail: connected ? "Native window observed" : "Open and capture the native CapCut window" },
+    { label: "Record Choose Clip", done: recording || Boolean(state.capcut.teach?.steps?.length), detail: recording ? "Recording actions now" : "Click the clip/media item in CapCut while recording" },
+    { label: "Edit once in CapCut", done: Boolean(state.capcut.teach?.steps?.length), detail: "Set 9:16, blur background, auto frame, optional sticker" },
+    { label: "Stop and save macro", done: trained, detail: trained ? "Reusable workflow saved" : "Save the workflow after recording" }
+  ];
+  return `
+    <section class="training-coach">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">Teach This Clip</span>
+          <h2>${esc(clip?.title || "No Builder clip selected")}</h2>
+        </div>
+        <div class="workflow-badge ${trained ? "trained" : ""}">${trained ? "Macro trained" : recording ? "Recording" : "Ready to teach"}</div>
+      </div>
+      <div class="coach-grid">
+        <div class="coach-steps">
+          ${steps.map((step, index) => `
+            <span class="${step.done ? "done" : ""}">
+              <b>${index + 1}</b>
+              <strong>${esc(step.label)}</strong>
+              <em>${esc(step.detail)}</em>
+            </span>
+          `).join("")}
+        </div>
+        <div class="coach-actions">
+          <p>${esc(clip
+            ? "Teach Mode records your real CapCut actions: choose the clip, edit it, and save. Later the agent replays the same learned path."
+            : "Approve a clip first, then use it here to train the CapCut workflow.")}</p>
+          ${missing.length ? `<small>Still needed before running full workflow: ${esc(missing.map(workflowInputLabel).join(", "))}</small>` : ""}
+          <div>
+            ${clip ? `<button type="button" data-builder-teach-clip="${esc(clip.id)}">Load Clip Inputs</button>` : ""}
+            ${clip ? `<button type="button" data-builder-teach-start="${esc(clip.id)}" ${inputsReady ? "" : ""}>Start Teaching</button>` : ""}
+            <button type="button" data-teach-action="stop" ${recording ? "" : "disabled"}>Stop Recording</button>
+            <button type="button" data-workflow-action="save" ${state.capcut.teach?.workflowId === verticalShortWorkflowId && !recording ? "" : "disabled"}>Save Workflow</button>
+            <button type="button" data-workflow-action="run" ${trained && !recording ? "" : "disabled"}>Run Trained Edit</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkflowPanel() {
+  const workflow = workflowById(verticalShortWorkflowId);
+  const lastRun = workflow.lastRun || {};
+  const trained = workflow.trainedMacro;
+  const running = Boolean(state.capcut.replay?.running && state.capcut.replay?.workflowId === workflow.id);
+  return `
+    <section class="workflow-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">CapCut Workflow</span>
+          <h2>Vertical 9:16 auto frame workflow</h2>
+        </div>
+        <div class="workflow-badge ${trained ? "trained" : ""}">
+          ${trained ? `${Number(trained.stepCount || 0)} trained steps` : "Needs training"}
+        </div>
+      </div>
+      <div class="workflow-name">${esc(workflow.name)}</div>
+      <div class="workflow-inputs">
+        ${["projectName", "outputProjectFolder", "stickerPath"].map((key) => `
+          <label>
+            <small>${esc(workflowInputLabel(key))}</small>
+            <input type="text" data-workflow-input="${esc(key)}" value="${esc(workflowInputValue(key))}" placeholder="${esc(workflowInputPlaceholder(key))}" />
+          </label>
+        `).join("")}
+      </div>
+      <div class="workflow-actions">
+        <button type="button" data-workflow-action="train">Train This Workflow</button>
+        <button type="button" data-workflow-action="save" ${state.capcut.teach?.workflowId === workflow.id ? "" : "disabled"}>Save Trained Workflow</button>
+        <button type="button" data-workflow-action="run" ${trained && !running ? "" : "disabled"}>Run This Workflow</button>
+        ${running ? `<button type="button" class="danger" data-replay-cancel>Stop Workflow</button>` : ""}
+      </div>
+      <div class="workflow-grid">
+        <div>
+          <strong>Training order</strong>
+          <ol>
+            ${(workflow.trainingInstructions || [
+              "Open or create a CapCut project.",
+              "Choose the clip manually in CapCut.",
+              "Set 9:16 vertical canvas.",
+              "Apply blurred background and auto frame.",
+              "Optional: add a sticker near the bottom center.",
+              "Save as {{projectName}} without exporting."
+            ]).map((item) => `<li>${esc(item)}</li>`).join("")}
+          </ol>
+        </div>
+        <div>
+          <strong>Run validation</strong>
+          ${lastRun?.validation ? `
+            <ul>
+              <li>CapCut open: ${lastRun.validation.capcutStillOpen ? "yes" : "no"}</li>
+              <li>Timeline media likely: ${lastRun.validation.timelineAppearsToHaveMedia ? "yes" : "no"}</li>
+              <li>Final screenshot: ${lastRun.validation.finalScreenshotExists ? "yes" : "no"}</li>
+              <li>Error dialog: ${lastRun.validation.noObviousErrorDialog ? "none detected" : "needs review"}</li>
+            </ul>
+          ` : `<span>No workflow run yet.</span>`}
+        </div>
+      </div>
+      ${lastRun?.checkpoints?.length ? `
+        <div class="workflow-checkpoints">
+          ${lastRun.checkpoints.map((checkpoint) => `
+            <span>${esc(checkpoint.label)} · ${checkpoint.screenshot?.sizeBytes ? "screenshot saved" : "missing"}</span>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderHybridAgentPanel() {
+  const planner = state.capcut.planner || {};
+  const logs = planner.logs || [];
+  const screenshot = planner.screenshot || {};
+  return `
+    <section class="hybrid-agent-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">CapCut Editing Agent</span>
+          <h2>${esc(planner.workflowName || "Hybrid AI + Macro Recovery")}</h2>
+        </div>
+        <button type="button" class="danger" data-replay-cancel ${state.capcut.replay?.running ? "" : "disabled"}>Stop</button>
+      </div>
+      <div class="agent-status-grid">
+        <span>
+          <small>Current step</small>
+          <b>${esc(planner.currentStep || "Idle")}</b>
+        </span>
+        <span>
+          <small>Last action</small>
+          <b>${esc(planner.lastAction || "No action yet")}</b>
+        </span>
+        <span>
+          <small>Macro replay</small>
+          <b>${esc(planner.macroReplayStatus || state.capcut.replay?.status || "idle")}</b>
+        </span>
+        <span>
+          <small>Recovery</small>
+          <b>${esc(planner.recoveryStatus || "idle")}</b>
+        </span>
+      </div>
+      <div class="agent-live">
+        ${screenshot.url ? `<img src="${esc(apiUrl(screenshot.url))}" alt="Latest CapCut agent screenshot">` : `<div class="capcut-shot-empty">No workflow screenshot yet</div>`}
+        <div class="agent-logs">
+          <strong>Logs</strong>
+          ${logs.length ? logs.slice(-10).reverse().map((log) => `
+            <p>
+              <b>${esc(log.label || "Action")}</b>
+              <span>${esc(log.status || "logged")} ${log.createdAt ? `· ${esc(log.createdAt)}` : ""}</span>
+            </p>
+          `).join("") : `<p><span>No hybrid workflow logs yet.</span></p>`}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTeachModePanel() {
+  const teach = state.capcut.teach || {};
+  const replay = state.capcut.replay || {};
+  const recording = Boolean(teach.recording);
+  const steps = teach.steps || [];
+  const selectedClip = selectedBuilderClip();
+  return `
+    <section class="teach-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">CapCut Recipe Builder</span>
+          <h2>${recording ? "Recording edit moves" : "Teach one reusable edit"}</h2>
+        </div>
+        <div class="teach-status ${recording ? "recording" : ""}">
+          ${recording ? "Recording" : teach.status || "Idle"}
+        </div>
+      </div>
+      <label class="macro-name">
+        <small>Macro Name</small>
+        <input id="capcut-macro-name" type="text" value="${esc(state.capcut.macroName)}" placeholder="vertical_916_blur_background_sticker" />
+      </label>
+      <div class="recipe-guide ready">
+        <div>
+          <strong>Choose the clip</strong>
+          <span>Record the exact click path you use in CapCut.</span>
+          <small>${selectedClip?.title ? `Builder context: ${selectedClip.title}` : "Use the clip already visible in CapCut"}</small>
+        </div>
+        <div>
+          <strong>Teach by doing</strong>
+          <span>Record one clean section at a time, then replay only what worked.</span>
+          <small>Use phase Re-record when one section is wrong.</small>
+        </div>
+      </div>
+      ${renderTeachPhaseCoach(teach, steps, recording)}
+      ${renderReplayStepStrip()}
+      ${renderStepInspector(steps)}
+      <div class="teach-actions">
+        <button type="button" data-teach-action="start" ${recording ? "disabled" : ""}>Start Recording</button>
+        <button type="button" data-teach-action="continue" ${recording || !steps.length ? "disabled" : ""}>Continue Recording</button>
+        <button type="button" data-teach-action="stop" ${recording ? "" : "disabled"}>Stop Recording</button>
+        <button type="button" data-teach-action="save" ${recording || !steps.length ? "disabled" : ""}>Save Macro</button>
+        <button type="button" data-teach-action="cancel">Cancel</button>
+        ${replay?.running ? `<button type="button" class="danger" data-replay-cancel>Stop Replay</button>` : ""}
+      </div>
+      <div class="teach-guide">
+        <span>
+          <small>Mode</small>
+          <strong>${esc(teach.automationMode === "capcut_window_relative" ? "CapCut window only" : teach.automationMode || "CapCut window only")}</strong>
+        </span>
+        <span>
+          <small>Accepted</small>
+          <strong>${Number(teach.acceptedEventCount || steps.length || 0)} actions</strong>
+        </span>
+        <span>
+          <small>Ignored outside CapCut</small>
+          <strong>${Number(teach.ignoredEventCount || 0)} events</strong>
+        </span>
+      </div>
+      <div class="teach-meta">
+        <span>${steps.length} step${steps.length === 1 ? "" : "s"} recorded</span>
+        <span>Emergency stop: command + option + escape</span>
+        <span>Mouse is restored after replay actions</span>
+        ${teach.stopReason ? `<span>${esc(teach.stopReason)}</span>` : ""}
+      </div>
+      ${renderTeachingVisionPanel(teach, steps, recording)}
+      <ol class="macro-steps">
+        ${steps.length ? steps.map(renderMacroStep).join("") : `
+          <li class="empty-step">
+            <span>
+              <strong>No steps recorded yet</strong>
+              <small>Start recording, edit in CapCut, then stop and save the macro.</small>
+            </span>
+          </li>
+        `}
+      </ol>
+    </section>
+  `;
+}
+
+function renderMacroLibraryPanel() {
+  const macros = state.capcut.macros || [];
+  const replay = state.capcut.replay || {};
+  const replayPaused = Boolean(replay.paused || replay.pauseRequested || replay.status === "paused");
+  const activeMacroId = replay.activeMacroId || "";
+  const macroProgress = Number(replay.currentMacroCount || 0) > 0
+    ? `Macro ${Number(replay.currentMacroIndex || 0)} of ${Number(replay.currentMacroCount || 0)}`
+    : "";
+  const macroStepProgress = Number(replay.currentMacroStepCount || 0) > 0
+    ? `macro step ${Number(replay.currentMacroStepIndex || 0)} / ${Number(replay.currentMacroStepCount || 0)}`
+    : "";
+  const collapsed = Boolean(state.capcut.macroLibraryCollapsed);
+  return `
+    <section class="macro-library ${collapsed ? "panel-collapsed" : ""}">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">Macro Library</span>
+          <h2>Saved CapCut workflows${collapsed ? ` <small class="collapsed-count">(${macros.length} saved)</small>` : ""}</h2>
+        </div>
+        <div class="macro-library-actions">
+          ${collapsed ? "" : `
+            <button type="button" data-run-all-macros ${macros.length && !replay?.running ? "" : "disabled"}>Run All</button>
+            <button type="button" data-macro-refresh>Refresh</button>
+          `}
+          <button type="button" class="panel-toggle" data-toggle-macro-library>${collapsed ? "▸ Expand" : "▾ Collapse"}</button>
+        </div>
+      </div>
+      ${collapsed ? "" : `
+      ${replay?.status ? `
+        <div class="replay-status ${replay.running ? "running" : ""} ${replayPaused ? "paused" : ""}">
+          <div class="macro-card-copy">
+            <strong>${esc(replay.macroName || "Replay")}</strong>
+            <span>${esc(replayPaused ? "paused" : replay.status)} · ${Number(replay.currentStepIndex || 0)} / ${Number(replay.totalSteps || 0)}</span>
+            ${macroProgress ? `
+              <div class="replay-sequence">
+                <b>${esc(macroProgress)}</b>
+                <span>${esc(replay.activeMacroName || replay.macroName || "Macro")}${macroStepProgress ? ` · ${esc(macroStepProgress)}` : ""}</span>
+              </div>
+            ` : ""}
+            ${replay.currentStepDescription ? `<small>${esc(replay.currentStepDescription)}</small>` : ""}
+          </div>
+          ${replay.running ? `
+            <div class="macro-card-actions">
+              ${replayPaused
+                ? `<button type="button" data-replay-resume>Resume</button>`
+                : `<button type="button" data-replay-pause>Pause</button>`}
+              <button type="button" class="danger" data-replay-cancel>Stop</button>
+            </div>
+          ` : ""}
+        </div>
+      ` : ""}
+      <div class="macro-list">
+        ${macros.length ? macros.map((macro) => `
+          <article class="macro-card ${activeMacroId === macro.id ? "active" : ""}" draggable="${replay?.running ? "false" : "true"}" data-macro-card data-macro-id="${esc(macro.id)}">
+            <div class="macro-card-copy">
+              <strong>${esc(macro.name)}</strong>
+              <small>#${Number(macro.orderIndex || 0) + 1} · ${Number(macro.stepCount || 0)} steps · ${esc(macro.updatedAt || macro.createdAt || "saved")}</small>
+              ${activeMacroId === macro.id ? `<em>Running now · ${macroStepProgress ? esc(macroStepProgress) : "active macro"}</em>` : ""}
+            </div>
+            <div class="macro-card-actions">
+              <button type="button" data-rename-macro="${esc(macro.id)}" ${replay?.running ? "disabled" : ""}>Rename</button>
+              <button type="button" data-edit-macro="${esc(macro.id)}" ${replay?.running ? "disabled" : ""}>Edit Steps</button>
+              <button type="button" data-replay-macro="${esc(macro.id)}" ${replay?.running ? "disabled" : ""}>Replay Macro</button>
+              <button type="button" class="danger" data-delete-macro="${esc(macro.id)}" ${replay?.running ? "disabled" : ""}>Delete</button>
+            </div>
+          </article>
+        `).join("") : `
+          <div class="clips-empty">
+            <strong>No macros saved yet</strong>
+            <span>Record one workflow in Teach Mode, then save it here.</span>
+            <button type="button" disabled>Replay Macro</button>
+          </div>
+        `}
+      </div>
+      `}
+    </section>
+  `;
+}
+
+const DETERMINISM_PHASES = [
+  { id: "choose_clip", label: "Choose Clip" },
+  { id: "canvas_916", label: "9:16 Canvas" },
+  { id: "blur_background", label: "Blur BG" },
+  { id: "auto_frame", label: "Auto Reframe 3:4" },
+  { id: "bottom_sticker", label: "Sticker" },
+  { id: "save_project", label: "Save" }
+];
+
+const GATE_STATUS_LABELS = {
+  passed: "verified",
+  passed_after_retry: "verified · retried once",
+  passed_after_human: "verified · after your fix",
+  failed: "FAILED — replay stopped"
+};
+
+const RESOLUTION_SOURCE_LABELS = {
+  visual_anchor: "Visual anchor",
+  semantic_exact_label: "Semantic label",
+  semantic_label: "Semantic label",
+  stored_ratio: "Ratio fallback",
+  stored_window_offset: "Ratio fallback",
+  legacy_screenshot_window: "Ratio fallback",
+  capcut_window: "Ratio fallback",
+  raw_recorded: "Raw coords"
+};
+
+function determinismPhaseStates(replay) {
+  const gates = Array.isArray(replay?.gates) ? replay.gates : [];
+  const byPhase = {};
+  for (const gate of gates) byPhase[gate.phaseId] = gate;
+  const paused = Boolean(replay?.paused || replay?.pauseRequested || replay?.status === "paused");
+  const anyFailed = gates.some((gate) => gate.status === "failed");
+  let runningMarked = false;
+  return DETERMINISM_PHASES.map((phase) => {
+    const gate = byPhase[phase.id];
+    if (gate) {
+      const cls = gate.status === "failed" ? "failed" : (gate.status === "passed" ? "passed" : "passed-soft");
+      return { ...phase, cls, note: GATE_STATUS_LABELS[gate.status] || gate.status };
+    }
+    if (replay?.running && !paused && !anyFailed && !runningMarked) {
+      runningMarked = true;
+      return { ...phase, cls: "running", note: "running now" };
+    }
+    const stopped = anyFailed || (replay?.status && !replay?.running);
+    return { ...phase, cls: "pending", note: stopped ? "not reached" : "waiting" };
+  });
+}
+
+function renderDeterminismMonitorPanel() {
+  const replay = state.capcut.replay || null;
+  const collapsed = Boolean(state.capcut.monitorCollapsed);
+  const warnings = Array.isArray(replay?.warnings) ? replay.warnings : [];
+  const humanGate = replay?.humanGate || null;
+  const waits = replay?.waits || null;
+  const waitSavedSeconds = waits ? Math.max(0, Math.round((Number(waits.recordedMs || 0) - Number(waits.actualMs || 0)) / 1000)) : 0;
+  const sources = replay?.resolutionSources || {};
+  const sourceCounts = {};
+  for (const [key, count] of Object.entries(sources)) {
+    const label = RESOLUTION_SOURCE_LABELS[key] || key;
+    sourceCounts[label] = (sourceCounts[label] || 0) + Number(count || 0);
+  }
+  const heals = Array.isArray(replay?.heals) ? replay.heals.length : 0;
+  const phases = determinismPhaseStates(replay);
+  const finished = replay?.status && !replay.running;
+  return `
+    <section class="determinism-panel ${collapsed ? "panel-collapsed" : ""}">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">Determinism Monitor</span>
+          <h2>Watch every phase get verified</h2>
+        </div>
+        <div class="macro-library-actions">
+          <button type="button" class="panel-toggle" data-toggle-determinism>${collapsed ? "▸ Expand" : "▾ Collapse"}</button>
+        </div>
+      </div>
+      ${collapsed ? "" : `
+        ${humanGate ? `
+          <div class="determinism-human-gate">
+            <div>
+              <strong>⛔ Needs you: ${esc(humanGate.reason || `Phase ${humanGate.phaseId} failed`)}</strong>
+              <span>The replay is paused. Fix CapCut manually, then press Resume — the system re-verifies the phase before continuing. It will never continue past a failed check on its own.</span>
+            </div>
+            <div class="macro-card-actions">
+              <button type="button" data-replay-resume>Resume &amp; Re-verify</button>
+              <button type="button" class="danger" data-replay-cancel>Stop Replay</button>
+            </div>
+          </div>
+        ` : ""}
+        ${replay ? `
+          <div class="determinism-phases">
+            ${phases.map((phase) => `
+              <div class="determinism-phase ${phase.cls}">
+                <b>${esc(phase.label)}</b>
+                <span>${esc(phase.note)}</span>
+              </div>
+            `).join("<i class=\"determinism-arrow\">→</i>")}
+          </div>
+          ${replay.running ? `
+            <div class="determinism-live">
+              <span class="pulse-dot"></span>
+              <span>Step ${Number(replay.currentStepIndex || 0)} / ${Number(replay.totalSteps || 0)} — ${esc(replay.currentStepDescription || "working…")}</span>
+            </div>
+          ` : ""}
+          <div class="determinism-stats">
+            <span>
+              <small>Click resolution</small>
+              <b>${Object.keys(sourceCounts).length
+                ? Object.entries(sourceCounts).map(([label, count]) => `${esc(label)} ×${count}`).join(" · ")
+                : "no clicks resolved yet"}</b>
+              <em>Visual anchor = pixel-verified. Ratio fallback should stay rare.</em>
+            </span>
+            <span>
+              <small>Wait time saved</small>
+              <b>${waits ? `${waitSavedSeconds}s faster` : "—"}</b>
+              <em>${waits ? `${Math.round(Number(waits.recordedMs || 0) / 1000)}s of taught pauses → ${Math.round(Number(waits.actualMs || 0) / 1000)}s replayed` : "Recorded pauses clamp; processing is awaited by polling"}</em>
+            </span>
+            <span>
+              <small>Self-heals</small>
+              <b>${heals}</b>
+              <em>Drifted clicks corrected and written back to the macro</em>
+            </span>
+            <span class="${warnings.length ? "warn" : ""}">
+              <small>Warnings</small>
+              <b>${warnings.length}</b>
+              <em>${warnings.length ? "See below — these mean a fallback was used" : "Zero warnings = fully deterministic run"}</em>
+            </span>
+          </div>
+          ${warnings.length ? `
+            <div class="determinism-warnings">
+              ${warnings.slice(-6).map((warning) => `
+                <div class="determinism-warning">
+                  <b>${esc(warning.kind)}</b>
+                  <span>step ${Number(warning.stepIndex || 0)} · ${esc(warning.description || warning.type || "")}</span>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
+          ${finished ? `
+            <div class="determinism-lastrun ${replay.status === "complete" ? "good" : "bad"}">
+              <strong>Last run: ${esc(replay.status)}</strong>
+              <span>${esc(replay.macroName || "")}${replay.finishedAt ? ` · finished ${esc(replay.finishedAt)}` : ""}${replay.stopReason && replay.status !== "complete" ? ` · ${esc(replay.stopReason)}` : ""}</span>
+              ${replay.runReportPath ? `<small>Full report: ${esc(replay.runReportPath)}</small>` : ""}
+            </div>
+          ` : ""}
+        ` : `
+          <div class="clips-empty">
+            <strong>No replay watched yet</strong>
+            <span>Replay a macro (or Run All) and this panel shows each phase — Choose Clip → 9:16 → Blur → Auto Reframe → Sticker → Save — turning green as the system verifies it on screen. A failed check stops the replay and asks for you.</span>
+          </div>
+        `}
+      `}
+    </section>
+  `;
+}
+
+function renderBuilderArea() {
+  const clips = builderClips();
+  return `
+    <section class="builder-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">Clip Builder</span>
+          <h2>Approved 9:16 prep queue</h2>
+        </div>
+        <div class="builder-count">${clips.length} approved</div>
+      </div>
+      <div class="builder-row">
+        ${clips.length ? clips.map((clip) => `
+          <article class="builder-item ${state.capcut.selectedBuilderClipId === clip.id ? "selected" : ""}">
+            <span>9:16 auto-frame target</span>
+            <strong>${esc(clip.title || "Approved clip")}</strong>
+            <small>${esc(clip.streamerName || "Watched stream")} · ${formatSeconds(clip.durationSeconds || clip.duration || 30)} · ${Number(clip.score || 0) || 0}% signal</small>
+            <em>${esc(clip.capcutTarget?.instruction || "Open in CapCut Workspace, set 9:16, then train macro steps.")}</em>
+            <div class="builder-actions">
+              <button type="button" data-builder-teach-clip="${esc(clip.id)}">Load for CapCut</button>
+              <button type="button" data-builder-teach-start="${esc(clip.id)}">Start Teaching</button>
+            </div>
+          </article>
+        `).join("") : `
+          <div class="clips-empty">
+            <strong>No approved clips yet</strong>
+            <span>Use Approve under a verified MP4 to move it here for CapCut prep.</span>
+          </div>
+        `}
+      </div>
+    </section>
+  `;
+}
+
+function renderCapCutWorkspace() {
+  const status = state.capcut.status || {};
+  const latest = status.latestScreenshot || {};
+  const lastAction = status.lastAction || {};
+  const lastError = status.lastError || {};
+  const workspace = status.workspace || {};
+  const connected = latest.target === "capcut_window";
+  const workspaceBounds = workspace.bounds
+    ? `${workspace.bounds.width}x${workspace.bounds.height} at ${workspace.bounds.x},${workspace.bounds.y}`
+    : "Connect CapCut to reserve a native workspace";
+  return `
+    <section class="capcut-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">CapCut Workspace</span>
+          <h2>Native Mac control layer</h2>
+        </div>
+        <div class="capcut-actions">
+          <button type="button" data-capcut-action="connect">Connect CapCut</button>
+          <button type="button" data-capcut-action="screenshot">Refresh Preview</button>
+          <button type="button" data-capcut-action="focus">Focus CapCut</button>
+          <button type="button" data-capcut-action="park">Reposition</button>
+          <button type="button" data-capcut-action="refresh">Reload Status</button>
+        </div>
+      </div>
+      ${state.capcut.error ? `<div class="capcut-error">${esc(state.capcut.error)}</div>` : ""}
+      <div class="capcut-operating-strip ${connected ? "ready" : "warn"}">
+        <strong>${connected ? "CapCut connected" : "CapCut preview not connected"}</strong>
+        <span>${connected
+          ? "Argentum is observing the native CapCut window and can run Teach Mode or replay against it."
+          : "Use Connect CapCut once. Argentum will open CapCut, place it in a native side workspace, and capture the live preview."}</span>
+      </div>
+      ${renderTrainingCoach()}
+      <div class="capcut-status-grid">
+        ${renderCapCutStatusValue("CapCut installed", Boolean(status.installed), status.appPath || "", status.installedStatus || null)}
+        ${renderCapCutStatusValue("CapCut running", Boolean(status.running), "", status.runningStatus || null)}
+        ${renderCapCutStatusValue("Accessibility", Boolean(status.accessibilityPermission), status.accessibilityMessage || "", status.accessibilityStatus || null)}
+        ${renderCapCutStatusValue("Screen recording", Boolean(status.screenRecordingPermission), status.screenRecordingMessage || "", status.screenRecordingStatus || null)}
+        ${renderCapCutStatusValue("Automation", Boolean(status.automationPermission), status.automationMessage || "", status.automationStatus || null)}
+        <span>
+          <small>Current active app</small>
+          <b>${esc(status.activeApp || "unknown")}</b>
+          <em>${esc(status.checkedAt || "not checked")}</em>
+        </span>
+        <span class="${lastError.message ? "bad" : "good"}">
+          <small>Last error</small>
+          <b>${esc(lastError.message ? "needs attention" : "none")}</b>
+          <em>${esc(lastError.message || "No automation error recorded")}</em>
+        </span>
+        <span class="good">
+          <small>Automation mode</small>
+          <b>${esc(status.automationMode === "capcut_window_relative" ? "window-relative" : status.automationMode || "native")}</b>
+          <em>${esc(status.cursorBehavior === "restore_after_action" ? "Restores your cursor after clicks/drags" : "Native Mac control")}</em>
+        </span>
+        <span class="${workspace.parked ? "good" : "unknown"}">
+          <small>CapCut workspace</small>
+          <b>${esc(workspace.parked ? `connected: ${workspace.mode || "compact"}` : "not connected")}</b>
+          <em>${esc(workspaceBounds)}</em>
+        </span>
+      </div>
+      <div class="capcut-help">
+        CapCut runs as a native companion window beside Argentum. Connect CapCut opens it, keeps it in a fixed workspace, and captures a real CapCut window preview. Teach Mode records only the CapCut window, ignores outside desktop clicks, and replays saved positions relative to the current CapCut window.
+      </div>
+      <div class="capcut-permissions">
+        <button type="button" data-open-permission="accessibility">Open Accessibility</button>
+        <button type="button" data-open-permission="screenRecording">Open Screen Recording</button>
+        <button type="button" data-open-permission="automation">Open Automation</button>
+      </div>
+      <div class="capcut-live">
+        <div>
+          <small>Last automation action</small>
+          <strong>${esc(lastAction.action || "none")}</strong>
+          <span>${esc(lastAction.status || "idle")} ${lastAction.createdAt ? `· ${lastAction.createdAt}` : ""}</span>
+        </div>
+        ${latest.url ? `
+          <figure>
+            <img src="${esc(apiUrl(latest.url))}" alt="Latest CapCut workspace screenshot">
+            <figcaption>${esc(connected ? "CapCut window preview" : "Preview not connected")}</figcaption>
+          </figure>
+        ` : `<div class="capcut-shot-empty">Connect CapCut to show the native window preview</div>`}
+      </div>
+      ${renderWorkflowPanel()}
+      ${renderHybridAgentPanel()}
+      ${renderTeachModePanel()}
+      ${renderMacroLibraryPanel()}
+      ${renderDeterminismMonitorPanel()}
+    </section>
+  `;
+}
+
+function renderClipsArea() {
+  const area = $("#clips-area");
+  if (!area) return;
+  const previousMacroScroll = area.querySelector(".macro-steps")?.scrollTop ?? state.capcut.macroStepsScrollTop ?? 0;
+  const macroNameInput = $("#capcut-macro-name");
+  const macroNameFocus = macroNameInput && document.activeElement === macroNameInput
     ? {
+      value: macroNameInput.value,
+      start: macroNameInput.selectionStart,
+      end: macroNameInput.selectionEnd
+    }
+    : null;
+  if (macroNameFocus) {
+    state.capcut.macroName = macroNameFocus.value;
+    localStorage.setItem("capcutMacroName", state.capcut.macroName);
+  }
+  const clips = currentClips();
+  const scopedToWatcher = Boolean(state.watch.session?.id || state.watch.streamer?.id);
+  const folder = state.config?.clipsFolder || state.config?.watchBufferDir || state.config?.outputDir || "Local clip folder";
+  area.innerHTML = `
+    <section class="clips-panel">
+      <div class="clips-head">
+        <div>
+          <span class="watch-kicker">Clips</span>
+          <h2>Tracked clip windows</h2>
+        </div>
+        <div class="clip-folder">
+          <small>MP4 folder</small>
+          <strong>${esc(folder)}</strong>
+        </div>
+      </div>
+      <div class="clips-row">
+        ${clips.length ? clips.map(renderClipItem).join("") : `
+          <div class="clips-empty">
+            <strong>${scopedToWatcher ? "No clips yet" : "No selected watcher"}</strong>
+            <span>${scopedToWatcher
+              ? "When this watcher saves a clip window, it appears here and the MP4 is stored in the folder above."
+              : "Clips stay locked to the selected stream. Pick a live stream to start the single-agent watch loop."}</span>
+          </div>
+        `}
+      </div>
+    </section>
+    ${renderBuilderArea()}
+    ${renderCapCutWorkspace()}
+  `;
+  const macroSteps = area.querySelector(".macro-steps");
+  if (macroSteps) {
+    macroSteps.scrollTop = previousMacroScroll;
+    state.capcut.macroStepsScrollTop = previousMacroScroll;
+    macroSteps.addEventListener("scroll", () => {
+      state.capcut.macroStepsScrollTop = macroSteps.scrollTop;
+    }, { passive: true });
+  }
+  if (macroNameFocus) {
+    const restoredInput = $("#capcut-macro-name");
+    if (restoredInput) {
+      restoredInput.focus();
+      restoredInput.setSelectionRange(macroNameFocus.start ?? restoredInput.value.length, macroNameFocus.end ?? restoredInput.value.length);
+    }
+  }
+}
+
+function signalScore(stream, session) {
+  const viewerBase = Math.min(35, Math.round(Math.log10(Math.max(1, Number(stream?.viewerCount || 0))) * 11));
+  const chat = Math.min(30, Math.round(Number(session?.lastChatMessagesPerMinute || 0) / 4));
+  const keywords = Array.isArray(session?.lastChatKeyword) && session.lastChatKeyword.length ? 18 : 0;
+  const titleBoost = /irl|reaction|challenge|fight|crazy|insane|ranked|clutch|final|drama|funny|rage|hype/i.test(`${stream?.title || ""} ${stream?.category || ""}`) ? 12 : 4;
+  return Math.max(1, Math.min(100, viewerBase + chat + keywords + titleBoost));
+}
+
+function renderSignalMeter(score) {
+  return `
+    <div class="signal-meter" style="--score:${score}%">
+      <span></span>
+    </div>
+  `;
+}
+
+function renderWatchArea() {
+  const area = $("#watch-area");
+  if (!area) return;
+  const stream = state.watch.stream;
+  if (!stream) {
+    area.innerHTML = `
+      <div class="watch-empty">
+        <strong>No stream selected</strong>
+        <span>Select one live stream to start the single-agent watch loop.</span>
+      </div>
+    `;
+    renderClipsArea();
+    return;
+  }
+
+  const session = state.watch.session;
+  const events = latestSignalEvents();
+  const keywords = state.config?.watchTriggerKeywords || ["holy shit", "wow", "wtf", "bro", "insane", "clip this"];
+  const score = signalScore(stream, session);
+  const chatPpm = Number(session?.lastChatMessagesPerMinute || 0);
+  const capabilities = session?.capabilities || {};
+  const stage = session?.currentStage || (state.watch.loading ? "Starting watcher" : "Ready");
+  const statusText = watchStatusText(session, stage);
+  const viewerCount = Number(stream.viewerCount || session?.viewerCount || 0);
+  const keywordSummary = watchKeywordStatus(session, keywords, events);
+  const canControl = Boolean(session?.id);
+  const pauseLabel = session?.status === "paused" ? "Paused" : "Pause";
+  area.innerHTML = `
+    <section class="watch-panel">
+      <div class="watch-command">
+        <div>
+          <span class="watch-kicker">Agent Watch Area</span>
+          <h2>${esc(statusText)}</h2>
+        </div>
+        <span class="watch-chip ${state.watch.error ? "bad" : session ? "good" : "idle"}">${esc(stage)}</span>
+        <span class="watch-chip ${capabilities.hasLiveVideo ? "good" : "idle"}">${esc(watchMediaStatus(capabilities))}</span>
+        <button type="button" class="watch-chip keyword" data-open-keywords title="Open all watch keywords">
+          <span>Top keys</span>
+          <b>${esc(keywordSummary)}</b>
+        </button>
+      </div>
+      <div class="watch-card-row">
+        <article class="watch-stream-card" data-open-watch-detail role="button" tabindex="0" aria-label="Open watch details for ${esc(stream.displayName)}">
+          <div class="watch-card-actions">
+            <button type="button" data-pause-watch="${esc(session?.id || "")}" ${canControl && session?.status !== "paused" ? "" : "disabled"}>${pauseLabel}</button>
+            <button type="button" data-stop-watch="${esc(session?.id || "")}" ${canControl ? "" : "disabled"}>Stop</button>
+          </div>
+          <div class="watch-card-poster" style="background-image:url('${esc(stream.thumbnail || "")}')">
+            <span>${esc(stream.platform || "stream")}</span>
+          </div>
+          <div class="watch-card-body">
+            <div class="watch-card-title">
+              <span>${esc(stream.platform || "stream")}</span>
+              <strong>${esc(stream.displayName)}</strong>
+            </div>
+            <div class="watch-card-metrics">
+              <span><small>Viewers</small><b>${formatNumber(viewerCount)}</b></span>
+              <span><small>Signal</small><b>${score}%</b></span>
+              <span><small>Chat</small><b>${formatNumber(chatPpm)}/min</b></span>
+            </div>
+            ${renderSignalMeter(score)}
+          </div>
+        </article>
+      </div>
+    </section>
+    ${renderWatchDetailModal({ stream, session, events, score, chatPpm, keywords, capabilities })}
+    ${renderKeywordModal({ session, events, keywords })}
+  `;
+  renderClipsArea();
+}
+
+async function refreshWatchState(streamerId = state.watch.streamer?.id || "") {
+  const active = await api("/api/watch-sessions/active");
+  const sessions = active.sessions || [];
+  const session = sessions.find((item) => item.streamerId === streamerId) || sessions[0] || null;
+  const clipParams = new URLSearchParams();
+  if (session?.id) clipParams.set("watchSessionId", session.id);
+  else if (streamerId) clipParams.set("streamerId", streamerId);
+  const clips = await api(`/api/clips/candidates${clipParams.toString() ? `?${clipParams}` : ""}`).catch(() => ({ candidates: [], streamers: [] }));
+  const streamer = session
+    ? (clips.streamers || []).find((item) => item.id === session.streamerId) || state.watch.streamer || null
+    : null;
+  state.watch.session = session;
+  if (session) {
+    state.watch.streamer = streamer;
+    state.watch.stream = streamFromWatchSession(session, streamer || {});
+    state.selectedStreamKey = streamKey(state.watch.stream);
+  } else if (!state.watch.loading) {
+    state.watch.streamer = null;
+    state.watch.stream = null;
+    state.selectedStreamKey = "";
+  }
+  state.watch.events = session
+    ? (active.events || []).filter((event) => event.sessionId === session.id)
+    : active.events || [];
+  state.clips = clips.candidates || [];
+  renderWatchArea();
+}
+
+function startWatchPolling() {
+  window.clearInterval(state.watchPollTimer);
+  state.watchPollTimer = window.setInterval(() => {
+    refreshWatchState().catch((error) => {
+      state.watch.error = error.message || "Watch refresh failed";
+      renderWatchArea();
+    });
+  }, 5000);
+}
+
+async function watchStreamer(key) {
+  const stream = findStreamByKey(key);
+  if (!stream) return;
+  state.selectedStreamKey = streamKey(stream);
+  state.watch = { ...state.watch, stream, streamer: null, session: null, events: [], detailOpen: false, keywordOpen: false, loading: true, error: "" };
+  renderStreams();
+  renderWatchArea();
+
+  const button = document.querySelector(`[data-watch-streamer="${CSS.escape(state.selectedStreamKey)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Starting";
+  }
+  try {
+    const upsert = await upsertStreamer(stream, { monitorEnabled: true });
+    const streamer = upsert.streamer;
+    state.watch.streamer = streamer;
+    state.watch.session = upsert.watchSession || null;
+    const run = await api("/api/watch/run", {
+      method: "POST",
+      body: JSON.stringify({
         mode: "real",
         streamerId: streamer.id,
         idempotencyKey: `watch:${streamer.id}:default`
-      }
-    : {
-        mode: "demo",
-        idempotencyKey: "practice-watch-cycle"
-      };
-  const result = await api("/api/watch-sessions", {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
-  state.selectedWatchSessionId = result.session?.id || state.selectedWatchSessionId;
-  if (state.selectedWatchSessionId) localStorage.setItem("selectedWatchSessionId", state.selectedWatchSessionId);
-  const health = result.session?.health || result.session?.status || "started";
-  toast(`${result.reused ? "Reconnected watcher" : "Started backend watcher"}: ${health.replaceAll("_", " ")}`, "good");
-  await refresh();
-}
-
-async function seedDemo() {
-  const result = await api("/api/demo/seed", { method: "POST", body: "{}" });
-  const seeded = result.seeded || {};
-  toast(`Practice project started: ${seeded.streamers || 0} streamers, ${seeded.candidates || 0} candidates`, "good");
-  await refresh();
-}
-
-async function clearDemo() {
-  const result = await api("/api/demo/clear", { method: "POST", body: "{}" });
-  toast(result.message || "Practice data cleared", "good");
-  await refresh();
-}
-
-async function uploadMediaSource(form) {
-  const data = new FormData(form);
-  const file = data.get("file");
-  if (!file || !file.size) {
-    toast("Choose a video file first.", "bad");
-    return;
+      })
+    });
+    state.watch.session = run.session || run.results?.[0]?.session || state.watch.session;
+    state.watch.loading = false;
+    renderStatus(`${stream.displayName} is now in the watch area`);
+    await refreshWatchState(streamer.id);
+    startWatchPolling();
+  } catch (error) {
+    state.watch.loading = false;
+    state.watch.error = error.message || "Could not start watcher";
+    renderStatus(state.watch.error);
+    renderWatchArea();
+  } finally {
+    if (button) button.disabled = false;
+    renderStreams();
   }
-  toast("Uploading and verifying source media...", "info");
-  const result = await api("/api/media/sources/upload", {
-    method: "POST",
-    body: data
+}
+
+async function pauseWatchSession(sessionId = state.watch.session?.id || "") {
+  if (!sessionId) return;
+  state.watch.error = "";
+  try {
+    const result = await api(`/api/watch-sessions/${encodeURIComponent(sessionId)}/pause`, { method: "POST" });
+    state.watch.session = result.session || state.watch.session;
+    renderStatus("Watcher paused");
+    await refreshWatchState();
+  } catch (error) {
+    state.watch.error = error.message || "Could not pause watcher";
+    renderStatus(state.watch.error);
+    renderWatchArea();
+  }
+}
+
+async function stopWatchSession(sessionId = state.watch.session?.id || "") {
+  if (!sessionId) return;
+  state.watch.error = "";
+  try {
+    await api(`/api/watch-sessions/${encodeURIComponent(sessionId)}/stop`, {
+      method: "POST",
+      body: JSON.stringify({ stopAll: true })
+    });
+    state.watch = {
+      ...state.watch,
+      stream: null,
+      streamer: null,
+      session: null,
+      events: [],
+      detailOpen: false,
+      keywordOpen: false,
+      loading: false
+    };
+    state.selectedStreamKey = "";
+    state.clips = [];
+    renderStatus("Watcher stopped");
+    renderWatchArea();
+  } catch (error) {
+    state.watch.error = error.message || "Could not stop watcher";
+    renderStatus(state.watch.error);
+    renderWatchArea();
+  }
+}
+
+async function approveClipForBuilder(candidateId) {
+  if (!candidateId) return;
+  try {
+    const result = await api(`/api/clips/candidates/${encodeURIComponent(candidateId)}/approve-builder`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    state.clips = (state.clips || []).map((clip) => clip.id === candidateId ? result.candidate : clip);
+    renderStatus("Clip approved for Builder and 9:16 CapCut prep");
+    renderClipsArea();
+  } catch (error) {
+    renderStatus(error.message || "Could not approve clip");
+  }
+}
+
+async function declineClip(candidateId) {
+  if (!candidateId) return;
+  try {
+    await api(`/api/clips/candidates/${encodeURIComponent(candidateId)}/decline`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Declined from Clips by operator." })
+    });
+    state.clips = (state.clips || []).filter((clip) => clip.id !== candidateId);
+    renderStatus("Clip declined and removed from Clips");
+    renderClipsArea();
+  } catch (error) {
+    renderStatus(error.message || "Could not decline clip");
+  }
+}
+
+async function loadBuilderClipForCapCut(candidateId) {
+  if (!candidateId) throw new Error("No Builder clip selected");
+  const result = await api(`/api/clips/candidates/${encodeURIComponent(candidateId)}/capcut-workflow-inputs`, {
+    timeoutMs: 25000
   });
-  state.selectedCandidateId = result.candidate?.id || state.selectedCandidateId;
-  if (result.candidate?.id) localStorage.setItem("selectedCandidateId", result.candidate.id);
-  state.studioTab = "source";
-  localStorage.setItem("studioTab", state.studioTab);
-  toast(`Source verified: ${result.source?.title || result.source?.originalFilename || "media loaded"}`, "good");
-  form.reset();
-  await refresh();
-}
-
-const agent101Goals = {
-  "agent101-demo-workflow": "Start Practice Mode, add 5 practice streamers, run a watch cycle, generate clip candidates, score them, create packages for the top 3, create CapCut briefs, create draft posting packages, and send them to Human Gate. Mark every record as practice.",
-  "agent101-add-demo-streamers": "Add 5 practice streamers for internal StreamClipper sandbox testing.",
-  "agent101-watch-cycle": "Run a safe watch cycle across practice-approved streamers and create practice sessions.",
-  "agent101-create-candidates": "Find 5 practice streams and make clip candidates.",
-  "agent101-package-top3": "Package the top 3 clip candidates, create CapCut handoffs, and create draft posting packages.",
-  "agent101-human-gate": "Send current draft posting packages to Human Gate without publishing anything."
-};
-
-function inferAgentRunMode(goal, mode = "auto") {
-  if (mode && mode !== "auto") return mode;
-  return /\b(demo|practice|sample|synthetic|local)\b/i.test(goal) ? "demo" : "real";
-}
-
-async function runAgent101(goal, mode = "auto") {
-  const runMode = inferAgentRunMode(goal, mode);
-  state.agentRunBusy = true;
-  state.agentRun = {
-    status: "running",
-    goal,
-    currentStep: "Starting Agent 101",
-    progress: 8,
-    steps: [],
-    counts: {}
+  state.capcut.selectedBuilderClipId = candidateId;
+  state.capcut.selectedBuilderClip = result.candidate || null;
+  state.capcut.workflowInputs = {
+    ...(state.capcut.workflowInputs || {}),
+    ...(result.inputs || {})
   };
-  render();
-  try {
-    const result = await api("/api/agent101/run", {
-      method: "POST",
-      body: JSON.stringify({ goal, mode: runMode, maxSteps: 10 })
-    });
-    state.agentRun = result;
-    state.agentRunBusy = false;
-    await loadCore();
-    const externalStatus = result.externalStatus || String(result.status || "").toLowerCase();
-    toast(
-      externalStatus === "blocked" || externalStatus === "needs_approval" ? result.summary : result.summary || "Agent 101 run complete",
-      externalStatus === "completed" ? "good" : externalStatus === "blocked" || externalStatus === "needs_approval" ? "info" : "bad"
-    );
-    renderNav();
-    render();
-  } catch (error) {
-    state.agentRunBusy = false;
-    state.agentRun = {
-      status: "error",
-      goal,
-      currentStep: "Run failed",
-      progress: 100,
-      summary: error.message,
-      steps: [],
-      counts: {}
-    };
-    toast(error.message, "bad");
-    render();
-  }
-}
-
-async function runAgentCommand(form) {
-  const goal = cleanCommand(form.elements.goal?.value) || agent101Goals["agent101-demo-workflow"];
-  state.agentChatOpen = true;
-  form.reset();
-  await runAgent101(goal, "auto");
-}
-
-function cleanCommand(value) {
-  return String(value || "").trim();
-}
-
-async function loadBrowserState() {
-  const [browser, capcut, media, handoffs, smoke] = await Promise.all([
-    api("/api/browser/profile"),
-    api("/api/capcut/status"),
-    api("/api/media/status"),
-    api("/api/handoffs"),
-    api("/api/system/smoke-test")
-  ]);
-  Object.assign(state, {
-    browser,
-    capcut,
-    media,
-    handoffs: handoffs.handoffs || [],
-    smokeTest: smoke.latest || state.smokeTest
-  });
-}
-
-async function ensureBrowserSession() {
-  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
-  if (active?.id) return active.id;
-  const result = await api("/api/browser/sessions", {
-    method: "POST",
-    body: JSON.stringify({ purpose: "Operator browser workspace" })
-  });
-  await loadBrowserState();
-  return result.session.id;
-}
-
-async function navigateBrowser(form) {
-  const url = cleanCommand(form.elements.url?.value);
-  if (!url) return;
-  state.browserBusy = true;
-  render();
-  try {
-    const sessionId = await ensureBrowserSession();
-    const result = await api(`/api/browser/sessions/${sessionId}/navigate`, {
-      method: "POST",
-      body: JSON.stringify({ url })
-    });
-    state.browserScreenshotStamp = Date.now();
-    await loadBrowserState();
-    toast(result.allowed ? "Browser loaded" : result.reason || "Navigation blocked", result.allowed ? "good" : "bad");
-  } finally {
-    state.browserBusy = false;
-    renderNav();
-    render();
-  }
-}
-
-async function ensureHandoffPackage({ prepare = false } = {}) {
-  let handoff = getActiveHandoff();
-  if (!handoff) {
-    const clipPackage = state.packages?.[0];
-    if (!clipPackage?.id) throw new Error("Create a clip package before preparing a CapCut handoff.");
-    const created = await api("/api/handoffs", {
-      method: "POST",
-      body: JSON.stringify({ clipPackageId: clipPackage.id })
-    });
-    handoff = created.handoff;
-  }
-  if (prepare && handoff?.id) {
-    const prepared = await api(`/api/handoffs/${handoff.id}/prepare`, { method: "POST", body: "{}" });
-    handoff = prepared.handoff;
-  }
-  await loadBrowserState();
-  return handoff;
-}
-
-async function runSystemSmoke() {
-  state.smokeModalOpen = true;
-  state.smokeBusy = true;
-  render();
-  try {
-    const result = await api("/api/browser/smoke-test", { method: "POST", body: "{}" });
-    state.smokeTest = {
-      ...result.smokeTest,
-      checks: (result.smokeTest?.checks || []).map((check) => ({
-        ...check,
-        status: check.status === "passed" ? "passed" : "failed",
-        technical: check.details ? JSON.stringify(check.details) : ""
-      }))
-    };
-    toast(`Smoke test ${result.smokeTest.status}`, statusTone(result.smokeTest.status));
-    await loadBrowserState();
-  } catch (error) {
-    toast(error.message, "bad");
-  } finally {
-    state.smokeBusy = false;
-    renderNav();
-    render();
-  }
-}
-
-async function sendBrowserInput(input) {
-  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
-  if (!active?.id) throw new Error("Start the browser before sending input.");
-  const result = await api(`/api/browser/sessions/${active.id}/input`, {
-    method: "POST",
-    body: JSON.stringify(input)
-  });
-  state.browserScreenshotStamp = Date.now();
-  await loadBrowserState();
+  state.capcut.workflowInputStatus = {
+    missingInputs: result.missingInputs || [],
+    loadedAt: new Date().toISOString()
+  };
+  localStorage.setItem("capcutSelectedBuilderClipId", candidateId);
+  localStorage.setItem("capcutWorkflowInputs", JSON.stringify(state.capcut.workflowInputs));
   return result;
 }
 
-async function handleBrowserAction(action) {
-  const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
-  state.browserBusy = true;
-  render();
+async function prepareBuilderClipForCapCut(candidateId, options = {}) {
+  if (!candidateId) return;
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  let poll = null;
+  renderClipsArea();
   try {
-    if (action === "start-session") {
-      await api("/api/browser/sessions", {
-        method: "POST",
-        body: JSON.stringify({ purpose: "StreamClipper supervised browser" })
-      });
-      toast("Browser session started", "good");
-    } else if (action === "test-example" || action === "run-diagnostics") {
-      state.browserBusy = false;
-      await runSystemSmoke();
+    const result = await loadBuilderClipForCapCut(candidateId);
+    if (options.startTeaching) {
+      await runCapCutPanelAction("connect");
+      await runWorkflowAction("train");
       return;
-    } else if (action === "new-tab") {
-      if (!active?.id) return;
-      await api(`/api/browser/sessions/${active.id}/tabs`, { method: "POST", body: "{}" });
-      toast("New browser tab opened", "good");
-    } else if (action === "close-tab") {
-      if (!active?.id || !active.activeTabId) return;
-      await api(`/api/browser/sessions/${active.id}/tabs/${active.activeTabId}`, { method: "DELETE" });
-      toast("Browser tab closed", "info");
-    } else if (action === "restart-session") {
-      if (!active?.id) return;
-      await api(`/api/browser/sessions/${active.id}/restart`, { method: "POST", body: "{}" });
-      toast("Browser session restarted", "good");
-    } else if (action === "end-session") {
-      if (!active?.id) return;
-      await api(`/api/browser/sessions/${active.id}`, { method: "DELETE" });
-      toast("Browser session ended", "info");
-    } else if (action === "browser-enter") {
-      await sendBrowserInput({ action: "keypress", key: "Enter" });
-      toast("Enter sent to browser", "good");
-    } else if (action === "browser-scroll") {
-      await sendBrowserInput({ action: "scroll", deltaY: 560 });
-      toast("Scrolled browser", "info");
-    } else if (action === "prepare-handoff") {
-      await ensureHandoffPackage({ prepare: true });
-      toast("CapCut handoff package prepared", "good");
-    } else if (action === "cancel-handoff") {
-      const handoff = getActiveHandoff();
-      if (!handoff?.id) return;
-      if (!window.confirm("Cancel this CapCut handoff? The generated artifacts stay saved.")) return;
-      await api(`/api/handoffs/${handoff.id}/cancel`, { method: "POST", body: "{}" });
-      toast("CapCut handoff cancelled", "info");
-    } else if (action === "open-capcut") {
-      const handoff = await ensureHandoffPackage({ prepare: false }).catch(() => null);
-      const body = active?.id ? { sessionId: active.id } : {};
-      if (handoff?.id) {
-        await api(`/api/handoffs/${handoff.id}/open-capcut`, { method: "POST", body: JSON.stringify(body) });
-      } else {
-        await api("/api/capcut/open", { method: "POST", body: JSON.stringify(body) });
-      }
-      state.browserScreenshotStamp = Date.now();
-      toast("CapCut handoff opened in human-control mode", "good");
-    } else if (action === "refresh-shot") {
-      state.browserScreenshotStamp = Date.now();
-      toast("Browser screen refreshed", "info");
-    } else if (action === "reset-profile") {
-      if (!window.confirm("Reset the browser profile and close active sessions?")) return;
-      await api("/api/browser/profile", { method: "DELETE" });
-      toast("Browser profile reset", "info");
-    } else if (["back", "forward", "refresh", "stop-loading", "take-control", "give-agent-control", "pause"].includes(action)) {
-      if (!active?.id) return;
-      if (action === "give-agent-control" && !window.confirm("Agent Assisted only allows approved, reversible actions. Login, CAPTCHA, payments, uploads, publishing, and destructive actions stay blocked. Continue?")) return;
-      await api(`/api/browser/sessions/${active.id}/${action}`, { method: "POST", body: "{}" });
-      state.browserScreenshotStamp = Date.now();
-      toast("Browser control updated", "good");
-    } else if (action === "resume") {
-      if (!active?.id) return;
-      await api(`/api/browser/sessions/${active.id}/resume`, { method: "POST", body: "{}" });
-      toast("Browser session resumed in human-control mode", "good");
     }
-    await loadBrowserState();
+    renderStatus("Builder clip loaded into CapCut workflow inputs");
   } catch (error) {
-    toast(error.message, "bad");
+    state.capcut.error = error.message || "Could not load Builder clip for CapCut";
+    renderStatus(state.capcut.error);
   } finally {
-    state.browserBusy = false;
-    renderNav();
-    render();
+    state.capcut.loading = false;
+    renderClipsArea();
   }
 }
 
-async function scoutStreamers() {
-  const platform = document.querySelector("#scout-platform")?.value || "all";
-  const result = await api(`/api/streamers/recommendations?platform=${encodeURIComponent(platform)}&limit=8`);
-  state.recommendations = result.recommendations || [];
-  state.recommendationsMessage = result.message || "";
-  toast(`Agent 101 found ${state.recommendations.length} streamer recommendations`, "good");
-  render();
-}
-
-async function addRecommendedStreamer(index) {
-  const item = state.recommendations[Number(index)];
-  if (!item) return;
-  const result = await api("/api/twitch/streamers", {
-    method: "POST",
-    body: JSON.stringify({
-      platform: item.platform,
-      displayName: item.displayName,
-      channelId: item.channelId,
-      channelUrl: item.channelUrl,
-      permissionStatus: "approved",
-      monitorEnabled: true,
-      allowedUse: item.suggestedUse || ["clips", "edits", "reposts"],
-      notes: `Added from Agent 101 Streamer Scout. ${item.reason || ""}`.trim()
-    })
-  });
-  state.selectedStreamerId = result.streamer?.id || state.selectedStreamerId;
-  localStorage.setItem("selectedStreamerId", state.selectedStreamerId);
-  toast(`${item.displayName} added to monitoring`, "good");
-  state.recommendations = state.recommendations.filter((_, itemIndex) => itemIndex !== Number(index));
-  await refresh();
-}
-
-async function packageCandidate(id) {
-  const result = await api("/api/clips/package", {
-    method: "POST",
-    body: JSON.stringify({ candidateId: id })
-  });
-  state.selectedCandidateId = id;
-  localStorage.setItem("selectedCandidateId", id);
-  toast(`Package created: ${result.packagePlan.title}`, "good");
-  await refresh();
-  setView("builder");
-}
-
-async function saveBuilderDraft(id) {
-  await api("/api/clips/draft", {
-    method: "POST",
-    body: JSON.stringify({ candidateId: id })
-  });
-  toast("Clip builder draft saved", "good");
-  await refresh();
-  setView("builder");
-}
-
-async function createCapCut() {
-  const projectId = state.studio?.project?.id;
-  if (!projectId) return toast("Open a Clip Project first.", "bad");
-  if (!projectReadiness(state.studio.project).canCapCut) {
-    toast("Render a verified MP4 before preparing a CapCut handoff.", "bad");
-    return;
-  }
-  await api(`/api/clip-projects/${encodeURIComponent(projectId)}/capcut-handoff`, {
-    method: "POST",
-    body: JSON.stringify({
-      renderId: state.studio.project.readiness?.latestArtifactId,
-      clipPackageId: selectedClipPackage()?.id || state.drafts[0]?.clipPackageId || ""
-    })
-  });
-  toast("CapCut handoff created", "good");
-  await refresh();
-}
-
-async function createCaptions() {
-  const packageId = selectedClipPackage()?.id || state.drafts[0]?.clipPackageId;
-  if (!packageId) return;
-  await api("/api/clips/captions", {
-    method: "POST",
-    body: JSON.stringify({ clipPackageId: packageId })
-  });
-  toast("Caption files created", "good");
-  await refresh();
-}
-
-function hydrateStudioPlayers() {
-  if (state.view !== "builder" && !state.previewCandidateId) return;
-  const videos = document.querySelectorAll("[data-studio-video]");
-  videos.forEach((video) => {
-    const start = Number(video.dataset.start || 0);
-    const seek = state.studioSeek ?? start;
-    const applySeek = () => {
-      if (!Number.isFinite(seek)) return;
-      try {
-        if (Math.abs(video.currentTime - seek) > 0.2) video.currentTime = seek;
-      } catch {
-        // Browser may reject seeking before metadata loads; loadedmetadata will retry.
-      }
+async function loadCapCutStatus() {
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const [status, teach] = await Promise.all([
+      api("/api/capcut-control/status", { timeoutMs: 25000 }),
+      api("/api/capcut-control/teach", { timeoutMs: 25000 }).catch(() => null)
+    ]);
+    state.capcut.status = status;
+    state.capcut.agentStatus = {
+      ...(state.capcut.agentStatus || {}),
+      mode: "desktop_app",
+      capcutInstalled: status.installed,
+      capcutRunning: status.running
     };
-    if (video.readyState >= 1) applySeek();
-    video.addEventListener("loadedmetadata", applySeek, { once: true });
-  });
-  state.studioSeek = null;
-}
-
-function setStudioTab(tab) {
-  state.studioTab = tab || "source";
-  localStorage.setItem("studioTab", state.studioTab);
-  render();
-}
-
-function selectStudioCandidate(id) {
-  if (!id) return;
-  const candidate = (state.studio?.candidates || state.candidates).find((item) => item.id === id);
-  if (!candidate) return;
-  state.selectedCandidateId = id;
-  state.studioSeek = candidateStartSeconds(candidate);
-  localStorage.setItem("selectedCandidateId", id);
-  if (state.view === "builder" && state.studioTab === "source") setStudioTab("candidate");
-  else render();
-}
-
-async function runStudioAction(action) {
-  const candidates = state.studio?.candidates || [];
-  const candidate = studioSelectedCandidate(candidates);
-  const projectId = state.studio?.project?.id;
-  if (action === "replay") {
-    state.studioSeek = candidateStartSeconds(candidate);
-    render();
-    return;
-  }
-  if (["mark-start", "mark-end", "capture-frame"].includes(action)) {
-    const video = document.querySelector("[data-studio-video]");
-    const current = video ? Number(video.currentTime || 0) : candidateStartSeconds(candidate);
-    if (action === "capture-frame") {
-      const frameUrl = `/api/media/sources/${encodeURIComponent(state.studio?.source?.id || "")}/frame?candidateId=${encodeURIComponent(candidate?.id || "")}&t=${encodeURIComponent(current)}`;
-      window.open(appUrl(frameUrl), "_blank", "noopener,noreferrer");
-      toast("Opened a real source frame from the current timestamp.", "good");
-      return;
+    if (teach) {
+      state.capcut.teach = teach.teach;
+      state.capcut.macros = teach.macros || [];
+      state.capcut.workflows = teach.workflows || [];
+      state.capcut.planner = teach.planner || null;
+      state.capcut.replay = teach.replay;
     }
-    if (!projectId || !candidate) return toast("Open a Clip Project and select a candidate first.", "bad");
-    const start = action === "mark-start" ? current : candidateStartSeconds(candidate);
-    const end = action === "mark-end" ? current : candidateEndSeconds(candidate);
-    if (!(end > start)) return toast("End time must be after start time.", "bad");
-    await api(`/api/clip-projects/${encodeURIComponent(projectId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        candidateId: candidate.id,
-        clipStartSeconds: start,
-        clipEndSeconds: end
+  } catch (error) {
+    state.capcut.error = error.message || "Could not read CapCut status";
+  } finally {
+    state.capcut.loading = false;
+    renderClipsArea();
+    api("/api/capcut/status", { timeoutMs: 5000 })
+      .then((agentStatus) => {
+        state.capcut.agentStatus = agentStatus;
+        renderClipsArea();
       })
+      .catch(() => {});
+  }
+}
+
+async function runCapCutPanelAction(action) {
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    let result = null;
+    if (action === "connect") result = await api("/api/capcut-control/park", { method: "POST", body: JSON.stringify({ mode: "compact" }), timeoutMs: 30000 });
+    if (action === "open") result = await api("/api/capcut-control/open", { method: "POST", body: JSON.stringify({}), timeoutMs: 30000 });
+    if (action === "park") result = await api("/api/capcut-control/park", { method: "POST", body: JSON.stringify({ mode: "compact" }), timeoutMs: 30000 });
+    if (action === "focus") result = await api("/api/capcut-control/focus", { method: "POST", body: JSON.stringify({}), timeoutMs: 30000 });
+    if (action === "screenshot") result = await api("/api/capcut-control/screenshot", { method: "POST", body: JSON.stringify({}), timeoutMs: 30000 });
+    if (action === "refresh") result = await api("/api/capcut-control/status", { timeoutMs: 25000 });
+    state.capcut.status = result?.status || result;
+    renderStatus(action === "screenshot" ? "CapCut screenshot captured" : action === "park" ? "CapCut parked in automation workspace" : "CapCut workspace updated");
+  } catch (error) {
+    state.capcut.error = error.message || "CapCut action failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    renderClipsArea();
+  }
+}
+
+async function openCapCutPermission(permission) {
+  try {
+    state.capcut.status = await api(`/api/capcut-control/permissions/${encodeURIComponent(permission)}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 20000
     });
-    toast(action === "mark-start" ? "Start marker saved" : "End marker saved", "good");
-    await refresh();
+    renderStatus("Opened macOS permission settings");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not open permission settings";
+    renderStatus(state.capcut.error);
+  } finally {
+    renderClipsArea();
+  }
+}
+
+function syncMacroNameFromInput() {
+  const input = $("#capcut-macro-name");
+  if (input) {
+    state.capcut.macroName = input.value.trim() || "vertical_916_capcut_workflow";
+    localStorage.setItem("capcutMacroName", state.capcut.macroName);
+  }
+}
+
+async function loadTeachState() {
+  try {
+    const result = await api("/api/capcut-control/teach", { timeoutMs: 25000 });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || [];
+    state.capcut.workflows = result.workflows || [];
+    state.capcut.planner = result.planner || null;
+    state.capcut.replay = result.replay;
+    await maybeAutoTeachSnapshot();
+  } catch (error) {
+    state.capcut.error = error.message || "Could not load Teach Mode";
+  } finally {
+    renderClipsArea();
+  }
+}
+
+async function captureTeachSnapshot(reason = "manual") {
+  if (state.capcut.snapshotBusy) return;
+  state.capcut.snapshotBusy = true;
+  renderClipsArea();
+  try {
+    const result = await api("/api/capcut-control/teach/snapshot", {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+      timeoutMs: 18000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.workflows = result.workflows || state.capcut.workflows || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    state.capcut.lastTeachSnapshotAt = Date.now();
+    if (reason !== "auto") renderStatus("Teaching frame captured");
+  } catch (error) {
+    if (reason !== "auto") {
+      state.capcut.error = error.message || "Could not capture teaching frame";
+      renderStatus(state.capcut.error);
+    }
+  } finally {
+    state.capcut.snapshotBusy = false;
+    renderClipsArea();
+  }
+}
+
+async function maybeAutoTeachSnapshot() {
+  const teach = state.capcut.teach || {};
+  if (!teach.recording || state.capcut.snapshotBusy) return;
+  const nowMs = Date.now();
+  const lastLocal = Number(state.capcut.lastTeachSnapshotAt || 0);
+  const lastRemote = Date.parse(teach.lastSnapshotAt || "") || 0;
+  if (nowMs - Math.max(lastLocal, lastRemote) < 4500) return;
+  await captureTeachSnapshot("auto");
+}
+
+async function runTeachAction(action) {
+  syncMacroNameFromInput();
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    let result = null;
+    if (action === "start") {
+      result = await api("/api/capcut-control/teach/start", {
+        method: "POST",
+        body: JSON.stringify({ name: state.capcut.macroName }),
+        timeoutMs: 45000
+      });
+      renderStatus("Teach Mode recording started");
+    }
+    if (action === "continue") {
+      result = await api("/api/capcut-control/teach/start", {
+        method: "POST",
+        body: JSON.stringify({ name: state.capcut.macroName, appendToCurrent: true }),
+        timeoutMs: 45000
+      });
+      renderStatus("Teach Mode recording continued");
+    }
+    if (action === "stop") {
+      result = await api("/api/capcut-control/teach/stop", {
+        method: "POST",
+        body: JSON.stringify({ reason: "operator_stop" }),
+        timeoutMs: 30000
+      });
+      renderStatus("Teach Mode recording stopped");
+    }
+    if (action === "save") {
+      result = await api("/api/capcut-control/teach/save", {
+        method: "POST",
+        body: JSON.stringify({ name: state.capcut.macroName }),
+        timeoutMs: 30000
+      });
+      renderStatus("CapCut macro saved");
+    }
+    if (action === "cancel") {
+      result = await api("/api/capcut-control/teach/cancel", {
+        method: "POST",
+        body: JSON.stringify({}),
+        timeoutMs: 30000
+      });
+      renderStatus("Teach Mode cancelled");
+    }
+    if (result) {
+      state.capcut.teach = result.teach;
+      state.capcut.macros = result.macros || state.capcut.macros || [];
+      state.capcut.replay = result.replay || state.capcut.replay;
+    }
+  } catch (error) {
+    state.capcut.error = error.message || "Teach Mode action failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function runTeachPhaseAction(phaseId, action) {
+  if (!phaseId || !action) return;
+  syncMacroNameFromInput();
+  const inputs = workflowInputsFromDom();
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/teach/phases/${encodeURIComponent(phaseId)}/${encodeURIComponent(action)}`, {
+      method: "POST",
+      body: JSON.stringify({ inputs, name: state.capcut.macroName, workflowId: verticalShortWorkflowId }),
+      timeoutMs: action === "start" || action === "retry" ? 45000 : 30000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.workflows = result.workflows || state.capcut.workflows || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    renderStatus({
+      start: "Phase recording started",
+      complete: "Phase finished",
+      skip: "Optional phase skipped",
+      retry: "Phase cleared and recording restarted"
+    }[action] || "Teach phase updated");
+  } catch (error) {
+    state.capcut.error = error.message || "Teach phase action failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function replayMacro(macroId, options = {}) {
+  if (!macroId) return;
+  const macro = (state.capcut.macros || []).find((item) => item.id === macroId || item.name === macroId) || {};
+  const startIndex = Math.max(0, Number(options.startIndex || 0));
+  const inputs = workflowInputsFromDom();
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  state.capcut.replay = {
+    ...(state.capcut.replay || {}),
+    macroId,
+    macroName: macro.name || macroId,
+    running: true,
+    status: "starting",
+    currentStepIndex: startIndex,
+    totalSteps: Number(macro.stepCount || 0),
+    startIndex,
+    currentStepDescription: startIndex ? `Retrying from step ${startIndex + 1}` : "Starting CapCut macro replay",
+    currentStepStatus: "starting",
+    log: []
+  };
+  renderClipsArea();
+  const poll = window.setInterval(() => loadTeachState(), 900);
+  try {
+    const result = await api(`/api/capcut-control/macros/${encodeURIComponent(macroId)}/replay`, {
+      method: "POST",
+      body: JSON.stringify({ startIndex, inputs }),
+      timeoutMs: 120000
+    });
+    state.capcut.replay = result.replay;
+    renderStatus("Macro replay finished");
+  } catch (error) {
+    state.capcut.error = error.message || "Macro replay failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    window.clearInterval(poll);
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function runAllMacros() {
+  const macros = state.capcut.macros || [];
+  if (!macros.length) return;
+  const totalSteps = macros.reduce((sum, macro) => sum + Number(macro.stepCount || 0), 0);
+  const inputs = workflowInputsFromDom();
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  state.capcut.replay = {
+    ...(state.capcut.replay || {}),
+    macroId: "capcut_macro_sequence_all",
+    macroName: "Run All Macros",
+    running: true,
+    status: "starting",
+    currentStepIndex: 0,
+    totalSteps,
+    currentStepDescription: `Starting ${macros.length} saved macros in order`,
+    currentStepStatus: "starting",
+    sequence: macros.map((macro, index) => ({
+      macroId: macro.id,
+      macroName: macro.name,
+      orderIndex: index,
+      stepCount: Number(macro.stepCount || 0)
+    })),
+    log: []
+  };
+  renderClipsArea();
+  const poll = window.setInterval(() => loadTeachState(), 900);
+  try {
+    const result = await api("/api/capcut-control/macros/run-all", {
+      method: "POST",
+      body: JSON.stringify({ inputs }),
+      timeoutMs: 300000
+    });
+    state.capcut.replay = result.replay;
+    renderStatus("All macros finished");
+  } catch (error) {
+    state.capcut.error = error.message || "Run All failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    window.clearInterval(poll);
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+function retryMacroFromStep(stepIndex) {
+  const replay = activeReplayForTeach() || state.capcut.replay || {};
+  const teach = state.capcut.teach || {};
+  const macroId = teach.savedMacroId || replay.macroId || (state.capcut.macros || []).find((macro) => macro.name === teach.name)?.id || "";
+  replayMacro(macroId, { startIndex: Number(stepIndex || 0) });
+}
+
+async function editMacro(macroId) {
+  if (!macroId) return;
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/macros/${encodeURIComponent(macroId)}/edit`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    state.capcut.macroName = result.teach?.name || state.capcut.macroName;
+    localStorage.setItem("capcutMacroName", state.capcut.macroName);
+    renderStatus("Macro loaded for step editing");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not load macro for editing";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function renameMacro(macroId) {
+  if (!macroId) return;
+  const macro = (state.capcut.macros || []).find((item) => item.id === macroId || item.name === macroId);
+  const currentName = macro?.name || macroId;
+  const nextName = window.prompt("Rename CapCut macro", currentName);
+  if (nextName === null) return;
+  const cleanName = nextName.trim();
+  if (!cleanName || cleanName === currentName) return;
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/macros/${encodeURIComponent(macroId)}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ name: cleanName }),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach || state.capcut.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.workflows = result.workflows || state.capcut.workflows || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    renderStatus("CapCut macro renamed");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not rename macro";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function reorderMacros(ids = []) {
+  const macroIds = ids.filter(Boolean);
+  if (!macroIds.length) return;
+  state.capcut.error = "";
+  try {
+    const result = await api("/api/capcut-control/macros/order", {
+      method: "POST",
+      body: JSON.stringify({ ids: macroIds }),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach || state.capcut.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.workflows = result.workflows || state.capcut.workflows || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    renderStatus("Macro order saved");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not save macro order";
+    renderStatus(state.capcut.error);
+  } finally {
+    await loadTeachState();
+  }
+}
+
+async function deleteMacro(macroId) {
+  if (!macroId) return;
+  const macro = (state.capcut.macros || []).find((item) => item.id === macroId || item.name === macroId);
+  const label = macro?.name || macroId;
+  if (!window.confirm(`Delete saved CapCut macro "${label}"? A backup copy will be kept in the macro folder.`)) return;
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/macros/${encodeURIComponent(macroId)}`, {
+      method: "DELETE",
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach || null;
+    state.capcut.macros = result.macros || [];
+    state.capcut.workflows = result.workflows || state.capcut.workflows || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    renderStatus("CapCut macro deleted");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not delete macro";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function editTeachStep(index, action) {
+  const stepIndex = Number(index);
+  if (!Number.isInteger(stepIndex)) return;
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/teach/steps/${stepIndex}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    renderStatus(action === "trim" ? "Macro tail removed from selected step" : "Macro step deleted");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not edit macro step";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function setTeachStepTarget(index) {
+  const stepIndex = Number(index);
+  if (!Number.isInteger(stepIndex)) return;
+  const step = state.capcut.teach?.steps?.[stepIndex] || {};
+  const current = step.semanticTarget?.label || "";
+  const label = window.prompt("What should this click target?", current);
+  if (label === null) return;
+  const cleanLabel = label.trim();
+  if (!cleanLabel) {
+    renderStatus("Target label was empty");
     return;
   }
-  if (action === "capcut-open") {
-    if (!projectReadiness(state.studio?.project || {}).canCapCut) {
-      toast("Prepare a verified CapCut handoff before opening the workspace.", "bad");
-      return;
-    }
-    await handleBrowserAction("open-capcut");
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    const result = await api(`/api/capcut-control/teach/steps/${stepIndex}/target`, {
+      method: "POST",
+      body: JSON.stringify({ label: cleanLabel }),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    renderStatus(`Step ${stepIndex + 1} target set to ${cleanLabel}`);
+  } catch (error) {
+    state.capcut.error = error.message || "Could not set macro target";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+async function updateTeachStepWait(index) {
+  const stepIndex = Number(index);
+  if (!Number.isInteger(stepIndex)) return;
+  const input = document.querySelector(`[data-wait-step-ms="${stepIndex}"]`);
+  const rawValue = String(input?.value ?? "").trim();
+  const parsedMs = rawValue === "" ? 0 : Number(rawValue);
+  if (!Number.isFinite(parsedMs)) {
+    renderStatus("Wait time must be a number");
     return;
   }
-  if (action === "render-draft") {
-    if (!candidate) return toast("Select a playable candidate first", "bad");
-    if (!projectId) return toast("Open or create a Clip Project first.", "bad");
-    state.studioBusy = true;
-    render();
-    try {
-      const result = await api(`/api/clip-projects/${encodeURIComponent(projectId || state.studio?.project?.id || "")}/render`, {
-        method: "POST",
-        body: JSON.stringify({
-          projectId: state.studio?.project?.id,
-          sourceId: state.studio?.source?.id,
-          candidateId: candidate.id,
-          format: "9:16"
-        })
-      });
-      toast(result.job?.status === "completed" ? "Rendered MP4 draft created" : "Render job updated", "good");
-      state.studioTab = "rendered";
-      localStorage.setItem("studioTab", state.studioTab);
-      await refresh();
-    } finally {
-      state.studioBusy = false;
-      render();
-    }
-  }
-}
-
-async function submitStreamer(form) {
-  const data = new FormData(form);
-  const allowedUse = data.getAll("allowedUse");
-  const result = await api("/api/twitch/streamers", {
-    method: "POST",
-    body: JSON.stringify({
-      displayName: data.get("displayName"),
-      platform: data.get("platform"),
-      channelId: data.get("channelId"),
-      channelUrl: data.get("channelUrl"),
-      permissionStatus: data.get("permissionStatus"),
-      monitorEnabled: data.get("monitorEnabled") === "true",
-      allowedUse,
-      notes: data.get("notes")
-    })
-  });
-  form.reset();
-  const status = liveStatusMeta(result.streamer);
-  toast(`Streamer added: ${status.label}`, result.streamer?.liveStatus === "api_not_configured" ? "info" : "good");
-  await refresh();
-}
-
-async function checkStreamer(id) {
-  const result = await api(`/api/twitch/streamers/${id}/check`, { method: "POST", body: "{}" });
-  const status = liveStatusMeta(result.streamer);
-  toast(`Twitch check: ${status.label}`, result.streamer?.liveStatus === "live" ? "good" : result.streamer?.liveStatus === "api_error" ? "bad" : "info");
-  await refresh();
-}
-
-async function gate(path, id) {
-  await api(path, {
-    method: "POST",
-    body: JSON.stringify({ id })
-  });
-  toast("Human Gate updated", "good");
-  await refresh();
-}
-
-document.addEventListener("submit", async (event) => {
-  const agentForm = event.target.closest("#agent101-command-form, #global-agent101-command-form");
-  const browserForm = event.target.closest("#browser-url-form");
-  const browserTypeForm = event.target.closest("#browser-type-form");
-  const mediaUploadForm = event.target.closest("#media-upload-form");
-  const form = event.target.closest("#streamer-form");
-  if (!agentForm && !browserForm && !browserTypeForm && !mediaUploadForm && !form) return;
-  event.preventDefault();
+  const ms = Math.max(0, Math.min(120000, Math.round(parsedMs)));
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
   try {
-    if (agentForm) {
-      await runAgentCommand(agentForm);
-      return;
-    }
-    if (browserForm) {
-      await navigateBrowser(browserForm);
-      return;
-    }
-    if (browserTypeForm) {
-      const text = cleanCommand(browserTypeForm.elements.text?.value);
-      if (!text) return;
-      await sendBrowserInput({ action: "type", text });
-      browserTypeForm.reset();
-      toast("Text sent to browser", "good");
-      renderNav();
-      render();
-      return;
-    }
-    if (mediaUploadForm) {
-      await uploadMediaSource(mediaUploadForm);
-      return;
-    }
-    await submitStreamer(form);
+    const result = await api(`/api/capcut-control/teach/steps/${stepIndex}/wait`, {
+      method: "POST",
+      body: JSON.stringify({ ms }),
+      timeoutMs: 30000
+    });
+    state.capcut.teach = result.teach;
+    state.capcut.macros = result.macros || state.capcut.macros || [];
+    state.capcut.replay = result.replay || state.capcut.replay;
+    renderStatus(`Step ${stepIndex + 1} wait set to ${ms}ms`);
   } catch (error) {
-    toast(error.message, "bad");
+    state.capcut.error = error.message || "Could not update wait step";
+    renderStatus(state.capcut.error);
+  } finally {
+    state.capcut.loading = false;
+    await loadTeachState();
   }
-});
+}
 
-document.addEventListener("click", async (event) => {
-  const target = event.target;
-  const navJump = target.closest("[data-nav-jump]");
-  if (navJump) return setView(navJump.dataset.navJump);
-
-  const openAgentChat = target.closest("[data-open-agent-chat]");
-  const closeAgentChat = target.closest("[data-close-agent-chat]");
-  const action = target.closest("[data-action]")?.dataset.action;
-  const testIntegrationId = target.closest("[data-test-integration]")?.dataset.testIntegration;
-  const watchSessionButton = target.closest("[data-watch-session-action]");
-  const watchSessionAction = watchSessionButton?.dataset.watchSessionAction;
-  const watchSessionId = watchSessionButton?.dataset.watchSessionId;
-  const browserAction = target.closest("[data-browser-action]")?.dataset.browserAction;
-  const browserTab = target.closest("[data-browser-tab]")?.dataset.browserTab;
-  const browserShot = target.closest("[data-browser-shot]");
-  const smokeClose = target.closest("[data-smoke-close]");
-  const smokeRetry = target.closest("[data-smoke-retry]");
-  const smokeCopy = target.closest("[data-smoke-copy]");
-  const studioTab = target.closest("[data-studio-tab]")?.dataset.studioTab;
-  const studioAction = target.closest("[data-studio-action]")?.dataset.studioAction;
-  const studioCandidate = target.closest("[data-studio-select-candidate]")?.dataset.studioSelectCandidate;
-  const previewCandidate = target.closest("[data-preview-candidate]")?.dataset.previewCandidate;
-  const closePreview = target.closest("[data-close-preview]");
-  const previewOpenBuilder = target.closest("[data-preview-open-builder]")?.dataset.previewOpenBuilder;
-  const selectCandidate = target.closest("[data-select-candidate]")?.dataset.selectCandidate;
-  const packageId = target.closest("[data-package-candidate]")?.dataset.packageCandidate;
-  const saveDraftId = target.closest("[data-save-builder-draft]")?.dataset.saveBuilderDraft;
-  const selectApproval = target.closest("[data-select-approval]")?.dataset.selectApproval;
-  const scoreId = target.closest("[data-score-candidate]")?.dataset.scoreCandidate;
-  const rejectId = target.closest("[data-reject-candidate]")?.dataset.rejectCandidate;
-  const toggleId = target.closest("[data-toggle-monitor]")?.dataset.toggleMonitor;
-  const approveStreamerId = target.closest("[data-approve-streamer]")?.dataset.approveStreamer;
-  const checkStreamerId = target.closest("[data-check-streamer]")?.dataset.checkStreamer;
-  const deleteId = target.closest("[data-delete-streamer]")?.dataset.deleteStreamer;
-  const addRecommendation = target.closest("[data-add-recommendation]")?.dataset.addRecommendation;
-  const requestPost = target.closest("[data-request-post]")?.dataset.requestPost;
-  const gateApprove = target.closest("[data-gate-approve]")?.dataset.gateApprove;
-  const gateReject = target.closest("[data-gate-reject]")?.dataset.gateReject;
-  const gateSendBack = target.closest("[data-gate-sendback]")?.dataset.gateSendback;
-  const selectStreamer = target.closest("[data-select-streamer]")?.dataset.selectStreamer;
-  const focusAddStreamer = target.closest("[data-focus-add-streamer]");
-
+async function cancelReplay() {
   try {
-    if (openAgentChat) {
-      state.agentChatOpen = true;
-      render();
-      return;
-    }
-    if (closeAgentChat) {
-      state.agentChatOpen = false;
-      render();
-      return;
-    }
-    if (closePreview) {
-      state.previewCandidateId = "";
-      render();
-      return;
-    }
-    if (testIntegrationId) {
-      const result = await api(`/api/integrations/${encodeURIComponent(testIntegrationId)}/test`, { method: "POST", body: "{}" });
-      toast(result.check?.message || `${labelize(testIntegrationId)} test complete`, integrationTone(result.check?.status || result.integration?.status));
-      await refresh();
-      return;
-    }
-    if (watchSessionAction && watchSessionId) {
-      await api(`/api/watch-sessions/${encodeURIComponent(watchSessionId)}/${watchSessionAction}`, { method: "POST", body: "{}" });
-      toast(`Watcher ${watchSessionAction} requested`, "good");
-      await refresh();
-      return;
-    }
-    if (browserTab) {
-      const active = state.browser?.activeSession || (state.browser?.sessions || []).find((session) => session.status !== "closed");
-      if (active?.id) {
-        await api(`/api/browser/sessions/${active.id}/tabs/${browserTab}`, { method: "PATCH", body: "{}" });
-        state.browserScreenshotStamp = Date.now();
-        await loadBrowserState();
-        renderNav();
-        render();
-      }
-      return;
-    }
-    if (browserShot && state.browser?.activeSession?.controlMode === "human_control") {
-      const rect = browserShot.getBoundingClientRect();
-      const naturalWidth = browserShot.naturalWidth || state.browser.activeSession.viewport?.width || 1440;
-      const naturalHeight = browserShot.naturalHeight || state.browser.activeSession.viewport?.height || 900;
-      const x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * naturalWidth;
-      const y = ((event.clientY - rect.top) / Math.max(1, rect.height)) * naturalHeight;
-      await sendBrowserInput({ action: "click", x, y });
-      renderNav();
-      render();
-      return;
-    }
-    if (browserAction) {
-      await handleBrowserAction(browserAction);
-      return;
-    }
-    if (smokeClose) {
-      state.smokeModalOpen = false;
-      render();
-      return;
-    }
-    if (smokeRetry) {
-      await runSystemSmoke();
-      return;
-    }
-    if (smokeCopy) {
-      await navigator.clipboard?.writeText(JSON.stringify(state.smokeTest || {}, null, 2));
-      toast("Smoke diagnostic report copied", "good");
-      return;
-    }
-    if (studioTab) {
-      setStudioTab(studioTab);
-      return;
-    }
-    if (studioCandidate) {
-      selectStudioCandidate(studioCandidate);
-      return;
-    }
-    if (studioAction) {
-      await runStudioAction(studioAction);
-      return;
-    }
-    if (previewOpenBuilder) {
-      state.selectedCandidateId = previewOpenBuilder;
-      state.previewCandidateId = "";
-      localStorage.setItem("selectedCandidateId", previewOpenBuilder);
-      setView("builder");
-      return;
-    }
-    if (previewCandidate) {
-      state.selectedCandidateId = previewCandidate;
-      state.previewCandidateId = previewCandidate;
-      localStorage.setItem("selectedCandidateId", previewCandidate);
-      render();
-      return;
-    }
-    if (focusAddStreamer) {
-      document.querySelector("#add-streamer-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      document.querySelector("#add-streamer-panel input[name='displayName']")?.focus();
-      return;
-    }
-    if (selectStreamer) {
-      state.selectedStreamerId = selectStreamer;
-      localStorage.setItem("selectedStreamerId", selectStreamer);
-      render();
-    }
-    if (action === "refresh") await refresh();
-    if (action === "run-watch") await runWatch();
-    if (action === "scout-streamers") await scoutStreamers();
-    if (action === "seed-demo") await seedDemo();
-    if (action === "clear-demo") await clearDemo();
-    if (agent101Goals[action]) await runAgent101(agent101Goals[action], "demo");
-    if (action === "create-capcut") await createCapCut();
-    if (action === "create-captions") await createCaptions();
-    if (action === "test-openai") {
-      const result = await api("/api/openai/test", { method: "POST", body: "{}" });
-      toast(result.message || "OpenAI test complete", result.live ? "good" : "info");
-    }
-    if (action === "test-twitch") {
-      const result = await api("/api/twitch/test", { method: "POST", body: "{}" });
-      toast(result.message || "Twitch test complete", result.live ? "good" : "info");
-    }
-    if (action === "test-kick") {
-      const result = await api("/api/kick/test", { method: "POST", body: "{}" });
-      toast(result.message || "Kick test complete", result.live ? "good" : "info");
-    }
-    if (selectCandidate) {
-      state.selectedCandidateId = selectCandidate;
-      localStorage.setItem("selectedCandidateId", selectCandidate);
-      render();
-    }
-    if (saveDraftId) await saveBuilderDraft(saveDraftId);
-    if (selectApproval) {
-      state.selectedApprovalId = selectApproval;
-      localStorage.setItem("selectedApprovalId", selectApproval);
-      render();
-    }
-    if (packageId) await packageCandidate(packageId);
-    if (scoreId) {
-      await api("/api/clips/candidates/score", { method: "POST", body: JSON.stringify({ id: scoreId }) });
-      toast("Candidate rescored", "good");
-      await refresh();
-    }
-    if (rejectId) {
-      await api("/api/clips/candidates/score", {
-        method: "POST",
-        body: JSON.stringify({ id: rejectId, updates: { status: "rejected", riskScore: 75 } })
-      });
-      toast("Candidate rejected", "info");
-      await refresh();
-    }
-    if (toggleId) {
-      const streamer = state.streamers.find((item) => item.id === toggleId);
-      await api(`/api/twitch/streamers/${toggleId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ monitorEnabled: !streamer.monitorEnabled })
-      });
-      await refresh();
-    }
-    if (approveStreamerId) {
-      await api(`/api/twitch/streamers/${approveStreamerId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ permissionStatus: "approved" })
-      });
-      toast("Streamer approved locally", "good");
-      await refresh();
-    }
-    if (checkStreamerId) await checkStreamer(checkStreamerId);
-    if (deleteId) {
-      await api(`/api/twitch/streamers/${deleteId}`, { method: "DELETE" });
-      toast("Streamer deleted", "info");
-      await refresh();
-    }
-    if (addRecommendation !== undefined) await addRecommendedStreamer(addRecommendation);
-    if (requestPost) {
-      await api(`/api/posts/${requestPost}/request-approval`, { method: "POST", body: "{}" });
-      toast("Approval requested", "good");
-      await refresh();
-    }
-    if (gateApprove) await gate("/api/human-gate/approve", gateApprove);
-    if (gateReject) await gate("/api/human-gate/reject", gateReject);
-    if (gateSendBack) await gate("/api/human-gate/send-back", gateSendBack);
+    const result = await api("/api/capcut-control/replay/cancel", {
+      method: "POST",
+      body: JSON.stringify({ reason: "operator_cancel" }),
+      timeoutMs: 15000
+    });
+    state.capcut.replay = result.replay;
+    renderStatus("Replay stop requested");
   } catch (error) {
-    toast(error.message, "bad");
+    state.capcut.error = error.message || "Could not stop replay";
+    renderStatus(state.capcut.error);
+  } finally {
+    renderClipsArea();
   }
-});
+}
 
-renderNav();
-loadCore()
-  .then(() => {
-    $("#api-status").textContent = "API online";
-    renderNav();
-    render();
-  })
-  .catch((error) => {
-    $("#api-status").className = "pill bad";
-    $("#api-status").textContent = "API error";
-    view.innerHTML = `<section class="panel">${empty(error.message)}</section>`;
+async function pauseReplay() {
+  try {
+    const result = await api("/api/capcut-control/replay/pause", {
+      method: "POST",
+      body: JSON.stringify({ reason: "operator_pause" }),
+      timeoutMs: 15000
+    });
+    state.capcut.replay = result.replay;
+    renderStatus("Replay paused");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not pause replay";
+    renderStatus(state.capcut.error);
+  } finally {
+    renderClipsArea();
+  }
+}
+
+async function resumeReplay() {
+  try {
+    const result = await api("/api/capcut-control/replay/resume", {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 15000
+    });
+    state.capcut.replay = result.replay;
+    renderStatus("Replay resumed");
+  } catch (error) {
+    state.capcut.error = error.message || "Could not resume replay";
+    renderStatus(state.capcut.error);
+  } finally {
+    renderClipsArea();
+  }
+}
+
+function workflowInputsFromDom() {
+  const inputs = { ...(state.capcut.workflowInputs || {}) };
+  document.querySelectorAll("[data-workflow-input]").forEach((input) => {
+    inputs[input.dataset.workflowInput] = input.value.trim();
   });
+  state.capcut.workflowInputs = inputs;
+  localStorage.setItem("capcutWorkflowInputs", JSON.stringify(inputs));
+  return inputs;
+}
+
+async function runWorkflowAction(action) {
+  const inputs = workflowInputsFromDom();
+  state.capcut.loading = true;
+  state.capcut.error = "";
+  renderClipsArea();
+  try {
+    let result = null;
+    if (action === "train") {
+      state.capcut.macroName = verticalShortWorkflowId;
+      localStorage.setItem("capcutMacroName", state.capcut.macroName);
+      result = await api(`/api/capcut-control/workflows/${encodeURIComponent(verticalShortWorkflowId)}/train`, {
+        method: "POST",
+        body: JSON.stringify({ inputs }),
+        timeoutMs: 45000
+      });
+      renderStatus("Workflow training started. Perform the edit once in CapCut, then save the trained workflow.");
+    }
+    if (action === "save") {
+      result = await api(`/api/capcut-control/workflows/${encodeURIComponent(verticalShortWorkflowId)}/save`, {
+        method: "POST",
+        body: JSON.stringify({ inputs }),
+        timeoutMs: 30000
+      });
+      renderStatus("Trained CapCut workflow saved with placeholders");
+    }
+    if (action === "run") {
+      const workflow = workflowById(verticalShortWorkflowId);
+      state.capcut.replay = {
+        ...(state.capcut.replay || {}),
+        workflowId: verticalShortWorkflowId,
+        macroId: workflow.trainedMacro?.id || "",
+        macroName: workflow.trainedMacro?.name || workflow.name,
+        running: true,
+        status: "starting",
+        currentStepIndex: 0,
+        totalSteps: Number(workflow.trainedMacro?.stepCount || 0),
+        currentStepDescription: "Starting trained CapCut workflow",
+        currentStepStatus: "starting",
+        log: []
+      };
+      renderClipsArea();
+      poll = window.setInterval(() => loadTeachState(), 900);
+      result = await api(`/api/capcut-control/workflows/${encodeURIComponent(verticalShortWorkflowId)}/run`, {
+        method: "POST",
+        body: JSON.stringify({ inputs }),
+        timeoutMs: 180000
+      });
+      renderStatus(`Workflow run ${result.run?.status || "finished"}`);
+    }
+    if (result?.teach) state.capcut.teach = result.teach;
+    if (result?.macros) state.capcut.macros = result.macros;
+    if (result?.replay) state.capcut.replay = result.replay;
+  } catch (error) {
+    state.capcut.error = error.message || "Workflow action failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    if (poll) window.clearInterval(poll);
+    state.capcut.loading = false;
+    await loadTeachState();
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  $("#stream-search-button")?.addEventListener("click", searchStreams);
+  $("#stream-search-input")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchStreams();
+  });
+  document.addEventListener("click", (event) => {
+    const watchButton = event.target.closest("[data-watch-streamer]");
+    const moreButton = event.target.closest("[data-more-streams]");
+    const pauseButton = event.target.closest("[data-pause-watch]");
+    const stopButton = event.target.closest("[data-stop-watch]");
+    const keywordsButton = event.target.closest("[data-open-keywords]");
+    const closeKeywords = event.target.closest("[data-close-keywords]");
+    const keywordsBackdrop = event.target.matches("[data-keywords-modal]");
+    const watchDetailButton = event.target.closest("[data-open-watch-detail]");
+    const closeWatchDetail = event.target.closest("[data-close-watch-detail]");
+    const watchDetailBackdrop = event.target.matches("[data-watch-detail-modal]");
+    const approveClipButton = event.target.closest("[data-approve-clip]");
+    const declineClipButton = event.target.closest("[data-decline-clip]");
+    const builderTeachClipButton = event.target.closest("[data-builder-teach-clip]");
+    const builderTeachStartButton = event.target.closest("[data-builder-teach-start]");
+    const capcutActionButton = event.target.closest("[data-capcut-action]");
+    const permissionButton = event.target.closest("[data-open-permission]");
+    const teachButton = event.target.closest("[data-teach-action]");
+    const teachSnapshotButton = event.target.closest("[data-teach-snapshot]");
+    const teachPhaseButton = event.target.closest("[data-teach-phase-action]");
+    const macroRefreshButton = event.target.closest("[data-macro-refresh]");
+    const runAllMacrosButton = event.target.closest("[data-run-all-macros]");
+    const toggleMacroLibraryButton = event.target.closest("[data-toggle-macro-library]");
+    const toggleDeterminismButton = event.target.closest("[data-toggle-determinism]");
+    const editMacroButton = event.target.closest("[data-edit-macro]");
+    const renameMacroButton = event.target.closest("[data-rename-macro]");
+    const deleteMacroButton = event.target.closest("[data-delete-macro]");
+    const replayButton = event.target.closest("[data-replay-macro]");
+    const retryMacroStepButton = event.target.closest("[data-retry-macro-step]");
+    const targetTeachStepButton = event.target.closest("[data-target-teach-step]");
+    const updateWaitStepButton = event.target.closest("[data-update-wait-step]");
+    const deleteTeachStepButton = event.target.closest("[data-delete-teach-step]");
+    const trimTeachStepButton = event.target.closest("[data-trim-teach-step]");
+    const replayPauseButton = event.target.closest("[data-replay-pause]");
+    const replayResumeButton = event.target.closest("[data-replay-resume]");
+    const replayCancelButton = event.target.closest("[data-replay-cancel]");
+    const workflowButton = event.target.closest("[data-workflow-action]");
+    if (approveClipButton) {
+      approveClipForBuilder(approveClipButton.dataset.approveClip);
+      return;
+    }
+    if (declineClipButton) {
+      declineClip(declineClipButton.dataset.declineClip);
+      return;
+    }
+    if (builderTeachStartButton) {
+      prepareBuilderClipForCapCut(builderTeachStartButton.dataset.builderTeachStart, { startTeaching: true });
+      return;
+    }
+    if (builderTeachClipButton) {
+      prepareBuilderClipForCapCut(builderTeachClipButton.dataset.builderTeachClip);
+      return;
+    }
+    if (capcutActionButton) {
+      runCapCutPanelAction(capcutActionButton.dataset.capcutAction);
+      return;
+    }
+    if (permissionButton) {
+      openCapCutPermission(permissionButton.dataset.openPermission);
+      return;
+    }
+    if (teachButton) {
+      runTeachAction(teachButton.dataset.teachAction);
+      return;
+    }
+    if (teachSnapshotButton) {
+      captureTeachSnapshot("manual");
+      return;
+    }
+    if (teachPhaseButton) {
+      runTeachPhaseAction(teachPhaseButton.dataset.teachPhaseId, teachPhaseButton.dataset.teachPhaseAction);
+      return;
+    }
+    if (macroRefreshButton) {
+      loadTeachState();
+      return;
+    }
+    if (toggleMacroLibraryButton) {
+      state.capcut.macroLibraryCollapsed = !state.capcut.macroLibraryCollapsed;
+      localStorage.setItem("capcutMacroLibraryCollapsed", String(state.capcut.macroLibraryCollapsed));
+      renderClipsArea();
+      return;
+    }
+    if (toggleDeterminismButton) {
+      state.capcut.monitorCollapsed = !state.capcut.monitorCollapsed;
+      localStorage.setItem("capcutMonitorCollapsed", String(state.capcut.monitorCollapsed));
+      renderClipsArea();
+      return;
+    }
+    if (runAllMacrosButton) {
+      runAllMacros();
+      return;
+    }
+    if (renameMacroButton) {
+      renameMacro(renameMacroButton.dataset.renameMacro);
+      return;
+    }
+    if (editMacroButton) {
+      editMacro(editMacroButton.dataset.editMacro);
+      return;
+    }
+    if (deleteMacroButton) {
+      deleteMacro(deleteMacroButton.dataset.deleteMacro);
+      return;
+    }
+    if (replayButton) {
+      replayMacro(replayButton.dataset.replayMacro);
+      return;
+    }
+    if (retryMacroStepButton) {
+      retryMacroFromStep(retryMacroStepButton.dataset.retryMacroStep);
+      return;
+    }
+    if (targetTeachStepButton) {
+      setTeachStepTarget(targetTeachStepButton.dataset.targetTeachStep);
+      return;
+    }
+    if (updateWaitStepButton) {
+      updateTeachStepWait(updateWaitStepButton.dataset.updateWaitStep);
+      return;
+    }
+    if (deleteTeachStepButton) {
+      editTeachStep(deleteTeachStepButton.dataset.deleteTeachStep, "delete");
+      return;
+    }
+    if (trimTeachStepButton) {
+      editTeachStep(trimTeachStepButton.dataset.trimTeachStep, "trim");
+      return;
+    }
+    if (replayPauseButton) {
+      pauseReplay();
+      return;
+    }
+    if (replayResumeButton) {
+      resumeReplay();
+      return;
+    }
+    if (replayCancelButton) {
+      cancelReplay();
+      return;
+    }
+    if (workflowButton) {
+      runWorkflowAction(workflowButton.dataset.workflowAction);
+      return;
+    }
+    if (pauseButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      pauseWatchSession(pauseButton.dataset.pauseWatch);
+      return;
+    }
+    if (stopButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      stopWatchSession(stopButton.dataset.stopWatch);
+      return;
+    }
+    if (watchButton) watchStreamer(watchButton.dataset.watchStreamer);
+    if (moreButton) {
+      state.visibleCount += 5;
+      renderStreams();
+    }
+    if (keywordsButton) {
+      state.watch.keywordOpen = true;
+      renderWatchArea();
+    }
+    if (closeKeywords || keywordsBackdrop) {
+      state.watch.keywordOpen = false;
+      renderWatchArea();
+    }
+    if (watchDetailButton) {
+      state.watch.detailOpen = true;
+      renderWatchArea();
+    }
+    if (closeWatchDetail || watchDetailBackdrop) {
+      state.watch.detailOpen = false;
+      renderWatchArea();
+    }
+  });
+  document.addEventListener("dragstart", (event) => {
+    const card = event.target.closest?.("[data-macro-card]");
+    if (!card || state.capcut.replay?.running || event.target.closest?.("button")) return;
+    state.capcut.dragMacroId = card.dataset.macroId || "";
+    card.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", state.capcut.dragMacroId);
+  });
+  document.addEventListener("dragover", (event) => {
+    const list = event.target.closest?.(".macro-list");
+    const dragging = document.querySelector(".macro-card.dragging");
+    if (!list || !dragging) return;
+    event.preventDefault();
+    const cards = [...list.querySelectorAll("[data-macro-card]:not(.dragging)")];
+    const after = cards.find((card) => event.clientY < card.getBoundingClientRect().top + card.getBoundingClientRect().height / 2);
+    if (after) list.insertBefore(dragging, after);
+    else list.appendChild(dragging);
+  });
+  document.addEventListener("drop", async (event) => {
+    const list = event.target.closest?.(".macro-list");
+    const dragging = document.querySelector(".macro-card.dragging");
+    if (!list || !dragging) return;
+    event.preventDefault();
+    dragging.classList.remove("dragging");
+    const ids = [...list.querySelectorAll("[data-macro-card]")]
+      .map((card) => card.dataset.macroId)
+      .filter(Boolean);
+    state.capcut.dragMacroId = "";
+    await reorderMacros(ids);
+  });
+  document.addEventListener("dragend", (event) => {
+    event.target.closest?.("[data-macro-card]")?.classList.remove("dragging");
+    state.capcut.dragMacroId = "";
+  });
+  document.addEventListener("input", (event) => {
+    if (event.target?.id === "capcut-macro-name") {
+      state.capcut.macroName = event.target.value;
+      localStorage.setItem("capcutMacroName", state.capcut.macroName);
+    }
+    if (event.target?.matches?.("[data-workflow-input]")) {
+      workflowInputsFromDom();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    const detailCard = event.target.closest?.("[data-open-watch-detail]");
+    if (event.key === "Enter" && event.target?.matches?.("[data-wait-step-ms]")) {
+      event.preventDefault();
+      updateTeachStepWait(event.target.dataset.waitStepMs);
+      return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && detailCard) {
+      event.preventDefault();
+      state.watch.detailOpen = true;
+      renderWatchArea();
+    }
+    if (event.key === "Escape" && (state.watch.detailOpen || state.watch.keywordOpen)) {
+      state.watch.detailOpen = false;
+      state.watch.keywordOpen = false;
+      renderWatchArea();
+    }
+  });
+  renderStatus("Ready");
+  await loadProviderStatus();
+  await refreshWatchState().catch(() => {
+    renderWatchArea();
+  });
+  await loadCapCutStatus();
+  window.setInterval(() => {
+    if (state.capcut.teach?.recording || state.capcut.replay?.running) {
+      loadTeachState();
+    }
+  }, 2000);
+  startWatchPolling();
+  renderClipsArea();
+});

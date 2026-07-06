@@ -1047,11 +1047,19 @@ function candidateJourney(candidate = {}) {
   steps.push({
     id: "capcut",
     label: "CapCut edit",
-    status: candidate.builderApproved ? "pending" : "skipped",
-    detail: candidate.builderApproved
-      ? "Ready for the taught 9:16 → blur → reframe → sticker workflow (Determinism Monitor shows it live)"
-      : "Unlocks after approval",
-    at: ""
+    status: candidate.capcutStatus === "edited"
+      ? "done"
+      : candidate.capcutStatus && candidate.capcutStatus !== "edited"
+        ? "failed"
+        : candidate.builderApproved ? "pending" : "skipped",
+    detail: candidate.capcutStatus === "edited"
+      ? `Edited by the taught workflow → project "${candidate.capcutProjectName || "saved"}"`
+      : candidate.capcutStatus
+        ? `Last attempt: ${candidate.capcutStatus} — check the Determinism Monitor`
+        : candidate.builderApproved
+          ? "Press Auto-Edit in CapCut — the taught 9:16 → blur → reframe → sticker workflow runs live in the Determinism Monitor"
+          : "Unlocks after approval",
+    at: candidate.capcutEditedAt || ""
   });
   return steps;
 }
@@ -10634,6 +10642,49 @@ async function handleApi(req, res, pathname, searchParams) {
     const candidates = filterClipCandidatesForRadar(state.clipCandidates, { projectId, sourceId })
       .map((candidate) => ({ ...candidate, journey: candidateJourney(candidate) }));
     return sendJson(res, 200, { candidates });
+  }
+
+  // One-button auto edit: clip in → taught CapCut workflow replayed on it.
+  // The server resolves the MP4 path, picks the trained macro, fills project
+  // inputs, and runs the gated replay (staging, window pinning, phase gates
+  // all included via replayMacro). The UI just watches the monitor.
+  const clipAutoEditMatch = pathname.match(/^\/api\/clip-candidates\/([^/]+)\/auto-edit$/);
+  if (req.method === "POST" && clipAutoEditMatch) {
+    try {
+      const candidateId = decodeURIComponent(clipAutoEditMatch[1]);
+      const candidate = state.clipCandidates.find((item) => item.id === candidateId);
+      if (!candidate) return sendError(res, 404, "Clip not found.");
+      const source = state.mediaSources.find((item) => item.id === candidate.sourceId);
+      if (!source?.filePath) return sendError(res, 422, "This clip has no saved MP4 yet — wait for the capture to finish.");
+      const controller = capCutController();
+      const macros = await controller.listMacros();
+      if (!macros.length) {
+        return sendError(res, 409, "No taught CapCut edit exists yet. Press Teach Edit once and record the 9:16 → blur → reframe → sticker workflow; after that, Auto-Edit replays it on every clip.");
+      }
+      const macro = macros.find((item) => item.workflowId) || macros[0];
+      const projectName = `${cleanText(candidate.title || candidate.streamerName || "clip").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "clip"}-${new Date().toISOString().slice(0, 10)}`;
+      await logEvent("capcut_auto_edit_started", "Auto-edit sent a clip to the taught CapCut workflow", {
+        candidateId: candidate.id,
+        macroId: macro.id,
+        sourceId: source.id,
+        projectName
+      });
+      const result = await controller.replayMacro(macro.id, {
+        inputs: {
+          sourceVideoPath: source.filePath,
+          projectName,
+          outputProjectFolder: config.capcutProjectDir
+        }
+      });
+      candidate.capcutStatus = result.replay?.status === "complete" ? "edited" : result.replay?.status || "attempted";
+      candidate.capcutEditedAt = now();
+      candidate.capcutProjectName = projectName;
+      candidate.updatedAt = now();
+      await saveState();
+      return sendJson(res, 200, { ...result, macroId: macro.id, macroName: macro.name, projectName });
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/clip-candidates/bulk-delete") {

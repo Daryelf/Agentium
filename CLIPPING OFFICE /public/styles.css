@@ -2851,3 +2851,18 @@ button.watch-chip {
   text-transform: none;
   letter-spacing: normal;
 }
+
+.builder-actions button.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+.builder-actions button.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.builder-actions button.primary:disabled {
+  opacity: 0.6;
+}

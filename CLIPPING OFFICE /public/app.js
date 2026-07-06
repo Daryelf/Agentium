@@ -1522,8 +1522,8 @@ function renderBuilderArea() {
             <small>${esc(clip.streamerName || "Watched stream")} · ${formatSeconds(clip.durationSeconds || clip.duration || 30)} · ${Number(clip.score || 0) || 0}% signal</small>
             <em>${esc(clip.capcutTarget?.instruction || "Open in CapCut Workspace, set 9:16, then train macro steps.")}</em>
             <div class="builder-actions">
-              <button type="button" data-builder-teach-clip="${esc(clip.id)}">Load for CapCut</button>
-              <button type="button" data-builder-teach-start="${esc(clip.id)}">Start Teaching</button>
+              <button type="button" class="primary" data-auto-edit-clip="${esc(clip.id)}" ${state.capcut.replay?.running ? "disabled" : ""}>${state.capcut.replay?.running ? "Editing…" : "Auto-Edit in CapCut"}</button>
+              <button type="button" data-builder-teach-start="${esc(clip.id)}" ${state.capcut.replay?.running ? "disabled" : ""}>Teach Edit</button>
             </div>
           </article>
         `).join("") : `
@@ -2208,6 +2208,55 @@ async function runTeachPhaseAction(phaseId, action) {
   }
 }
 
+/**
+ * One button, whole pipeline: send the approved clip to the taught CapCut
+ * workflow and watch it live in the Determinism Monitor. The server resolves
+ * the MP4, stages it, and runs the gated replay — the UI just follows along.
+ */
+async function autoEditClipInCapCut(candidateId) {
+  if (!candidateId) return;
+  if (state.capcut.replay?.running) {
+    renderStatus("A CapCut edit is already running — watch the Determinism Monitor below.");
+    return;
+  }
+  state.capcut.error = "";
+  state.capcut.monitorCollapsed = false;
+  localStorage.setItem("capcutMonitorCollapsed", "false");
+  state.capcut.replay = {
+    ...(state.capcut.replay || {}),
+    running: true,
+    status: "starting",
+    macroName: "Auto-Edit",
+    currentStepIndex: 0,
+    currentStepDescription: "Staging the clip and opening CapCut…",
+    currentStepStatus: "starting",
+    gates: [],
+    warnings: [],
+    log: []
+  };
+  renderClipsArea();
+  document.querySelector(".determinism-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const poll = window.setInterval(() => loadTeachState(), 900);
+  try {
+    const result = await api(`/api/clip-candidates/${encodeURIComponent(candidateId)}/auto-edit`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 600000
+    });
+    if (result.replay) state.capcut.replay = result.replay;
+    renderStatus(result.replay?.status === "complete"
+      ? `Auto-edit complete — CapCut project "${result.projectName || "saved"}" is ready.`
+      : `Auto-edit ${result.replay?.status || "finished"} — see the Determinism Monitor for the phase that stopped it.`);
+  } catch (error) {
+    state.capcut.error = error.message || "Auto-edit failed";
+    renderStatus(state.capcut.error);
+  } finally {
+    window.clearInterval(poll);
+    await loadTeachState();
+    refreshWatchState().catch(() => {});
+  }
+}
+
 async function replayMacro(macroId, options = {}) {
   if (!macroId) return;
   const macro = (state.capcut.macros || []).find((item) => item.id === macroId || item.name === macroId) || {};
@@ -2668,6 +2717,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (declineClipButton) {
       declineClip(declineClipButton.dataset.declineClip);
+      return;
+    }
+    const autoEditClipButton = event.target.closest("[data-auto-edit-clip]");
+    if (autoEditClipButton) {
+      autoEditClipInCapCut(autoEditClipButton.dataset.autoEditClip);
       return;
     }
     if (builderTeachStartButton) {

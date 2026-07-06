@@ -2719,3 +2719,135 @@ button.watch-chip {
 .determinism-lastrun strong { color: #e2e8f0; }
 .determinism-lastrun span { color: #94a3b8; }
 .determinism-lastrun small { color: #64748b; word-break: break-all; }
+
+/* --- Watch chat-state chip + per-clip journey trace ------------------------ */
+
+.watch-chip.warn {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+}
+
+.clip-journey {
+  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.clip-journey-toggle {
+  justify-self: start;
+  background: #111c2e;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 8px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.clip-journey-toggle:hover {
+  border-color: #64748b;
+  color: #cbd5e1;
+}
+
+.clip-journey-toggle.failed {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fca5a5;
+}
+
+.clip-journey-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0.4rem 0 0.2rem;
+  display: grid;
+  gap: 0;
+}
+
+.clip-journey-steps li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  position: relative;
+  padding: 0.25rem 0 0.25rem 2px;
+}
+
+.clip-journey-steps li i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 3px;
+  background: #334155;
+  border: 2px solid #334155;
+  position: relative;
+  z-index: 1;
+}
+
+.clip-journey-steps li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 16px;
+  bottom: -6px;
+  width: 2px;
+  background: #1e293b;
+}
+
+.clip-journey-steps li.done i {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.clip-journey-steps li.failed i {
+  background: #f87171;
+  border-color: #f87171;
+}
+
+.clip-journey-steps li.pending i {
+  background: transparent;
+  border-color: #64748b;
+}
+
+.clip-journey-steps li.skipped i {
+  background: transparent;
+  border-color: #334155;
+}
+
+.clip-journey-steps li > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.clip-journey-steps li b {
+  font-size: 0.75rem;
+  color: #e2e8f0;
+}
+
+.clip-journey-steps li.skipped b,
+.clip-journey-steps li.pending b {
+  color: #94a3b8;
+}
+
+.clip-journey-steps li.failed b {
+  color: #fca5a5;
+}
+
+.clip-journey-steps li span {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  overflow-wrap: anywhere;
+}
+
+.clip-journey-steps li small {
+  font-size: 0.65rem;
+  color: #475569;
+}
+
+.clip-journey-steps li b,
+.clip-journey-steps li span,
+.clip-journey-steps li small,
+.clip-journey-toggle {
+  text-transform: none;
+  letter-spacing: normal;
+}

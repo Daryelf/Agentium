@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -7,12 +7,77 @@ import dns from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import Anthropic from "@anthropic-ai/sdk";
 import ffmpegStatic from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { createBrowserWorkspace } from "./services/browser-workspace.js";
+import { createCapCutController } from "./services/capcut-controller.js";
+import { TOOL_REGISTRY, executeTool, listOutputFiles, readOutputFile, resultToToolText } from "./services/agent-tools.js";
+import { isCapCutInstalled, isCapCutRunning, runCapcutDesktopEdit } from "./services/capcut-desktop.js";
+import { TwitchChatMonitor } from "./services/twitch-chat.js";
+import { analyzeAudioEnergy } from "./services/audio-energy.js";
+import { transcribeBuffer, scoreTranscript, isWhisperAvailable } from "./services/whisper-service.js";
+import { runVisionGate } from "./services/vision-gate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = path.join(__dirname, "data", "state.json");
+
+const inheritedEnvKeys = new Set(Object.keys(process.env));
+
+function parseEnvLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (!match) return null;
+  let value = match[2].trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return { key: match[1], value };
+}
+
+function loadEnvFile(filePath, { localOverride = false } = {}) {
+  let raw = "";
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn(`[config] Could not read env file ${filePath}: ${error.message}`);
+    }
+    return;
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    const parsed = parseEnvLine(line);
+    if (!parsed) continue;
+    if (inheritedEnvKeys.has(parsed.key)) continue;
+    if (localOverride || !process.env[parsed.key]) {
+      process.env[parsed.key] = parsed.value;
+    }
+  }
+}
+
+loadEnvFile(path.resolve(__dirname, "..", ".env"));
+loadEnvFile(path.resolve(__dirname, "..", ".env.local"));
+loadEnvFile(path.resolve(__dirname, ".env"), { localOverride: true });
+
+// GUI-launched apps (Electron, Finder) get a minimal PATH without Homebrew,
+// so streamlink / yt-dlp silently "disappear" when the office isn't started
+// from a terminal — the recorder then waits forever. Make external tools
+// resolvable no matter how the process was launched.
+{
+  const extraToolDirs = ["/opt/homebrew/bin", "/usr/local/bin", path.join(process.env.HOME || "", ".local", "bin")];
+  const pathParts = String(process.env.PATH || "").split(":").filter(Boolean);
+  for (const dir of extraToolDirs) {
+    if (dir && !pathParts.includes(dir)) pathParts.push(dir);
+  }
+  process.env.PATH = pathParts.join(":");
+}
+
+const RUNTIME_DIR = path.resolve(
+  process.env.CLIPPING_OFFICE_DATA_DIR ||
+    process.env.ARGENTUM_CLIPPING_OFFICE_DATA_DIR ||
+    path.join(__dirname, "data"),
+);
+const DATA_FILE = path.join(RUNTIME_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const execFileAsync = promisify(execFile);
 const ffmpegExecutable = process.env.FFMPEG_PATH || ffmpegStatic || "ffmpeg";
@@ -22,7 +87,7 @@ const DEMO_PROJECT_ID = "project_clipping_office_main";
 const DEMO_STREAMER_ID = "streamer_demo_media_source";
 const DEMO_MEDIA_FILE = path.join(PUBLIC_DIR, "demo", "demo-source.mp4");
 const DEMO_FRAME_DIR = path.join(PUBLIC_DIR, "demo");
-const THUMBNAIL_DIR = path.join(__dirname, "outputs", "thumbnails");
+const DEFAULT_CLIP_SAVE_DIR = path.join(__dirname, "Clips");
 
 const PROVENANCE = {
   VERIFIED_API: "VERIFIED_API",
@@ -40,10 +105,32 @@ const PROVENANCE = {
   UNAVAILABLE: "UNAVAILABLE"
 };
 
+function boundedNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function splitCsvList(value, fallback = []) {
+  const list = String(value || "")
+    .split(",")
+    .map((item) => cleanText(item).toLowerCase())
+    .map((item) => item.replace(/\s{2,}/g, " ").trim())
+    .filter(Boolean);
+  return list.length ? list : fallback.slice();
+}
+
 const config = {
   port: Number(process.env.PORT || 4177),
   openaiApiKey: process.env.OPENAI_API_KEY || "",
   openaiModel: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+  anthropicModel: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
+  braveApiKey: process.env.BRAVE_API_KEY || "",
+  serpApiKey: process.env.SERP_API_KEY || "",
+  dalleApiKey: process.env.DALLE_API_KEY || "",
+  resendApiKey: process.env.RESEND_API_KEY || "",
+  sendgridApiKey: process.env.SENDGRID_API_KEY || "",
   aiProvider: process.env.AI_PROVIDER || "openai",
   aiMode: process.env.AI_MODE || "live",
   twitchClientId: process.env.TWITCH_CLIENT_ID || "",
@@ -53,6 +140,8 @@ const config = {
   twitchAppAccessToken: process.env.TWITCH_APP_ACCESS_TOKEN || "",
   twitchUserAccessToken: process.env.TWITCH_USER_ACCESS_TOKEN || "",
   twitchRefreshToken: process.env.TWITCH_REFRESH_TOKEN || "",
+  twitchEventSubSecret: process.env.TWITCH_EVENTSUB_SECRET || "",
+  twitchEventSubCallbackUrl: process.env.TWITCH_EVENTSUB_CALLBACK_URL || "",
   twitchAllowedChannels: (process.env.TWITCH_ALLOWED_CHANNELS || "")
     .split(",")
     .map((value) => value.trim().toLowerCase())
@@ -63,24 +152,71 @@ const config = {
   databaseUrl: process.env.DATABASE_URL || "",
   redisUrl: process.env.REDIS_URL || "",
   objectStorageBucket: process.env.S3_BUCKET || process.env.AWS_BUCKET || process.env.MINIO_BUCKET || "",
-  uploadDir: path.resolve(__dirname, process.env.CLIPPER_UPLOAD_DIR || "./uploads"),
-  outputDir: path.resolve(__dirname, process.env.CLIPPER_OUTPUT_DIR || "./outputs"),
+  uploadDir: path.resolve(RUNTIME_DIR, process.env.CLIPPER_UPLOAD_DIR || "./uploads"),
+  outputDir: path.resolve(RUNTIME_DIR, process.env.CLIPPER_OUTPUT_DIR || "./outputs"),
+  agent101OutputDir: path.resolve(RUNTIME_DIR, process.env.AGENT101_OUTPUT_DIR || "./outputs"),
+  watchBufferDir: process.env.CLIPPER_WATCH_BUFFER_DIR
+    ? path.resolve(RUNTIME_DIR, process.env.CLIPPER_WATCH_BUFFER_DIR)
+    : DEFAULT_CLIP_SAVE_DIR,
+  captureEnabled: process.env.STREAMCLIPPER_CAPTURE_ENABLED !== "false",
+  captureToolPreference: cleanText(process.env.STREAMCLIPPER_CAPTURE_TOOL || "auto").toLowerCase(),
+  streamlinkExecutable: process.env.STREAMLINK_PATH || "streamlink",
+  ytdlpExecutable: process.env.YTDLP_PATH || "yt-dlp",
   browserEnabled: process.env.BROWSER_ENABLED !== "false",
   browserHeadless: process.env.BROWSER_HEADLESS !== "false",
   browserAllowLocalhost: process.env.BROWSER_ALLOW_LOCALHOST !== "false",
-  browserProfileDir: path.resolve(__dirname, process.env.BROWSER_PROFILE_DIR || "./data/browser-profile"),
-  browserDownloadsDir: path.resolve(__dirname, process.env.BROWSER_DOWNLOAD_DIR || "./downloads/browser"),
+  browserProfileDir: path.resolve(RUNTIME_DIR, process.env.BROWSER_PROFILE_DIR || "./browser-profile"),
+  browserDownloadsDir: path.resolve(RUNTIME_DIR, process.env.BROWSER_DOWNLOAD_DIR || "./browser-downloads"),
   browserViewport: {
     width: Number(process.env.BROWSER_VIEWPORT_WIDTH || 1440),
     height: Number(process.env.BROWSER_VIEWPORT_HEIGHT || 900)
   },
   browserNavigationTimeoutMs: Number(process.env.BROWSER_NAVIGATION_TIMEOUT_MS || 30000),
   capcutHandoffUrl: process.env.CAPCUT_HANDOFF_URL || "https://www.capcut.com/editor",
+  capcutDownloadDir: path.resolve(RUNTIME_DIR, process.env.CAPCUT_DOWNLOAD_DIR || "./capcut-downloads"),
+  capcutAppPath: process.env.CAPCUT_APP_PATH || "",
+  capcutScreenshotDir: path.resolve(RUNTIME_DIR, process.env.CAPCUT_SCREENSHOT_DIR || "./capcut-screenshots"),
+  capcutMacroDir: path.resolve(RUNTIME_DIR, process.env.CAPCUT_MACRO_DIR || "./capcut-macros"),
+  capcutProjectDir: path.resolve(RUNTIME_DIR, process.env.CAPCUT_PROJECT_DIR || "./capcut-projects"),
+  capcutRunReportDir: path.resolve(RUNTIME_DIR, process.env.CAPCUT_RUN_REPORT_DIR || "./capcut-runs"),
+  capcutDefaultStickerPath: process.env.CAPCUT_DEFAULT_STICKER_PATH || "",
+  capcutBrandSticker: process.env.CAPCUT_BRAND_STICKER || "Essentrx",
+  capcutAgentDryRun: process.env.CAPCUT_AGENT_DRY_RUN === "true",
+  whisperModel: process.env.WHISPER_MODEL || "base",
   postDailyLimit: Number(process.env.POST_DAILY_LIMIT || 20),
+  maxWatchedStreamers: boundedNumber(process.env.STREAMCLIPPER_MAX_WATCHED_STREAMERS, 1, 1, 10),
+  singleWatchMode: process.env.STREAMCLIPPER_SINGLE_WATCH_MODE === "true" || process.env.STREAMCLIPPER_MAX_WATCHED_STREAMERS === "1" || process.env.STREAMCLIPPER_MAX_WATCHED_STREAMERS === undefined,
+  watchTriggerRequiresSignal: process.env.STREAMCLIPPER_REQUIRE_WATCH_TRIGGER !== "false",
+  watchTriggerKeywords: splitCsvList(process.env.STREAMCLIPPER_CHAT_TRIGGER_KEYWORDS, [
+    "holy shit",
+    "holy",
+    "pog",
+    "poggers",
+    "omg",
+    "unreal",
+    "insane",
+    "clutch",
+    "nice one",
+    "holy hell",
+    "what",
+    "crazy",
+    "clip this",
+    "send it"
+  ]),
+  chatWindowMs: boundedNumber(process.env.STREAMCLIPPER_CHAT_WINDOW_MS, 10000, 1000, 60000),
+  chatSpikeThreshold: boundedNumber(process.env.STREAMCLIPPER_CHAT_SPIKE_THRESHOLD, 30, 2, 500),
+  chatSpikeCooldownMs: boundedNumber(process.env.STREAMCLIPPER_CHAT_SPIKE_COOLDOWN_MS, 20000, 1000, 120000),
+  watchCandidateMaxPerTick: boundedNumber(process.env.STREAMCLIPPER_WATCH_CANDIDATE_MAX_PER_TICK, 1, 1, 10),
+  watchCandidateCooldownMs: boundedNumber(process.env.STREAMCLIPPER_WATCH_CANDIDATE_COOLDOWN_MS, 5000, 0, 120000),
+  watchCandidateMaxActivePerSession: boundedNumber(process.env.STREAMCLIPPER_WATCH_CANDIDATE_SESSION_CAP, 1, 1, 200),
+  watchCandidateUnresolvedCap: boundedNumber(process.env.STREAMCLIPPER_WATCH_CANDIDATE_UNRESOLVED_CAP, 1, 1, 100),
+  autoCaptureBaselineSeconds: boundedNumber(process.env.STREAMCLIPPER_BASELINE_CAPTURE_SECONDS, 120, 30, 1800),
+  twitchClipMinScore: boundedNumber(process.env.STREAMCLIPPER_TWITCH_CLIP_MIN_SCORE, 75, 1, 100),
   openaiTestBudgetUsd: Number(process.env.OPENAI_TEST_BUDGET_USD || 10),
   enableSyntheticTestFixtures: process.env.ENABLE_SYNTHETIC_TEST_FIXTURES === "true",
   maxUploadBytes: Number(process.env.CLIPPER_MAX_UPLOAD_BYTES || 1024 * 1024 * 500)
 };
+const THUMBNAIL_DIR = path.join(config.outputDir, "thumbnails");
 
 const stateDefaults = {
   streamers: [],
@@ -92,6 +228,7 @@ const stateDefaults = {
   streamerClipProfiles: [],
   feedbackEvents: [],
   mediaSegments: [],
+  captureJobs: [],
   clipCandidates: [],
   clipPackages: [],
   postingDrafts: [],
@@ -107,6 +244,7 @@ const stateDefaults = {
   discoveredStreamers: [],
   executionContracts: [],
   agentRuns: [],
+  capcutAgentSessions: [],
   handoffPackages: [],
   smokeTests: [],
   twitchValidation: null,
@@ -118,6 +256,15 @@ const stateDefaults = {
     actions: [],
     downloads: [],
     policies: []
+  },
+  capcutControl: {
+    actions: [],
+    screenshots: [],
+    teach: null,
+    replay: null,
+    workflows: {},
+    lastStatus: null,
+    lastAction: null
   }
 };
 
@@ -125,18 +272,54 @@ let state = structuredClone(stateDefaults);
 let twitchAppToken = null;
 let kickAppToken = null;
 let browserWorkspaceInstance = null;
+let capcutControllerInstance = null;
+let saveStateQueue = Promise.resolve();
+let saveStateWriteCounter = 0;
 const watchWorkerTimers = new Map();
 const watchWorkerBusy = new Set();
 const watchEventClients = new Map();
+const chatMonitors = new Map();
+const chatSpikeLog = new Map();
+const chatKeywordLog = new Map();
+const agent101StreamClients = new Map();
+const capcutAgentStreamClients = new Map();
 const WATCH_WORKER_ID = `local-worker-${process.pid}`;
 const WATCH_TICK_MS = Number(process.env.WATCH_TICK_MS || 7000);
 const WATCH_LEASE_MS = Number(process.env.WATCH_LEASE_MS || 45000);
 const WATCH_HEARTBEAT_STALE_MS = Number(process.env.WATCH_HEARTBEAT_STALE_MS || 90000);
+const WATCH_RECORDING_WINDOW_SECONDS = boundedNumber(process.env.STREAMCLIPPER_RECORDING_WINDOW_SECONDS, 30, 5, 300);
+const WATCH_MAX_RECORDING_WINDOWS = boundedNumber(process.env.STREAMCLIPPER_MAX_RECORDING_WINDOWS, 240, 1, 2000);
 const ACTIVE_WATCH_STATUSES = new Set(["queued", "starting", "connecting", "watching", "degraded", "reconnecting"]);
 const TERMINAL_WATCH_STATUSES = new Set(["stream_ended", "completed", "failed", "cancelled"]);
+const DEFAULT_CLIP_PROFILE = {
+  genre: "general",
+  chatSpikeThreshold: 30,
+  audioThresholdDb: -8,
+  tensionSpikeThreshold: 8,
+  emoteWeights: {},
+  goldenHours: [],
+  minClipScore: 80,
+  clipHistory: {
+    totalCreated: 0,
+    avgScoreAccepted: 0,
+    lastClipAt: null
+  }
+};
+const EVENTSUB_EVENT_TYPES = [
+  "channel.raid",
+  "channel.subscription.gift",
+  "channel.cheer",
+  "channel.prediction.end",
+  "channel.poll.end"
+];
 
 function now() {
   return new Date().toISOString();
+}
+
+function isRecentTimestamp(value, windowMs) {
+  const timestamp = typeof value === "number" ? value : Date.parse(value || "");
+  return Number.isFinite(timestamp) && Date.now() - timestamp < windowMs;
 }
 
 function todayKey(date = new Date()) {
@@ -151,12 +334,28 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function slugify(value, fallback = "project") {
+  const slug = cleanText(value)
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return slug || fallback;
+}
+
 function twitchApiConfigured() {
   return Boolean(config.twitchClientId && (config.twitchClientSecret || config.twitchOAuthToken || config.twitchAppAccessToken || config.twitchUserAccessToken));
 }
 
 function kickApiConfigured() {
   return Boolean(config.kickOAuthToken || (config.kickClientId && config.kickClientSecret));
+}
+
+function liveProviderConfigured(platform) {
+  if (platform === "twitch") return twitchApiConfigured();
+  if (platform === "kick") return kickApiConfigured();
+  return false;
 }
 
 function normalizeTwitchLogin(value) {
@@ -218,57 +417,382 @@ function normalizeStatus(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+function detectClipGenre(value = "") {
+  const text = cleanText(value).toLowerCase();
+  if (/warzone|valorant|counter-strike|\bcs\b|apex|fortnite|\br6\b|rainbow six|call of duty|cod\b/.test(text)) return "fps";
+  if (/league|dota|smite|arena/.test(text)) return "moba";
+  if (/\birl\b|just chatting/.test(text)) return "irl";
+  if (/podcast|talk show|interview/.test(text)) return "podcast";
+  if (/variety/.test(text)) return "variety";
+  return "general";
+}
+
+function normalizeClipProfile(input = {}, streamer = {}) {
+  const existing = input && typeof input === "object" ? input : {};
+  const history = existing.clipHistory && typeof existing.clipHistory === "object" ? existing.clipHistory : {};
+  const parsedAudioThreshold = Number(existing.audioThresholdDb ?? DEFAULT_CLIP_PROFILE.audioThresholdDb);
+  const detectedGenre = detectClipGenre(
+    streamer.currentGame || streamer.liveCategory || streamer.category || streamer.liveTitle || streamer.displayName || ""
+  );
+  const emoteWeights = existing.emoteWeights && typeof existing.emoteWeights === "object" && !Array.isArray(existing.emoteWeights)
+    ? Object.fromEntries(Object.entries(existing.emoteWeights).map(([key, value]) => [cleanText(key), Number(value)]).filter(([key, value]) => key && Number.isFinite(value)))
+    : {};
+  const goldenHours = Array.isArray(existing.goldenHours)
+    ? existing.goldenHours.map((hour) => Number(hour)).filter((hour) => Number.isInteger(hour) && hour >= 0 && hour <= 23)
+    : [];
+  return {
+    ...DEFAULT_CLIP_PROFILE,
+    ...existing,
+    genre: normalizeStatus(existing.genre || detectedGenre, ["fps", "moba", "variety", "irl", "podcast", "general"], detectedGenre),
+    chatSpikeThreshold: boundedNumber(existing.chatSpikeThreshold, DEFAULT_CLIP_PROFILE.chatSpikeThreshold, 2, 500),
+    audioThresholdDb: Number.isFinite(parsedAudioThreshold) ? Math.max(-60, Math.min(0, parsedAudioThreshold)) : DEFAULT_CLIP_PROFILE.audioThresholdDb,
+    tensionSpikeThreshold: boundedNumber(existing.tensionSpikeThreshold, DEFAULT_CLIP_PROFILE.tensionSpikeThreshold, 1, 100),
+    emoteWeights,
+    goldenHours,
+    minClipScore: boundedNumber(existing.minClipScore, DEFAULT_CLIP_PROFILE.minClipScore, 1, 100),
+    clipHistory: {
+      totalCreated: Math.max(0, Number(history.totalCreated || 0)),
+      avgScoreAccepted: Math.max(0, Math.min(100, Number(history.avgScoreAccepted || 0))),
+      lastClipAt: history.lastClipAt || null
+    }
+  };
+}
+
+function ensureStreamerDetectionProfile(streamer = {}, updates = {}) {
+  if (!streamer || typeof streamer !== "object") return structuredClone(DEFAULT_CLIP_PROFILE);
+  streamer.clipProfile = normalizeClipProfile({ ...(streamer.clipProfile || {}), ...(updates || {}) }, streamer);
+  return streamer.clipProfile;
+}
+
+function applyAudioThresholdForStreamer(audioEnergy = {}, streamer = {}) {
+  const profile = ensureStreamerDetectionProfile(streamer);
+  const threshold = Number(profile.audioThresholdDb ?? DEFAULT_CLIP_PROFILE.audioThresholdDb);
+  const maxVolumeDb = Number(audioEnergy?.maxVolumeDb);
+  return {
+    ...(audioEnergy || {}),
+    isLoudMoment: Number.isFinite(maxVolumeDb) && maxVolumeDb >= threshold,
+    loudThresholdDb: threshold
+  };
+}
+
+function normalizeAllowedUse(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => cleanText(item).toLowerCase()).filter(Boolean))];
+  }
+  if (!value || typeof value !== "object") return [];
+  return [...new Set(Object.entries(value)
+    .filter(([, enabled]) => Boolean(enabled))
+    .map(([use]) => cleanText(use).toLowerCase())
+    .filter(Boolean))];
+}
+
+function normalizeApprovedStreamerAllowedUse() {
+  let repaired = false;
+  for (const streamer of state.streamers || []) {
+    if (!streamer || streamer.isDemo) continue;
+    const normalized = normalizeAllowedUse(streamer.allowedUse);
+    if (streamer.permissionStatus === "approved" && !normalized.length) {
+      streamer.allowedUse = ["clips"];
+      repaired = true;
+      continue;
+    }
+    if (!Array.isArray(streamer.allowedUse)) {
+      streamer.allowedUse = normalized;
+      repaired = true;
+    }
+  }
+  return repaired;
+}
+
+function normalizeLoadedState() {
+  state.streamers ||= [];
+  state.streamSessions ||= [];
+  state.watchSessions ||= [];
+  state.watchEvents ||= [];
+  state.sourceCapabilities ||= [];
+  state.clipMissions ||= [];
+  state.streamerClipProfiles ||= [];
+  state.feedbackEvents ||= [];
+  state.mediaSegments ||= [];
+  state.captureJobs ||= [];
+  state.clipCandidates ||= [];
+  state.clipPackages ||= [];
+  state.postingDrafts ||= [];
+  state.approvalRequests ||= [];
+  state.artifacts ||= [];
+  state.mediaSources ||= [];
+  state.mediaProjects ||= [];
+  state.mediaJobs ||= [];
+  state.clipProjectVersions ||= [];
+  state.editDecisionLists ||= [];
+  state.captionTracks ||= [];
+  state.overlayTracks ||= [];
+  state.discoveredStreamers ||= [];
+  state.executionContracts ||= [];
+  state.agentRuns ||= [];
+  state.capcutAgentSessions ||= [];
+  state.handoffPackages ||= [];
+  state.smokeTests ||= [];
+  state.integrationChecks ||= {};
+  state.logs ||= [];
+  state.browser ||= structuredClone(stateDefaults.browser);
+  state.browser.sessions ||= [];
+  state.browser.actions ||= [];
+  state.browser.downloads ||= [];
+  state.browser.policies ||= [];
+  state.capcutControl ||= structuredClone(stateDefaults.capcutControl);
+  state.capcutControl.actions ||= [];
+  state.capcutControl.screenshots ||= [];
+  state.capcutControl.teach ||= null;
+  state.capcutControl.replay ||= null;
+  state.capcutControl.workflows ||= {};
+  if (state.capcutControl.teach?.recording) {
+    state.capcutControl.teach.recording = false;
+    state.capcutControl.teach.status = "stopped";
+    state.capcutControl.teach.stopReason ||= "runtime_restarted";
+    state.capcutControl.teach.stoppedAt ||= now();
+  }
+  if (state.capcutControl.replay?.running) {
+    state.capcutControl.replay.running = false;
+    state.capcutControl.replay.status = "stopped";
+    state.capcutControl.replay.stopReason ||= "runtime_restarted";
+    state.capcutControl.replay.finishedAt ||= now();
+  }
+  for (const streamer of state.streamers || []) {
+    ensureStreamerDetectionProfile(streamer);
+  }
+  if (normalizeApprovedStreamerAllowedUse()) {
+    addStateLog("streamer_allowed_use_repaired", "Upgraded legacy approved streamer allowedUse fields.");
+  }
+}
+
+function isStateJsonParseError(error) {
+  return error instanceof SyntaxError || /json|unterminated|unexpected/i.test(error?.message || "");
+}
+
+function corruptStateBackupPath() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${DATA_FILE}.corrupt-${stamp}.bak`;
+}
+
+function repairTruncatedStateJson(raw) {
+  if (!raw) return null;
+  const markers = ['\n  "logs": [', '\n  "browser": {'];
+  for (const marker of markers) {
+    const index = raw.lastIndexOf(marker);
+    if (index < 0) continue;
+    const prefix = raw.slice(0, index).replace(/[\s,]*$/, "");
+    if (!prefix.startsWith("{")) continue;
+    const repaired = `${prefix},\n  "logs": [],\n  "browser": ${JSON.stringify(stateDefaults.browser, null, 2).replace(/\n/g, "\n  ")}\n}\n`;
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      // Try the next safe boundary.
+    }
+  }
+  return null;
+}
+
 async function ensureStorage() {
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
   await fs.mkdir(config.uploadDir, { recursive: true });
   await fs.mkdir(config.outputDir, { recursive: true });
+  await fs.mkdir(config.agent101OutputDir, { recursive: true });
+  await fs.mkdir(config.watchBufferDir, { recursive: true });
   await fs.mkdir(THUMBNAIL_DIR, { recursive: true });
   await fs.mkdir(config.browserProfileDir, { recursive: true });
   await fs.mkdir(config.browserDownloadsDir, { recursive: true });
+  await fs.mkdir(config.capcutDownloadDir, { recursive: true });
+  await fs.mkdir(config.capcutProjectDir, { recursive: true });
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
     state = { ...structuredClone(stateDefaults), ...JSON.parse(raw) };
-    state.streamers ||= [];
-    state.streamSessions ||= [];
-    state.watchSessions ||= [];
-    state.watchEvents ||= [];
-    state.sourceCapabilities ||= [];
-    state.clipMissions ||= [];
-    state.streamerClipProfiles ||= [];
-    state.feedbackEvents ||= [];
-    state.mediaSegments ||= [];
-    state.clipCandidates ||= [];
-    state.clipPackages ||= [];
-    state.postingDrafts ||= [];
-    state.approvalRequests ||= [];
-    state.artifacts ||= [];
-    state.mediaSources ||= [];
-    state.mediaProjects ||= [];
-    state.mediaJobs ||= [];
-    state.clipProjectVersions ||= [];
-    state.editDecisionLists ||= [];
-    state.captionTracks ||= [];
-    state.overlayTracks ||= [];
-    state.discoveredStreamers ||= [];
-    state.executionContracts ||= [];
-    state.agentRuns ||= [];
-    state.handoffPackages ||= [];
-    state.smokeTests ||= [];
-    state.integrationChecks ||= {};
-    state.logs ||= [];
-    state.browser ||= structuredClone(stateDefaults.browser);
-    state.browser.sessions ||= [];
-    state.browser.actions ||= [];
-    state.browser.downloads ||= [];
-    state.browser.policies ||= [];
+    normalizeLoadedState();
+    repairUnsafeStreamerMonitoring();
+    migrateMetadataOnlyRecordingWindowsOutOfRadar("startup_migration");
+    await enforceSingleWatchAtBoot();
+    await saveState();
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (error.code === "ENOENT") {
+      await saveState();
+      return;
+    }
+    if (!isStateJsonParseError(error)) throw error;
+
+    const raw = await fs.readFile(DATA_FILE, "utf8").catch(() => "");
+    const backupPath = corruptStateBackupPath();
+    if (raw) await fs.writeFile(backupPath, raw, "utf8").catch(() => {});
+    const repaired = repairTruncatedStateJson(raw);
+    if (repaired) {
+      state = { ...structuredClone(stateDefaults), ...JSON.parse(repaired) };
+      normalizeLoadedState();
+      addStateLog("state_json_recovered", "Recovered Clipping Office state after truncated JSON", {
+        backupPath,
+        originalBytes: Buffer.byteLength(raw, "utf8"),
+        recoveredBytes: Buffer.byteLength(repaired, "utf8")
+      });
+    } else {
+      state = structuredClone(stateDefaults);
+      normalizeLoadedState();
+      addStateLog("state_json_reset", "Reset Clipping Office state after unreadable JSON", {
+        backupPath,
+        error: error.message
+      });
+    }
+    repairUnsafeStreamerMonitoring();
+    migrateMetadataOnlyRecordingWindowsOutOfRadar("startup_recovery_migration");
+    await enforceSingleWatchAtBoot();
     await saveState();
   }
 }
 
-async function saveState() {
-  await fs.writeFile(DATA_FILE, JSON.stringify(state, null, 2));
+function repairUnsafeStreamerMonitoring() {
+  let repaired = false;
+  for (const streamer of state.streamers || []) {
+    if (!["twitch", "kick"].includes(streamer.platform) || liveProviderConfigured(streamer.platform)) continue;
+    if (!streamer.monitorEnabled) continue;
+    const unverifiedStatus = ["api_not_configured", "unknown", "api_error", "unverified", ""].includes(streamer.liveStatus || "");
+    if (!unverifiedStatus && streamer.lastCheckedAt) continue;
+    streamer.monitorEnabled = false;
+    streamer.monitorPausedAt = now();
+    streamer.liveStatus = "api_not_configured";
+    streamer.liveStatusReason = `${streamer.platform === "kick" ? "Kick" : "Twitch"} API is not configured. Monitoring was paused until an official live check can run.`;
+    streamer.updatedAt = now();
+    repaired = true;
+  }
+  if (repaired) {
+    addStateLog("streamer_monitor_repaired", "Paused unverified stream monitors that could not be checked by provider API", {
+      twitchConfigured: twitchApiConfigured(),
+      kickConfigured: kickApiConfigured()
+    });
+  }
+  return repaired;
+}
+
+function playableSourceForCandidate(candidate) {
+  const source = findExistingMediaSource(candidate?.sourceId);
+  if (!source?.filePath) return null;
+  const normalized = normalizeMediaSourceRecord(source);
+  return normalized.playable ? source : null;
+}
+
+function candidateHasPlayableSource(candidate) {
+  return Boolean(playableSourceForCandidate(candidate) || (candidate?.mediaPlayable && candidate?.sourceId));
+}
+
+function upsertRecordingWindowTelemetry(session, window = {}) {
+  if (!session) return null;
+  const index = Number(window.index ?? window.recordingWindowIndex);
+  if (!Number.isFinite(index)) return null;
+  const startSeconds = Number(window.startSeconds ?? index * WATCH_RECORDING_WINDOW_SECONDS);
+  const endSeconds = Number(window.endSeconds ?? startSeconds + WATCH_RECORDING_WINDOW_SECONDS);
+  const existing = (session.recordingWindows || []).find((item) => Number(item.index) === index);
+  const next = {
+    id: existing?.id || newId("watch_window"),
+    index,
+    startSeconds,
+    endSeconds,
+    durationSeconds: Number(window.durationSeconds || WATCH_RECORDING_WINDOW_SECONDS),
+    status: cleanText(window.status) || "awaiting_source",
+    sourceId: cleanText(window.sourceId || existing?.sourceId),
+    candidateId: cleanText(window.candidateId || existing?.candidateId),
+    message: cleanText(window.message || existing?.message) || "Waiting for a local recorded source before Radar review.",
+    updatedAt: now(),
+    createdAt: existing?.createdAt || now()
+  };
+  const windows = (session.recordingWindows || []).filter((item) => Number(item.index) !== index);
+  windows.push(next);
+  session.recordingWindows = windows
+    .sort((a, b) => Number(b.index) - Number(a.index))
+    .slice(0, WATCH_MAX_RECORDING_WINDOWS);
+  return next;
+}
+
+function migrateMetadataOnlyRecordingWindowsOutOfRadar(reason = "radar_truth_repair") {
+  const before = state.clipCandidates.length;
+  const candidatesBefore = Array.isArray(state.clipCandidates) ? [...state.clipCandidates] : [];
+  const keepLiveBySession = new Map();
+
+  if (shouldTreatAsSingleWatch()) {
+    const activeWatchSessionIds = new Set(
+      state.watchSessions
+        .filter((session) => isWatchSessionActive(session) || session.status === "paused")
+        .map((session) => session.id),
+    );
+    for (const candidate of candidatesBefore) {
+      if (candidate?.sourceType !== "live_recording_window" || !candidate?.watchSessionId) continue;
+      if (!activeWatchSessionIds.has(candidate.watchSessionId)) continue;
+      if (candidateHasPlayableSource(candidate)) continue;
+      const existing = keepLiveBySession.get(candidate.watchSessionId);
+      if (!existing) {
+        keepLiveBySession.set(candidate.watchSessionId, candidate);
+        continue;
+      }
+      const existingWindow = Number(existing.recordingWindowIndex);
+      const candidateWindow = Number(candidate.recordingWindowIndex);
+      if (Number.isFinite(existingWindow) && Number.isFinite(candidateWindow)) {
+        if (candidateWindow > existingWindow) keepLiveBySession.set(candidate.watchSessionId, candidate);
+        continue;
+      }
+      if (Date.parse(candidate.updatedAt || candidate.createdAt || 0) > Date.parse(existing.updatedAt || existing.createdAt || 0)) {
+        keepLiveBySession.set(candidate.watchSessionId, candidate);
+      }
+    }
+  }
+
+  const migrated = [];
+  state.clipCandidates = state.clipCandidates.filter((candidate) => {
+    const metadataOnlyWindow = candidate?.sourceType === "live_recording_window" && !candidateHasPlayableSource(candidate);
+    if (!metadataOnlyWindow) return true;
+    if (shouldTreatAsSingleWatch()) {
+      const keepCandidate = keepLiveBySession.get(candidate?.watchSessionId);
+      if (keepCandidate?.id === candidate?.id) return true;
+    }
+    const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+    if (session) {
+      upsertRecordingWindowTelemetry(session, {
+        index: candidate.recordingWindowIndex,
+        startSeconds: candidate.startSeconds,
+        endSeconds: candidate.endSeconds,
+        durationSeconds: candidate.durationSeconds || candidate.duration,
+        status: "awaiting_source",
+        message: "Removed from Clip Radar because no saved playable clip file exists yet."
+      });
+      rememberDeletedRecordingWindow(session, candidate, reason);
+      session.candidatesDetected = Math.max(0, Number(session.candidatesDetected || 0) - 1);
+      session.candidatesReview = Math.max(0, Number(session.candidatesReview || 0) - 1);
+      session.updatedAt = now();
+    }
+    migrated.push(candidate.id);
+    return false;
+  });
+  if (migrated.length) {
+    addStateLog("metadata_windows_migrated", "Metadata-only watch windows were removed from Clip Radar", {
+      reason,
+      migrated: migrated.length,
+      before,
+      after: state.clipCandidates.length
+    });
+  }
+  return migrated.length;
+}
+
+async function writeStateSnapshot() {
+  const tmp = `${DATA_FILE}.tmp.${process.pid}.${Date.now()}.${saveStateWriteCounter += 1}`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
+    await fs.rename(tmp, DATA_FILE);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function saveState() {
+  const write = saveStateQueue.then(writeStateSnapshot, writeStateSnapshot);
+  saveStateQueue = write.catch(() => {});
+  return write;
 }
 
 function addStateLog(type, message, details = {}) {
@@ -305,6 +829,22 @@ function browserWorkspace() {
   return browserWorkspaceInstance;
 }
 
+function capCutController() {
+  if (!capcutControllerInstance) {
+    capcutControllerInstance = createCapCutController({
+      config,
+      state,
+      helpers: {
+        newId,
+        saveState,
+        addStateLog,
+        logEvent
+      }
+    });
+  }
+  return capcutControllerInstance;
+}
+
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(statusCode, {
@@ -316,6 +856,64 @@ function sendJson(res, statusCode, payload) {
 
 function sendError(res, statusCode, message, details = {}) {
   sendJson(res, statusCode, { error: message, details });
+}
+
+function writeSse(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function emitAgent101Stream(sessionId, event, payload = {}) {
+  const clients = agent101StreamClients.get(sessionId);
+  if (!clients?.size) return;
+  for (const res of clients) {
+    writeSse(res, event, { sessionId, ...payload });
+  }
+}
+
+function emitCapcutAgentStream(sessionId, event, payload = {}) {
+  const clients = capcutAgentStreamClients.get(sessionId);
+  if (!clients?.size) return;
+  for (const res of clients) {
+    writeSse(res, event, { sessionId, ...payload });
+  }
+}
+
+function subscribeCapcutAgentStream(sessionId, res) {
+  const session = state.capcutAgentSessions.find((item) => item.sessionId === sessionId || item.id === sessionId);
+  if (!session) return sendError(res, 404, "CapCut Agent session not found.");
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-store",
+    connection: "keep-alive"
+  });
+  const set = capcutAgentStreamClients.get(session.sessionId) || new Set();
+  set.add(res);
+  capcutAgentStreamClients.set(session.sessionId, set);
+  writeSse(res, "connected", { sessionId: session.sessionId, session: publicCapcutAgentSession(session) });
+  for (const event of (session.events || []).slice(-20)) writeSse(res, "capcut_agent_step", event);
+  const timer = setInterval(() => writeSse(res, "ping", { t: Date.now() }), 15000);
+  res.on("close", () => {
+    clearInterval(timer);
+    set.delete(res);
+    if (!set.size) capcutAgentStreamClients.delete(session.sessionId);
+  });
+}
+
+function subscribeAgent101Stream(sessionId, res) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive"
+  });
+  writeSse(res, "connected", { sessionId, connectedAt: now() });
+  const clients = agent101StreamClients.get(sessionId) || new Set();
+  clients.add(res);
+  agent101StreamClients.set(sessionId, clients);
+  res.on("close", () => {
+    clients.delete(res);
+    if (!clients.size) agent101StreamClients.delete(sessionId);
+  });
 }
 
 function sendPng(res, buffer) {
@@ -355,6 +953,147 @@ function watchSessionHealth(session) {
   return "backend_worker_active";
 }
 
+const JOURNEY_TRIGGER_LABELS = {
+  chat_spike: "Chat spike",
+  chat_keyword: "Chat keyword",
+  tension_emote_prediction: "Tension emotes (predictive)",
+  chat_dead_sampling: "Fixed-cadence sample (chat silent)",
+  manual_capture: "Manual capture",
+  watch_capture: "Watch capture"
+};
+
+/**
+ * Per-clip pipeline trace: every stage a clip goes through, computed from the
+ * fields the pipeline already writes, so the operator can follow the IO of
+ * each clip end to end in the UI. Read-only; missing data shows as pending
+ * instead of guessing.
+ */
+function candidateJourney(candidate = {}) {
+  const source = state.mediaSources.find((item) => item.id === candidate.sourceId) || null;
+  const captureJob = state.captureJobs.find((job) => job.sourceId === candidate.sourceId) || null;
+  const steps = [];
+  const trigger = cleanText(source?.watchWindowTrigger || candidate.watchWindowTrigger);
+  steps.push({
+    id: "trigger",
+    label: "Trigger",
+    status: trigger ? "done" : "pending",
+    detail: trigger
+      ? `${JOURNEY_TRIGGER_LABELS[trigger] || trigger}${source?.watchWindowKeywordSignals?.length ? ` · ${source.watchWindowKeywordSignals.join(", ")}` : ""}`
+      : "Waiting for a chat/tension signal or sampling window",
+    at: source?.watchWindowTriggerAt || candidate.createdAt || ""
+  });
+  const captured = Boolean(source?.filePath);
+  steps.push({
+    id: "capture",
+    label: "Capture",
+    status: captured ? "done" : (captureJob?.status === "failed" ? "failed" : "pending"),
+    detail: captured
+      ? `${captureJob?.tool || "recorder"} → ${path.basename(String(source.filePath || ""))} (${Math.round(Number(source.durationSeconds || 0))}s)`
+      : captureJob?.error || "No local MP4 saved yet",
+    at: source?.createdAt || captureJob?.updatedAt || ""
+  });
+  steps.push({
+    id: "verify",
+    label: "Verify MP4",
+    status: source?.sha256 ? "done" : (captured ? "pending" : "skipped"),
+    detail: source?.sha256 ? `checksum ${String(source.sha256).slice(0, 12)}… · ${Math.round(Number(source.durationSeconds || 0))}s playable` : "Runs right after capture",
+    at: source?.createdAt || ""
+  });
+  const audio = source?.audioEnergy || null;
+  steps.push({
+    id: "audio",
+    label: "Audio energy",
+    status: audio?.available ? "done" : (captured ? "pending" : "skipped"),
+    detail: audio?.available
+      ? `peak ${audio.maxVolumeDb ?? "?"} dB${audio.isLoudMoment ? " · loud moment" : ""}${audio.isVoiceExcited ? " · voice excitement" : ""}`
+      : "FFmpeg loudness scan of the saved window",
+    at: source?.createdAt || ""
+  });
+  steps.push({
+    id: "transcript",
+    label: "Transcript",
+    status: Number(source?.transcriptScore || 0) > 0
+      ? "done"
+      : source?.transcriptError
+        ? "failed"
+        : (captured ? "pending" : "skipped"),
+    detail: Number(source?.transcriptScore || 0) > 0
+      ? `Whisper score ${Math.round(Number(source.transcriptScore))}/100`
+      : source?.transcriptError || "Whisper transcription + hype scoring",
+    at: source?.transcribedAt || ""
+  });
+  const scored = Number(candidate.score || 0) > 0 || cleanText(candidate.decision);
+  steps.push({
+    id: "score",
+    label: "Radar decision",
+    status: scored ? (candidate.decision === "rejected" ? "failed" : "done") : "pending",
+    detail: scored
+      ? `${Number(candidate.score || 0)}% · ${candidate.decision || "review"}${candidate.decisionReason ? ` — ${cleanText(candidate.decisionReason).slice(0, 140)}` : ""}`
+      : "Combined chat/audio/transcript scoring",
+    at: candidate.updatedAt || ""
+  });
+  const declined = Boolean(candidate.operatorDeclined || candidate.declinedAt);
+  steps.push({
+    id: "operator",
+    label: "Your call",
+    status: candidate.builderApproved ? "done" : declined ? "failed" : "pending",
+    detail: candidate.builderApproved
+      ? "Approved for the 9:16 Builder queue"
+      : declined
+        ? "Declined"
+        : "Waiting for Approve/Decline in the Clips panel",
+    at: candidate.builderApprovedAt || candidate.declinedAt || ""
+  });
+  steps.push({
+    id: "capcut",
+    label: "CapCut edit",
+    status: candidate.builderApproved ? "pending" : "skipped",
+    detail: candidate.builderApproved
+      ? "Ready for the taught 9:16 → blur → reframe → sticker workflow (Determinism Monitor shows it live)"
+      : "Unlocks after approval",
+    at: ""
+  });
+  return steps;
+}
+
+function filterClipCandidatesForRadar(candidates = [], { projectId, sourceId } = {}) {
+  const activeWatchSessionIds = new Set(state.watchSessions.filter((session) => ACTIVE_WATCH_STATUSES.has(session.status)).map((session) => session.id));
+  const filtered = candidates.filter((candidate) => {
+    if (projectId && candidate?.projectId !== projectId) return false;
+    if (sourceId && candidate?.sourceId !== sourceId) return false;
+    if (candidate?.sourceType !== "live_recording_window") return true;
+    return activeWatchSessionIds.has(candidate?.watchSessionId);
+  });
+
+  if (!shouldTreatAsSingleWatch()) {
+    return filtered;
+  }
+
+  const latestLiveBySession = new Map();
+  for (const candidate of filtered) {
+    if (candidate?.sourceType !== "live_recording_window" || !candidate?.watchSessionId) continue;
+    const existing = latestLiveBySession.get(candidate.watchSessionId);
+    if (!existing) {
+      latestLiveBySession.set(candidate.watchSessionId, candidate);
+      continue;
+    }
+    const existingWindow = Number(existing.recordingWindowIndex);
+    const candidateWindow = Number(candidate.recordingWindowIndex);
+    const isSameWindow = Number.isFinite(existingWindow) && Number.isFinite(candidateWindow)
+      ? candidateWindow > existingWindow
+      : false;
+    const isNewerSource = candidate.updatedAt && existing.updatedAt
+      ? Date.parse(candidate.updatedAt) > Date.parse(existing.updatedAt)
+      : Date.parse(candidate.createdAt || 0) > Date.parse(existing.createdAt || 0);
+    if (isSameWindow || (!Number.isFinite(existingWindow) && !Number.isFinite(candidateWindow) && isNewerSource)) {
+      latestLiveBySession.set(candidate.watchSessionId, candidate);
+    }
+  }
+
+  const latestLiveIds = new Set(Array.from(latestLiveBySession.values()).map((candidate) => candidate?.id));
+  return filtered.filter((candidate) => candidate?.sourceType !== "live_recording_window" || latestLiveIds.has(candidate.id));
+}
+
 function publicWatchSession(session) {
   if (!session) return null;
   const streamer = state.streamers.find((item) => item.id === session.streamerId) || null;
@@ -367,6 +1106,7 @@ function publicWatchSession(session) {
     health: watchSessionHealth(session),
     streamerName: streamer?.displayName || session.streamerName || "Unknown streamer",
     missionName: mission?.name || session.missionName || "Default clip mission",
+    recordingWindowSeconds: WATCH_RECORDING_WINDOW_SECONDS,
     capabilities
   };
 }
@@ -408,8 +1148,195 @@ async function appendWatchEvent(sessionId, type, payload = {}) {
   return event;
 }
 
+function normalizeChatChannel(streamer = {}) {
+  if (streamer.platform !== "twitch") return "";
+  return normalizeTwitchLogin(streamer.channelId || streamer.displayName || streamer.channelUrl);
+}
+
+function recentChatSpikesForSession(sessionId, withinMs = WATCH_RECORDING_WINDOW_SECONDS * 1000) {
+  const spikes = chatSpikeLog.get(sessionId) || [];
+  const cutoff = Date.now() - withinMs;
+  return spikes.filter((spike) => Number(spike.timestamp || 0) >= cutoff);
+}
+
+function rememberChatSpike(sessionId, spike) {
+  const spikes = chatSpikeLog.get(sessionId) || [];
+  spikes.push(spike);
+  chatSpikeLog.set(sessionId, spikes.slice(-40));
+}
+
+function recentChatKeywordSignalsForSession(sessionId, withinMs = WATCH_RECORDING_WINDOW_SECONDS * 1000) {
+  const signals = chatKeywordLog.get(sessionId) || [];
+  const cutoff = Date.now() - withinMs;
+  return signals.filter((signal) => Number(signal.timestamp || 0) >= cutoff);
+}
+
+function rememberChatKeywordSignal(sessionId, signal) {
+  const signals = chatKeywordLog.get(sessionId) || [];
+  signals.push(signal);
+  chatKeywordLog.set(sessionId, signals.slice(-40));
+}
+
+function detectChatKeywords(message = "") {
+  const text = cleanText(message).toLowerCase();
+  if (!text) return [];
+  const matches = [];
+  for (const keyword of config.watchTriggerKeywords) {
+    if (text.includes(keyword) && !matches.includes(keyword)) matches.push(keyword);
+  }
+  return matches;
+}
+
+function watchSignalsForWindow(sessionId, windowIndex, signals) {
+  if (!sessionId) return [];
+  const targetWindow = Number(windowIndex);
+  if (!Number.isFinite(targetWindow)) return [];
+  return (signals || []).filter((signal) => {
+    const signalWindow = Number(signal.analysisWindowIndex);
+    if (Number.isFinite(signalWindow)) return signalWindow === targetWindow;
+    const signalTs = Number(signal.timestamp || signal.recordedAt || 0);
+    return Number.isFinite(signalTs) && signalTs >= Date.now() - (WATCH_RECORDING_WINDOW_SECONDS * 1000);
+  });
+}
+
+function startChatMonitorForSession(session) {
+  if (!session || chatMonitors.has(session.id) || !isWatchSessionActive(session)) return;
+  const streamer = state.streamers.find((item) => item.id === session.streamerId);
+  const clipProfile = ensureStreamerDetectionProfile(streamer);
+  const channelName = normalizeChatChannel(streamer);
+  if (!channelName) return;
+  const getWindowIndex = () => Math.max(0, Math.floor(Number(session.analyzedSeconds || 0) / WATCH_RECORDING_WINDOW_SECONDS));
+  const monitor = new TwitchChatMonitor({
+    channelName,
+    windowMs: config.chatWindowMs,
+    spikeThreshold: Number(clipProfile.chatSpikeThreshold || config.chatSpikeThreshold),
+    spikeCooldownMs: config.chatSpikeCooldownMs,
+    tensionSpikeThreshold: Number(clipProfile.tensionSpikeThreshold || DEFAULT_CLIP_PROFILE.tensionSpikeThreshold),
+    onTension: (tensionPayload) => {
+      const activeSession = state.watchSessions.find((item) => item.id === session.id);
+      if (activeSession) {
+        activeSession.tensionDetectedAt = new Date(Number(tensionPayload.timestamp || Date.now())).toISOString();
+        activeSession.tensionPayload = tensionPayload;
+        activeSession.updatedAt = now();
+      }
+      appendWatchEvent(session.id, "tension_emote_spike", {
+        ...tensionPayload,
+        message: "Tension emote spike detected. Agent 101 will pre-capture this window if the stream is approved."
+      }).catch((error) => {
+        addStateLog("chat_monitor_error", "Failed to record Twitch tension emote spike", { sessionId: session.id, error: error.message });
+      });
+    },
+    onSpike: (spike) => {
+      const payload = {
+        ...spike,
+        analysisWindowIndex: getWindowIndex(),
+        recordedAt: now(),
+        source: "twitch_irc"
+      };
+      rememberChatSpike(session.id, payload);
+      const activeSession = state.watchSessions.find((item) => item.id === session.id);
+      if (activeSession) {
+        activeSession.lastChatSpikeAt = payload.recordedAt;
+        activeSession.lastChatMessagesPerMinute = payload.messagesPerMinute;
+        activeSession.updatedAt = now();
+      }
+      appendWatchEvent(session.id, "chat_spike_detected", {
+        channel: payload.channel,
+        messagesPerWindow: payload.messagesPerWindow,
+        messagesPerMinute: payload.messagesPerMinute,
+        message: "Twitch chat spike detected. The watcher will save this window if capture is available."
+      }).catch((error) => {
+        addStateLog("chat_monitor_error", "Failed to record Twitch chat spike", { sessionId: session.id, error: error.message });
+      });
+    },
+    onMessage: (message) => {
+      const activeSession = state.watchSessions.find((item) => item.id === session.id);
+      if (!activeSession) return;
+      activeSession.lastChatMessageAt = now();
+      activeSession.lastChatMessagesPerMinute = message.messagesPerMinute;
+      const matchedKeywords = detectChatKeywords(message.message);
+      if (matchedKeywords.length) {
+        const keywordPayload = {
+          analysisWindowIndex: getWindowIndex(),
+          channel: channelName,
+          matchedKeywords,
+          sampleMessage: cleanText(message.message),
+          messagesPerMinute: message.messagesPerMinute,
+          timestamp: message.timestamp,
+          source: "twitch_irc_keyword",
+          recordedAt: now()
+        };
+        rememberChatKeywordSignal(session.id, keywordPayload);
+        activeSession.lastChatKeywordAt = keywordPayload.recordedAt;
+        activeSession.lastChatKeyword = matchedKeywords;
+        appendWatchEvent(session.id, "chat_keyword_detected", {
+          channel: keywordPayload.channel,
+          messagesPerMinute: keywordPayload.messagesPerMinute,
+          matchedKeywords,
+          message: `Twitch chat keyword match: ${matchedKeywords.join(", ")}`
+        }).catch((error) => {
+          addStateLog("chat_monitor_error", "Failed to record Twitch chat keyword match", { sessionId: session.id, error: error.message });
+        });
+      }
+    }
+  });
+  chatMonitors.set(session.id, monitor);
+  monitor.start();
+}
+
+function stopChatMonitorForSession(sessionId) {
+  const monitor = chatMonitors.get(sessionId);
+  if (monitor) monitor.stop();
+  chatMonitors.delete(sessionId);
+}
+
 function activeWatchSessions() {
   return state.watchSessions.filter((session) => isWatchSessionActive(session) || session.status === "paused");
+}
+
+function detectCrossStreamEvent() {
+  const cutoff = Date.now() - 90000;
+  const activeSpiking = activeWatchSessions()
+    .filter((session) => session.status !== "paused")
+    .filter((session) => isRecentTimestamp(session.lastChatSpikeAt, 90000))
+    .map((session) => {
+      const streamer = findStreamer(session.streamerId);
+      return {
+        sessionId: session.id,
+        streamerId: session.streamerId,
+        channel: streamer?.displayName || session.streamerName || session.streamerId,
+        lastChatSpikeAt: session.lastChatSpikeAt,
+        timestamp: Date.parse(session.lastChatSpikeAt || "")
+      };
+    })
+    .filter((item) => Number.isFinite(item.timestamp) && item.timestamp >= cutoff);
+  if (activeSpiking.length < 3) {
+    return { isCrossStreamEvent: false, affectedSessionIds: [], sessionCount: activeSpiking.length };
+  }
+  return {
+    isCrossStreamEvent: true,
+    affectedSessionIds: activeSpiking.map((item) => item.sessionId),
+    sessionCount: activeSpiking.length,
+    affectedChannels: activeSpiking.map((item) => item.channel),
+    detectedAt: now()
+  };
+}
+
+async function broadcastCrossStreamEvent(event) {
+  if (!event?.isCrossStreamEvent) return;
+  for (const sessionId of event.affectedSessionIds || []) {
+    const session = state.watchSessions.find((item) => item.id === sessionId);
+    if (session) {
+      session.crossStreamEvent = event;
+      session.updatedAt = now();
+    }
+    await appendWatchEvent(sessionId, "cross_stream_event", {
+      sessionCount: event.sessionCount,
+      affectedSessionIds: event.affectedSessionIds,
+      affectedChannels: event.affectedChannels || [],
+      message: "Multiple watched streamers are spiking at once. External event correlation is active."
+    });
+  }
 }
 
 function ensureStreamerClipProfile(streamer = {}) {
@@ -525,8 +1452,8 @@ function capabilitiesForWatchSource({ session, source, streamer }) {
     sourceId: source?.id || session.sourceId || null,
     hasLiveVideo: playable,
     hasAudio: Boolean(playable && source?.hasAudio),
-    hasChat: false,
-    hasTranscript: false,
+    hasChat: Boolean(normalizeChatChannel(streamer)),
+    hasTranscript: Boolean(playable && source?.transcriptSummary?.text),
     hasViewerCount: Boolean(streamer?.liveViewerCount),
     hasSceneAnalysis: playable,
     isSeekable: playable,
@@ -546,6 +1473,436 @@ function findReusableActiveWatchSession({ streamerId, clipProfileId, mode, idemp
     if (idempotencyKey && session.idempotencyKey === idempotencyKey) return true;
     return session.streamerId === streamerId && session.clipProfileId === clipProfileId && session.mode === mode;
   }) || null;
+}
+
+function pruneLiveWindowsForStreamerBeforeWatchStart(streamerId, reason = "watch_session_start", preferredSessionId = "", options = {}) {
+  const { forceSingleWatch = false } = options || {};
+  const normalizedStreamerId = cleanText(streamerId);
+  const normalizedPreferred = cleanText(preferredSessionId);
+  const sessions = state.watchSessions.filter((session) => session.streamerId === normalizedStreamerId);
+  return sessions.reduce((removedTotal, session) => {
+    if (!session?.id) return removedTotal;
+    if (session.id === normalizedPreferred) {
+      return removedTotal + pruneLiveWindowCandidatesForSession(session, reason, { keepLatest: true, forceSingleWatch });
+    }
+    return removedTotal + pruneLiveWindowCandidatesForSession(session, reason, { keepLatest: false, forceSingleWatch });
+  }, 0);
+}
+
+function deletedRecordingWindowIndexSet(session) {
+  return new Set((Array.isArray(session?.deletedRecordingWindows) ? session.deletedRecordingWindows : [])
+    .map((item) => Number(item.index))
+    .filter(Number.isFinite));
+}
+
+function purgeUnresolvedLiveWindowCandidatesForSession(session, reason = "live_window_reset") {
+  if (!session?.id) return 0;
+  const sessionId = session.id;
+  const removed = [];
+  const kept = [];
+  for (const candidate of state.clipCandidates) {
+    if (candidate?.watchSessionId !== sessionId || candidate?.sourceType !== "live_recording_window") {
+      kept.push(candidate);
+      continue;
+    }
+    const isPlayable = candidate.mediaPlayable || Boolean(playableSourceForCandidate(candidate));
+    const isTerminal = candidate.status === "packaged" || candidate.status === "in_builder" || candidate.decision === "rejected";
+    if (!isTerminal && !isPlayable) {
+      removed.push(candidate);
+      rememberDeletedRecordingWindow(session, candidate, reason);
+      continue;
+    }
+    kept.push(candidate);
+  }
+  if (!removed.length) return 0;
+  state.clipCandidates = kept;
+  const sessionCandidates = state.clipCandidates.filter((candidate) => candidate.watchSessionId === sessionId);
+  session.candidatesDetected = sessionCandidates.length;
+  session.candidatesAccepted = sessionCandidates.filter((candidate) => candidate.decision === "accepted").length;
+  session.candidatesReview = sessionCandidates.filter((candidate) => candidate.decision === "review").length;
+  session.candidatesRejected = sessionCandidates.filter((candidate) => candidate.decision === "rejected").length;
+  session.currentStage = "Single-window watch pipeline reset";
+  session.updatedAt = now();
+  addStateLog("live_windows_pruned", "Unresolved live-recording window candidates were removed before (re)starting watch", {
+    sessionId,
+    removed: removed.length,
+    reason
+  });
+  appendWatchEvent(session.id, "recording_windows_pruned", {
+    removed: removed.length,
+    reason,
+    candidateIds: removed.map((candidate) => candidate.id)
+  }).catch(() => {});
+  return removed.length;
+}
+
+function isSingleWatchTerminalLiveCandidate(candidate) {
+  return (
+    candidate?.status === "packaged"
+    || candidate?.status === "in_builder"
+    || candidate?.status === "deleted"
+    || candidate?.decision === "rejected"
+  );
+}
+
+function pruneSingleWatchLiveWindowCandidatesForSession(session, reason = "single_watch_cleanup") {
+  return pruneLiveWindowCandidatesForSession(session, reason, { keepLatest: true, forceSingleWatch: true });
+}
+
+function pruneSingleWatchLiveWindowCandidatesForOtherSession(session, reason = "single_watch_streamer_cleanup", keepLatest = false) {
+  return pruneLiveWindowCandidatesForSession(session, reason, { keepLatest });
+}
+
+function pruneLiveWindowCandidatesForSession(session, reason = "single_watch_cleanup", options = {}) {
+  const { forceSingleWatch = false } = options;
+  if (!forceSingleWatch && !shouldTreatAsSingleWatch()) return 0;
+  if (!session?.id) return 0;
+  const sessionId = session.id;
+  const keepLatest = Boolean(options.keepLatest);
+  const sessionCandidates = state.clipCandidates.filter((candidate) => candidate?.watchSessionId === sessionId && candidate?.sourceType === "live_recording_window");
+  if (sessionCandidates.length <= 1) return 0;
+
+  const nonTerminal = sessionCandidates.filter((candidate) => !isSingleWatchTerminalLiveCandidate(candidate));
+  if (!keepLatest && !nonTerminal.length) return 0;
+  if (keepLatest && nonTerminal.length <= 1) return 0;
+
+  const keep = keepLatest
+    ? nonTerminal
+      .slice()
+      .sort((a, b) => {
+        const aIndex = Number(a?.recordingWindowIndex);
+        const bIndex = Number(b?.recordingWindowIndex);
+        if (Number.isFinite(aIndex) || Number.isFinite(bIndex)) {
+          return (Number.isFinite(bIndex) ? bIndex : Number.MIN_SAFE_INTEGER)
+            - (Number.isFinite(aIndex) ? aIndex : Number.MIN_SAFE_INTEGER);
+        }
+        return Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0);
+      })[0]
+    : null;
+  const keepIndex = sessionCandidates.findIndex((candidate) => candidate?.id === keep?.id);
+
+  const removed = [];
+  const kept = [];
+  for (const candidate of sessionCandidates) {
+    if (isSingleWatchTerminalLiveCandidate(candidate)) {
+      kept.push(candidate);
+      continue;
+    }
+    if (keepLatest && candidate.id === keep?.id && keepIndex >= 0) {
+      kept.push(candidate);
+      continue;
+    }
+    removed.push(candidate);
+    rememberDeletedRecordingWindow(session, candidate, reason);
+  }
+  if (!removed.length) return 0;
+
+  state.clipCandidates = [
+    ...state.clipCandidates.filter((candidate) => candidate?.watchSessionId !== sessionId || candidate?.sourceType !== "live_recording_window"),
+    ...kept.filter((candidate) => candidate?.watchSessionId === sessionId)
+  ];
+
+  const sessionCandidatesAfter = state.clipCandidates.filter((candidate) => candidate.watchSessionId === sessionId);
+  session.candidatesDetected = sessionCandidatesAfter.length;
+  session.candidatesAccepted = sessionCandidatesAfter.filter((candidate) => candidate.decision === "accepted").length;
+  session.candidatesReview = sessionCandidatesAfter.filter((candidate) => candidate.decision === "review").length;
+  session.candidatesRejected = sessionCandidatesAfter.filter((candidate) => candidate.decision === "rejected").length;
+  session.currentStage = "Single-watch cleanup kept the latest live window";
+  session.updatedAt = now();
+  appendWatchEvent(session.id, "recording_windows_pruned", {
+    reason,
+    removed: removed.length,
+    kept: kept.length,
+    removedIds: removed.map((candidate) => candidate.id)
+  }).catch(() => {});
+  addStateLog("live_windows_pruned_single_watch", "Single-stream watch cleanup removed extra non-terminal windows", {
+    sessionId,
+    removed: removed.length
+  });
+  return removed.length;
+}
+
+function pruneSingleWatchLiveWindowCandidatesForStreamer(streamerId, reason = "single_watch_streamer_cleanup", preferredSessionId = "") {
+  if (!shouldTreatAsSingleWatch()) return 0;
+  const targetStreamerId = cleanText(streamerId);
+  const preferred = cleanText(preferredSessionId);
+  const sessions = state.watchSessions.filter((session) => session.streamerId === targetStreamerId);
+  return sessions.reduce((total, session) => {
+    if (!session?.id) return total;
+    if (session.id === preferred) {
+      return total + pruneLiveWindowCandidatesForSession(session, reason, { keepLatest: true });
+    }
+    return total + pruneLiveWindowCandidatesForSession(session, reason, { keepLatest: false });
+  }, 0);
+}
+
+function rememberDeletedRecordingWindow(session, candidate, reason) {
+  const index = Number(candidate?.recordingWindowIndex);
+  if (!session || candidate?.sourceType !== "live_recording_window" || !Number.isFinite(index)) return false;
+  const deleted = Array.isArray(session.deletedRecordingWindows) ? session.deletedRecordingWindows : [];
+  const withoutSameIndex = deleted.filter((item) => Number(item.index) !== index);
+  withoutSameIndex.push({
+    index,
+    candidateId: candidate.id,
+    title: candidate.title,
+    reason,
+    deletedAt: now()
+  });
+  session.deletedRecordingWindows = withoutSameIndex.slice(-WATCH_MAX_RECORDING_WINDOWS);
+  return true;
+}
+
+async function stopWatchSessionAfterCandidateCleanup(session, reason = "operator_cleanup") {
+  if (!session) return null;
+  const streamer = findStreamer(session.streamerId);
+  let monitorDisabled = false;
+  if (streamer?.monitorEnabled) {
+    streamer.monitorEnabled = false;
+    streamer.monitorPausedAt = now();
+    streamer.updatedAt = now();
+    monitorDisabled = true;
+  }
+  const wasTerminal = TERMINAL_WATCH_STATUSES.has(session.status);
+  if (!wasTerminal) {
+    await stopWatchSession(session.id, "cancelled", {
+      reason,
+      cleanup: true,
+      monitorDisabled
+    });
+  }
+  await appendWatchEvent(session.id, "source_monitor_paused", {
+    reason,
+    cleanup: true,
+    monitorDisabled,
+    message: "Operator cleanup stopped the active watcher so deleted source-pending windows do not refill Clip Radar."
+  });
+  await logEvent("watch_stopped_after_cleanup", "Clip cleanup stopped source watcher", {
+    sessionId: session.id,
+    streamerId: session.streamerId || "",
+    streamerName: streamer?.displayName || session.streamerName || "",
+    monitorDisabled,
+    reason
+  });
+  await saveState();
+  return {
+    sessionId: session.id,
+    streamerId: session.streamerId || "",
+    streamerName: streamer?.displayName || session.streamerName || "",
+    monitorDisabled,
+    status: session.status
+  };
+}
+
+function preferredSingleWatchTarget() {
+  const liveSessions = state.watchSessions.filter((session) =>
+    isWatchSessionActive(session)
+    && session.status !== "paused"
+    && session.streamerId
+  );
+  const currentStream = liveSessions
+    .map((session) => state.streamers.find((streamer) => streamer.id === session.streamerId))
+    .find((streamer) => streamer && isApprovedStreamer(streamer) && !isPracticeStreamer(streamer))
+  if (currentStream?.id) return currentStream.id;
+  const candidate = state.streamers
+    .filter((streamer) => isApprovedStreamer(streamer) && !isPracticeStreamer(streamer) && streamer.monitorEnabled)
+    .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))[0];
+  return candidate?.id || "";
+}
+
+async function enforceSingleWatchAtBoot(reason = "boot_single_watch_enforcement") {
+  const preferredStreamerId = preferredSingleWatchTarget();
+  if (!preferredStreamerId) return;
+  await enforceSingleWatchedStreamer(preferredStreamerId, reason);
+}
+
+async function deleteClipCandidate(candidateId, reason = "operator_delete", options = {}) {
+  const decodedId = decodeURIComponent(cleanText(candidateId));
+  const index = state.clipCandidates.findIndex((candidate) => candidate.id === decodedId);
+  if (index < 0) throw Object.assign(new Error("Clip candidate not found"), { statusCode: 404 });
+  const candidate = state.clipCandidates[index];
+  const linkedPackages = state.clipPackages.filter((clipPackage) => clipPackage.candidateId === candidate.id);
+  if (linkedPackages.length) {
+    throw Object.assign(new Error("This candidate already has a package. Delete or reject the package before deleting the source candidate."), {
+      statusCode: 409,
+      details: { packageIds: linkedPackages.map((clipPackage) => clipPackage.id) }
+    });
+  }
+  state.clipCandidates.splice(index, 1);
+  state.feedbackEvents = state.feedbackEvents.filter((feedback) => feedback.candidateId !== candidate.id);
+  const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+  if (session) {
+    const suppressedRecordingWindow = rememberDeletedRecordingWindow(session, candidate, reason);
+    const remaining = state.clipCandidates.filter((item) => item.watchSessionId === session.id);
+    session.candidatesDetected = remaining.length;
+    session.candidatesAccepted = remaining.filter((item) => item.decision === "accepted").length;
+    session.candidatesReview = remaining.filter((item) => item.decision === "review").length;
+    session.candidatesRejected = remaining.filter((item) => item.decision === "rejected").length;
+    session.updatedAt = now();
+    await appendWatchEvent(session.id, "candidate_deleted", {
+      candidateId: candidate.id,
+      title: candidate.title,
+      reason,
+      remaining: remaining.length,
+      suppressedRecordingWindow,
+      recordingWindowIndex: Number.isFinite(Number(candidate.recordingWindowIndex)) ? Number(candidate.recordingWindowIndex) : null,
+      operatorAction: true
+    });
+  }
+  let stoppedWatchSession = null;
+  if (options.stopWatcher && session) {
+    stoppedWatchSession = await stopWatchSessionAfterCandidateCleanup(session, reason);
+  }
+  await logEvent("candidate_deleted", "Clip candidate deleted from Radar", {
+    candidateId: candidate.id,
+    streamerId: candidate.streamerId || "",
+    watchSessionId: candidate.watchSessionId || "",
+    reason,
+    stoppedWatchSessionId: stoppedWatchSession?.sessionId || ""
+  });
+  await saveState();
+  return {
+    deleted: true,
+    candidateId: candidate.id,
+    candidate,
+    watchSessionId: candidate.watchSessionId || "",
+    stoppedWatchSession,
+    remaining: state.clipCandidates.length
+  };
+}
+
+async function approveClipCandidateForBuilder(candidateId) {
+  const decodedId = decodeURIComponent(cleanText(candidateId));
+  const candidate = state.clipCandidates.find((item) => item.id === decodedId);
+  if (!candidate) throw Object.assign(new Error("Clip candidate not found"), { statusCode: 404 });
+  const source = playableSourceForCandidate(candidate);
+  if (!source) {
+    throw Object.assign(new Error("Builder approval requires a verified playable MP4 source."), {
+      statusCode: 422,
+      details: { candidateId: candidate.id }
+    });
+  }
+  candidate.builderApproved = true;
+  candidate.builderStatus = "approved";
+  candidate.status = candidate.status === "candidate" ? "builder_ready" : candidate.status || "builder_ready";
+  candidate.targetAspectRatio = "9:16";
+  candidate.capcutTarget = {
+    aspectRatio: "9:16",
+    reframe: "auto",
+    sourceMode: "verified_mp4",
+    instruction: "Open in local CapCut Workspace, apply 9:16 canvas, then use Auto Reframe before export review."
+  };
+  candidate.builderApprovedAt = now();
+  candidate.updatedAt = now();
+  await logEvent("clip_builder_approved", "Clip approved for Builder and CapCut 9:16 prep", {
+    candidateId: candidate.id,
+    sourceId: source.id,
+    targetAspectRatio: "9:16"
+  });
+  await saveState();
+  return {
+    candidate,
+    source: publicMediaSource(source),
+    capcutTarget: candidate.capcutTarget
+  };
+}
+
+async function declineClipCandidate(candidateId, reason = "Declined by operator.") {
+  const decodedId = decodeURIComponent(cleanText(candidateId));
+  const candidate = state.clipCandidates.find((item) => item.id === decodedId);
+  if (!candidate) throw Object.assign(new Error("Clip candidate not found"), { statusCode: 404 });
+  candidate.status = "rejected";
+  candidate.decision = "rejected";
+  candidate.operatorDeclined = true;
+  candidate.declinedAt = now();
+  candidate.decisionReason = cleanText(reason) || candidate.decisionReason || "Declined by operator.";
+  candidate.updatedAt = now();
+  const session = state.watchSessions.find((item) => item.id === candidate.watchSessionId);
+  if (session) {
+    const suppressedRecordingWindow = rememberDeletedRecordingWindow(session, candidate, "operator_decline");
+    const sessionCandidates = state.clipCandidates.filter((item) => item.watchSessionId === session.id);
+    session.candidatesDetected = sessionCandidates.length;
+    session.candidatesAccepted = sessionCandidates.filter((item) => item.decision === "accepted").length;
+    session.candidatesReview = sessionCandidates.filter((item) => item.decision === "review").length;
+    session.candidatesRejected = sessionCandidates.filter((item) => item.decision === "rejected").length;
+    session.updatedAt = now();
+    await appendWatchEvent(session.id, "candidate_declined", {
+      candidateId: candidate.id,
+      reason: candidate.decisionReason,
+      suppressedRecordingWindow,
+      recordingWindowIndex: Number.isFinite(Number(candidate.recordingWindowIndex)) ? Number(candidate.recordingWindowIndex) : null,
+      operatorAction: true
+    });
+  }
+  await logEvent("candidate_declined", "Clip candidate declined by operator", {
+    candidateId: candidate.id,
+    streamerId: candidate.streamerId || "",
+    watchSessionId: candidate.watchSessionId || ""
+  });
+  await saveState();
+  return { candidate, declined: true };
+}
+
+async function capcutWorkflowInputsForCandidate(candidateId) {
+  const decodedId = decodeURIComponent(cleanText(candidateId));
+  const candidate = state.clipCandidates.find((item) => item.id === decodedId);
+  if (!candidate) throw Object.assign(new Error("Clip candidate not found"), { statusCode: 404 });
+  const source = playableSourceForCandidate(candidate);
+  if (!source?.filePath) {
+    throw Object.assign(new Error("CapCut workflow requires a verified local MP4 source."), {
+      statusCode: 422,
+      details: { candidateId: candidate.id }
+    });
+  }
+  await fs.mkdir(config.capcutProjectDir, { recursive: true });
+  const projectName = slugify(`${candidate.streamerName || "clip"}-${candidate.title || candidate.id}`, candidate.id);
+  const stickerPath = cleanText(config.capcutDefaultStickerPath);
+  return {
+    candidate,
+    source: publicMediaSource(source),
+    inputs: {
+      sourceVideoPath: source.filePath,
+      stickerPath,
+      projectName,
+      outputProjectFolder: config.capcutProjectDir
+    },
+    missingInputs: [],
+    instructions: [
+      "Connect CapCut.",
+      "Start workflow training.",
+      "In CapCut, import the selected MP4.",
+      "Set the project to 9:16 vertical.",
+      "Auto frame the subject.",
+      "Create a blurred background.",
+      "Optional: add a bottom sticker if you picked one.",
+      "Save the project, then stop and save the macro in Argentum."
+    ]
+  };
+}
+
+async function startLiveWatchForApprovedStreamer(streamer, trigger = "approved_live_monitor") {
+  if (!streamer || streamer.permissionStatus !== "approved" || !streamer.monitorEnabled) return null;
+  if (!["twitch", "kick"].includes(streamer.platform) || !liveProviderConfigured(streamer.platform)) return null;
+  try {
+    const watch = await startWatchSession({
+      mode: "real",
+      streamerId: streamer.id,
+      idempotencyKey: `watch:${streamer.id}:default`
+    });
+    await logEvent("watch_auto_started", "Approved live streamer watcher started", {
+      streamerId: streamer.id,
+      sessionId: watch.session?.id,
+      trigger,
+      reused: Boolean(watch.reused)
+    });
+    return watch;
+  } catch (error) {
+    await logEvent("watch_auto_start_blocked", "Approved live streamer watcher could not start", {
+      streamerId: streamer.id,
+      trigger,
+      error: error.message
+    });
+    return null;
+  }
 }
 
 function watchSessionSummary(session) {
@@ -589,7 +1946,26 @@ function watchSessionSummary(session) {
   };
 }
 
+function topCandidateSignals(candidate = {}, scored = {}) {
+  const signals = [];
+  if (candidate.audioEnergy?.isVoiceExcited) signals.push("voice excited");
+  const keywords = candidate.transcriptSummary?.detectedKeywords || [];
+  if (keywords.length) signals.push(`transcript hype keywords detected (${keywords.slice(0, 4).join(", ")})`);
+  if (candidate.transcriptSummary?.silenceBeforeBurst) signals.push("silence-to-burst arc");
+  const messagesPerMinute = Number(candidate.chatSignals?.messagesPerMinute || 0);
+  if (messagesPerMinute >= 60) signals.push(`chat spike ${messagesPerMinute}/min`);
+  if (candidate.emoteDistribution?.dominant && !["none", "mixed"].includes(candidate.emoteDistribution.dominant)) {
+    signals.push(`${candidate.emoteDistribution.dominant} emote velocity`);
+  }
+  if (candidate.crossStreamBoost) signals.push("cross-stream event");
+  if (candidate.visionGate?.clipType) signals.push(`vision gate: ${candidate.visionGate.clipType}`);
+  if (!signals.length && scored.scoreEvidence?.verified) signals.push("verified media evidence");
+  return signals;
+}
+
 function evaluateCandidateQuality(candidate, mission, capabilities) {
+  const streamer = findStreamer(candidate.streamerId);
+  const streamerProfile = ensureStreamerDetectionProfile(streamer);
   const scored = scoreClipMoment(candidate);
   const evidenceCount = Array.isArray(candidate.measuredEvidence) ? candidate.measuredEvidence.length : 0;
   const hasPlayableEvidence = Boolean(capabilities?.hasLiveVideo && candidate.sourceId);
@@ -609,7 +1985,7 @@ function evaluateCandidateQuality(candidate, mission, capabilities) {
     score = Math.min(score, 64);
     rejectionReasons.push("Moment does not show enough setup-to-payoff context.");
   }
-  const acceptThreshold = Number(mission.minQualityScore || 80);
+  const acceptThreshold = Number(streamerProfile.minClipScore || mission.minQualityScore || 80);
   const reviewThreshold = Number(mission.reviewQualityScore || 70);
   const decision = score >= acceptThreshold
     ? "accepted"
@@ -621,6 +1997,10 @@ function evaluateCandidateQuality(candidate, mission, capabilities) {
       ? `Score ${score} is below the automatic acceptance threshold of ${acceptThreshold}, so it needs operator review.`
       : `Score ${score} is below the review threshold of ${reviewThreshold}.`);
   }
+  const signalSummary = topCandidateSignals(candidate, scored);
+  const acceptedReason = signalSummary.length
+    ? `Accepted: ${signalSummary.join(", ")}.`
+    : "Accepted because verified playable media, hook strength, duration, and context meet the active clip mission.";
   return {
     ...scored,
     score,
@@ -628,10 +2008,10 @@ function evaluateCandidateQuality(candidate, mission, capabilities) {
     decision,
     rejectionReasons,
     decisionReason: decision === "accepted"
-      ? "Accepted because verified playable media, hook strength, duration, and context meet the active clip mission."
+      ? acceptedReason
       : decision === "review"
-        ? rejectionReasons.join(" ")
-      : rejectionReasons.join(" "),
+        ? [rejectionReasons.join(" "), signalSummary.length ? `Top signals: ${signalSummary.join(", ")}.` : ""].filter(Boolean).join(" ")
+        : rejectionReasons.join(" "),
     scoreBreakdown: {
       hookStrength: scored.hookScore,
       engagementPotential: scored.engagementPotential,
@@ -639,7 +2019,15 @@ function evaluateCandidateQuality(candidate, mission, capabilities) {
       riskScore: scored.riskScore,
       evidenceCount,
       hasPlayableEvidence,
-      hasCompleteMoment
+      hasCompleteMoment,
+      transcriptScore: candidate.transcriptScore || 0,
+      transcriptKeywords: candidate.transcriptSummary?.detectedKeywords || [],
+      silenceBeforeBurst: candidate.transcriptSummary?.silenceBeforeBurst || false,
+      isVoiceExcited: candidate.audioEnergy?.isVoiceExcited || false,
+      emoteDistribution: candidate.emoteDistribution || null,
+      crossStreamBoost: candidate.crossStreamBoost || false,
+      visionGate: candidate.visionGate || null,
+      clipProfile: { genre: streamerProfile?.genre || "general" }
     }
   };
 }
@@ -666,20 +2054,584 @@ function ensureWatchMediaSegments(session, source) {
   return [segment];
 }
 
+function liveSourceUrlForStreamer(streamer = {}) {
+  if (streamer.channelUrl) return streamer.channelUrl;
+  if (streamer.platform === "kick" && streamer.channelId) return `https://kick.com/${streamer.channelId}`;
+  if (streamer.platform === "twitch" && streamer.channelId) return `https://www.twitch.tv/${streamer.channelId}`;
+  return "";
+}
+
+async function liveRecorderStatus() {
+  const [streamlink, ytdlp, ffmpeg] = await Promise.all([
+    commandStatus(config.streamlinkExecutable, ["--version"]),
+    commandStatus(config.ytdlpExecutable, ["--version"]),
+    commandStatus(ffmpegExecutable)
+  ]);
+  const preferred = config.captureToolPreference;
+  const tools = [
+    { id: "streamlink", ...streamlink },
+    { id: "yt-dlp", ...ytdlp }
+  ];
+  const available = tools.filter((tool) => tool.configured);
+  const selected = preferred === "streamlink"
+    ? available.find((tool) => tool.id === "streamlink")
+    : preferred === "yt-dlp" || preferred === "ytdlp"
+      ? available.find((tool) => tool.id === "yt-dlp")
+      : available[0];
+  return {
+    enabled: config.captureEnabled,
+    ready: Boolean(config.captureEnabled && ffmpeg.configured && selected),
+    selected: selected?.id || null,
+    streamlink,
+    ytdlp,
+    ffmpeg,
+    bufferDir: config.watchBufferDir,
+    message: !config.captureEnabled
+      ? "Live capture is disabled by STREAMCLIPPER_CAPTURE_ENABLED=false."
+      : !ffmpeg.configured
+        ? "FFmpeg is missing, so live windows cannot be saved."
+        : selected
+          ? `${selected.id} is available for live source capture.`
+          : "Install streamlink or yt-dlp so live monitor windows can be saved as local clips."
+  };
+}
+
+async function prependPythonUserBinToPath() {
+  try {
+    const { stdout } = await execFileAsync("python3", ["-m", "site", "--user-base"], { timeout: 10000 });
+    const userBase = stdout.trim();
+    if (!userBase) return;
+    const bin = path.join(userBase, "bin");
+    const parts = String(process.env.PATH || "").split(path.delimiter);
+    if (!parts.includes(bin)) process.env.PATH = [bin, ...parts].filter(Boolean).join(path.delimiter);
+  } catch {
+    // Best effort only. liveRecorderStatus will still report missing tools clearly.
+  }
+}
+
+async function installPythonTool(packageName) {
+  try {
+    await execFileAsync("python3", ["-m", "pip", "install", "--user", packageName, "--quiet"], {
+      timeout: 180000,
+      maxBuffer: 1024 * 1024 * 3
+    });
+    await prependPythonUserBinToPath();
+    return true;
+  } catch (firstError) {
+    try {
+      await execFileAsync("python3", ["-m", "pip", "install", packageName, "--break-system-packages", "--quiet"], {
+        timeout: 180000,
+        maxBuffer: 1024 * 1024 * 3
+      });
+      await prependPythonUserBinToPath();
+      return true;
+    } catch (secondError) {
+      addStateLog("capture_tool_install_failed", `Could not install ${packageName}`, {
+        userInstallError: firstError.message,
+        systemInstallError: secondError.message
+      });
+      return false;
+    }
+  }
+}
+
+async function ensureCaptureTools() {
+  if (!config.captureEnabled || process.env.STREAMCLIPPER_AUTO_INSTALL_CAPTURE_TOOLS === "false") return;
+  await prependPythonUserBinToPath();
+  const status = await liveRecorderStatus();
+  if (status.ready) return;
+  if (!status.streamlink.configured) await installPythonTool("streamlink");
+  const afterStreamlink = await liveRecorderStatus();
+  if (afterStreamlink.ready) return;
+  if (!afterStreamlink.ytdlp.configured) await installPythonTool("yt-dlp");
+}
+
+async function resolveLivePlaybackUrl(sourceUrl) {
+  const status = await liveRecorderStatus();
+  if (!status.ready) {
+    const error = new Error(status.message);
+    error.statusCode = 424;
+    error.code = "capture_tool_missing";
+    error.recorderStatus = status;
+    throw error;
+  }
+  if (status.selected === "streamlink") {
+    try {
+      const { stdout } = await execFileAsync(status.streamlink.command, [
+        "--stream-url",
+        sourceUrl,
+        "best"
+      ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+      const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//i.test(line));
+      if (url) return { url, tool: "streamlink" };
+    } catch (error) {
+      if (!status.ytdlp?.configured) throw error;
+    }
+  }
+  if (status.ytdlp?.configured) {
+    const { stdout } = await execFileAsync(status.ytdlp.command, [
+      "-g",
+      "-f",
+      "best",
+      sourceUrl
+    ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+    const url = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//i.test(line));
+    if (url) return { url, tool: "yt-dlp" };
+  }
+  const error = new Error("Recorder did not return a playable stream URL.");
+  error.statusCode = 424;
+  error.code = "capture_url_missing";
+  throw error;
+}
+
+async function recordRemoteStreamToFile(streamUrl, outputPath, durationSeconds) {
+  const timeout = Math.max(60000, (Number(durationSeconds || WATCH_RECORDING_WINDOW_SECONDS) + 60) * 1000);
+  const common = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    streamUrl,
+    "-t",
+    String(durationSeconds)
+  ];
+  try {
+    await execFileAsync(ffmpegExecutable, [
+      ...common,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
+      "-c",
+      "copy",
+      "-movflags",
+      "+faststart",
+      outputPath
+    ], { timeout, maxBuffer: 1024 * 1024 * 6 });
+  } catch {
+    await execFileAsync(ffmpegExecutable, [
+      ...common,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-movflags",
+      "+faststart",
+      outputPath
+    ], { timeout: Math.max(timeout, 120000), maxBuffer: 1024 * 1024 * 8 });
+  }
+  const stat = await fs.stat(outputPath);
+  if (!stat.isFile() || stat.size <= 0) throw new Error("Capture failed: output file is empty.");
+  return stat;
+}
+
+function captureAttemptIsRecent(session, windowIndex) {
+  const lastIndex = Number(session.captureWindowIndex);
+  const lastAttempt = session.lastCaptureAttemptAt ? new Date(session.lastCaptureAttemptAt).getTime() : 0;
+  return lastIndex === Number(windowIndex) && lastAttempt && Date.now() - lastAttempt < Math.max(15000, WATCH_RECORDING_WINDOW_SECONDS * 1000);
+}
+
+async function enrichSourceWithTranscript(source) {
+  if (!source?.filePath) return source;
+  try {
+    if (!(await isWhisperAvailable())) {
+      source.transcriptStatus = "whisper_unavailable";
+      return source;
+    }
+    const transcriptResult = await transcribeBuffer(source.filePath, {
+      ffmpegExecutable,
+      model: config.whisperModel
+    }).catch((error) => ({ available: false, error: error.message }));
+    if (!transcriptResult.available) {
+      source.transcriptStatus = "transcription_unavailable";
+      source.transcriptError = cleanText(transcriptResult.error).slice(0, 240);
+      return source;
+    }
+    const transcriptScoring = scoreTranscript(transcriptResult);
+    source.transcriptStatus = "transcribed";
+    source.transcriptScore = transcriptScoring.transcriptScore;
+    source.transcriptSummary = {
+      text: transcriptResult.text?.slice(0, 300) || "",
+      hypeHits: transcriptScoring.hypeHits,
+      silenceBeforeBurst: transcriptScoring.silenceBeforeBurst,
+      speechRate: transcriptScoring.speechRate,
+      peakSpeechRate: transcriptScoring.peakSpeechRate,
+      detectedKeywords: transcriptScoring.detectedKeywords
+    };
+    source.updatedAt = now();
+    return source;
+  } catch (error) {
+    source.transcriptStatus = "transcription_error";
+    source.transcriptError = cleanText(error.message).slice(0, 240);
+    addStateLog("transcription_error", "Whisper transcription failed for a captured buffer", {
+      sourceId: source.id,
+      error: source.transcriptError
+    });
+    return source;
+  }
+}
+
+async function captureLiveWindowForSession(session, {
+  streamer,
+  mission,
+  windowIndex,
+  watchTrigger = "watch_capture",
+  watchTriggerSignals = {}
+}) {
+  if (!session || session.mode !== "real" || !isRealApprovedStreamer(streamer)) return null;
+  if (deletedRecordingWindowIndexSet(session).has(Number(windowIndex))) return null;
+  const existingCandidate = state.clipCandidates.find((candidate) =>
+    candidate.watchSessionId === session.id
+    && Number(candidate.recordingWindowIndex) === Number(windowIndex)
+    && candidateHasPlayableSource(candidate)
+  );
+  if (existingCandidate) return playableSourceForCandidate(existingCandidate);
+  if (captureAttemptIsRecent(session, windowIndex) || session.captureStatus === "capturing") return null;
+
+  const sourceUrl = liveSourceUrlForStreamer(streamer);
+  if (!sourceUrl) return null;
+  const startSeconds = Number(windowIndex) * WATCH_RECORDING_WINDOW_SECONDS;
+  const endSeconds = startSeconds + WATCH_RECORDING_WINDOW_SECONDS;
+  const filename = `${new Date().toISOString().replace(/[:.]/g, "-")}-${streamer.channelId || streamer.id}-window-${Number(windowIndex) + 1}.mp4`
+    .replace(/[^a-z0-9_.-]+/gi, "-");
+  const outputPath = path.join(config.watchBufferDir, filename);
+  const job = {
+    id: newId("capture_job"),
+    watchSessionId: session.id,
+    streamerId: streamer.id,
+    recordingWindowIndex: Number(windowIndex),
+    status: "running",
+    outputPath,
+    tool: "",
+    error: "",
+    createdAt: now(),
+    updatedAt: now()
+  };
+  state.captureJobs.unshift(job);
+  state.captureJobs = state.captureJobs.slice(0, 500);
+  Object.assign(session, {
+    captureStatus: "capturing",
+    captureWindowIndex: Number(windowIndex),
+    lastCaptureAttemptAt: now(),
+    captureMessage: `Saving ${WATCH_RECORDING_WINDOW_SECONDS}s local buffer for ${streamer.displayName}.`,
+    updatedAt: now()
+  });
+  upsertRecordingWindowTelemetry(session, {
+    index: windowIndex,
+    startSeconds,
+    endSeconds,
+    status: "capturing",
+    message: `Saving local ${WATCH_RECORDING_WINDOW_SECONDS}s video buffer.`
+  });
+  await appendWatchEvent(session.id, "source_capture_started", {
+    streamerId: streamer.id,
+    recordingWindowIndex: Number(windowIndex),
+    durationSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+    message: "Saving a local watch-window video buffer for Clip Radar."
+  });
+
+  try {
+    const resolved = await resolveLivePlaybackUrl(sourceUrl);
+    job.tool = resolved.tool;
+    await recordRemoteStreamToFile(resolved.url, outputPath, WATCH_RECORDING_WINDOW_SECONDS);
+    const audioEnergy = applyAudioThresholdForStreamer(await analyzeAudioEnergy(outputPath, ffmpegExecutable), streamer);
+    const source = await createMediaSourceFromFile({
+      filePath: outputPath,
+      originalFilename: filename,
+      mimeType: "video/mp4",
+      title: `${streamer.displayName} window ${Number(windowIndex) + 1}`,
+      mode: "real",
+      provenance: PROVENANCE.WATCHER_BUFFER,
+      permissionStatus: "approved",
+      rightsStatus: "approved",
+      sourceType: "watcher_buffer",
+      provider: streamer.platform,
+      streamerId: streamer.id,
+      watchSessionId: session.id,
+      recordingWindowIndex: Number(windowIndex),
+      liveWindowStartSeconds: startSeconds,
+      liveWindowEndSeconds: endSeconds,
+      audioEnergy,
+      watchWindowTrigger: watchTrigger,
+      watchWindowTriggerAt: now(),
+      watchWindowSignals: watchTriggerSignals
+    });
+    await enrichSourceWithTranscript(source);
+    job.status = "completed";
+    job.sourceId = source.id;
+    job.updatedAt = now();
+    Object.assign(session, {
+      sourceId: source.id,
+      captureStatus: "ready",
+      captureMessage: "Local video buffer saved and verified.",
+      lastMediaAt: now(),
+      updatedAt: now()
+    });
+    upsertRecordingWindowTelemetry(session, {
+      index: windowIndex,
+      startSeconds,
+      endSeconds,
+      status: "source_ready",
+      sourceId: source.id,
+      message: "Local playable video buffer is ready for Radar."
+    });
+    await appendWatchEvent(session.id, "source_capture_completed", {
+      sourceId: source.id,
+      recordingWindowIndex: Number(windowIndex),
+      durationSeconds: source.durationSeconds,
+      tool: resolved.tool,
+      audioEnergy,
+      transcriptScore: source.transcriptScore || 0,
+      message: "Local watch-window video buffer saved and verified."
+    });
+    await logEvent("watch_window_captured", "Live watch window captured to local media", {
+      sessionId: session.id,
+      streamerId: streamer.id,
+      sourceId: source.id,
+      recordingWindowIndex: Number(windowIndex),
+      durationSeconds: source.durationSeconds,
+      tool: resolved.tool
+    });
+    await saveState();
+    return source;
+  } catch (error) {
+    await fs.rm(outputPath, { force: true }).catch(() => {});
+    job.status = "blocked";
+    job.error = error.message;
+    job.updatedAt = now();
+    Object.assign(session, {
+      captureStatus: "blocked",
+      captureMessage: error.message,
+      updatedAt: now()
+    });
+    upsertRecordingWindowTelemetry(session, {
+      index: windowIndex,
+      startSeconds,
+      endSeconds,
+      status: "capture_blocked",
+      message: error.message
+    });
+    await appendWatchEvent(session.id, "source_capture_blocked", {
+      recordingWindowIndex: Number(windowIndex),
+      reason: error.code || "capture_failed",
+      message: error.message
+    });
+    await saveState();
+    return null;
+  }
+}
+
+// A stream with lots of viewers but a silent chat (view-botted channels are
+// the classic case) can never produce chat spikes, keywords, or tension
+// signals — so a chat-gated watcher would sit idle forever. Track the chat
+// feed's health per session and fall back to fixed-cadence sampling when it
+// is dead; audio-energy + transcript + vision scoring filter the samples.
+const CHAT_DEAD_AFTER_MS = 3 * 60 * 1000;
+const CHAT_DEAD_SAMPLING_INTERVAL_WINDOWS = 2;
+
+function updateChatSignalState(session, streamer) {
+  if (!session || session.mode !== "real") return "unknown";
+  if (!normalizeChatChannel(streamer) || !chatMonitors.has(session.id)) {
+    session.chatSignalState = "unavailable";
+    return session.chatSignalState;
+  }
+  const startedTs = Date.parse(session.startedAt || session.createdAt || "") || Date.now();
+  const lastMessageTs = Date.parse(session.lastChatMessageAt || "") || 0;
+  if (lastMessageTs && Date.now() - lastMessageTs < CHAT_DEAD_AFTER_MS) {
+    session.chatSignalState = "healthy";
+  } else if (Date.now() - startedTs < CHAT_DEAD_AFTER_MS) {
+    session.chatSignalState = "warming_up";
+  } else {
+    session.chatSignalState = "dead";
+  }
+  return session.chatSignalState;
+}
+
+async function maybeCaptureCurrentWatchWindow(session, { streamer, mission }) {
+  if (!config.captureEnabled || session.mode !== "real") return null;
+  const currentIndex = Math.max(0, Math.floor(Number(session.analyzedSeconds || 0) / WATCH_RECORDING_WINDOW_SECONDS));
+  const recentSpikes = watchSignalsForWindow(session.id, currentIndex, recentChatSpikesForSession(session.id));
+  const recentKeywords = watchSignalsForWindow(session.id, currentIndex, recentChatKeywordSignalsForSession(session.id));
+  const hasSpikeSignal = recentSpikes.length && Number(session.lastSpikeCaptureWindowIndex ?? -1) !== currentIndex;
+  const hasKeywordSignal = recentKeywords.length && Number(session.lastKeywordCaptureWindowIndex ?? -1) !== currentIndex;
+  const hasTensionSignal = isRecentTimestamp(session.tensionDetectedAt, 45000)
+    && Number(session.lastTensionCaptureWindowIndex ?? -1) !== currentIndex;
+  const chatState = updateChatSignalState(session, streamer);
+  const chatDeadSamplingDue = chatState === "dead"
+    && currentIndex % CHAT_DEAD_SAMPLING_INTERVAL_WINDOWS === 0
+    && Number(session.lastChatDeadSamplingWindowIndex ?? -1) !== currentIndex;
+  if (chatState === "dead" && !session.chatDeadNoticedAt) {
+    session.chatDeadNoticedAt = now();
+    await appendWatchEvent(session.id, "chat_signal_dead", {
+      channel: normalizeChatChannel(streamer),
+      viewers: Number(streamer?.viewers || 0),
+      message: "Chat has been silent for 3+ minutes on this stream (view-botted channels look exactly like this). Switching to fixed-cadence sampling — audio, transcript, and vision scoring will filter the windows."
+    });
+  }
+  if (chatState === "healthy" && session.chatDeadNoticedAt) session.chatDeadNoticedAt = "";
+  if (config.watchTriggerRequiresSignal && !hasSpikeSignal && !hasKeywordSignal && !hasTensionSignal && !chatDeadSamplingDue) return null;
+  const hasAnyWindowSignal = hasSpikeSignal || hasKeywordSignal || hasTensionSignal || chatDeadSamplingDue;
+
+  const trigger = hasSpikeSignal
+    ? "chat_spike"
+    : hasKeywordSignal
+      ? "chat_keyword"
+      : hasTensionSignal
+        ? "tension_emote_prediction"
+        : chatDeadSamplingDue
+          ? "chat_dead_sampling"
+          : "manual_capture";
+  if (chatDeadSamplingDue) session.lastChatDeadSamplingWindowIndex = currentIndex;
+  session.lastCaptureTrigger = trigger;
+  session.lastCaptureTriggerAt = now();
+  session.lastCaptureTriggerWindowIndex = currentIndex;
+  if (hasSpikeSignal) session.lastSpikeCaptureWindowIndex = currentIndex;
+  if (hasKeywordSignal) session.lastKeywordCaptureWindowIndex = currentIndex;
+  if (hasTensionSignal) session.lastTensionCaptureWindowIndex = currentIndex;
+  if (hasAnyWindowSignal) session.lastAutoCaptureWindowIndex = currentIndex;
+  await appendWatchEvent(session.id, "capture_triggered", {
+    trigger,
+    recordingWindowIndex: currentIndex,
+    chatSpike: recentSpikes.at(-1) || null,
+    tension: hasTensionSignal ? session.tensionPayload || null : null,
+    keywords: recentKeywords.at(-1)?.matchedKeywords || [],
+    message: trigger === "chat_spike"
+      ? "Chat spike triggered a local 30-second recording window."
+      : trigger === "chat_keyword"
+        ? `Chat keyword trigger detected: ${(recentKeywords.at(-1)?.matchedKeywords || []).join(", ")}`
+        : trigger === "tension_emote_prediction"
+          ? "Tension emote velocity triggered a predictive local recording window."
+          : trigger === "chat_dead_sampling"
+            ? "Chat is silent, so the watcher sampled this window on a fixed cadence for scoring."
+      : "Manual capture triggered a local 30-second recording buffer."
+  });
+  const source = await captureLiveWindowForSession(session, {
+    streamer,
+    mission,
+    windowIndex: currentIndex,
+    watchTrigger: trigger,
+    watchTriggerSignals: {
+      hasSpikeSignal,
+      hasKeywordSignal,
+      hasTensionSignal,
+      chatSpikes: recentSpikes,
+      chatKeywords: recentKeywords,
+      tension: hasTensionSignal ? session.tensionPayload || null : null
+    }
+  });
+  if (source && recentSpikes.length) {
+    const spike = recentSpikes.at(-1);
+    const keyword = recentKeywords.at(-1);
+    Object.assign(source, {
+      chatSpike: spike,
+      watchWindowTrigger: trigger,
+      watchWindowSignal: spike ? "chat_spike" : keyword ? "chat_keyword" : "watch_trigger",
+      watchWindowKeywordSignals: keyword?.matchedKeywords || [],
+      chatSignals: spike
+        ? {
+          spike: spike.messagesPerWindow,
+          messagesPerMinute: spike.messagesPerMinute,
+          source: "twitch_irc",
+          label: "Real Twitch IRC spike"
+        }
+        : keyword
+          ? {
+            spike: 0,
+            messagesPerMinute: keyword.messagesPerMinute,
+            source: "twitch_irc_keyword",
+            label: `Keyword match: ${keyword.matchedKeywords.join(", ")}`
+          }
+          : {
+            spike: 0,
+            messagesPerMinute: source?.audioEnergy?.isLoudMoment ? 30 : 0,
+            source: "watch_capture",
+            label: "Watch-window capture requested"
+          },
+      watchWindowSignals: {
+        ...source.watchWindowSignals,
+        watchTrigger: {
+          type: trigger,
+          keywords: keyword?.matchedKeywords || [],
+          spikeWindowIndex: Number(currentIndex)
+        }
+      },
+      updatedAt: now()
+    });
+    await saveState();
+  } else if (source && recentKeywords.length && !recentSpikes.length) {
+    const keyword = recentKeywords.at(-1);
+    Object.assign(source, {
+      watchWindowTrigger: trigger,
+      watchWindowSignal: keyword ? "chat_keyword" : "watch_capture",
+      watchWindowKeywordSignals: keyword?.matchedKeywords || [],
+      chatSignals: keyword
+        ? {
+          spike: 0,
+          messagesPerMinute: keyword.messagesPerMinute,
+          source: "twitch_irc_keyword",
+          label: `Keyword match: ${keyword.matchedKeywords.join(", ")}`
+        }
+        : {
+          spike: 0,
+          messagesPerMinute: source?.audioEnergy?.isLoudMoment ? 30 : 0,
+          source: "watch_capture",
+          label: "Watch-window capture requested"
+        },
+      watchWindowSignals: {
+        ...source.watchWindowSignals,
+        watchTrigger: {
+          type: trigger,
+          keywords: keyword?.matchedKeywords || [],
+          spikeWindowIndex: Number(currentIndex)
+        }
+      },
+      updatedAt: now()
+    });
+    await saveState();
+  } else if (source && hasAnyWindowSignal) {
+    Object.assign(source, {
+      watchWindowTrigger: trigger,
+      watchWindowSignal: source.watchWindowSignal || (hasTensionSignal ? "tension_emote" : "watch_capture"),
+      tensionSignal: hasTensionSignal ? session.tensionPayload || null : source.tensionSignal || null,
+      chatSignals: hasTensionSignal
+        ? {
+          spike: Number(session.tensionPayload?.tensionCount || 0),
+          messagesPerMinute: Number(session.tensionPayload?.messagesPerMinute || 0),
+          source: "twitch_irc_tension_emotes",
+          label: "Tension emote velocity"
+        }
+        : source.chatSignals,
+      updatedAt: now()
+    });
+    await saveState();
+  }
+  return source;
+}
+
 async function ensureWatchSessionCandidates(session) {
   const streamer = state.streamers.find((item) => item.id === session.streamerId);
   const source = state.mediaSources.find((item) => item.id === session.sourceId);
   const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || ensureClipMission(streamer);
   const capabilities = capabilitiesForWatchSource({ session, source, streamer });
-  if (!capabilities.hasLiveVideo || !source?.filePath) {
-    await appendWatchEvent(session.id, "candidate_rejected", {
-      reason: "Metadata-only monitoring cannot create timestamped candidates or rendered clips."
-    });
-    return [];
+  if (!capabilities.hasLiveVideo || !source?.filePath || source?.sourceType === "watcher_buffer") {
+    return ensureWatchRecordingWindowCandidates(session, { streamer, mission, capabilities, source });
   }
   ensureWatchMediaSegments(session, source);
   const existing = state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id);
-  if (existing.length) return existing;
+  if (existing.length) {
+    pruneLiveWindowCandidatesForSession(session, "watch_session_candidate_refresh", { keepLatest: true, forceSingleWatch: true });
+    return state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id);
+  }
+  if (source?.sourceType === "demo") return [source];
   const sourceDuration = Math.max(1, sourceDurationSeconds(source) || 24);
   const base = demoCandidateDefinitions(source.id).map((candidate, index) => {
     const start = Math.max(0, Math.min(sourceDuration - 4, 1 + index * 2));
@@ -796,6 +2748,433 @@ async function ensureWatchSessionCandidates(session) {
   return evaluated;
 }
 
+function recordingWindowCandidatesForSession(sessionId) {
+  return state.clipCandidates.filter((candidate) =>
+    candidate.watchSessionId === sessionId && candidate.sourceType === "live_recording_window"
+  );
+}
+
+function activeLiveRecordingWindowCandidates(sessionId) {
+  if (!sessionId) return [];
+  return state.clipCandidates.filter((candidate) =>
+    candidate.watchSessionId === sessionId
+    && candidate.sourceType === "live_recording_window"
+    && candidate.status !== "packaged"
+    && candidate.decision !== "rejected"
+    && candidate.status !== "deleted"
+  );
+}
+
+function unresolvedLiveRecordingCandidates(sessionId) {
+  if (!sessionId) return [];
+  return state.clipCandidates.filter((candidate) =>
+    candidate.watchSessionId === sessionId
+    && candidate.sourceType === "live_recording_window"
+    && candidate.status !== "packaged"
+    && candidate.decision !== "rejected"
+  );
+}
+
+function shouldTreatAsSingleWatch() {
+  if (config.singleWatchMode === false) return false;
+  return true;
+}
+
+function targetRecordingWindowIndexes(session) {
+  const analyzed = Math.max(0, Number(session.analyzedSeconds || 0));
+  const currentIndex = Math.max(0, Math.floor(analyzed / WATCH_RECORDING_WINDOW_SECONDS));
+  const visibleWindowCount = Math.min(3, WATCH_MAX_RECORDING_WINDOWS);
+  const firstIndex = Math.max(0, currentIndex - visibleWindowCount + 1);
+  const indexes = [];
+  for (let index = firstIndex; index <= currentIndex; index += 1) {
+    indexes.push(index);
+  }
+  return indexes.length ? indexes : [0];
+}
+
+function buildWatchRecordingCandidate(session, { streamer, mission, capabilities, source, windowIndex }) {
+  const liveWindowStartSeconds = windowIndex * WATCH_RECORDING_WINDOW_SECONDS;
+  const liveWindowEndSeconds = liveWindowStartSeconds + WATCH_RECORDING_WINDOW_SECONDS;
+  const hasPlayableSource = Boolean(capabilities.hasLiveVideo && source?.filePath);
+  const sourceMatchesWindow = hasPlayableSource
+    && source?.watchSessionId === session.id
+    && Number(source?.recordingWindowIndex) === Number(windowIndex);
+  const sourceWindowDuration = Math.max(1, Math.min(WATCH_RECORDING_WINDOW_SECONDS, Number(sourceDurationSeconds(source) || WATCH_RECORDING_WINDOW_SECONDS)));
+  const start = sourceMatchesWindow ? 0 : liveWindowStartSeconds;
+  const end = sourceMatchesWindow ? sourceWindowDuration : liveWindowEndSeconds;
+  const streamerName = streamer?.displayName || session.streamerName || "Live streamer";
+  const liveTitle = cleanText(streamer?.liveTitle || session.title || `${streamerName} live stream`);
+  const category = cleanText(streamer?.liveCategory || session.category || "Live stream");
+  const viewerCount = Number(streamer?.liveViewerCount || session.viewerCount || 0);
+  const monitor = chatMonitors.get(session.id);
+  const emoteDistribution = monitor?.currentEmoteDistribution?.() || null;
+  const sourceChatSpike = source?.chatSpike || null;
+  const watchWindowTrigger = cleanText(source?.watchWindowTrigger || (sourceChatSpike ? "chat_spike" : ""));
+  const watchWindowKeywords = Array.isArray(source?.watchWindowKeywordSignals)
+    ? source.watchWindowKeywordSignals
+    : [];
+  const messagesPerMinute = Number(
+    sourceChatSpike?.messagesPerMinute
+    || source?.chatSignals?.messagesPerMinute
+    || monitor?.currentMessagesPerMinute?.()
+    || session.lastChatMessagesPerMinute
+    || 0
+  );
+  const chatSignals = sourceChatSpike
+    ? {
+        spike: Number(sourceChatSpike.messagesPerWindow || sourceChatSpike.spike || 0),
+        messagesPerMinute,
+        source: "twitch_irc",
+        label: "Real Twitch IRC spike",
+        detectedAt: sourceChatSpike.recordedAt || sourceChatSpike.timestamp || null
+      }
+    : watchWindowTrigger === "chat_keyword" && watchWindowKeywords.length
+      ? {
+          spike: 0,
+          messagesPerMinute,
+          source: "twitch_irc_keyword",
+          label: `Keyword matched: ${watchWindowKeywords.join(", ")}`
+        }
+    : messagesPerMinute > 0
+      ? {
+          spike: Math.round(messagesPerMinute / 6),
+          messagesPerMinute,
+          source: "twitch_irc_baseline",
+          label: "Real Twitch IRC baseline"
+        }
+      : {
+          spike: 0,
+          messagesPerMinute: 0,
+          source: PROVENANCE.UNAVAILABLE,
+          label: capabilities.hasChat ? "No chat spike inside this saved window" : "No chat capture source configured"
+        };
+  const audioEnergy = source?.audioEnergy || null;
+  const audioAvailable = Boolean(audioEnergy?.available);
+  const transcriptScore = Number(source?.transcriptScore || 0);
+  const transcriptSummary = source?.transcriptSummary || null;
+  const emoteHookBonus = emoteDistribution?.dominant === "hype" ? 5 : emoteDistribution?.dominant === "tension" ? 3 : 0;
+  const crossStreamEvent = isRecentTimestamp(session.crossStreamEvent?.detectedAt, 90000) ? session.crossStreamEvent : null;
+  const crossStreamBoost = Boolean(crossStreamEvent);
+  const hookScore = Math.min(
+    20,
+    10
+      + (chatSignals.messagesPerMinute >= 60 ? 5 : 0)
+      + (audioEnergy?.isLoudMoment ? 4 : 0)
+      + (audioEnergy?.isVoiceExcited ? 3 : 0)
+      + Math.round(transcriptScore / 6)
+      + emoteHookBonus
+  );
+  const savedMediaReason = sourceChatSpike || watchWindowTrigger === "chat_keyword"
+    ? "Real watcher-buffer video is saved and matched to a Twitch chat spike."
+    : watchWindowTrigger === "tension_emote_prediction"
+      ? "Real watcher-buffer video is saved from a predictive tension-emote spike before the payoff."
+      : watchWindowTrigger.startsWith("eventsub_")
+        ? "Real watcher-buffer video is saved from a Twitch EventSub hard trigger."
+        : audioEnergy?.isVoiceExcited
+          ? "Real watcher-buffer video is saved and streamer voice energy indicates an exciting moment."
+          : audioEnergy?.isLoudMoment
+            ? "Real watcher-buffer video is saved and audio energy indicates an exciting moment."
+            : "Real watcher-buffer video is saved for operator review. No strong chat/audio spike was detected.";
+  const base = {
+    id: newId("candidate"),
+    watchSessionId: session.id,
+    clipProfileId: mission.id,
+    streamerId: session.streamerId,
+    streamerName,
+    sessionId: session.id,
+    sourceId: source?.id || "",
+    sourceType: "live_recording_window",
+    sourceProvenance: source?.provenance || PROVENANCE.WATCHER_BUFFER,
+    provenance: PROVENANCE.WATCHER_BUFFER,
+    creativeProvenance: PROVENANCE.AI_GENERATED,
+    recordingWindowIndex: windowIndex,
+    recordingWindowSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+    liveWindowStartSeconds,
+    liveWindowEndSeconds,
+    bufferStatus: hasPlayableSource ? "verified_media_window" : "source_pending",
+    mediaPlayable: hasPlayableSource,
+    timestampStartSeconds: start,
+    timestampEndSeconds: end,
+    startSeconds: start,
+    endSeconds: end,
+    timestampStart: secondsToTimestamp(start),
+    timestampEnd: secondsToTimestamp(end),
+    duration: Math.max(1, end - start),
+    durationSeconds: Math.max(1, end - start),
+    title: `30s clip window ${windowIndex + 1}: ${streamerName}`,
+    category,
+    transcriptSnippet: hasPlayableSource
+      ? transcriptSummary?.text
+        ? transcriptSummary.text
+        : `Saved ${Math.max(1, end - start)}s watcher buffer from "${liveTitle}". ${watchWindowTrigger === "chat_keyword" ? "A watched keyword appeared in chat during this window." : sourceChatSpike ? "Twitch chat spiked during this window." : audioEnergy?.isVoiceExcited ? "Streamer voice energy spiked during this window." : audioEnergy?.isLoudMoment ? "Audio energy peaked during this window." : "No spike signal was attached; review the playback before packaging."}`
+      : `Agent 101 logged a ${WATCH_RECORDING_WINDOW_SECONDS}-second live watch window from "${liveTitle}". Transcript and video scoring are pending until a playable buffer is attached.`,
+    transcriptProvenance: transcriptSummary?.text ? "whisper_cli" : PROVENANCE.UNAVAILABLE,
+    transcriptScore,
+    transcriptSummary,
+    chatSignals,
+    emoteDistribution,
+    crossStreamBoost,
+    crossStreamEvent,
+    viewerCount,
+    hookScore,
+    riskScore: 18,
+    audioEnergy,
+    audioEnergyDb: source?.audioEnergyDb ?? audioEnergy?.maxVolumeDb ?? null,
+    audioMeanDb: source?.audioMeanDb ?? audioEnergy?.meanVolumeDb ?? null,
+    isLoudMoment: Boolean(source?.isLoudMoment || audioEnergy?.isLoudMoment),
+    watchWindowTrigger,
+    reason: hasPlayableSource
+      ? savedMediaReason
+      : "Agent 101 logged watch telemetry only. Capture or upload a saved video buffer before this can become a Radar clip.",
+    measuredEvidence: [
+      { label: "Approved streamer monitor", provenance: "watchlist" },
+      { label: "Official live metadata checked", provenance: PROVENANCE.VERIFIED_API },
+      {
+        label: hasPlayableSource ? "Playable source attached" : "Playable source pending",
+        provenance: hasPlayableSource ? PROVENANCE.VERIFIED_MEDIA : PROVENANCE.WATCHER_BUFFER
+      },
+      ...(sourceChatSpike || (watchWindowTrigger === "chat_keyword" && watchWindowKeywords.length)
+        ? [{ label: watchWindowKeywords.length ? `Chat keyword: ${watchWindowKeywords.join(", ")}` : "Twitch IRC chat spike", provenance: "twitch_irc" }]
+        : []),
+      ...(watchWindowTrigger === "tension_emote_prediction" ? [{ label: "Predictive tension emote spike", provenance: "twitch_irc" }] : []),
+      ...(transcriptSummary?.text ? [{ label: "Whisper transcript scoring", provenance: "whisper_cli" }] : []),
+      ...(audioEnergy?.isVoiceExcited ? [{ label: "Voice-band excitement detected", provenance: "ffmpeg_voice_band" }] : []),
+      ...(audioAvailable ? [{ label: "FFmpeg audio energy analysis", provenance: "ffmpeg_volumedetect_v2" }] : []),
+      ...(crossStreamBoost ? [{
+        type: "cross_stream_event",
+        label: "Cross-stream event detected",
+        provenance: "watch_session_correlation",
+        sessionCount: crossStreamEvent.sessionCount,
+        affectedChannels: crossStreamEvent.affectedChannels || []
+      }] : [])
+    ],
+    signals: {
+      visualAction: null,
+      completePayoff: null,
+      deadAir: null,
+      menuScreen: null,
+      needsScoring: true
+    },
+    decision: "review",
+    decisionReason: hasPlayableSource
+      ? "Recording window captured for operator review. Automatic good/bad scoring is the next layer."
+      : "Source is live metadata only. Agent 101 is waiting for playable media before quality scoring.",
+    status: hasPlayableSource ? "candidate" : "source_pending",
+    createdBy: "Agent 101",
+    createdAt: now(),
+    updatedAt: now()
+  };
+  const scored = hasPlayableSource
+    ? evaluateCandidateQuality(base, mission, capabilities)
+    : scoreClipMoment(base);
+  return {
+    ...base,
+    ...scored,
+    reason: base.reason,
+    decisionReason: hasPlayableSource ? scored.decisionReason : base.decisionReason,
+    status: hasPlayableSource ? "candidate" : "source_pending",
+    confidence: hasPlayableSource ? scored.confidence : "source pending",
+    scoringProvider: hasPlayableSource ? scored.scoringProvider : scored.scoringProvider || "source_pending",
+    suggestedHook: watchWindowTrigger === "chat_keyword" && watchWindowKeywords.length
+      ? `Keyword-driven moment for ${streamerName}`
+      : sourceChatSpike
+        ? `Chat popped for ${streamerName}`
+        : audioEnergy?.isLoudMoment ? `${streamerName} got loud` : `Review ${streamerName}`,
+    suggestedTitle: `${streamerName} live window ${windowIndex + 1}`
+  };
+}
+
+async function ensureWatchRecordingWindowCandidates(session, { streamer, mission, capabilities, source }) {
+  pruneSingleWatchLiveWindowCandidatesForSession(session, "single_watch_candidate_cleanup");
+  const existing = recordingWindowCandidatesForSession(session.id);
+  const activeExisting = activeLiveRecordingWindowCandidates(session.id);
+  const existingIndexes = new Set(existing.map((candidate) => Number(candidate.recordingWindowIndex)).filter(Number.isFinite));
+  const activeIndexes = new Set(activeExisting.map((candidate) => Number(candidate.recordingWindowIndex)).filter(Number.isFinite));
+  const deletedIndexes = deletedRecordingWindowIndexSet(session);
+  const targetIndexes = targetRecordingWindowIndexes(session);
+  const activeIndexesArray = Array.from(activeIndexes).filter((value) => Number.isFinite(value));
+  const singleWatchWindowMode = shouldTreatAsSingleWatch();
+  if (singleWatchWindowMode && activeIndexesArray.length) {
+    const keepIndex = Math.max(...activeIndexesArray);
+    targetIndexes.splice(0);
+    targetIndexes.push(keepIndex);
+  }
+  const sourceWindowIndex = Number(source?.recordingWindowIndex);
+  if (Number.isFinite(sourceWindowIndex) && !targetIndexes.includes(sourceWindowIndex)) {
+    targetIndexes.push(sourceWindowIndex);
+  }
+  const orderedTargetIndexes = Array.from(new Set(targetIndexes)).filter(Number.isFinite).sort((a, b) => Number(b) - Number(a));
+  const created = [];
+  const nowMs = Date.now();
+  const maxPerTick = Math.max(1, Number(config.watchCandidateMaxPerTick || 1));
+  const cappedMaxPerTick = singleWatchWindowMode ? 1 : maxPerTick;
+  const activeCap = singleWatchWindowMode
+    ? 1
+    : Math.max(0, Number(config.watchCandidateMaxActivePerSession || 1));
+  const maxActiveRemaining = Math.max(0, activeCap - activeExisting.length);
+  const unresolvedCandidates = unresolvedLiveRecordingCandidates(session.id);
+  const unresolvedCap = singleWatchWindowMode
+    ? 1
+    : Math.max(0, Number(config.watchCandidateUnresolvedCap || 1));
+  const maxUnresolvedRemaining = Math.max(0, unresolvedCap - unresolvedCandidates.length);
+  const withinCooldown = config.watchCandidateCooldownMs > 0
+    && Number(session.lastWatchCandidateAt || 0) > 0
+    && nowMs - Number(session.lastWatchCandidateAt || 0) < Number(config.watchCandidateCooldownMs);
+  let candidatesToCreate = Math.max(0, Math.min(cappedMaxPerTick, maxActiveRemaining, maxUnresolvedRemaining));
+  if (withinCooldown || candidatesToCreate <= 0) return existing;
+  let telemetryUpdated = false;
+  for (const index of orderedTargetIndexes) {
+    if (candidatesToCreate <= 0) break;
+    if (existingIndexes.has(index)) continue;
+    if (deletedIndexes.has(index)) continue;
+    const sourceMatchesIndex = source?.sourceType !== "watcher_buffer"
+      || (source?.watchSessionId === session.id && Number(source?.recordingWindowIndex) === Number(index));
+    if (!capabilities.hasLiveVideo || !source?.filePath || !sourceMatchesIndex) {
+      const previousTelemetry = (session.recordingWindows || []).find((item) => Number(item.index) === Number(index));
+      const telemetry = upsertRecordingWindowTelemetry(session, {
+        index,
+        startSeconds: index * WATCH_RECORDING_WINDOW_SECONDS,
+        endSeconds: (index + 1) * WATCH_RECORDING_WINDOW_SECONDS,
+        durationSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+        status: session.captureStatus === "blocked" ? "capture_blocked" : session.captureStatus === "capturing" ? "capturing" : "awaiting_source",
+        message: !sourceMatchesIndex && capabilities.hasLiveVideo
+          ? "Waiting for this exact watch window to be captured."
+          : session.captureMessage || "Waiting for the local recorder to attach a playable video buffer."
+      });
+      telemetryUpdated = Boolean(telemetry) || telemetryUpdated;
+      if (!previousTelemetry || previousTelemetry.status !== telemetry?.status || previousTelemetry.message !== telemetry?.message) {
+        await appendWatchEvent(session.id, "recording_window_waiting_for_source", {
+          windowId: telemetry?.id || "",
+          recordingWindowIndex: index,
+          startSeconds: telemetry?.startSeconds,
+          endSeconds: telemetry?.endSeconds,
+          status: telemetry?.status,
+          message: telemetry?.message
+        });
+      }
+      continue;
+    }
+    const candidate = buildWatchRecordingCandidate(session, { streamer, mission, capabilities, source, windowIndex: index });
+    const watchWindowTrigger = cleanText(candidate.watchWindowTrigger || source?.watchWindowTrigger || "");
+    const candidateScore = Number(candidate.score || 0);
+    const triggerCanCreateCandidate = ["chat_spike", "chat_keyword", "tension_emote_prediction"].includes(watchWindowTrigger)
+      || watchWindowTrigger.startsWith("eventsub_");
+    if (!triggerCanCreateCandidate && source?.sourceType === "watcher_buffer") {
+      upsertRecordingWindowTelemetry(session, {
+        index,
+        startSeconds: candidate.liveWindowStartSeconds,
+        endSeconds: candidate.liveWindowEndSeconds,
+        durationSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+        status: "source_pending",
+        message: "Watch window skipped because trigger was not a chat spike or keyword match."
+      });
+      await appendWatchEvent(session.id, "recording_window_skipped", {
+        candidateId: `${session.id}:${index}`,
+        reason: "Window skipped to avoid low-quality auto-capture noise.",
+        watchWindowTrigger
+      });
+      continue;
+    }
+    if (Number.isFinite(candidateScore) && candidateScore < config.twitchClipMinScore) {
+      candidate.lowSignalReview = true;
+      candidate.decision = candidate.decision === "accepted" ? "review" : candidate.decision;
+      candidate.decisionReason = `${candidate.decisionReason || "Saved MP4 needs operator review."} Signal is ${candidateScore}/${config.twitchClipMinScore}, so it will not auto-stage.`;
+      await appendWatchEvent(session.id, "recording_window_low_score", {
+        candidateId: candidate.id,
+        sourceId: candidate.sourceId,
+        score: candidateScore,
+        minScore: config.twitchClipMinScore,
+        message: "Saved MP4 is visible for review but below the auto-stage threshold."
+      });
+    }
+    state.clipCandidates.unshift(candidate);
+    candidatesToCreate -= 1;
+    session.lastWatchCandidateAt = nowMs;
+    upsertRecordingWindowTelemetry(session, {
+      index,
+      startSeconds: candidate.liveWindowStartSeconds,
+      endSeconds: candidate.liveWindowEndSeconds,
+      durationSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+      status: "source_ready",
+      sourceId: candidate.sourceId,
+      candidateId: candidate.id,
+      message: "Saved local buffer is now a Clip Radar candidate."
+    });
+    created.push(candidate);
+    await appendWatchEvent(session.id, "recording_window_created", {
+      candidateId: candidate.id,
+      title: candidate.title,
+      startSeconds: candidate.startSeconds,
+      endSeconds: candidate.endSeconds,
+      windowSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+      bufferStatus: candidate.bufferStatus,
+      message: "Agent 101 logged a 30-second clip window for later scoring."
+    });
+    await appendWatchEvent(session.id, "candidate_review", {
+      candidateId: candidate.id,
+      title: candidate.title,
+      score: candidate.score,
+      reason: candidate.decisionReason
+    });
+    if (candidate.decision === "accepted" && Number(candidate.score || 0) >= config.twitchClipMinScore) {
+      await createOfficialTwitchClip(streamer, candidate);
+    }
+  }
+  if (created.length) {
+    const sessionCandidates = state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id);
+    session.candidatesDetected = sessionCandidates.length;
+    session.candidatesReview = sessionCandidates.filter((candidate) => candidate.decision === "review").length;
+    session.lastCandidateAt = now();
+    session.currentStage = `Recording ${WATCH_RECORDING_WINDOW_SECONDS}s clip windows`;
+    session.updatedAt = now();
+    await logEvent("recording_windows_created", "Agent 101 created 30-second watch windows", {
+      sessionId: session.id,
+      streamerId: session.streamerId,
+      created: created.length,
+      total: session.candidatesDetected,
+      windowSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+      sourcePending: !capabilities.hasLiveVideo
+    });
+    await saveState();
+  } else if (telemetryUpdated) {
+    session.currentStage = session.captureStatus === "capturing" ? "Saving local clip buffer" : "Waiting for local clip recorder";
+    session.updatedAt = now();
+    await saveState();
+  }
+  return [...created, ...existing];
+}
+
+async function ensureActiveWatchSessionCandidateCoverage(reason = "api_refresh") {
+  const created = [];
+  if (shouldTreatAsSingleWatch()) {
+    const preferredStreamerId = preferredSingleWatchTarget();
+    if (preferredStreamerId) await enforceSingleWatchedStreamer(preferredStreamerId, `${reason}_single_watch_enforcement`);
+  }
+  const migrated = migrateMetadataOnlyRecordingWindowsOutOfRadar(reason);
+  if (migrated) await saveState();
+  for (const session of activeWatchSessions()) {
+    if (!isWatchSessionActive(session) || session.status === "paused") continue;
+    const beforeIds = new Set(state.clipCandidates.map((candidate) => candidate.id));
+    pruneLiveWindowsForStreamerBeforeWatchStart(session.streamerId, reason, session.id, { forceSingleWatch: true });
+    startWatchWorker(session.id);
+    await ensureWatchSessionCandidates(session);
+    const newCandidates = state.clipCandidates.filter((candidate) =>
+      candidate.watchSessionId === session.id && !beforeIds.has(candidate.id)
+    );
+    if (!newCandidates.length) continue;
+    created.push(...newCandidates);
+    const windowIndexes = newCandidates.map((candidate) => Number(candidate.recordingWindowIndex)).filter(Number.isFinite);
+    await appendWatchEvent(session.id, "candidate_coverage_repaired", {
+      reason,
+      created: newCandidates.length,
+      newestWindowIndex: windowIndexes.length ? Math.max(...windowIndexes) : null,
+      message: "Active monitor had missing current recording windows, so Agent 101 restored live Clip Radar coverage."
+    });
+  }
+  if (created.length) await saveState();
+  return created;
+}
+
 async function claimWatchSession(session) {
   if (!session || TERMINAL_WATCH_STATUSES.has(session.status) || session.status === "paused") return false;
   const leaseExpiresAt = session.leaseExpiresAt ? new Date(session.leaseExpiresAt).getTime() : 0;
@@ -843,28 +3222,77 @@ async function runWatchWorkerTick(sessionId) {
     const session = state.watchSessions.find((item) => item.id === sessionId);
     if (!session || TERMINAL_WATCH_STATUSES.has(session.status) || session.status === "paused") {
       stopWatchWorkerTimer(sessionId);
+      stopChatMonitorForSession(sessionId);
       return;
     }
     if (!(await claimWatchSession(session))) return;
-    const capabilities = state.sourceCapabilities.find((item) => item.watchSessionId === session.id) || null;
+    let capabilities = state.sourceCapabilities.find((item) => item.watchSessionId === session.id) || null;
     session.heartbeatAt = now();
     session.leaseExpiresAt = new Date(Date.now() + WATCH_LEASE_MS).toISOString();
     session.analyzedSeconds = Number(session.analyzedSeconds || 0) + Math.round(WATCH_TICK_MS / 1000);
     session.lastMediaAt = capabilities?.hasLiveVideo ? now() : session.lastMediaAt;
     session.updatedAt = now();
+    const streamer = state.streamers.find((item) => item.id === session.streamerId);
+    const lastLiveCheckMs = session.lastOfficialLiveCheckAt ? Date.parse(session.lastOfficialLiveCheckAt) || 0 : 0;
+    if (streamer && ["twitch", "kick"].includes(streamer.platform) && Date.now() - lastLiveCheckMs > 60000) {
+      session.lastOfficialLiveCheckAt = now();
+      try {
+        const liveCheck = await checkStreamerLive(streamer);
+        if (liveCheck.live === false) {
+          await appendWatchEvent(session.id, "stream_offline_detected", {
+            streamerId: streamer.id,
+            provider: streamer.platform,
+            message: "Official provider check says the streamer is offline. Watcher stopped to avoid wasted work."
+          });
+          await stopWatchSession(session.id, "stream_ended", { reason: "provider_offline" });
+          return;
+        }
+      } catch (error) {
+        await appendWatchEvent(session.id, "stream_live_check_failed", {
+          streamerId: streamer.id,
+          provider: streamer.platform,
+          message: error.message
+        });
+      }
+    }
     await appendWatchEvent(session.id, "watcher_heartbeat", {
       heartbeatAt: session.heartbeatAt,
       workerId: session.workerId,
       analyzedSeconds: session.analyzedSeconds,
       health: watchSessionHealth(session)
     });
+    const recentTension = isRecentTimestamp(session.tensionDetectedAt, 45000);
+    if (recentTension) {
+      session.lastCaptureTrigger = "tension_emote_prediction";
+      session.lastCaptureTriggerAt = now();
+    }
+    const crossStreamEvent = detectCrossStreamEvent();
+    if (crossStreamEvent.isCrossStreamEvent) {
+      session.crossStreamEvent = crossStreamEvent;
+      await appendWatchEvent(session.id, "cross_stream_event_detected", {
+        sessionCount: crossStreamEvent.sessionCount,
+        affectedSessionIds: crossStreamEvent.affectedSessionIds,
+        affectedChannels: crossStreamEvent.affectedChannels || [],
+        message: "Cross-stream spike detected. Candidate scoring will receive an external-event boost."
+      });
+      await broadcastCrossStreamEvent(crossStreamEvent);
+    }
     if (capabilities?.hasLiveVideo && Number(session.candidatesDetected || 0) === 0) {
       await appendWatchEvent(session.id, "signal_detected", {
         signal: "verified_media_ready",
         message: "Verified backend media is ready for quality-gated candidate evaluation."
       });
-      await ensureWatchSessionCandidates(session);
     }
+    let capturedSource = null;
+    if (!capabilities?.hasLiveVideo) {
+      const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || ensureClipMission(streamer);
+      capturedSource = await maybeCaptureCurrentWatchWindow(session, { streamer, mission });
+      if (capturedSource) {
+        capabilities = capabilitiesForWatchSource({ session, source: capturedSource, streamer });
+      }
+    }
+    await ensureWatchSessionCandidates(session);
+    if (capturedSource) await autoStageCapturedCandidatesForBuilder(session, capturedSource, session.lastCaptureTrigger || "watch_capture");
     await saveState();
   } finally {
     watchWorkerBusy.delete(sessionId);
@@ -880,6 +3308,20 @@ async function runWatchWorkerTick(sessionId) {
 
 function startWatchWorker(sessionId) {
   if (watchWorkerTimers.has(sessionId)) return;
+  const session = state.watchSessions.find((item) => item.id === sessionId);
+  if (session) {
+    startChatMonitorForSession(session);
+    if (session.mode === "real") {
+      const streamer = findStreamer(session.streamerId);
+      subscribeToEventSub(streamer).catch((error) => {
+        addStateLog("eventsub_subscribe_error", "Twitch EventSub subscription setup failed", {
+          sessionId,
+          streamerId: streamer?.id || "",
+          error: error.message
+        });
+      });
+    }
+  }
   watchWorkerTimers.set(sessionId, setTimeout(() => runWatchWorkerTick(sessionId).catch((error) => {
     addStateLog("watch_worker_error", "Watch worker failed", { sessionId, error: error.message });
   }), 250));
@@ -930,11 +3372,18 @@ async function startWatchSession(body = {}) {
     idempotencyKey
   });
   if (existing) {
+    pruneLiveWindowsForStreamerBeforeWatchStart(streamer.id, "watch_session_reused", existing.id, { forceSingleWatch: true });
+    purgeUnresolvedLiveWindowCandidatesForSession(existing, "watch_session_reused");
+    if (mode === "real") await enforceSingleWatchedStreamer(streamer.id, "watch_session_reused");
     startWatchWorker(existing.id);
     return { session: publicWatchSession(existing), reused: true, events: watchEventsFor(existing.id), summary: watchSessionSummary(existing) };
   }
 
+  pruneLiveWindowsForStreamerBeforeWatchStart(streamer.id, "watch_session_start", "", { forceSingleWatch: true });
+
   if (mode === "real") {
+    streamer.monitorEnabled = true;
+    streamer.monitorPausedAt = null;
     if (!isRealApprovedStreamer(streamer)) {
       throw Object.assign(new Error("Real watch requires an approved, monitored streamer."), { statusCode: 403 });
     }
@@ -943,13 +3392,18 @@ async function startWatchSession(body = {}) {
       official: Boolean(streamer.platform === "twitch" || streamer.platform === "kick"),
       reason: error.message
     }));
-    if (liveCheck.stream) {
-      streamer.liveStatus = "live";
-      streamer.liveTitle = liveCheck.stream.title || streamer.liveTitle;
-      streamer.liveCategory = liveCheck.stream.game_name || streamer.liveCategory;
-      streamer.liveViewerCount = Number(liveCheck.stream.viewer_count || streamer.liveViewerCount || 0);
-      streamer.lastCheckedAt = now();
+    if (!liveCheck?.stream) {
+      await stopOfflineWatchSessionsForStreamer(streamer, liveCheck?.reason || "live_check_not_live");
+      throw Object.assign(new Error(liveCheck?.reason || "Streamer is offline. Watcher was not started."), {
+        statusCode: liveCheck?.official ? 409 : 400
+      });
     }
+    streamer.liveStatus = "live";
+    streamer.liveTitle = liveCheck.stream.title || streamer.liveTitle;
+    streamer.liveCategory = liveCheck.stream.game_name || streamer.liveCategory;
+    streamer.liveViewerCount = Number(liveCheck.stream.viewer_count || streamer.liveViewerCount || 0);
+    streamer.lastCheckedAt = now();
+    await enforceSingleWatchedStreamer(streamer.id, "watch_session_start");
   }
 
   const created = now();
@@ -974,6 +3428,7 @@ async function startWatchSession(body = {}) {
     lastMediaAt: null,
     lastSignalAt: null,
     lastCandidateAt: null,
+    lastWatchCandidateAt: 0,
     stoppedAt: null,
     reconnectCount: 0,
     analyzedSeconds: 0,
@@ -1015,6 +3470,7 @@ async function pauseWatchSession(sessionId) {
   session.leaseExpiresAt = null;
   session.updatedAt = now();
   stopWatchWorkerTimer(session.id);
+  stopChatMonitorForSession(session.id);
   await appendWatchEvent(session.id, "session_paused", { reason: "operator_pause" });
   return publicWatchSession(session);
 }
@@ -1033,7 +3489,7 @@ async function resumeWatchSession(sessionId) {
   return publicWatchSession(session);
 }
 
-async function stopWatchSession(sessionId, status = "cancelled") {
+async function stopWatchSession(sessionId, status = "cancelled", details = {}) {
   const session = state.watchSessions.find((item) => item.id === sessionId);
   if (!session) throw Object.assign(new Error("Watch session not found"), { statusCode: 404 });
   session.status = status;
@@ -1042,9 +3498,132 @@ async function stopWatchSession(sessionId, status = "cancelled") {
   session.stoppedAt = now();
   session.updatedAt = now();
   stopWatchWorkerTimer(session.id);
-  await appendWatchEvent(session.id, status === "stream_ended" ? "stream_ended" : "session_stopped", { status });
+  stopChatMonitorForSession(session.id);
+  const streamer = findStreamer(session.streamerId);
+  if (streamer) {
+    if (details.operatorAction || /^operator_stop/.test(String(details.reason || ""))) {
+      streamer.monitorEnabled = false;
+      streamer.monitorPausedAt = now();
+      streamer.updatedAt = now();
+    }
+    await unsubscribeEventSub(streamer).catch((error) => {
+      addStateLog("eventsub_unsubscribe_error", "Twitch EventSub unsubscribe failed", {
+        sessionId: session.id,
+        streamerId: streamer.id,
+        error: error.message
+      });
+    });
+  }
+  await appendWatchEvent(session.id, status === "stream_ended" ? "stream_ended" : "session_stopped", { status, ...details });
   await saveState();
   return publicWatchSession(session);
+}
+
+async function stopOtherActiveWatchSessions(preferredSessionId = "", reason = "operator_stop_single_watch") {
+  const preferredId = cleanText(preferredSessionId);
+  const stoppedSessions = [];
+  const sessions = activeWatchSessions().filter((session) => session.id !== preferredId);
+  for (const session of sessions) {
+    const stopped = await stopWatchSession(session.id, "cancelled", {
+      reason,
+      operatorAction: true,
+      preferredSessionId: preferredId,
+      message: "Stopped because the operator stopped the single-agent watch loop."
+    });
+    stoppedSessions.push(stopped);
+  }
+  return stoppedSessions;
+}
+
+async function enforceSingleWatchedStreamer(preferredStreamerId = "", reason = "single_stream_limit") {
+  const preferredId = cleanText(preferredStreamerId);
+  const stoppedSessions = [];
+  const pausedStreamers = [];
+  for (const streamer of state.streamers || []) {
+    if (preferredId && streamer.id === preferredId) continue;
+    if (!streamer.monitorEnabled) continue;
+    streamer.monitorEnabled = false;
+    streamer.monitorPausedAt = now();
+    streamer.updatedAt = now();
+    pausedStreamers.push(streamer.id);
+  }
+  const sessions = activeWatchSessions().filter((session) => !preferredId || session.streamerId !== preferredId);
+  for (const session of sessions) {
+    const stopped = await stopWatchSession(session.id, "cancelled", {
+      reason,
+      preferredStreamerId: preferredId,
+      message: "Stopped because StreamClipper now watches only one streamer at a time."
+    });
+    stoppedSessions.push(stopped.id || session.id);
+  }
+  if (pausedStreamers.length || stoppedSessions.length) {
+    await logEvent("single_stream_enforced", "Paused extra stream monitors so only one streamer is watched", {
+      preferredStreamerId: preferredId,
+      reason,
+      pausedStreamers,
+      stoppedSessions
+    });
+  }
+  return { pausedStreamers, stoppedSessions };
+}
+
+async function stopOfflineWatchSessionsForStreamer(streamer, reason = "provider_offline") {
+  if (!streamer?.id) return [];
+  const sessions = activeWatchSessions().filter((session) => session.streamerId === streamer.id);
+  const stopped = [];
+  for (const session of sessions) {
+    const publicSession = await stopWatchSession(session.id, "stream_ended", {
+      reason,
+      streamerId: streamer.id,
+      provider: streamer.platform,
+      message: "Provider API reported the streamer offline, so the local watch loop stopped."
+    });
+    stopped.push(publicSession);
+  }
+  if (stopped.length) {
+    await logEvent("watch_stopped_offline", "Stopped watch sessions for offline streamer", {
+      streamerId: streamer.id,
+      streamerName: streamer.displayName,
+      provider: streamer.platform,
+      stopped: stopped.length,
+      reason
+    });
+  }
+  return stopped;
+}
+
+async function removeStreamerFromWatchlist(streamerId, reason = "operator_delete_streamer") {
+  const id = cleanText(streamerId);
+  const index = state.streamers.findIndex((streamer) => streamer.id === id);
+  if (index < 0) {
+    const error = new Error("Streamer not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const [removed] = state.streamers.splice(index, 1);
+  const stoppedSessions = [];
+  const sessions = activeWatchSessions().filter((session) => session.streamerId === removed.id);
+  for (const session of sessions) {
+    const stopped = await stopWatchSession(session.id, "cancelled", {
+      reason,
+      streamerId: removed.id,
+      message: "Stopped because the streamer was removed from the watchlist."
+    });
+    stoppedSessions.push(stopped.id || session.id);
+  }
+  await unsubscribeEventSub(removed).catch((error) => {
+    addStateLog("eventsub_unsubscribe_error", "Twitch EventSub unsubscribe failed during streamer delete", {
+      streamerId: removed.id,
+      error: error.message
+    });
+  });
+  await logEvent("streamer_deleted", "Streamer removed from watchlist", {
+    streamerId: removed.id,
+    streamerName: removed.displayName || "",
+    stoppedSessions: stoppedSessions.length,
+    reason
+  });
+  return { deleted: true, streamer: removed, streamerId: removed.id, stoppedSessions };
 }
 
 async function recoverWatchSessions() {
@@ -1063,6 +3642,33 @@ async function recoverWatchSessions() {
         reconnectCount: session.reconnectCount
       });
       startWatchWorker(session.id);
+    }
+  }
+  await saveState();
+}
+
+async function recoverApprovedLiveMonitors() {
+  for (const streamer of state.streamers || []) {
+    const shouldRecover = streamer.permissionStatus === "approved"
+      && ["twitch", "kick"].includes(streamer.platform)
+      && liveProviderConfigured(streamer.platform)
+      && streamer.liveStatus === "live"
+      && !streamer.monitorEnabled
+      && !streamer.monitorPausedAt;
+    if (!shouldRecover) continue;
+    try {
+      assertWatchCapacity({ monitorEnabled: true, permissionStatus: "approved", excludeId: streamer.id });
+      streamer.monitorEnabled = true;
+      streamer.updatedAt = now();
+      await logEvent("watch_auto_enabled", "Approved live streamer monitoring recovered on startup", {
+        streamerId: streamer.id
+      });
+      await startLiveWatchForApprovedStreamer(streamer, "startup_recovery");
+    } catch (error) {
+      await logEvent("watch_auto_start_blocked", "Startup recovery could not enable approved live monitor", {
+        streamerId: streamer.id,
+        error: error.message
+      });
     }
   }
   await saveState();
@@ -1135,6 +3741,11 @@ function publicConfig() {
     aiMode: config.aiMode,
     openaiModel: config.openaiModel,
     openaiConfigured: Boolean(config.openaiApiKey),
+    anthropicModel: config.anthropicModel,
+    anthropicConfigured: Boolean(config.anthropicApiKey),
+    agent101OutputDirConfigured: Boolean(config.agent101OutputDir),
+    webSearchConfigured: Boolean(config.braveApiKey || config.serpApiKey),
+    imageGenerationConfigured: Boolean(config.dalleApiKey || config.openaiApiKey),
     openaiTestBudgetUsd: config.openaiTestBudgetUsd,
     twitchConfigured: twitchApiConfigured(),
     twitchRedirectConfigured: Boolean(config.twitchRedirectUri),
@@ -1143,12 +3754,25 @@ function publicConfig() {
     kickConfigured: kickApiConfigured(),
     kickOAuthTokenConfigured: Boolean(config.kickOAuthToken),
     postDailyLimit: config.postDailyLimit,
+    singleWatchMode: config.singleWatchMode,
+    maxWatchedStreamers: config.maxWatchedStreamers,
+    watchCandidateUnresolvedCap: config.watchCandidateUnresolvedCap,
+    watchTriggerKeywords: config.watchTriggerKeywords,
+    chatSpikeThreshold: config.chatSpikeThreshold,
+    chatWindowMs: config.chatWindowMs,
+    recordingWindowSeconds: WATCH_RECORDING_WINDOW_SECONDS,
+    streamWatchMode: config.singleWatchMode ? "single" : "pooled",
+    streamWatchCapacity: watchCapacity(),
     browserEnabled: config.browserEnabled,
     browserMode: config.browserHeadless ? "headless_screenshot" : "headed_local",
     browserViewport: config.browserViewport,
     capcutManualHandoff: Boolean(config.capcutHandoffUrl),
+    capcutAgentConfigured: Boolean(config.capcutHandoffUrl && config.browserEnabled),
+    capcutDownloadDirConfigured: Boolean(config.capcutDownloadDir),
     objectStorageConfigured: Boolean(config.objectStorageBucket),
     uploadDir: config.uploadDir,
+    watchBufferDir: config.watchBufferDir,
+    clipsFolder: config.watchBufferDir,
     outputDir: config.outputDir
   };
 }
@@ -1168,6 +3792,42 @@ function isPracticeStreamer(streamer) {
     || streamer?.platform === "demo"
     || /demo|practice/i.test(`${streamer?.id || ""} ${streamer?.sourceMode || ""}`)
   );
+}
+
+function watchedStreamerCount(excludeId = "") {
+  return state.streamers.filter((streamer) => (
+    streamer?.id !== excludeId
+    && streamer?.monitorEnabled
+    && isApprovedStreamer(streamer)
+    && !isPracticeStreamer(streamer)
+  )).length;
+}
+
+function watchCapacity(excludeId = "") {
+  const watching = watchedStreamerCount(excludeId);
+  const streamWatchModeHint = String(config.streamWatchMode || "").toLowerCase().trim();
+  const hasExplicitWatchMode = streamWatchModeHint === "single" || streamWatchModeHint === "pooled";
+  const enforceSingleWatch = hasExplicitWatchMode
+    ? streamWatchModeHint === "single"
+    : config.singleWatchMode !== false;
+  const limit = enforceSingleWatch ? 1 : config.maxWatchedStreamers;
+  return {
+    watching,
+    limit,
+    remaining: Math.max(0, limit - watching),
+    atLimit: watching >= limit
+  };
+}
+
+function assertWatchCapacity({ monitorEnabled, permissionStatus = "approved", excludeId = "" } = {}) {
+  if (!monitorEnabled || permissionStatus !== "approved") return;
+  const capacity = watchCapacity(excludeId);
+  if (capacity.atLimit) {
+    const error = new Error(`Stream watch capacity reached (${capacity.watching}/${capacity.limit}). Pause another monitored stream before adding more.`);
+    error.statusCode = 409;
+    error.details = capacity;
+    throw error;
+  }
 }
 
 function isPracticeSource(source) {
@@ -1467,14 +4127,17 @@ async function buildIntegrationMatrix() {
     integrationRecord({
       id: "capcut",
       name: "CapCut",
-      category: "handoff",
-      configured: Boolean(config.capcutHandoffUrl),
-      status: "manual_handoff",
-      mode: "operator_controlled",
-      message: "Agent 101 can prepare CapCut briefs and handoff files, but the operator controls CapCut.",
-      capabilities: ["Cut list", "Caption track", "Export checklist"],
-      blockedActions: ["No direct CapCut account operation"],
-      nextAction: "Open handoff when a verified package exists"
+      category: "automation",
+      configured: true,
+      status: config.anthropicApiKey || config.capcutAgentDryRun ? "desktop_control_ready" : "needs_anthropic_key",
+      mode: "desktop_app",
+      message: config.anthropicApiKey || config.capcutAgentDryRun
+        ? "Agent 101 can drive the native Mac CapCut app for verified clips. Export/download stays approval-gated and operator-controlled."
+        : "CapCut desktop automation needs ANTHROPIC_API_KEY for screenshot vision, unless dry run is enabled.",
+      missingConfig: config.anthropicApiKey || config.capcutAgentDryRun ? [] : ["ANTHROPIC_API_KEY"],
+      capabilities: ["Native CapCut app control", "Verified clip import", "9:16 setup", "Blur background", "Auto reframe", "Brand sticker placement", "Export approval package"],
+      blockedActions: ["Credential entry", "Account settings", "Payment", "Export/download automation", "Posting without Human Gate"],
+      nextAction: "Render a verified clip, then run CapCut Agent desktop edit"
     }),
     integrationRecord({
       id: "posting-platforms",
@@ -1642,7 +4305,7 @@ async function buildReadinessAudit() {
       "Real source capture still requires verified provider permission and playable source records before candidates become production candidates.",
       "Direct publishing/uploading remains intentionally unimplemented and Human Gate blocked.",
       "Database and object storage migration are needed before multi-user production traffic.",
-      "CapCut is manual handoff until a connector design is approved."
+      "CapCut export/download and publishing remain Human Gate gated even when desktop staging is ready."
     ],
     secretsExposed: false
   };
@@ -1659,9 +4322,9 @@ function isApprovedStreamer(streamer) {
 function isRealApprovedStreamer(streamer) {
   if (!streamer || streamer.isDemo || streamer.permissionStatus !== "approved") return false;
   if (!["twitch", "kick"].includes(streamer.platform)) return false;
-  const allowed = streamer.allowedUse;
-  if (Array.isArray(allowed)) return allowed.includes("clips") || allowed.includes("createOfficialClip") || allowed.includes("editClip");
-  return Boolean(allowed?.createOfficialClip || allowed?.downloadClip || allowed?.editClip || allowed?.repostClip);
+  const allowed = normalizeAllowedUse(streamer.allowedUse);
+  if (streamer.permissionStatus === "approved" && !allowed.length) return true;
+  return allowed.includes("clips") || allowed.includes("createOfficialClip") || allowed.includes("editClip");
 }
 
 function isSafeInternalDraftSource(source = {}) {
@@ -2032,6 +4695,214 @@ function artifactIsVerifiedClip(artifact) {
   return Boolean(artifact.path && content.sha256 && ["passed", "verified"].includes(content.probeStatus));
 }
 
+function publicCapcutAgentSession(session) {
+  if (!session) return null;
+  return {
+    id: session.id,
+    sessionId: session.sessionId,
+    clipId: session.clipId,
+    renderedArtifactId: session.renderedArtifactId,
+    browserSessionId: session.browserSessionId || "",
+    title: session.title || "CapCut edit",
+    status: session.status,
+    stage: session.stage,
+    dryRun: Boolean(session.dryRun),
+    exportReady: Boolean(session.exportReady),
+    loginApprovalId: session.loginApprovalId || "",
+    exportApprovalId: session.exportApprovalId || "",
+    completedPhases: session.completedPhases || [],
+    events: (session.events || []).slice(-25),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    completedAt: session.completedAt || null,
+    lastError: session.lastError || ""
+  };
+}
+
+function approvalById(id) {
+  return state.approvalRequests.find((item) => item.id === cleanText(id)) || null;
+}
+
+function approvedApproval(id, type = "") {
+  const approval = approvalById(id);
+  if (!approval || approval.status !== "approved") return null;
+  if (type && approval.type !== type) return null;
+  return approval;
+}
+
+function candidateIsPractice(candidate) {
+  if (!candidate) return false;
+  const refs = practiceReferenceSets();
+  return refs.candidateIds.has(candidate.id) || isPracticeStreamer(state.streamers.find((item) => item.id === candidate.streamerId));
+}
+
+function resolveCapcutClipReference(input = {}) {
+  const clipId = cleanText(input.clip_id || input.clipId || input.candidateId);
+  const candidate = state.clipCandidates.find((item) => item.id === clipId);
+  if (!candidate) {
+    const error = new Error("Clip candidate not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+  const clipPackage = state.clipPackages.find((item) => item.candidateId === candidate.id);
+  const artifactId = cleanText(input.rendered_artifact_id || input.renderedArtifactId || input.artifactId || candidate.renderedArtifactId || clipPackage?.renderedArtifactId);
+  const artifact = state.artifacts.find((item) => item.id === artifactId);
+  if (!artifactIsVerifiedClip(artifact)) {
+    const error = new Error("CapCut Agent requires a verified rendered MP4 before upload.");
+    error.statusCode = 422;
+    error.details = { clipId: candidate.id, artifactId: artifactId || null, renderRequired: true };
+    throw error;
+  }
+  return { candidate, clipPackage, artifact };
+}
+
+function rememberCapcutAgentSession(session) {
+  state.capcutAgentSessions ||= [];
+  const index = state.capcutAgentSessions.findIndex((item) => item.sessionId === session.sessionId);
+  if (index >= 0) state.capcutAgentSessions[index] = session;
+  else state.capcutAgentSessions.unshift(session);
+  state.capcutAgentSessions = state.capcutAgentSessions.slice(0, 100);
+  return session;
+}
+
+async function addCapcutAgentEvent(session, event, payload = {}) {
+  const entry = {
+    id: newId("capcut_event"),
+    event,
+    phase: payload.phase || event,
+    status: payload.status || "running",
+    message: payload.message || "",
+    createdAt: payload.createdAt || now(),
+    ...payload
+  };
+  session.events ||= [];
+  session.events.push(entry);
+  session.events = session.events.slice(-100);
+  session.updatedAt = now();
+  rememberCapcutAgentSession(session);
+  emitCapcutAgentStream(session.sessionId, "capcut_agent_step", entry);
+  await saveState();
+  return entry;
+}
+
+async function runCapcutEditClip(input = {}, context = {}) {
+  let candidate = null;
+  let clipPackage = null;
+  let artifact = null;
+  let clipPath = cleanText(input.clipPath || input.clip_path);
+  if (!clipPath) {
+    ({ candidate, clipPackage, artifact } = resolveCapcutClipReference(input));
+    clipPath = artifact.path;
+  } else {
+    const clipIdForLookup = cleanText(input.clip_id || input.clipId || input.candidateId);
+    candidate = state.clipCandidates.find((item) => item.id === clipIdForLookup) || null;
+    clipPackage = candidate ? state.clipPackages.find((item) => item.candidateId === candidate.id) || null : null;
+    const artifactId = cleanText(input.rendered_artifact_id || input.renderedArtifactId || input.artifactId);
+    artifact = state.artifacts.find((item) => item.id === artifactId) || null;
+  }
+  const editSpec = input.edit_spec && typeof input.edit_spec === "object" ? input.edit_spec : {};
+  const sourceProvenance = cleanText(input.sourceProvenance || input.source_provenance || artifact?.provenance || artifact?.content?.provenance);
+  const practice = candidateIsPractice(candidate) || /PRACTICE/i.test(sourceProvenance);
+  if (practice && input.practice_confirmed !== true) {
+    const error = new Error("Practice clips are blocked until the operator explicitly confirms practice media.");
+    error.statusCode = 409;
+    error.details = { clipId: candidate?.id || input.clipId || input.clip_id || "unknown", practice: true };
+    throw error;
+  }
+
+  const sessionId = cleanText(input.capcut_session_id || input.sessionId) || newId("capcut_session");
+  const clipId = cleanText(input.clipId || input.clip_id || input.candidateId || candidate?.id || artifact?.id || path.basename(clipPath));
+  const title = `${candidate?.title || clipPackage?.title || artifact?.title || clipId || "Clip"} -> CapCut Desktop`;
+  const requestedDryRun = Boolean(input.dry_run && (
+    config.enableSyntheticTestFixtures
+    || process.env.APP_MODE === "local"
+    || process.env.NODE_ENV === "test"
+  ));
+  let session = state.capcutAgentSessions.find((item) => item.sessionId === sessionId) || {
+    id: newId("capcut_agent"),
+    sessionId,
+    clipId,
+    clipPackageId: clipPackage?.id || "",
+    renderedArtifactId: artifact?.id || "",
+    title,
+    status: "queued",
+    stage: "desktop_preflight",
+    dryRun: requestedDryRun || config.capcutAgentDryRun,
+    exportReady: false,
+    mode: "desktop",
+    events: [],
+    createdAt: now(),
+    updatedAt: now()
+  };
+  session.clipId = clipId;
+  session.clipPackageId = clipPackage?.id || "";
+  session.renderedArtifactId = artifact?.id || "";
+  session.title = title;
+  session.editSpec = editSpec;
+  session.mode = "desktop";
+  session.dryRun = requestedDryRun || config.capcutAgentDryRun;
+  session.sourcePath = clipPath;
+  rememberCapcutAgentSession(session);
+
+  try {
+    session.status = "running";
+    session.stage = "desktop_editing";
+    rememberCapcutAgentSession(session);
+    await addCapcutAgentEvent(session, "capcut_agent_started", {
+      phase: "open_capcut",
+      status: "running",
+      message: "Opening CapCut desktop app."
+    });
+    const run = await runCapcutDesktopEdit({
+      ...editSpec,
+      clipPath,
+      clipId,
+      brandSticker: input.brandSticker || input.brand_sticker || editSpec.brandSticker || config.capcutBrandSticker || process.env.CAPCUT_BRAND_STICKER || "Essentrx",
+      stickerScale: input.stickerScale || input.sticker_scale || editSpec.stickerScale || 35
+    }, {
+      sessionId: session.sessionId,
+      dryRun: session.dryRun,
+      client: context.anthropicClient || (config.anthropicApiKey ? new Anthropic({ apiKey: config.anthropicApiKey }) : null),
+      onStep: async (entry) => addCapcutAgentEvent(session, "capcut_agent_step", entry)
+    });
+    session.completedPhases = run.completedPhases || run.steps?.map((item) => item.phase) || [];
+    session.exportReady = Boolean(run.exportReady);
+    session.status = "operator_review";
+    session.stage = "operator_review";
+    session.exportApprovalId = "";
+    rememberCapcutAgentSession(session);
+    await addCapcutAgentEvent(session, "operator_review_ready", {
+      phase: "operator_review",
+      status: "complete",
+      message: "CapCut desktop edit is ready for operator review. Export/upload automation is disabled."
+    });
+  } catch (error) {
+    session.status = "error";
+    session.stage = "desktop_editing";
+    session.lastError = error.message;
+    rememberCapcutAgentSession(session);
+    await addCapcutAgentEvent(session, "capcut_agent_error", {
+      phase: "desktop_editing",
+      status: "error",
+      message: error.message
+    });
+    await saveState();
+    return { error: true, message: error.message, session: publicCapcutAgentSession(session) };
+  }
+
+  await saveState();
+  return {
+    requiresApproval: false,
+    approvalType: "",
+    approvalRequest: null,
+    session: publicCapcutAgentSession(session),
+    executed: true,
+    exportResult: { downloaded: false, desktopExportAutomation: false },
+    postingDraftCreated: false,
+    message: "CapCut desktop edit is ready for operator review. No Human Gate approval is required for this local edit. Export/upload remains manual."
+  };
+}
+
 function assertPostingDraftHasRealClip(draft) {
   const artifact = state.artifacts.find((item) => item.id === draft?.clipArtifactId || item.id === draft?.videoRef);
   if (!artifactIsVerifiedClip(artifact)) throw new Error("Posting draft blocked: verified rendered clip artifact is required.");
@@ -2063,25 +4934,49 @@ function scoreClipMoment(input = {}) {
   ];
   const excitementHits = excitementWords.filter((word) => text.includes(word)).length;
   const chatSpike = Number(input.chatSignals?.spike || input.chatSignals?.messagesPerMinute || 0);
+  const chatSource = cleanText(input.chatSignals?.source).toLowerCase();
+  const realChat = Boolean(chatSpike && chatSource && !["watch_window_estimate", "agent101_demo", "practice_signal", "unavailable"].includes(chatSource));
+  const transcriptAvailable = Boolean(input.transcriptSnippet && input.transcriptProvenance !== PROVENANCE.UNAVAILABLE);
+  const audioEnergy = input.audioEnergy || {};
+  const maxAudioDb = Number(input.audioEnergyDb ?? audioEnergy.maxVolumeDb);
+  const loudThresholdDb = Number(audioEnergy.loudThresholdDb ?? -8);
+  const loudMoment = Boolean(input.isLoudMoment || audioEnergy.isLoudMoment || (Number.isFinite(maxAudioDb) && maxAudioDb >= loudThresholdDb));
+  const voiceExcited = Boolean(audioEnergy.isVoiceExcited);
   const duration = Number(input.duration || 30);
   const lengthScore = duration >= 15 && duration <= 60 ? 18 : duration < 10 || duration > 90 ? 4 : 10;
   const chatScore = Math.min(22, Math.round(chatSpike / 2));
-  const transcriptScore = Math.min(20, excitementHits * 5);
-  const hookScore = Math.min(20, Number(input.hookScore || 8 + excitementHits * 3));
+  const audioScore = loudMoment ? 10 : Number.isFinite(maxAudioDb) ? 4 : 0;
+  const voiceScore = voiceExcited ? 6 : 0;
+  const emoteDistribution = input.emoteDistribution || {};
+  const emoteScore = emoteDistribution.dominant === "hype" ? 5 : emoteDistribution.dominant === "tension" ? 3 : 0;
+  const providedTranscriptScore = Number(input.transcriptScore || 0);
+  const transcriptScore = Math.min(20, Math.max(excitementHits * 5, providedTranscriptScore));
+  const hookScore = Math.min(20, Number(input.hookScore || 8 + excitementHits * 3) + emoteScore + Math.round(providedTranscriptScore / 6) + (voiceExcited ? 2 : 0));
   const contextScore = input.category || input.title ? 10 : 4;
   const riskScore = Math.min(100, Number(input.riskScore || (text.includes("copyright") ? 60 : 15)));
   const riskPenalty = Math.round(riskScore / 5);
-  const raw = chatScore + transcriptScore + lengthScore + hookScore + contextScore - riskPenalty;
+  const crossStreamBonus = input.crossStreamBoost ? 10 : 0;
+  const raw = chatScore + audioScore + voiceScore + emoteScore + transcriptScore + lengthScore + hookScore + contextScore + crossStreamBonus - riskPenalty;
   const score = Math.max(0, Math.min(100, raw));
-  const confidence = input.transcriptSnippet || chatSpike ? "medium" : "low";
+  const confidence = transcriptAvailable || realChat || loudMoment || voiceExcited ? "medium" : "low";
   const suggestedHook = input.suggestedHook || makeHook(input.title || input.reason || "Stream moment");
   const suggestedTitle = input.suggestedTitle || makeTitle(input.title || input.reason || "Clip moment");
 
   return {
     score,
     hookScore,
+    engagementPotential: Math.min(100, chatScore + emoteScore + transcriptScore + crossStreamBonus + 35),
+    retentionPotential: Math.min(100, lengthScore + hookScore + voiceScore + transcriptScore + 35),
     riskScore,
     confidence,
+    scoringProvider: transcriptAvailable || realChat || loudMoment || voiceExcited ? "local_evidence" : "local_heuristic",
+    scoreEvidence: {
+      source: transcriptAvailable || realChat || loudMoment || voiceExcited ? "transcript_chat_audio" : "local_heuristic",
+      verified: Boolean(transcriptAvailable || realChat || loudMoment || voiceExcited),
+      message: transcriptAvailable || realChat || loudMoment || voiceExcited
+        ? "Score uses attached transcript, provider chat, saved-buffer audio energy, voice-band energy, emote velocity, or cross-stream correlation."
+        : "Score is a local heuristic and should not be treated as a verified clip-quality score."
+    },
     reason:
       confidence === "low"
         ? "Manual/practice candidate: add transcript, chat notes, or visual context for a stronger score."
@@ -2160,6 +5055,177 @@ function buildPackage(candidate) {
       "External upload remains draft-only until approved."
     ]
   };
+}
+
+async function createClipPackageForCandidate(candidate, body = {}, context = {}) {
+  if (!candidate) {
+    const error = new Error("Candidate not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const existing = state.clipPackages.find((clipPackage) => clipPackage.candidateId === candidate.id);
+  if (existing) return { clipPackage: existing, packagePlan: existing.packagePlan || buildPackage({ ...candidate, ...body }), reused: true };
+  const streamer = findStreamer(candidate.streamerId);
+  const source = findExistingMediaSource(candidate.sourceId);
+  if (!source) {
+    await logEvent("candidate_blocked", "Package blocked because candidate has no verified media source", {
+      candidateId: candidate.id,
+      sourceId: candidate.sourceId || ""
+    });
+    const error = new Error("Candidate generation blocked: no verified playable media.");
+    error.statusCode = 422;
+    throw error;
+  }
+  await assertSourceIsPlayable(source);
+  assertCandidateReferencesSource(candidate, source);
+  assertCandidateTimesValid(candidate, source);
+
+  // ── Vision Gate ──────────────────────────────────────────────────────────
+  // Analyze keyframes with Claude Haiku before committing to a clip package.
+  // Only runs when the source has a local file path (captured buffer clips).
+  // Defaults to PASS on any error so API issues never block the pipeline.
+  if (source.filePath && !candidate.visionGate) {
+    const vg = await runVisionGate(source.filePath, ffmpegExecutable);
+    candidate.visionGate = vg;
+    if (!vg.shouldClip && !vg.skipped) {
+      await logEvent("vision_gate_reject", `Vision gate rejected clip: ${vg.reason}`, {
+        candidateId: candidate.id,
+        clipType: vg.clipType,
+        compositeScore: vg.compositeScore,
+      });
+      candidate.status = "rejected";
+      candidate.rejectedReason = `Vision gate: ${vg.reason}`;
+      await saveState();
+      const err = new Error(`Vision gate rejected this clip (${vg.clipType}): ${vg.reason}`);
+      err.statusCode = 422;
+      throw err;
+    }
+  }
+  // ── End Vision Gate ──────────────────────────────────────────────────────
+
+  if (!isSafeInternalDraftSource(source) && !isRealApprovedStreamer(streamer)) {
+    await logEvent("permission_blocked", "Package blocked for unapproved streamer", { candidateId: candidate.id });
+    const error = new Error("Streamer permission is not approved");
+    error.statusCode = 403;
+    throw error;
+  }
+  const packagePlan = buildPackage({ ...candidate, ...body });
+  const packageArtifact = await writeArtifact("clip_package", packagePlan.title, {
+    candidate,
+    streamer,
+    packagePlan,
+    createdAt: now(),
+    createdBy: context.createdBy || "StreamClipper"
+  });
+  const clipPackage = {
+    id: newId("package"),
+    candidateId: candidate.id,
+    format: "9:16",
+    resolution: "1080x1920",
+    targetDuration: Number(body.targetDuration || candidate.duration || 30),
+    hook: packagePlan.hook,
+    captionOverlays: packagePlan.captionOverlays,
+    cutInstructions: packagePlan.cutInstructions,
+    capcutBriefId: null,
+    postingDrafts: [],
+    approvalStatus: context.approvalStatus || "pending",
+    artifacts: [packageArtifact],
+    sourceId: source.id,
+    sourceProvenance: source.provenance,
+    renderedArtifactId: candidate.renderedArtifactId || null,
+    packagePlan,
+    createdAt: now(),
+    updatedAt: now(),
+    createdBy: context.createdBy || "StreamClipper"
+  };
+  state.clipPackages.unshift(clipPackage);
+  candidate.status = context.markBuilderDraft ? "in_builder" : "packaged";
+  if (context.markBuilderDraft) {
+    candidate.builderDraft = {
+      format: "9:16",
+      resolution: "1080x1920",
+      duration: Number(candidate.duration || 30),
+      status: "saved",
+      updatedAt: now(),
+      createdBy: context.createdBy || "StreamClipper"
+    };
+    candidate.movedToBuilderAt = now();
+  }
+  candidate.updatedAt = now();
+  if (streamer) {
+    const clipProfile = ensureStreamerDetectionProfile(streamer);
+    const history = clipProfile.clipHistory || structuredClone(DEFAULT_CLIP_PROFILE.clipHistory);
+    const previousTotal = Number(history.totalCreated || 0);
+    const nextTotal = previousTotal + 1;
+    const candidateScore = Number(candidate.score || candidate.qualityScore || 0);
+    history.totalCreated = nextTotal;
+    history.lastClipAt = now();
+    history.avgScoreAccepted = Number.isFinite(candidateScore)
+      ? Math.round((((Number(history.avgScoreAccepted || 0) * previousTotal) + candidateScore) / nextTotal) * 100) / 100
+      : Number(history.avgScoreAccepted || 0);
+    clipProfile.clipHistory = history;
+    streamer.updatedAt = now();
+  }
+  await logEvent(context.eventType || "package_created", context.message || "Clip package created", {
+    candidateId: candidate.id,
+    clipPackageId: clipPackage.id,
+    sourceId: source.id,
+    autoStaged: Boolean(context.markBuilderDraft),
+    postingDraftsCreated: 0,
+    approvalRequestsCreated: 0
+  });
+  return { clipPackage, packagePlan, reused: false };
+}
+
+async function autoStageCapturedCandidatesForBuilder(session, source, reason = "watch_capture") {
+  if (!session?.id || !source?.id) return [];
+  const candidates = state.clipCandidates
+    .filter((candidate) => candidate.watchSessionId === session.id && candidate.sourceId === source.id && candidateHasPlayableSource(candidate))
+    .filter((candidate) => !state.clipPackages.some((clipPackage) => clipPackage.candidateId === candidate.id));
+  const sourceTrigger = cleanText(source.watchWindowTrigger || source.watchWindowSignal || "").toLowerCase();
+  const isStrongTrigger = ["chat_spike", "chat_keyword", "tension_emote_prediction"].includes(sourceTrigger)
+    || sourceTrigger.startsWith("eventsub_");
+  if (!isStrongTrigger) return [];
+  const staged = [];
+  const strongestCandidate = candidates
+    .filter((candidate) => candidate.decision !== "rejected")
+    .filter((candidate) => {
+      const score = Number(candidate.score || candidate.confidence || 0);
+      return !Number.isFinite(score) || score >= config.twitchClipMinScore;
+    })
+    .sort((a, b) => {
+      const aScore = Number(a.score || a.confidence || 0);
+      const bScore = Number(b.score || b.confidence || 0);
+      const aDecision = a.decision === "accepted" ? 2 : a.decision === "review" ? 1 : 0;
+      const bDecision = b.decision === "accepted" ? 2 : b.decision === "review" ? 1 : 0;
+      if (aDecision !== bDecision) return bDecision - aDecision;
+      return bScore - aScore;
+    })[0];
+
+  if (!strongestCandidate) return [];
+  try {
+    const result = await createClipPackageForCandidate(strongestCandidate, {}, {
+      createdBy: "StreamClipper watcher",
+      approvalStatus: "draft",
+      markBuilderDraft: true,
+      eventType: "builder_auto_staged",
+      message: "Captured spike clip staged for Clip Builder"
+    });
+    staged.push(result.clipPackage);
+    await appendWatchEvent(session.id, "builder_auto_staged", {
+      candidateId: strongestCandidate.id,
+      clipPackageId: result.clipPackage.id,
+      reason,
+      message: "Chat/audio spike produced playable media, so StreamClipper staged it in Clip Builder."
+    });
+  } catch (error) {
+    await appendWatchEvent(session.id, "builder_auto_stage_blocked", {
+      candidateId: strongestCandidate.id,
+      reason,
+      message: error.message
+    });
+  }
+  return staged;
 }
 
 async function writeArtifact(kind, name, payload, extension = "json") {
@@ -2335,10 +5401,20 @@ function normalizeClipProjectRecord(project = {}) {
     activeRenderJobId: project.activeRenderJobId || null,
     latestArtifactId: project.latestArtifactId || null,
     capcutHandoffId: project.capcutHandoffId || null,
+    editorState: sanitizeClipEditorState(project.editorState || {}),
     createdAt: project.createdAt || now(),
     updatedAt: project.updatedAt || now(),
     autosavedAt: project.autosavedAt || null
   };
+}
+
+function sanitizeClipEditorState(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const serialized = JSON.stringify(value);
+  if (serialized.length > 50000) {
+    throw Object.assign(new Error("Editor state is too large to save."), { statusCode: 413 });
+  }
+  return JSON.parse(serialized);
 }
 
 function publicClipProject(project) {
@@ -2634,9 +5710,10 @@ function emptyStudioProjectPayload(projectId = DEMO_PROJECT_ID) {
     renderJobs: [],
     artifacts: [],
     capcut: {
-      status: "manual_handoff",
-      workspaceUrl: config.capcutHandoffUrl,
-      browserReady: config.browserEnabled
+      status: "desktop_control_ready",
+      workspaceUrl: "",
+      browserReady: false,
+      mode: "desktop_app"
     },
     unavailable: {
       transcript: "No media source selected.",
@@ -2702,9 +5779,10 @@ function studioProjectPayload(projectId = DEMO_PROJECT_ID) {
     renderJobs,
     artifacts: projectArtifacts,
     capcut: {
-      status: "manual_handoff",
-      workspaceUrl: config.capcutHandoffUrl,
-      browserReady: config.browserEnabled
+      status: "desktop_control_ready",
+      workspaceUrl: "",
+      browserReady: false,
+      mode: "desktop_app"
     },
     unavailable: {
       transcript: normalizedSource?.provenance === PROVENANCE.DEMO_SOURCE
@@ -2792,7 +5870,28 @@ async function createClipProject(input = {}) {
   return project;
 }
 
-async function createMediaSourceFromFile({ filePath, originalFilename, mimeType, title, projectId, mode = "real", provenance = PROVENANCE.AUTHORIZED_UPLOAD, permissionStatus = "uploaded", rightsStatus = "operator_review_required" }) {
+async function createMediaSourceFromFile({
+  filePath,
+  originalFilename,
+  mimeType,
+  title,
+  projectId,
+  mode = "real",
+  provenance = PROVENANCE.AUTHORIZED_UPLOAD,
+  permissionStatus = "uploaded",
+  rightsStatus = "operator_review_required",
+  sourceType = "",
+  provider = "",
+  streamerId = "",
+  watchSessionId = "",
+  recordingWindowIndex = null,
+  liveWindowStartSeconds = null,
+  liveWindowEndSeconds = null,
+  audioEnergy = null,
+  watchWindowTrigger = "",
+  watchWindowTriggerAt = "",
+  watchWindowSignals = null
+}) {
   await fs.stat(filePath);
   const [metadata, stat, sha256] = await Promise.all([
     ffprobeMetadata(filePath),
@@ -2803,10 +5902,14 @@ async function createMediaSourceFromFile({ filePath, originalFilename, mimeType,
     id: newId("media"),
     ownerId: "local",
     projectId: cleanText(projectId) || null,
-    sourceType: mode === "practice" ? "practice" : "upload",
-    provider: mode === "practice" ? "local" : "upload",
+    sourceType: cleanText(sourceType) || (mode === "practice" ? "practice" : "upload"),
+    provider: cleanText(provider) || (mode === "practice" ? "local" : "upload"),
     providerSourceId: null,
-    streamerId: "",
+    streamerId: cleanText(streamerId),
+    watchSessionId: cleanText(watchSessionId),
+    recordingWindowIndex: Number.isFinite(Number(recordingWindowIndex)) ? Number(recordingWindowIndex) : null,
+    liveWindowStartSeconds: Number.isFinite(Number(liveWindowStartSeconds)) ? Number(liveWindowStartSeconds) : null,
+    liveWindowEndSeconds: Number.isFinite(Number(liveWindowEndSeconds)) ? Number(liveWindowEndSeconds) : null,
     displayName: cleanText(title) || originalFilename || path.basename(filePath),
     title: cleanText(title) || originalFilename || path.basename(filePath),
     originalFilename,
@@ -2822,6 +5925,13 @@ async function createMediaSourceFromFile({ filePath, originalFilename, mimeType,
     frameRate: metadata.frameRate,
     fps: metadata.fps,
     hasAudio: metadata.hasAudio,
+    audioEnergy,
+    audioEnergyDb: Number.isFinite(Number(audioEnergy?.maxVolumeDb)) ? Number(audioEnergy.maxVolumeDb) : null,
+    audioMeanDb: Number.isFinite(Number(audioEnergy?.meanVolumeDb)) ? Number(audioEnergy.meanVolumeDb) : null,
+    isLoudMoment: Boolean(audioEnergy?.isLoudMoment),
+    watchWindowTrigger: cleanText(watchWindowTrigger),
+    watchWindowTriggerAt: cleanText(watchWindowTriggerAt) || null,
+    watchWindowSignals: watchWindowSignals && typeof watchWindowSignals === "object" ? watchWindowSignals : null,
     status: "ready",
     provenance,
     permissionStatus,
@@ -3314,6 +6424,303 @@ async function twitchFetch(endpoint) {
   return response.json();
 }
 
+function eventSubConfigured() {
+  return Boolean(config.twitchEventSubSecret && config.twitchEventSubCallbackUrl);
+}
+
+function verifyTwitchEventSubSignature(req, rawBody) {
+  if (!config.twitchEventSubSecret) return false;
+  const signature = cleanText(req.headers["twitch-eventsub-message-signature"]);
+  const messageId = cleanText(req.headers["twitch-eventsub-message-id"]);
+  const timestamp = cleanText(req.headers["twitch-eventsub-message-timestamp"]);
+  if (!signature.startsWith("sha256=") || !messageId || !timestamp) return false;
+  const expected = `sha256=${crypto
+    .createHmac("sha256", config.twitchEventSubSecret)
+    .update(messageId + timestamp)
+    .update(rawBody)
+    .digest("hex")}`;
+  const left = Buffer.from(signature);
+  const right = Buffer.from(expected);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function eventSubBroadcasterId(eventData = {}) {
+  return cleanText(
+    eventData.broadcaster_user_id
+      || eventData.to_broadcaster_user_id
+      || eventData.from_broadcaster_user_id
+      || eventData.user_id
+  );
+}
+
+function findActiveWatchForEventSubEvent(eventData = {}) {
+  const broadcasterId = eventSubBroadcasterId(eventData);
+  const broadcasterLogin = normalizeTwitchLogin(
+    eventData.broadcaster_user_login
+      || eventData.to_broadcaster_user_login
+      || eventData.from_broadcaster_user_login
+      || eventData.user_login
+  );
+  for (const session of activeWatchSessions()) {
+    if (session.status === "paused" || session.mode !== "real") continue;
+    const streamer = findStreamer(session.streamerId);
+    if (!streamer || streamer.platform !== "twitch" || !isRealApprovedStreamer(streamer)) continue;
+    const streamerProviderId = cleanText(streamer.providerUserId);
+    const streamerLogin = normalizeTwitchLogin(streamer.channelId || streamer.channelUrl || streamer.displayName);
+    if (broadcasterId && streamerProviderId && broadcasterId === streamerProviderId) return { session, streamer };
+    if (broadcasterLogin && streamerLogin && broadcasterLogin === streamerLogin) return { session, streamer };
+  }
+  return { session: null, streamer: null };
+}
+
+function eventSubTriggerName(eventType = "") {
+  return `eventsub_${cleanText(eventType).replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "").toLowerCase() || "notification"}`;
+}
+
+async function triggerEventSubCapture(session, streamer, eventType, eventData = {}) {
+  if (!session || !streamer || session.mode !== "real" || !isRealApprovedStreamer(streamer)) return null;
+  const windowIndex = Math.max(0, Math.floor(Number(session.analyzedSeconds || 0) / WATCH_RECORDING_WINDOW_SECONDS));
+  const trigger = eventSubTriggerName(eventType);
+  session.lastEventSubTrigger = { type: eventType, at: now(), data: eventData };
+  session.lastCaptureTrigger = trigger;
+  session.lastCaptureTriggerAt = now();
+  await appendWatchEvent(session.id, "eventsub_trigger", {
+    type: eventType,
+    trigger,
+    streamerId: streamer.id,
+    message: "Twitch EventSub hard trigger received. Capturing the current local watch window."
+  });
+  const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || ensureClipMission(streamer);
+  const source = await captureLiveWindowForSession(session, {
+    streamer,
+    mission,
+    windowIndex,
+    watchTrigger: trigger,
+    watchTriggerSignals: {
+      eventSubType: eventType,
+      eventSubData: eventData
+    }
+  });
+  if (source) {
+    const capabilities = capabilitiesForWatchSource({ session, source, streamer });
+    await ensureWatchSessionCandidates(session);
+    await autoStageCapturedCandidatesForBuilder(session, source, trigger);
+    await appendWatchEvent(session.id, "eventsub_capture_completed", {
+      type: eventType,
+      sourceId: source.id,
+      capabilities,
+      message: "EventSub-triggered buffer is saved and available for Clip Radar scoring."
+    });
+  }
+  await saveState();
+  return source;
+}
+
+async function handleTwitchEventSubWebhook(req, res) {
+  const rawBody = await readRawBody(req);
+  if (!verifyTwitchEventSubSignature(req, rawBody)) {
+    return sendError(res, 403, "Invalid Twitch EventSub signature.");
+  }
+  const json = JSON.parse(rawBody.toString("utf8") || "{}");
+  const messageType = cleanText(req.headers["twitch-eventsub-message-type"]);
+  if (messageType === "webhook_callback_verification" && json.challenge) {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+    res.end(String(json.challenge));
+    return;
+  }
+  if (messageType === "revocation") {
+    addStateLog("eventsub_revoked", "Twitch EventSub subscription was revoked", {
+      subscriptionType: json.subscription?.type || "",
+      status: json.subscription?.status || ""
+    });
+    await saveState();
+    return sendJson(res, 200, { ok: true, revoked: true });
+  }
+  if (messageType !== "notification") return sendJson(res, 202, { ok: true, ignored: messageType || "unknown" });
+  const eventType = cleanText(json.subscription?.type);
+  if (!EVENTSUB_EVENT_TYPES.includes(eventType)) return sendJson(res, 202, { ok: true, ignored: eventType });
+  const eventData = json.event || {};
+  const { session, streamer } = findActiveWatchForEventSubEvent(eventData);
+  if (!session || !streamer) {
+    addStateLog("eventsub_no_active_watch", "Twitch EventSub notification had no active approved watch session", {
+      eventType,
+      broadcasterId: eventSubBroadcasterId(eventData)
+    });
+    await saveState();
+    return sendJson(res, 202, { ok: true, matched: false });
+  }
+  triggerEventSubCapture(session, streamer, eventType, eventData).catch((error) => {
+    addStateLog("eventsub_capture_error", "EventSub-triggered capture failed", {
+      sessionId: session.id,
+      streamerId: streamer.id,
+      eventType,
+      error: error.message
+    });
+  });
+  return sendJson(res, 202, { ok: true, matched: true, sessionId: session.id, streamerId: streamer.id });
+}
+
+function eventSubConditionForType(type, broadcasterId) {
+  if (type === "channel.raid") return { to_broadcaster_user_id: broadcasterId };
+  return { broadcaster_user_id: broadcasterId };
+}
+
+async function subscribeToEventSub(streamer) {
+  if (!eventSubConfigured()) {
+    addStateLog("eventsub_skipped", "Twitch EventSub subscription skipped because webhook configuration is missing", {
+      streamerId: streamer?.id || "",
+      callbackConfigured: Boolean(config.twitchEventSubCallbackUrl),
+      secretConfigured: Boolean(config.twitchEventSubSecret)
+    });
+    return { configured: false, skipped: true, subscriptions: [] };
+  }
+  if (!streamer || streamer.platform !== "twitch" || !isRealApprovedStreamer(streamer)) {
+    return { configured: true, skipped: true, reason: "streamer_not_approved_for_twitch", subscriptions: [] };
+  }
+  const broadcasterId = cleanText(streamer.providerUserId);
+  if (!/^\d+$/.test(broadcasterId)) {
+    addStateLog("eventsub_skipped", "Twitch EventSub subscription skipped because broadcaster ID is missing", {
+      streamerId: streamer.id,
+      channelId: streamer.channelId
+    });
+    return { configured: true, skipped: true, reason: "missing_broadcaster_id", subscriptions: [] };
+  }
+  const existing = Array.isArray(streamer.eventSubSubscriptions) ? streamer.eventSubSubscriptions : [];
+  streamer.eventSubSubscriptions = existing.filter((subscription) => subscription?.id && subscription?.type);
+  const existingTypes = new Set(streamer.eventSubSubscriptions.map((subscription) => subscription.type));
+  const token = await getTwitchAppToken();
+  const created = [];
+  for (const type of EVENTSUB_EVENT_TYPES) {
+    if (existingTypes.has(type)) continue;
+    const payload = {
+      type,
+      version: "1",
+      condition: eventSubConditionForType(type, broadcasterId),
+      transport: {
+        method: "webhook",
+        callback: config.twitchEventSubCallbackUrl,
+        secret: config.twitchEventSubSecret
+      }
+    };
+    const response = await fetch("https://api.twitch.tv/helix/eventsub/subscriptions", {
+      method: "POST",
+      headers: {
+        "Client-Id": config.twitchClientId,
+        Authorization: `Bearer ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      addStateLog("eventsub_subscribe_failed", "Twitch EventSub subscription request failed", {
+        streamerId: streamer.id,
+        type,
+        status: response.status,
+        message: json.message || ""
+      });
+      continue;
+    }
+    const subscription = json.data?.[0] || null;
+    if (!subscription?.id) continue;
+    const record = {
+      id: subscription.id,
+      type,
+      status: subscription.status || "pending",
+      broadcasterId,
+      callbackUrl: config.twitchEventSubCallbackUrl,
+      createdAt: now()
+    };
+    streamer.eventSubSubscriptions.push(record);
+    created.push(record);
+  }
+  streamer.updatedAt = now();
+  if (created.length) await saveState();
+  return { configured: true, skipped: false, created, subscriptions: streamer.eventSubSubscriptions };
+}
+
+async function unsubscribeEventSub(streamer) {
+  const subscriptions = Array.isArray(streamer?.eventSubSubscriptions) ? streamer.eventSubSubscriptions : [];
+  if (!subscriptions.length || !(config.twitchClientId && (config.twitchClientSecret || config.twitchAppAccessToken))) return [];
+  const token = await getTwitchAppToken().catch(() => "");
+  if (!token) return [];
+  const removed = [];
+  for (const subscription of subscriptions) {
+    const id = cleanText(subscription?.id || subscription);
+    if (!id) continue;
+    const params = new URLSearchParams({ id });
+    const response = await fetch(`https://api.twitch.tv/helix/eventsub/subscriptions?${params}`, {
+      method: "DELETE",
+      headers: {
+        "Client-Id": config.twitchClientId,
+        Authorization: `Bearer ${token}`
+      }
+    });
+    if (response.ok || response.status === 404) removed.push(id);
+  }
+  if (removed.length) {
+    streamer.eventSubSubscriptions = subscriptions.filter((subscription) => !removed.includes(cleanText(subscription?.id || subscription)));
+    streamer.updatedAt = now();
+  }
+  return removed;
+}
+
+async function createOfficialTwitchClip(streamer, candidate) {
+  if (streamer?.platform !== "twitch") return null;
+  const broadcasterId = cleanText(streamer.providerUserId);
+  if (!broadcasterId || !/^\d+$/.test(broadcasterId)) {
+    await appendWatchEvent(candidate.watchSessionId, "twitch_clip_skipped", {
+      candidateId: candidate.id,
+      reason: "missing_broadcaster_id",
+      message: "Official Twitch Clip was skipped because this streamer record does not have a numeric broadcaster ID yet."
+    });
+    return null;
+  }
+  const token = twitchUserToken();
+  if (!token) {
+    await appendWatchEvent(candidate.watchSessionId, "twitch_clip_skipped", {
+      candidateId: candidate.id,
+      reason: "missing_user_token",
+      message: "Official Twitch Clip was skipped because TWITCH_USER_ACCESS_TOKEN/TWITCH_OAUTH_TOKEN is not configured."
+    });
+    return null;
+  }
+  const params = new URLSearchParams({ broadcaster_id: broadcasterId });
+  const response = await fetch(`https://api.twitch.tv/helix/clips?${params}`, {
+    method: "POST",
+    headers: {
+      "Client-Id": config.twitchClientId,
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    await appendWatchEvent(candidate.watchSessionId, "twitch_clip_failed", {
+      candidateId: candidate.id,
+      status: response.status,
+      message: json.message || "Twitch Clip API request failed."
+    });
+    return null;
+  }
+  const clip = json.data?.[0] || null;
+  if (!clip?.id) return null;
+  candidate.officialTwitchClip = {
+    id: clip.id,
+    editUrl: clip.edit_url || "",
+    createdAt: now()
+  };
+  candidate.measuredEvidence = [
+    ...(candidate.measuredEvidence || []),
+    { label: "Official Twitch Clip object created", provenance: PROVENANCE.TWITCH_CLIP }
+  ];
+  await appendWatchEvent(candidate.watchSessionId, "twitch_clip_created", {
+    candidateId: candidate.id,
+    twitchClipId: clip.id,
+    editUrl: clip.edit_url || ""
+  });
+  return clip;
+}
+
 function mapTwitchSourceRecord(stream, run, contract) {
   const rawResponseHash = safeHash(stream);
   return {
@@ -3494,6 +6901,7 @@ function mapTwitchRecommendation(stream) {
   const category = stream.game_name || "Twitch";
   const item = {
     platform: "twitch",
+    providerUserId: cleanText(stream.user_id),
     displayName: stream.user_name || stream.user_login || "Twitch streamer",
     channelId: stream.user_login || stream.user_id || "",
     channelUrl: stream.user_login ? `https://www.twitch.tv/${stream.user_login}` : "",
@@ -3502,7 +6910,11 @@ function mapTwitchRecommendation(stream) {
     viewerCount: Number(stream.viewer_count || 0),
     thumbnail: stream.thumbnail_url || "",
     startedAt: stream.started_at || "",
-    source: "Official Twitch Helix live directory"
+    source: "Official Twitch Helix live directory",
+    sourceType: "official_live",
+    liveStatus: "live",
+    liveVerified: true,
+    canAutoMonitor: true
   };
   return {
     ...item,
@@ -3524,7 +6936,11 @@ function mapKickRecommendation(stream) {
     viewerCount: Number(stream.viewer_count || 0),
     thumbnail: stream.thumbnail || stream.profile_picture || "",
     startedAt: stream.started_at || "",
-    source: "Official Kick public live directory"
+    source: "Official Kick public live directory",
+    sourceType: "official_live",
+    liveStatus: "live",
+    liveVerified: true,
+    canAutoMonitor: true
   };
   return {
     ...item,
@@ -3548,26 +6964,35 @@ async function fetchKickRecommendations(limit) {
   return (json.data || []).map(mapKickRecommendation);
 }
 
-function fallbackStreamerRecommendations(limit) {
+function fallbackStreamerRecommendations(limit, platform = "all") {
+  const allowed = platform === "all" ? new Set(["kick", "twitch"]) : new Set([platform]);
   return [
     ["kick", "xqc", "xQc", "High-volume live audience with strong reaction potential.", "Just Chatting", 96],
     ["kick", "adinross", "Adin Ross", "Large Kick-native audience; needs brand-safety review before monitoring.", "Just Chatting", 88],
-    ["twitch", "kaicenat", "KaiCenat", "High-energy creator with frequent clip-worthy moments.", "Just Chatting", 91],
+    ["twitch", "kaicenat", "KaiCenat", "High-energy creator with frequent clip-worthy moments.", "Just Chatting", 94],
+    ["twitch", "caseoh_", "caseoh_", "Large Twitch audience and recurring reaction-friendly segments.", "Just Chatting", 92],
+    ["twitch", "zackrawrr", "zackrawrr", "Consistent live personality content with strong clip-review potential.", "Just Chatting", 89],
     ["twitch", "tarik", "tarik", "Esports creator with repeatable VALORANT clip potential.", "VALORANT", 86],
-    ["twitch", "hasanabi", "HasanAbi", "Long-form commentary creates many possible reaction clips.", "Just Chatting", 82]
-  ].slice(0, limit).map(([platform, channelId, displayName, reason, category, score]) => ({
+    ["twitch", "hasanabi", "HasanAbi", "Long-form commentary creates many possible reaction clips.", "Just Chatting", 82],
+    ["twitch", "lirik", "LIRIK", "Variety streams are useful for supervised highlight scouting.", "Variety", 78]
+  ].filter(([itemPlatform]) => allowed.has(itemPlatform)).slice(0, limit).map(([platform, channelId, displayName, reason, category, score]) => ({
     platform,
     channelId,
     displayName,
     channelUrl: platform === "kick" ? `https://kick.com/${channelId}` : `https://www.twitch.tv/${channelId}`,
-    title: "Manual review recommendation",
+    title: "Manual review recommendation - live status not verified",
     category,
     viewerCount: 0,
     thumbnail: "",
     score,
     reason,
     suggestedUse: ["clips", "edits", "reposts"],
-    source: "Agent 101 fallback shortlist"
+    source: platform === "twitch" ? "Agent 101 Twitch fallback shortlist" : "Agent 101 fallback shortlist",
+    sourceType: "manual_review",
+    liveStatus: "unverified",
+    liveVerified: false,
+    canAutoMonitor: false,
+    requiresReview: true
   }));
 }
 
@@ -3606,17 +7031,39 @@ async function recommendStreamers({ platform = "all", limit = 12 } = {}) {
     .sort((a, b) => b.score - a.score || b.viewerCount - a.viewerCount)
     .slice(0, max);
 
+  const usedFallback = recommendations.length === 0;
+  let manualReviewRecommendations = [];
+  if (usedFallback) {
+    manualReviewRecommendations = fallbackStreamerRecommendations(max, platform)
+      .filter((row) => row.channelId)
+      .filter((row) => {
+        const key = streamerIdentityKey(row);
+        if (existing.has(key) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+  const providerConfigured = providers.some((provider) => (
+    provider === "kick" ? kickApiConfigured() : provider === "twitch" ? twitchApiConfigured() : false
+  ));
+  const providerBlocked = !providerConfigured;
+
   return {
     recommendations,
+    manualReviewRecommendations,
     errors,
     providers: {
       kickConfigured: kickApiConfigured(),
       twitchConfigured: twitchApiConfigured()
     },
     generatedBy: "Agent 101 Streamer Scout",
-    message: recommendations.some((row) => row.source?.includes("Official"))
+    fallbackUsed: usedFallback,
+    providerBlocked,
+    message: recommendations.some((row) => row.sourceType === "official_live")
       ? "Agent 101 found live streamer recommendations from configured provider APIs."
-      : "No live provider recommendations were returned. No synthetic streamer recommendations were substituted."
+      : providerBlocked
+        ? "Live scout needs provider API access before it can rank real streams. Connect Twitch/Kick in Integrations or add a channel manually for Human Gate review."
+        : "No verified live streams were returned by the configured provider APIs right now. Agent 101 did not create fake live recommendations."
   };
 }
 
@@ -3670,7 +7117,15 @@ async function checkStreamerLive(streamer) {
   streamer.liveCategory = stream?.game_name || "";
   streamer.liveViewerCount = stream?.viewer_count || 0;
   streamer.liveThumbnailUrl = stream?.thumbnail_url || stream?.thumbnail || "";
+  streamer.providerUserId = stream?.user_id || stream?.broadcaster_user_id || streamer.providerUserId || "";
+  streamer.channelId = stream?.user_login || stream?.slug || streamer.channelId;
   streamer.lastLiveAt = stream ? now() : streamer.lastLiveAt;
+  const detectedGenre = stream ? detectClipGenre(streamer.liveCategory || stream.game_name || streamer.liveTitle) : "";
+  ensureStreamerDetectionProfile(
+    streamer,
+    detectedGenre && (!streamer.clipProfile?.genre || streamer.clipProfile.genre === "general") ? { genre: detectedGenre } : {}
+  );
+  if (!stream) await stopOfflineWatchSessionsForStreamer(streamer, "provider_offline");
   return { streamerId: streamer.id, live: Boolean(stream), official: true, provider: streamer.platform, stream };
 }
 
@@ -3748,7 +7203,36 @@ function createPostingDraftsForPackage(clipPackage, packagePlan) {
   });
 }
 
-const AGENT101_SYSTEM_PROMPT = `You are Agent 101, a truthful supervised clipping agent inside StreamClipper. Never claim you found, watched, clipped, rendered, queued, or posted media unless the corresponding verified record or file exists. Honor requested quantities exactly. If the user requests two streamers, return no more than two. Do not silently expand scope. Real mode may only use real Twitch/Kick records from official APIs with provider IDs, fetch timestamps, and response hashes. Practice mode must be explicitly requested and clearly labeled PRACTICE MEDIA — NOT A REAL STREAM. Follow the workflow in order: discovery, validation, rights, source, analysis, candidate, clip, verify, posting draft, approval. Do not create downstream artifacts before prerequisites are complete. If a real integration, right, or media source is unavailable, explain the exact blocker and stop. Do not replace a failed real action with a simulation.`;
+const LEGACY_AGENT101_CLIPPING_PROMPT = `You are Agent 101, a truthful supervised clipping agent inside StreamClipper. Never claim you found, watched, clipped, rendered, queued, or posted media unless the corresponding verified record or file exists. Honor requested quantities exactly. If the user requests two streamers, return no more than two. Do not silently expand scope. Real mode may only use real Twitch/Kick records from official APIs with provider IDs, fetch timestamps, and response hashes. Practice mode must be explicitly requested and clearly labeled PRACTICE MEDIA — NOT A REAL STREAM. Follow the workflow in order: discovery, validation, rights, source, analysis, candidate, clip, verify, posting draft, approval. Do not create downstream artifacts before prerequisites are complete. If a real integration, right, or media source is unavailable, explain the exact blocker and stop. Do not replace a failed real action with a simulation.`;
+
+const AGENT101_SYSTEM_PROMPT = `You are Agent 101, an autonomous business-building AI agent inside Argentum OS.
+
+Your purpose is to take a plain-English business description or task from the operator and deliver a finished, working result -- not a plan, not a skeleton, not a tutorial. A finished result.
+
+You think in steps. For every task:
+1. Break it into concrete subtasks
+2. Execute each subtask using your tools
+3. Verify the output of each tool before moving to the next step
+4. If a tool fails, diagnose the failure and try a different approach -- do not give up after one error
+5. When finished, call create_handoff_doc so the operator knows exactly what was built and what they need to do
+
+Rules you never break:
+- Never fabricate file contents without writing them. If you say a file exists, it must exist.
+- Never claim a task is done until you have verified the output.
+- Never call run_shell without first calling request_human_approval and confirming it returned approved status.
+- Never write files outside the outputs/ directory without explicit operator permission.
+- Never store API keys in files -- always use environment variable placeholders and document what the operator must fill in.
+- Never contact real external APIs (Stripe, TikTok, Instagram, etc.) directly -- generate the integration code and document what the operator activates manually.
+- CapCut editing may use capcut_edit_clip only with a verified rendered clip or explicit local clip path. Export/download must stay behind Human Gate and operator control.
+- Always separate what you built from what the operator must do themselves.
+
+When you are uncertain, ask one clarifying question. Do not ask multiple questions at once.
+
+When a task requires information you do not have (the operator's business name, their prices, their target market), stop and ask for it before building.
+
+You have access to the following tools: read_file, write_file, list_files, run_shell (requires approval), run_node_script, scaffold_website, add_stripe_checkout, add_email_flow, generate_deployment_config, write_copy, generate_brand_identity, write_product_listings, generate_product_image, generate_hero_image, generate_logo_concept, search_web, analyze_competitor, get_market_data, create_project_plan, create_handoff_doc, capcut_edit_clip, request_human_approval, check_approval_status.
+
+You do not have these tools and must tell the operator if they are needed: creating Stripe accounts, buying domains, connecting social media accounts, placing real orders, publishing live websites (you generate deployment configs but the operator runs the deploy command).`;
 
 const AGENT101_DEMO_STREAMERS = [
   {
@@ -3940,7 +7424,7 @@ async function agentOpenAIPlan(goal) {
       },
       body: JSON.stringify({
         model: config.openaiModel,
-        input: `${AGENT101_SYSTEM_PROMPT}
+        input: `${LEGACY_AGENT101_CLIPPING_PROMPT}
 
 Goal: ${goal}
 
@@ -3997,7 +7481,7 @@ async function agentOpenAIScoreCandidates(run, candidates) {
       },
       body: JSON.stringify({
         model: config.openaiModel,
-        input: `${AGENT101_SYSTEM_PROMPT}
+        input: `${LEGACY_AGENT101_CLIPPING_PROMPT}
 
 Score these safe internal demo clip candidates as one batch. Return only JSON:
 {
@@ -4884,11 +8368,21 @@ async function agentToolScoreClipCandidates(run) {
       reason: cleanText(aiScore.reason) || localScore.reason,
       suggestedHook: cleanText(aiScore.suggestedHook) || localScore.suggestedHook,
       suggestedTitle: cleanText(aiScore.suggestedTitle) || localScore.suggestedTitle,
-      scoringProvider: "openai"
+      scoringProvider: "openai",
+      scoreEvidence: {
+        source: "openai",
+        verified: true,
+        message: "Score was produced by the configured AI scorer from the candidate evidence available at scoring time."
+      }
     } : {
       engagementPotential: localScore.score,
       retentionPotential: Math.min(100, localScore.score + 3),
-      scoringProvider: "local_fallback"
+      scoringProvider: "local_fallback",
+      scoreEvidence: {
+        source: "local_heuristic",
+        verified: false,
+        message: "Fallback score only. Needs transcript, chat, visual analysis, or operator score before it is considered real."
+      }
     }, {
       reviewedBy: "Agent 101",
       updatedAt: now()
@@ -5100,7 +8594,485 @@ const AGENT101_TOOL_REGISTRY = {
   add_log: agentToolAddLog
 };
 
+function shouldUseAgent101Studio(body = {}) {
+  if (body.agentMode === "studio" || body.studio === true || body.context?.agent101Studio) return true;
+  const message = cleanText(body.message || body.goal || "");
+  if (!message) return false;
+  const businessIntent = /\b(build|website|site|shop|store|stripe|checkout|brand|identity|logo|email|landing|saas|portfolio|blog|deploy|deployment|copy|product listing|market|competitor|business plan|handoff|project plan)\b/i.test(message);
+  const clippingIntent = /\b(clip|stream|streamer|twitch|kick|watch|radar|capcut|posting|candidate|human gate)\b/i.test(message);
+  return businessIntent && !clippingIntent;
+}
+
+function extractAgent101Message(body = {}) {
+  return cleanText(body.message || body.goal || body.prompt || "");
+}
+
+function estimateAnthropicCostUsd(usage = {}) {
+  const input = Number(usage.input_tokens || 0);
+  const output = Number(usage.output_tokens || 0);
+  return Number((((input * 3) + (output * 15)) / 1_000_000).toFixed(6));
+}
+
+function studioSessionRuns(sessionId) {
+  return (state.agentRuns || [])
+    .filter((run) => run.kind === "agent101_studio" && run.sessionId === sessionId)
+    .sort((a, b) => new Date(a.startedAt || 0) - new Date(b.startedAt || 0));
+}
+
+function publicAgent101Session(sessionId) {
+  const runs = studioSessionRuns(sessionId);
+  if (!runs.length) return null;
+  const first = runs[0];
+  const last = runs.at(-1);
+  const outputFiles = [...new Map(runs.flatMap((run) => run.outputFiles || []).map((file) => [file.path || file, file])).values()];
+  return {
+    sessionId,
+    firstMessage: first.userMessage || first.goal || "",
+    lastMessage: last.response || last.summary || "",
+    timestamp: last.completedAt || last.startedAt,
+    status: last.status,
+    runCount: runs.length,
+    outputFiles,
+    costEstimateUsd: runs.reduce((total, run) => total + Number(run.costEstimateUsd || 0), 0)
+  };
+}
+
+function listAgent101Sessions() {
+  const ids = [...new Set((state.agentRuns || [])
+    .filter((run) => run.kind === "agent101_studio" && run.sessionId)
+    .map((run) => run.sessionId))];
+  return ids
+    .map(publicAgent101Session)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+}
+
+function agent101OutputFileObjects(run) {
+  return (run.outputFiles || [])
+    .map((item) => typeof item === "string" ? { path: item } : item)
+    .filter((item) => cleanText(item.path));
+}
+
+function rememberAgent101OutputFiles(run, result) {
+  const seen = new Map(agent101OutputFileObjects(run).map((file) => [file.path, file]));
+  const inspect = (value) => {
+    if (!value) return;
+    if (typeof value === "string") {
+      if (value.startsWith("outputs/")) seen.set(value, { path: value });
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(inspect);
+      return;
+    }
+    if (typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        if (["path", "image_path"].includes(key) && typeof child === "string" && child.startsWith("outputs/")) {
+          seen.set(child, { path: child });
+        }
+        if (["files_created", "outputFiles", "files"].includes(key)) inspect(child);
+      }
+    }
+  };
+  inspect(result);
+  run.outputFiles = [...seen.values()];
+}
+
+function addAgent101StudioEvent(run, type, message, details = {}) {
+  const event = {
+    id: newId("agent101_event"),
+    type,
+    message,
+    details,
+    createdAt: now()
+  };
+  run.events ||= [];
+  run.steps ||= [];
+  run.events.push(event);
+  run.steps.push({ id: event.id, name: type, status: details.status || "running", message, details });
+  run.currentStep = message;
+  persistAgentRun(run);
+  emitAgent101Stream(run.sessionId, type, { runId: run.runId, message, details, createdAt: event.createdAt });
+  return event;
+}
+
+function makeAgent101ToolContext(run, anthropicClient = null) {
+  return {
+    projectRoot: __dirname,
+    outputRoot: config.agent101OutputDir,
+    config,
+    state,
+    runId: run.runId,
+    sessionId: run.sessionId,
+    anthropicClient,
+    createApprovalRequest,
+    saveState,
+    logEvent,
+    newId,
+    now,
+    browserWorkspace,
+    capcutEditClip: (input) => runCapcutEditClip(input, { run, source: "agent101_tool" })
+  };
+}
+
+async function executeAgent101StudioTool(run, name, input, toolContext) {
+  const startedAt = now();
+  const startMs = Date.now();
+  addAgent101StudioEvent(run, "tool_start", `Agent 101 is running ${name.replaceAll("_", " ")}.`, {
+    tool: name,
+    input
+  });
+  try {
+    const output = await executeTool(name, input || {}, toolContext);
+    const durationMs = Date.now() - startMs;
+    const record = {
+      id: newId("tool_call"),
+      name,
+      input,
+      output,
+      durationMs,
+      timestamp: startedAt,
+      status: output?.error ? "error" : output?.requiresApproval ? "needs_approval" : "completed"
+    };
+    run.toolCalls ||= [];
+    run.toolResults ||= [];
+    run.toolCalls.push(record);
+    run.toolResults.push({ tool: name, result: output, durationMs, timestamp: now() });
+    rememberAgent101OutputFiles(run, output);
+    if (output?.requiresApproval) run.status = "NEEDS_APPROVAL";
+    addAgent101StudioEvent(run, output?.requiresApproval ? "approval_required" : "tool_result", output?.requiresApproval
+      ? `${name.replaceAll("_", " ")} is waiting for Human Gate approval.`
+      : `Agent 101 completed ${name.replaceAll("_", " ")}.`, {
+        tool: name,
+        output,
+        durationMs,
+        status: record.status
+      });
+    await saveState();
+    return output;
+  } catch (error) {
+    const durationMs = Date.now() - startMs;
+    const output = { error: true, message: error.message };
+    const record = {
+      id: newId("tool_call"),
+      name,
+      input,
+      output,
+      durationMs,
+      timestamp: startedAt,
+      status: "error"
+    };
+    run.toolCalls ||= [];
+    run.toolResults ||= [];
+    run.toolCalls.push(record);
+    run.toolResults.push({ tool: name, result: output, durationMs, timestamp: now() });
+    addAgent101StudioEvent(run, "tool_error", `${name.replaceAll("_", " ")} failed: ${error.message}`, {
+      tool: name,
+      error: error.message,
+      durationMs,
+      status: "error"
+    });
+    await saveState();
+    return output;
+  }
+}
+
+function buildAgent101HistoryMessages(sessionId, currentMessage) {
+  const prior = studioSessionRuns(sessionId).slice(-6);
+  const messages = [];
+  for (const run of prior) {
+    if (run.userMessage) messages.push({ role: "user", content: run.userMessage });
+    if (run.response) messages.push({ role: "assistant", content: run.response });
+  }
+  messages.push({ role: "user", content: currentMessage });
+  return messages;
+}
+
+async function runClaudeAgent101Studio(run, message) {
+  const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
+  const toolContext = makeAgent101ToolContext(run, anthropicClient);
+  const messages = buildAgent101HistoryMessages(run.sessionId, message);
+  let finalText = "";
+  const usage = { input_tokens: 0, output_tokens: 0 };
+
+  for (let iteration = 0; iteration < 25; iteration += 1) {
+    addAgent101StudioEvent(run, "model_call", `Agent 101 is thinking through step ${iteration + 1}.`, { iteration });
+    const response = await anthropicClient.messages.create({
+      model: config.anthropicModel,
+      max_tokens: 4096,
+      system: AGENT101_SYSTEM_PROMPT,
+      tools: TOOL_REGISTRY,
+      messages
+    });
+    usage.input_tokens += Number(response.usage?.input_tokens || 0);
+    usage.output_tokens += Number(response.usage?.output_tokens || 0);
+    run.messages.push({ role: "assistant", content: response.content, createdAt: now() });
+
+    const text = response.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+    const toolUses = response.content.filter((part) => part.type === "tool_use");
+    if (!toolUses.length) {
+      finalText = text || "Agent 101 finished with no additional output.";
+      break;
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+    const toolResults = [];
+    for (const toolUse of toolUses) {
+      const result = await executeAgent101StudioTool(run, toolUse.name, toolUse.input || {}, toolContext);
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: toolUse.id,
+        content: resultToToolText(result),
+        is_error: Boolean(result?.error)
+      });
+      if (result?.requiresApproval) {
+        finalText = `Human Gate approval is pending for ${toolUse.name}. Approve it in Human Gate, then rerun the request with the approval id if execution should continue.`;
+      }
+    }
+    messages.push({ role: "user", content: toolResults });
+    if (finalText && run.status === "NEEDS_APPROVAL") break;
+  }
+
+  if (!finalText) {
+    finalText = "Agent 101 stopped after the 25-step safety cap. Review the generated files and run a follow-up if more work is needed.";
+    run.status = run.status === "NEEDS_APPROVAL" ? run.status : "BLOCKED";
+  }
+  run.tokens = usage;
+  run.costEstimateUsd = estimateAnthropicCostUsd(usage);
+  return finalText;
+}
+
+function inferLocalBusinessName(message) {
+  const called = message.match(/\bcalled\s+([A-Za-z0-9 '&-]{2,80})/i);
+  if (called) {
+    return called[1]
+      .replace(/\b(?:with|for|that|which|where|including|and)\b.*$/i, "")
+      .replace(/[.?!].*$/, "")
+      .trim();
+  }
+  if (/3d printing/i.test(message)) return "PrintForge";
+  const shop = message.match(/\b(?:for|about)\s+(?:a|my)?\s*([A-Za-z0-9 '&-]{3,80})(?:\s+(?:business|shop|website|brand|company))?/i);
+  return shop ? shop[1].replace(/[.?!].*$/, "").trim() : "Argentum Build";
+}
+
+function inferLocalWebsiteType(message) {
+  if (/\bshop|store|stripe|checkout|cart|pay|product\b/i.test(message)) return "shop";
+  if (/\bsaas|software\b/i.test(message)) return "saas";
+  if (/\bportfolio\b/i.test(message)) return "portfolio";
+  if (/\bblog\b/i.test(message)) return "blog";
+  return "landing";
+}
+
+async function runLocalAgent101Studio(run, message) {
+  const toolContext = makeAgent101ToolContext(run, null);
+  const name = inferLocalBusinessName(message);
+  const type = inferLocalWebsiteType(message);
+  const outputNotes = [];
+
+  if (/\b(shell|command|terminal|npm run|npm install|node\s+)/i.test(message)) {
+    const command = message.match(/\b(?:run|execute)\s+`([^`]+)`/i)?.[1]
+      || message.match(/\b(npm\s+(?:run|install)[A-Za-z0-9 .:_/-]*)/i)?.[1]
+      || "npm run check";
+    const result = await executeAgent101StudioTool(run, "run_shell", { command }, toolContext);
+    return result.requiresApproval
+      ? "Shell execution is waiting for Human Gate approval. No command was executed."
+      : "Shell command completed. Review the tool output for stdout and stderr.";
+  }
+
+  if (/\bbrand|identity|logo|tagline|social bio\b/i.test(message) && !/\bwebsite|shop|landing|site\b/i.test(message)) {
+    const brand = await executeAgent101StudioTool(run, "generate_brand_identity", {
+      business_description: message,
+      industry: /3d printing/i.test(message) ? "3D printing" : "business services",
+      target_audience: "buyers who want premium execution",
+      vibe: "premium, clear, operator-grade"
+    }, toolContext);
+    outputNotes.push(...(brand.files_created || []));
+    const handoff = await executeAgent101StudioTool(run, "create_handoff_doc", {
+      project_path: `brand/${slugify(name)}`,
+      what_was_built: ["Brand identity document", "Name options", "Taglines", "Voice guide", "Palette", "Logo concept direction"],
+      what_operator_must_do: ["Choose the final brand name", "Create final vector logo in Canva/Looka/Figma", "Replace placeholder social copy with real account links"]
+    }, toolContext);
+    outputNotes.push(handoff.path);
+    return `Brand identity package created for ${name}.`;
+  }
+
+  if (/\bemail|post-purchase|abandoned cart|welcome flow\b/i.test(message) && !/\bwebsite|shop|landing|site\b/i.test(message)) {
+    const flow = await executeAgent101StudioTool(run, "add_email_flow", {
+      website_path: `websites/${slugify(name)}`,
+      events: ["order_confirmation", "shipping_update", "abandoned_cart", "welcome"],
+      provider: "resend"
+    }, toolContext);
+    outputNotes.push(...(flow.files_created || []));
+    await executeAgent101StudioTool(run, "create_handoff_doc", {
+      project_path: `websites/${slugify(name)}`,
+      what_was_built: ["Email templates", "Server-side sending module", "Email setup documentation"],
+      what_operator_must_do: ["Create a Resend or SendGrid account", "Set provider API key server-side", "Send test emails before enabling live customer mail"]
+    }, toolContext);
+    return `Email flow files created for ${name}.`;
+  }
+
+  if (/\bwebsite|site|shop|store|landing|saas|portfolio|blog|3d printing|stripe|checkout\b/i.test(message)) {
+    const scaffold = await executeAgent101StudioTool(run, "scaffold_website", {
+      name,
+      type,
+      description: message,
+      pages: type === "shop" ? ["Home", "Products", "Product Detail", "Cart", "Success", "Admin", "Contact"] : ["Home", "About", "Services", "Contact"],
+      features: type === "shop"
+        ? ["Product catalog", "Cart", "Stripe Checkout scaffold", "Admin order dashboard", "Mobile-first premium UI"]
+        : ["Premium landing page", "Lead capture", "Operator handoff", "Mobile-first premium UI"]
+    }, toolContext);
+    outputNotes.push(...(scaffold.files_created || []));
+    const sitePath = `websites/${slugify(name)}`;
+    if (type === "shop" || /\bstripe|checkout|pay\b/i.test(message)) {
+      const stripe = await executeAgent101StudioTool(run, "add_stripe_checkout", {
+        website_path: sitePath,
+        products: [
+          { name: "Starter Custom Print", description: "Entry custom 3D print order", price_cents: 4900, currency: "usd" },
+          { name: "Premium Custom Print", description: "Higher-detail custom 3D print order", price_cents: 12900, currency: "usd" }
+        ]
+      }, toolContext);
+      outputNotes.push(...(stripe.files_created || []));
+    }
+    const deploy = await executeAgent101StudioTool(run, "generate_deployment_config", {
+      website_path: sitePath,
+      platform: "railway"
+    }, toolContext);
+    outputNotes.push(...(deploy.files_created || []));
+    const handoff = await executeAgent101StudioTool(run, "create_handoff_doc", {
+      project_path: sitePath,
+      what_was_built: [
+        `${type} website scaffold`,
+        "Mobile-first vanilla CSS UI",
+        "Server-side Node app",
+        type === "shop" ? "Stripe Checkout setup files" : "Lead capture/contact flow",
+        "Deployment configuration"
+      ],
+      what_operator_must_do: [
+        "Review placeholder copy, products, and prices",
+        "Paste provider keys only into server environment variables",
+        "Run npm install and npm start in the generated project",
+        "Test locally before deploying"
+      ]
+    }, toolContext);
+    outputNotes.push(handoff.path);
+    return `Generated a working ${type} website package for ${name}. Files were written under outputs/${sitePath}.`;
+  }
+
+  const plan = await executeAgent101StudioTool(run, "create_project_plan", {
+    goal: message,
+    timeline: "2 weeks",
+    resources: { operator: "owner", agent: "Agent 101", approvals: "Human Gate" }
+  }, toolContext);
+  outputNotes.push(...(plan.files_created || []));
+  await executeAgent101StudioTool(run, "create_handoff_doc", {
+    project_path: `plans/${slugify(message)}`,
+    what_was_built: ["Project plan"],
+    what_operator_must_do: ["Approve the plan or run a follow-up with the missing business details"]
+  }, toolContext);
+  return "Created an operator project plan. Add a clearer build target and Agent 101 can generate the working files.";
+}
+
+async function runAgent101Studio(body = {}) {
+  const message = extractAgent101Message(body);
+  if (!message) throw Object.assign(new Error("message is required"), { statusCode: 400 });
+  const sessionId = cleanText(body.sessionId) || newId("agent101_session");
+  const runId = newId("agent101_run");
+  const startedMs = Date.now();
+  const run = {
+    runId,
+    sessionId,
+    kind: "agent101_studio",
+    agent: "Agent 101",
+    status: "RUNNING",
+    externalStatus: "running",
+    provider: config.anthropicApiKey ? "anthropic" : "local_tool_fallback",
+    model: config.anthropicApiKey ? config.anthropicModel : "local_tool_fallback",
+    userMessage: message,
+    goal: message,
+    messages: [{ role: "user", content: message, createdAt: now() }],
+    toolCalls: [],
+    toolResults: [],
+    outputFiles: [],
+    events: [],
+    steps: [],
+    response: "",
+    costEstimateUsd: 0,
+    tokens: {},
+    startedAt: now(),
+    completedAt: null,
+    currentStep: "Starting Agent 101 Studio"
+  };
+  persistAgentRun(run);
+  addAgent101StudioEvent(run, "run_started", "Agent 101 Studio run started.", { provider: run.provider, model: run.model });
+  await saveState();
+
+  try {
+    const response = config.anthropicApiKey
+      ? await runClaudeAgent101Studio(run, message)
+      : await runLocalAgent101Studio(run, message);
+    run.response = response;
+    run.summary = response;
+    if (run.status !== "NEEDS_APPROVAL" && run.status !== "BLOCKED") run.status = "COMPLETED";
+    run.externalStatus = toExternalRunStatus(run.status);
+    run.completedAt = now();
+    run.totalDurationMs = Date.now() - startedMs;
+    run.toolCallCount = run.toolCalls.length;
+    addAgent101StudioEvent(run, "run_completed", run.status === "NEEDS_APPROVAL" ? "Agent 101 paused for Human Gate approval." : "Agent 101 Studio run completed.", {
+      status: run.status,
+      toolCallCount: run.toolCallCount,
+      outputFiles: run.outputFiles.length
+    });
+    await saveRunState(run);
+    return {
+      sessionId,
+      runId,
+      response: run.response,
+      status: run.status,
+      externalStatus: run.externalStatus,
+      provider: run.provider,
+      model: run.model,
+      toolCallCount: run.toolCallCount,
+      totalDurationMs: run.totalDurationMs,
+      costEstimateUsd: run.costEstimateUsd,
+      outputFiles: agent101OutputFileObjects(run),
+      run
+    };
+  } catch (error) {
+    run.status = "FAILED";
+    run.externalStatus = "error";
+    run.response = error.message;
+    run.summary = error.message;
+    run.completedAt = now();
+    run.totalDurationMs = Date.now() - startedMs;
+    addAgent101StudioEvent(run, "run_failed", error.message, { error: error.message, status: "error" });
+    await saveRunState(run);
+    return {
+      sessionId,
+      runId,
+      response: error.message,
+      status: run.status,
+      externalStatus: run.externalStatus,
+      provider: run.provider,
+      model: run.model,
+      toolCallCount: run.toolCalls.length,
+      totalDurationMs: run.totalDurationMs,
+      costEstimateUsd: run.costEstimateUsd,
+      outputFiles: agent101OutputFileObjects(run),
+      run
+    };
+  }
+}
+
 async function runAgent101(body = {}) {
+  if (shouldUseAgent101Studio(body)) return runAgent101Studio(body);
+  return runLegacyAgent101(body);
+}
+
+async function runLegacyAgent101(body = {}) {
   const contract = inferExecutionContract(body);
   const runId = newId("agent101_run");
   contract.runId = runId;
@@ -5411,29 +9383,51 @@ async function seedDemoWorkspace() {
   return seeded;
 }
 
+function commandCandidatePaths(command) {
+  const raw = cleanText(command);
+  if (!raw) return [];
+  if (raw.includes(path.sep) || raw.startsWith(".")) return [raw];
+  const macToolDirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  return [raw, ...macToolDirs.map((dir) => path.join(dir, raw))];
+}
+
 async function commandStatus(command, args = ["-version"]) {
-  try {
-    const { stdout, stderr } = await execFileAsync(command, args, { timeout: 4000 });
-    const firstLine = (stdout || stderr || "").split("\n")[0] || `${command} available`;
-    return { configured: true, command, version: firstLine };
-  } catch (error) {
-    return { configured: false, command, message: `${command} is not available to the server process.` };
+  const candidates = commandCandidatePaths(command);
+  for (const candidate of candidates) {
+    try {
+      const { stdout, stderr } = await execFileAsync(candidate, args, { timeout: 4000 });
+      const firstLine = (stdout || stderr || "").split("\n")[0] || `${candidate} available`;
+      return { configured: true, command: candidate, version: firstLine, tried: candidates };
+    } catch {
+      // Try the next common Mac tool path before reporting the recorder missing.
+    }
   }
+  return {
+    configured: false,
+    command: cleanText(command),
+    tried: candidates,
+    message: `${cleanText(command)} is not available to the server process.`
+  };
 }
 
 async function mediaToolStatus() {
-  const [ffmpeg, ffprobe] = await Promise.all([
+  const [ffmpeg, ffprobe, recorder] = await Promise.all([
     commandStatus(ffmpegExecutable),
-    commandStatus(ffprobeExecutable)
+    commandStatus(ffprobeExecutable),
+    liveRecorderStatus()
   ]);
   return {
-    mode: ffmpeg.configured && ffprobe.configured ? "local_render_ready" : "manual_handoff",
+    mode: ffmpeg.configured && ffprobe.configured ? recorder.ready ? "local_capture_render_ready" : "local_render_ready" : "manual_handoff",
     ffmpeg,
     ffprobe,
+    recorder,
     outputDir: config.outputDir,
+    watchBufferDir: config.watchBufferDir,
     secretsExposed: false,
-    notes: ffmpeg.configured && ffprobe.configured
-      ? "Local render tools are available for future near-finished drafts."
+    notes: ffmpeg.configured && ffprobe.configured && recorder.ready
+      ? "Local capture and render tools are available for real watch-window clips."
+      : ffmpeg.configured && ffprobe.configured
+        ? "Local rendering is available, but live capture needs streamlink or yt-dlp."
       : "CapCut handoff remains available while local render tools are installed."
   };
 }
@@ -5580,6 +9574,10 @@ async function handleApi(req, res, pathname, searchParams) {
         pendingApprovals: state.approvalRequests.filter((request) => request.status === "pending").length
       }
     });
+  }
+
+  if (req.method === "POST" && pathname === "/api/twitch/eventsub") {
+    return handleTwitchEventSubWebhook(req, res);
   }
 
   if (req.method === "GET" && pathname === "/api/browser/profile") {
@@ -5901,14 +9899,364 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, result.status === "error" ? 500 : 200, result);
   }
 
+  const capcutControlScreenshotMatch = pathname.match(/^\/api\/capcut-control\/screenshots\/([^/]+)$/);
+  if (req.method === "GET" && capcutControlScreenshotMatch) {
+    const buffer = await capCutController().screenshotById(decodeURIComponent(capcutControlScreenshotMatch[1]));
+    if (!buffer) return sendError(res, 404, "CapCut screenshot not found.");
+    return sendPng(res, buffer);
+  }
+
+  const capcutMacroScreenshotMatch = pathname.match(/^\/api\/capcut-control\/macro-screenshots\/([^/]+)\/([^/]+)$/);
+  if (req.method === "GET" && capcutMacroScreenshotMatch) {
+    const buffer = await capCutController().macroScreenshotById(
+      decodeURIComponent(capcutMacroScreenshotMatch[1]),
+      decodeURIComponent(capcutMacroScreenshotMatch[2])
+    );
+    if (!buffer) return sendError(res, 404, "CapCut macro screenshot not found.");
+    return sendPng(res, buffer);
+  }
+
+  const capcutWorkflowScreenshotMatch = pathname.match(/^\/api\/capcut-control\/workflow-screenshots\/([^/]+)\/([^/]+)$/);
+  if (req.method === "GET" && capcutWorkflowScreenshotMatch) {
+    const buffer = await capCutController().workflowScreenshotById(
+      decodeURIComponent(capcutWorkflowScreenshotMatch[1]),
+      decodeURIComponent(capcutWorkflowScreenshotMatch[2])
+    );
+    if (!buffer) return sendError(res, 404, "CapCut workflow screenshot not found.");
+    return sendPng(res, buffer);
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut-control/status") {
+    try {
+      return sendJson(res, 200, await capCutController().status());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut-control/audit") {
+    try {
+      return sendJson(res, 200, await capCutController().auditReport());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/open") {
+    try {
+      return sendJson(res, 200, await capCutController().openCapCut());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/focus") {
+    try {
+      return sendJson(res, 200, await capCutController().focusCapCut());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/park") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().parkCapCut({ mode: body.mode || "compact" }));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/screenshot") {
+    try {
+      return sendJson(res, 201, await capCutController().takeScreenshot());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutPermissionMatch = pathname.match(/^\/api\/capcut-control\/permissions\/([^/]+)$/);
+  if (req.method === "POST" && capcutPermissionMatch) {
+    try {
+      return sendJson(res, 200, await capCutController().openPermissionPane(decodeURIComponent(capcutPermissionMatch[1])));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/action") {
+    let actionName = "action";
+    try {
+      const body = await readJsonBody(req);
+      actionName = cleanText(body.action) || actionName;
+      return sendJson(res, 200, await capCutController().runAction(body.action, body));
+    } catch (error) {
+      await capCutController().logAction(actionName, "failed", { error: error.message }).catch(() => {});
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut-control/teach") {
+    try {
+      return sendJson(res, 200, await capCutController().teachStatus());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/teach/start") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 201, await capCutController().startTeachMode(body.name || body.macroName || "", {
+        appendToCurrent: Boolean(body.appendToCurrent || body.append)
+      }));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/teach/stop") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().stopTeachMode({ reason: body.reason || "operator_stop" }));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/teach/save") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 201, await capCutController().saveTeachMacro(body.name || body.macroName || ""));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/teach/cancel") {
+    try {
+      return sendJson(res, 200, await capCutController().cancelTeachMode());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/teach/snapshot") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 201, await capCutController().captureTeachSnapshot(body.reason || "manual"));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutTeachPhaseMatch = pathname.match(/^\/api\/capcut-control\/teach\/phases\/([^/]+)\/(start|complete|skip|retry)$/);
+  if (req.method === "POST" && capcutTeachPhaseMatch) {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const phaseId = decodeURIComponent(capcutTeachPhaseMatch[1]);
+      const action = capcutTeachPhaseMatch[2];
+      const inputs = {
+        ...(body.inputs || body),
+        name: body.name || body.macroName,
+        workflowId: body.workflowId
+      };
+      if (action === "start") return sendJson(res, 200, await capCutController().startTeachPhase(phaseId, inputs));
+      if (action === "complete") return sendJson(res, 200, await capCutController().completeTeachPhase(phaseId));
+      if (action === "skip") return sendJson(res, 200, await capCutController().skipTeachPhase(phaseId));
+      if (action === "retry") return sendJson(res, 200, await capCutController().retryTeachPhase(phaseId, inputs));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutTeachStepMatch = pathname.match(/^\/api\/capcut-control\/teach\/steps\/(\d+)\/(delete|trim|target|wait)$/);
+  if (req.method === "POST" && capcutTeachStepMatch) {
+    try {
+      const stepIndex = Number(capcutTeachStepMatch[1]);
+      const action = capcutTeachStepMatch[2];
+      if (action === "delete") return sendJson(res, 200, await capCutController().deleteTeachStep(stepIndex));
+      if (action === "trim") return sendJson(res, 200, await capCutController().trimTeachStepsFrom(stepIndex));
+      if (action === "target") {
+        const body = await readJsonBody(req).catch(() => ({}));
+        return sendJson(res, 200, await capCutController().setTeachStepTarget(stepIndex, body.label || body.target || ""));
+      }
+      if (action === "wait") {
+        const body = await readJsonBody(req).catch(() => ({}));
+        return sendJson(res, 200, await capCutController().updateTeachStepWait(stepIndex, body.ms));
+      }
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut-control/macros") {
+    try {
+      return sendJson(res, 200, { macros: await capCutController().listMacros(), replay: capCutController().publicReplayState() });
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/macros/order") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().reorderMacros(body.ids || body.macroIds || []));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/macros/run-all") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().replayAllMacros({
+        inputs: body.inputs || body.workflowInputs || {}
+      }));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutMacroDeleteMatch = pathname.match(/^\/api\/capcut-control\/macros\/([^/]+)$/);
+  if (req.method === "DELETE" && capcutMacroDeleteMatch) {
+    try {
+      return sendJson(res, 200, await capCutController().deleteMacro(decodeURIComponent(capcutMacroDeleteMatch[1])));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut-control/workflows") {
+    try {
+      return sendJson(res, 200, await capCutController().workflowStatus());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutWorkflowMatch = pathname.match(/^\/api\/capcut-control\/workflows\/([^/]+)\/(train|save|run)$/);
+  if (req.method === "POST" && capcutWorkflowMatch) {
+    try {
+      const workflowId = decodeURIComponent(capcutWorkflowMatch[1]);
+      const action = capcutWorkflowMatch[2];
+      const body = await readJsonBody(req).catch(() => ({}));
+      if (action === "train") {
+        return sendJson(res, 201, await capCutController().startWorkflowTraining(workflowId, body.inputs || body));
+      }
+      if (action === "save") {
+        return sendJson(res, 201, await capCutController().saveWorkflowMacro(workflowId, body.inputs || body));
+      }
+      if (action === "run") {
+        return sendJson(res, 200, await capCutController().runWorkflow(workflowId, body.inputs || body));
+      }
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const capcutMacroRenameMatch = pathname.match(/^\/api\/capcut-control\/macros\/([^/]+)\/rename$/);
+  if (req.method === "POST" && capcutMacroRenameMatch) {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().renameMacro(
+        decodeURIComponent(capcutMacroRenameMatch[1]),
+        body.name || body.macroName || ""
+      ));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutMacroEditMatch = pathname.match(/^\/api\/capcut-control\/macros\/([^/]+)\/edit$/);
+  if (req.method === "POST" && capcutMacroEditMatch) {
+    try {
+      return sendJson(res, 200, await capCutController().loadMacroForEditing(decodeURIComponent(capcutMacroEditMatch[1])));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  const capcutMacroReplayMatch = pathname.match(/^\/api\/capcut-control\/macros\/([^/]+)\/replay$/);
+  if (req.method === "POST" && capcutMacroReplayMatch) {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const result = await capCutController().replayMacro(decodeURIComponent(capcutMacroReplayMatch[1]), {
+        startIndex: Number(body.startIndex || body.fromStepIndex || 0),
+        inputs: body.inputs || body.workflowInputs || {}
+      });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/replay/cancel") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().cancelReplay(body.reason || "operator_cancel"));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/replay/pause") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await capCutController().pauseReplay(body.reason || "operator_pause"));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut-control/replay/resume") {
+    try {
+      return sendJson(res, 200, await capCutController().resumeReplay());
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/capcut/status") {
+    const installed = await isCapCutInstalled();
+    const running = await isCapCutRunning();
+    const visionReady = Boolean(config.anthropicApiKey);
+    const agentReady = Boolean(config.capcutAgentDryRun || (installed && visionReady));
     return sendJson(res, 200, {
-      status: "manual_handoff",
-      configured: Boolean(config.capcutHandoffUrl),
-      url: config.capcutHandoffUrl,
-      browserReady: config.browserEnabled,
-      notes: "CapCut is a manual polishing workspace. Agent 101 prepares briefs and instructions, but does not operate the editor."
+      status: agentReady ? "desktop_control_ready" : installed ? "needs_anthropic_key" : "capcut_not_installed",
+      configured: agentReady,
+      url: "",
+      mode: "desktop_app",
+      capcutInstalled: installed,
+      capcutRunning: running,
+      browserReady: false,
+      visionReady,
+      agentReady,
+      downloadDirConfigured: Boolean(config.capcutDownloadDir),
+      brandSticker: config.capcutBrandSticker,
+      notes: "Agent 101 uses the native Mac CapCut app. Export/download remains Human Gate gated and operator-controlled."
     });
+  }
+
+  if (req.method === "GET" && pathname === "/api/capcut/sessions") {
+    return sendJson(res, 200, {
+      sessions: (state.capcutAgentSessions || []).map(publicCapcutAgentSession)
+    });
+  }
+
+  const capcutSessionEventsMatch = pathname.match(/^\/api\/capcut\/sessions\/([^/]+)\/events$/);
+  if (req.method === "GET" && capcutSessionEventsMatch) {
+    return subscribeCapcutAgentStream(decodeURIComponent(capcutSessionEventsMatch[1]), res);
+  }
+
+  if (req.method === "POST" && pathname === "/api/capcut/edit") {
+    try {
+      const body = await readJsonBody(req);
+      const result = await runCapcutEditClip(body, { source: "api" });
+      return sendJson(res, result.error ? 500 : result.requiresApproval ? 202 : 200, result);
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/capcut/open") {
@@ -5996,6 +10344,7 @@ async function handleApi(req, res, pathname, searchParams) {
         selectedCandidateId: candidate?.id || project.selectedCandidateId || "",
         clipStartSeconds: nextStart == null ? project.clipStartSeconds : Math.max(0, Number(nextStart)),
         clipEndSeconds: nextEnd == null ? project.clipEndSeconds : Math.max(0, Number(nextEnd)),
+        editorState: body.editorState && typeof body.editorState === "object" ? sanitizeClipEditorState(body.editorState) : project.editorState || {},
         status: source ? "source_ready" : project.status,
         updatedAt: now(),
         autosavedAt: now()
@@ -6279,14 +10628,45 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 
   if (req.method === "GET" && pathname === "/api/clip-candidates") {
+    await ensureActiveWatchSessionCandidateCoverage("clip_candidates_refresh");
     const projectId = cleanText(searchParams.get("projectId"));
     const sourceId = cleanText(searchParams.get("sourceId"));
-    const candidates = state.clipCandidates.filter((candidate) => {
-      if (projectId && candidate.projectId !== projectId) return false;
-      if (sourceId && candidate.sourceId !== sourceId) return false;
-      return true;
-    });
+    const candidates = filterClipCandidatesForRadar(state.clipCandidates, { projectId, sourceId })
+      .map((candidate) => ({ ...candidate, journey: candidateJourney(candidate) }));
     return sendJson(res, 200, { candidates });
+  }
+
+  if (req.method === "POST" && pathname === "/api/clip-candidates/bulk-delete") {
+    const body = await readJsonBody(req).catch(() => ({}));
+    const ids = [...new Set(Array.isArray(body.ids) ? body.ids.map(cleanText).filter(Boolean) : [])];
+    if (!ids.length) return sendError(res, 400, "Choose at least one clip candidate to delete.");
+    const stopWatchers = Boolean(body.stopWatchers || body.stopWatcher || body.disableMonitoring);
+    const deleted = [];
+    const blocked = [];
+    const stoppedWatchSessions = [];
+    const stoppedSessionIds = new Set();
+    for (const id of ids) {
+      try {
+        const result = await deleteClipCandidate(id, "operator_bulk_delete", { stopWatcher: stopWatchers });
+        deleted.push(result.candidateId);
+        const stopped = result.stoppedWatchSession;
+        if (stopped?.sessionId && !stoppedSessionIds.has(stopped.sessionId)) {
+          stoppedSessionIds.add(stopped.sessionId);
+          stoppedWatchSessions.push(stopped);
+        }
+      } catch (error) {
+        blocked.push({ id, error: error.message, details: error.details || {} });
+      }
+    }
+    await logEvent("candidate_bulk_delete", "Bulk clip candidate delete completed", {
+      requested: ids.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      stoppedWatchSessions: stoppedWatchSessions.length,
+      stopWatchers
+    });
+    await saveState();
+    return sendJson(res, 200, { deleted, blocked, requested: ids.length, stoppedWatchSessions });
   }
 
   if (req.method === "POST" && (pathname === "/api/media/candidates" || pathname === "/api/clip-candidates")) {
@@ -6295,6 +10675,14 @@ async function handleApi(req, res, pathname, searchParams) {
     if (!source) return sendError(res, 422, "Candidate generation blocked: no verified playable media.");
     try {
       await assertSourceIsPlayable(source);
+      const sourceSessionId = cleanText(source.watchSessionId);
+      const session = state.watchSessions.find((item) => item.id === sourceSessionId) || null;
+      if (session) {
+        const unresolvedForSession = unresolvedLiveRecordingCandidates(session.id);
+        if (unresolvedForSession.length >= Number(config.watchCandidateUnresolvedCap || 0)) {
+          return sendError(res, 409, `Candidate queue is full for this watch session (${unresolvedForSession.length}/${config.watchCandidateUnresolvedCap}). Resolve or archive one before adding another.`);
+        }
+      }
       const start = Math.max(0, Number(body.startSeconds ?? body.timestampStartSeconds ?? 0));
       const end = Number(body.endSeconds ?? body.timestampEndSeconds ?? start + Number(body.durationSeconds || body.duration || 0));
       const scoreValue = body.score == null ? null : Number(body.score);
@@ -6445,6 +10833,11 @@ async function handleApi(req, res, pathname, searchParams) {
     if (!candidate) return sendError(res, 404, "Clip candidate not found");
     if (req.method === "GET") {
       return sendJson(res, 200, { candidate });
+    }
+    if (req.method === "DELETE") {
+      const stopWatcher = ["1", "true", "yes"].includes(String(searchParams.get("stopWatcher") || searchParams.get("stopWatchers") || "").toLowerCase());
+      const result = await deleteClipCandidate(clipCandidateMatch[1], "operator_delete", { stopWatcher });
+      return sendJson(res, 200, result);
     }
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
@@ -6699,6 +11092,67 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  const agentStreamMatch = pathname.match(/^\/api\/agent101\/stream\/([^/]+)$/);
+  if (req.method === "GET" && agentStreamMatch) {
+    subscribeAgent101Stream(decodeURIComponent(agentStreamMatch[1]), res);
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/agent101/sessions") {
+    return sendJson(res, 200, { sessions: listAgent101Sessions() });
+  }
+
+  const agentSessionDownloadMatch = pathname.match(/^\/api\/agent101\/sessions\/([^/]+)\/download$/);
+  if (req.method === "GET" && agentSessionDownloadMatch) {
+    const sessionId = decodeURIComponent(agentSessionDownloadMatch[1]);
+    const session = publicAgent101Session(sessionId);
+    if (!session) return sendError(res, 404, "Agent 101 session not found");
+    const files = [];
+    for (const file of session.outputFiles || []) {
+      const pathValue = file.path || file;
+      const content = await readOutputFile(config.agent101OutputDir, pathValue).catch((error) => ({
+        path: pathValue,
+        error: error.message,
+        content: ""
+      }));
+      files.push(content);
+    }
+    const body = JSON.stringify({ session, files, exportedAt: now() }, null, 2);
+    res.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "content-disposition": `attachment; filename="agent101-${sessionId}-outputs.json"`,
+      "cache-control": "no-store"
+    });
+    res.end(body);
+    return;
+  }
+
+  const agentSessionMatch = pathname.match(/^\/api\/agent101\/sessions\/([^/]+)$/);
+  if (req.method === "GET" && agentSessionMatch) {
+    const sessionId = decodeURIComponent(agentSessionMatch[1]);
+    const session = publicAgent101Session(sessionId);
+    if (!session) return sendError(res, 404, "Agent 101 session not found");
+    const runs = studioSessionRuns(sessionId);
+    return sendJson(res, 200, {
+      session,
+      runs,
+      conversation: runs.flatMap((run) => [
+        { role: "user", content: run.userMessage, createdAt: run.startedAt, runId: run.runId },
+        { role: "assistant", content: run.response || run.summary || "", createdAt: run.completedAt || run.startedAt, runId: run.runId, toolCalls: run.toolCalls || [] }
+      ])
+    });
+  }
+
+  if (req.method === "GET" && pathname === "/api/agent101/files") {
+    const filePath = cleanText(searchParams.get("path") || "");
+    if (!filePath) return sendError(res, 400, "Output file path is required");
+    return sendJson(res, 200, await readOutputFile(config.agent101OutputDir, filePath));
+  }
+
+  if (req.method === "GET" && pathname === "/api/agent101/outputs") {
+    return sendJson(res, 200, { files: await listOutputFiles(config.agent101OutputDir) });
+  }
+
   if (req.method === "POST" && pathname === "/api/agent101/runs") {
     const body = await readJsonBody(req);
     const result = await runAgent101(body);
@@ -6893,6 +11347,18 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, { streamers: state.streamers });
   }
 
+  if (req.method === "POST" && pathname === "/api/twitch/eventsub/subscribe") {
+    const body = await readJsonBody(req).catch(() => ({}));
+    const streamer = findStreamer(body.streamerId);
+    if (!streamer) return sendError(res, 404, "Streamer not found.");
+    if (!isRealApprovedStreamer(streamer)) {
+      return sendError(res, 403, "EventSub subscription requires an approved streamer record.");
+    }
+    const result = await subscribeToEventSub(streamer);
+    await saveState();
+    return sendJson(res, 200, { streamer, result });
+  }
+
   if (req.method === "GET" && pathname === "/api/streamers/recommendations") {
     const result = await recommendStreamers({
       platform: normalizeStatus(searchParams.get("platform") || "all", ["all", "kick", "twitch"], "all"),
@@ -6909,22 +11375,98 @@ async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "POST" && pathname === "/api/twitch/streamers") {
     const body = await readJsonBody(req);
     const identity = normalizeStreamerInput(body);
+    const platform = normalizeStatus(body.platform || "twitch", ["twitch", "youtube_live", "kick", "other"], "twitch");
+    const providerConfigured = liveProviderConfigured(platform);
+    const requestedMonitorEnabled = Boolean(body.monitorEnabled ?? false);
+    const monitorEnabled = providerConfigured ? requestedMonitorEnabled : false;
+    let permissionStatus = normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], "pending");
+    if (requestedMonitorEnabled && !providerConfigured) {
+      permissionStatus = permissionStatus === "blocked" ? "blocked" : "pending";
+    }
+    const requestedLiveStatus = normalizeStatus(body.liveStatus, ["live", "offline", "unverified", "api_not_configured", "unknown"], "unknown");
+    const liveStatus = providerConfigured ? requestedLiveStatus : "api_not_configured";
+    const liveStatusReason = !providerConfigured
+      ? `${platform === "kick" ? "Kick" : platform === "twitch" ? "Twitch" : "Provider"} API is not configured. Added for review only; monitoring stays paused until an official live check can run.`
+      : cleanText(body.liveStatusReason || (requestedLiveStatus === "live" ? "Official live recommendation" : "Not checked yet"));
+    if (monitorEnabled && permissionStatus === "approved") {
+      await enforceSingleWatchedStreamer("", "streamer_create_monitor_enabled");
+    }
+    try {
+      assertWatchCapacity({ monitorEnabled, permissionStatus });
+    } catch (error) {
+      return sendError(res, error.statusCode || 409, error.message, error.details);
+    }
+    const existingStreamer = state.streamers.find((streamer) => {
+      if (streamer.platform !== platform) return false;
+      const existingChannel = cleanText(streamer.channelId).toLowerCase();
+      const nextChannel = cleanText(identity.channelId).toLowerCase();
+      const existingUrl = cleanText(streamer.channelUrl).toLowerCase().replace(/\/+$/, "");
+      const nextUrl = cleanText(identity.channelUrl).toLowerCase().replace(/\/+$/, "");
+      return (nextChannel && existingChannel === nextChannel) || (nextUrl && existingUrl === nextUrl);
+    });
+    if (existingStreamer) {
+      const currentAllowedUse = normalizeAllowedUse(existingStreamer.allowedUse);
+      const requestedAllowedUse = Array.isArray(body.allowedUse)
+        ? body.allowedUse.map((item) => cleanText(item).toLowerCase()).filter(Boolean)
+        : [];
+      const mergedAllowedUse = Array.from(new Set([...currentAllowedUse, ...requestedAllowedUse]));
+      const nextPermissionStatus = permissionStatus === "approved" || existingStreamer.permissionStatus === "approved" ? "approved" : permissionStatus;
+      const nextAllowedUse = nextPermissionStatus === "approved" && !mergedAllowedUse.length ? ["clips"] : mergedAllowedUse;
+      const preserveMonitorEnabled = !requestedMonitorEnabled && existingStreamer.permissionStatus === "approved"
+        ? Boolean(existingStreamer.monitorEnabled)
+        : monitorEnabled;
+      const nextLiveStatus = liveStatus === "unknown" || liveStatus === "unverified"
+        ? existingStreamer.liveStatus || liveStatus
+        : liveStatus;
+      Object.assign(existingStreamer, {
+        displayName: identity.displayName || existingStreamer.displayName,
+        channelId: identity.channelId || existingStreamer.channelId,
+        channelUrl: identity.channelUrl || existingStreamer.channelUrl,
+        providerUserId: cleanText(body.providerUserId || body.broadcasterId) || existingStreamer.providerUserId || "",
+        permissionStatus: nextPermissionStatus,
+        allowedUse: nextAllowedUse,
+        monitorEnabled: preserveMonitorEnabled,
+        monitorPausedAt: preserveMonitorEnabled ? null : (body.monitorPausedAt || existingStreamer.monitorPausedAt || null),
+        liveStatus: nextLiveStatus,
+        liveStatusReason: nextLiveStatus === existingStreamer.liveStatus ? existingStreamer.liveStatusReason : liveStatusReason,
+        notes: cleanText(body.notes) || existingStreamer.notes,
+        updatedAt: now()
+      });
+      ensureStreamerDetectionProfile(existingStreamer, body.clipProfile || {});
+      await logEvent("streamer_upserted", "Existing streamer updated instead of duplicated", {
+        streamerId: existingStreamer.id,
+        platform,
+        channelId: existingStreamer.channelId,
+        monitorEnabled: existingStreamer.monitorEnabled
+      });
+      let watch = null;
+      if (existingStreamer.permissionStatus === "approved" && existingStreamer.monitorEnabled && existingStreamer.liveStatus === "live") {
+        watch = await startLiveWatchForApprovedStreamer(existingStreamer, "streamer_upserted");
+      }
+      await saveState();
+      return sendJson(res, 200, { streamer: existingStreamer, watchSession: watch?.session || null, reused: true });
+    }
     const streamer = {
       id: newId("streamer"),
-      platform: normalizeStatus(body.platform || "twitch", ["twitch", "youtube_live", "kick", "other"], "twitch"),
+      platform,
       displayName: identity.displayName,
       channelId: identity.channelId,
       channelUrl: identity.channelUrl,
-      permissionStatus: normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], "pending"),
-      allowedUse: Array.isArray(body.allowedUse) ? body.allowedUse : ["clips"],
-      monitorEnabled: Boolean(body.monitorEnabled ?? true),
+      providerUserId: cleanText(body.providerUserId || body.broadcasterId),
+      permissionStatus,
+      allowedUse: Array.isArray(body.allowedUse)
+        ? Array.from(new Set(body.allowedUse.map((item) => cleanText(item).toLowerCase()).filter(Boolean)))
+        : ["clips"],
+      monitorEnabled,
+      monitorPausedAt: monitorEnabled ? null : (body.monitorPausedAt || null),
       lastCheckedAt: null,
-      liveStatus: "unknown",
-      liveStatusReason: "Not checked yet",
+      liveStatus,
+      liveStatusReason,
       notes: cleanText(body.notes),
       createdAt: now(),
       updatedAt: now()
     };
+    ensureStreamerDetectionProfile(streamer, body.clipProfile || {});
     state.streamers.unshift(streamer);
     if (streamer.permissionStatus !== "approved") {
       createApprovalRequest({
@@ -6937,7 +11479,9 @@ async function handleApi(req, res, pathname, searchParams) {
     }
     await logEvent("streamer_added", "Streamer added to watchlist", {
       streamerId: streamer.id,
-      permissionStatus: streamer.permissionStatus
+      permissionStatus: streamer.permissionStatus,
+      monitorEnabled: streamer.monitorEnabled,
+      liveStatus: streamer.liveStatus
     });
     if (streamer.permissionStatus === "approved" && streamer.monitorEnabled) {
       try {
@@ -6957,8 +11501,12 @@ async function handleApi(req, res, pathname, searchParams) {
         });
       }
     }
+    let watch = null;
+    if (streamer.permissionStatus === "approved" && streamer.monitorEnabled && streamer.liveStatus === "live") {
+      watch = await startLiveWatchForApprovedStreamer(streamer, "streamer_added");
+    }
     await saveState();
-    return sendJson(res, 201, { streamer });
+    return sendJson(res, 201, { streamer, watchSession: watch?.session || null });
   }
 
   const streamerCheckMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)\/check$/);
@@ -6988,48 +11536,159 @@ async function handleApi(req, res, pathname, searchParams) {
     }
   }
 
+  if (req.method === "POST" && pathname === "/api/twitch/streamers/bulk-delete") {
+    const body = await readJsonBody(req).catch(() => ({}));
+    const ids = [...new Set(Array.isArray(body.ids) ? body.ids.map(cleanText).filter(Boolean) : [])];
+    if (!ids.length) return sendError(res, 400, "Choose at least one streamer to remove.");
+    const deleted = [];
+    const blocked = [];
+    const stoppedSessions = [];
+    for (const id of ids) {
+      try {
+        const result = await removeStreamerFromWatchlist(id, "operator_bulk_delete_streamers");
+        deleted.push(result.streamerId);
+        stoppedSessions.push(...(result.stoppedSessions || []));
+      } catch (error) {
+        blocked.push({ id, error: error.message });
+      }
+    }
+    await logEvent("streamer_bulk_delete", "Bulk streamer delete completed", {
+      requested: ids.length,
+      deleted: deleted.length,
+      blocked: blocked.length,
+      stoppedSessions: stoppedSessions.length
+    });
+    await saveState();
+    return sendJson(res, 200, { requested: ids.length, deleted, blocked, stoppedSessions });
+  }
+
+  const streamerApproveMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)\/approve$/);
+  if (streamerApproveMatch && req.method === "PATCH") {
+    const streamer = findStreamer(streamerApproveMatch[1]);
+    if (!streamer) return sendError(res, 404, "Streamer not found");
+    await enforceSingleWatchedStreamer(streamer.id, "streamer_approved_monitor_enabled");
+    try {
+      assertWatchCapacity({ monitorEnabled: true, permissionStatus: "approved", excludeId: streamer.id });
+    } catch (error) {
+      return sendError(res, error.statusCode || 409, error.message, error.details);
+    }
+    streamer.permissionStatus = "approved";
+    streamer.allowedUse = Array.from(new Set([...(streamer.allowedUse || []), "clips", "edits"]));
+    streamer.monitorEnabled = true;
+    streamer.monitorPausedAt = null;
+    streamer.updatedAt = now();
+    await logEvent("streamer_approved", `${streamer.displayName} approved for clipping`, {
+      streamerId: streamer.id,
+      allowedUse: streamer.allowedUse
+    });
+    let watch = null;
+    if (streamer.liveStatus === "live") {
+      watch = await startLiveWatchForApprovedStreamer(streamer, "streamer_approved");
+    }
+    await saveState();
+    return sendJson(res, 200, { streamer, watchSession: watch?.session || null });
+  }
+
+  const streamerClipProfileMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)\/clip-profile$/);
+  if (streamerClipProfileMatch && req.method === "PATCH") {
+    const streamer = findStreamer(streamerClipProfileMatch[1]);
+    if (!streamer) return sendError(res, 404, "Streamer not found");
+    const body = await readJsonBody(req).catch(() => ({}));
+    const clipProfile = ensureStreamerDetectionProfile(streamer, body);
+    streamer.updatedAt = now();
+    await logEvent("streamer_clip_profile_updated", "Streamer clip profile updated", {
+      streamerId: streamer.id,
+      genre: clipProfile.genre,
+      minClipScore: clipProfile.minClipScore,
+      chatSpikeThreshold: clipProfile.chatSpikeThreshold,
+      tensionSpikeThreshold: clipProfile.tensionSpikeThreshold
+    });
+    await saveState();
+    return sendJson(res, 200, { streamer, clipProfile });
+  }
+
   const streamerMatch = pathname.match(/^\/api\/twitch\/streamers\/([^/]+)$/);
   if (streamerMatch && req.method === "PATCH") {
     const streamer = findStreamer(streamerMatch[1]);
     if (!streamer) return sendError(res, 404, "Streamer not found");
     const body = await readJsonBody(req);
     const before = streamer.permissionStatus;
+    const nextPermissionStatus = body.permissionStatus
+      ? normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], streamer.permissionStatus)
+      : streamer.permissionStatus;
+    const approvingNow = before !== "approved" && nextPermissionStatus === "approved";
+    const nextMonitorEnabled = body.monitorEnabled !== undefined
+      ? Boolean(body.monitorEnabled)
+      : approvingNow && streamer.liveStatus === "live" && !streamer.monitorPausedAt
+        ? true
+        : streamer.monitorEnabled;
+    const nextPlatform = body.platform ? normalizeStatus(body.platform, ["twitch", "youtube_live", "kick", "other"], streamer.platform) : streamer.platform;
+    const providerConfigured = liveProviderConfigured(nextPlatform);
+    const safeMonitorEnabled = providerConfigured ? nextMonitorEnabled : false;
+    const safePermissionStatus = nextMonitorEnabled && !providerConfigured && nextPermissionStatus !== "blocked" ? "pending" : nextPermissionStatus;
+    if (safeMonitorEnabled && safePermissionStatus === "approved") {
+      await enforceSingleWatchedStreamer(streamer.id, "streamer_patch_monitor_enabled");
+    }
+    try {
+      assertWatchCapacity({ monitorEnabled: safeMonitorEnabled, permissionStatus: safePermissionStatus, excludeId: streamer.id });
+    } catch (error) {
+      return sendError(res, error.statusCode || 409, error.message, error.details);
+    }
     const identity = normalizeStreamerInput({
       displayName: body.displayName !== undefined ? body.displayName : streamer.displayName,
       channelId: body.channelId !== undefined ? body.channelId : streamer.channelId,
       channelUrl: body.channelUrl !== undefined ? body.channelUrl : streamer.channelUrl,
       platform: body.platform !== undefined ? body.platform : streamer.platform
     });
+    const currentAllowedUse = normalizeAllowedUse(streamer.allowedUse);
+    const requestedAllowedUse = Array.isArray(body.allowedUse)
+      ? body.allowedUse.map((item) => cleanText(item).toLowerCase()).filter(Boolean)
+      : [];
+    const mergedAllowedUse = Array.from(new Set([...currentAllowedUse, ...requestedAllowedUse]));
+    const nextAllowedUse = safePermissionStatus === "approved" && !mergedAllowedUse.length ? ["clips"] : mergedAllowedUse;
     Object.assign(streamer, {
-      platform: body.platform ? normalizeStatus(body.platform, ["twitch", "youtube_live", "kick", "other"], streamer.platform) : streamer.platform,
+      platform: nextPlatform,
       displayName: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.displayName : streamer.displayName,
       channelId: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.channelId : streamer.channelId,
       channelUrl: body.displayName !== undefined || body.channelId !== undefined || body.channelUrl !== undefined ? identity.channelUrl : streamer.channelUrl,
-      permissionStatus: body.permissionStatus
-        ? normalizeStatus(body.permissionStatus, ["approved", "pending", "blocked"], streamer.permissionStatus)
-        : streamer.permissionStatus,
-      allowedUse: Array.isArray(body.allowedUse) ? body.allowedUse : streamer.allowedUse,
-      monitorEnabled: body.monitorEnabled !== undefined ? Boolean(body.monitorEnabled) : streamer.monitorEnabled,
+      providerUserId: body.providerUserId !== undefined || body.broadcasterId !== undefined
+        ? cleanText(body.providerUserId || body.broadcasterId)
+        : streamer.providerUserId || "",
+      permissionStatus: safePermissionStatus,
+      allowedUse: nextAllowedUse,
+      monitorEnabled: safeMonitorEnabled,
+      monitorPausedAt: safeMonitorEnabled ? null : (body.monitorEnabled === false ? now() : streamer.monitorPausedAt || null),
+      liveStatus: !providerConfigured && nextMonitorEnabled ? "api_not_configured" : streamer.liveStatus,
+      liveStatusReason: !providerConfigured && nextMonitorEnabled
+        ? `${nextPlatform === "kick" ? "Kick" : nextPlatform === "twitch" ? "Twitch" : "Provider"} API is not configured. Monitoring was kept paused.`
+        : streamer.liveStatusReason,
       notes: body.notes !== undefined ? cleanText(body.notes) : streamer.notes,
       updatedAt: now()
     });
+    ensureStreamerDetectionProfile(streamer, body.clipProfile || {});
     if (before !== "approved" && streamer.permissionStatus === "approved") {
       await logEvent("approval_local", "Streamer permission marked approved locally", { streamerId: streamer.id });
     }
+    let watch = null;
+    if (streamer.permissionStatus === "approved" && streamer.monitorEnabled && streamer.liveStatus === "live") {
+      watch = await startLiveWatchForApprovedStreamer(streamer, "streamer_patch");
+    }
     await saveState();
-    return sendJson(res, 200, { streamer });
+    return sendJson(res, 200, { streamer, watchSession: watch?.session || null });
   }
 
   if (streamerMatch && req.method === "DELETE") {
-    const index = state.streamers.findIndex((streamer) => streamer.id === streamerMatch[1]);
-    if (index < 0) return sendError(res, 404, "Streamer not found");
-    const [removed] = state.streamers.splice(index, 1);
-    await logEvent("streamer_deleted", "Streamer removed from watchlist", { streamerId: removed.id });
-    await saveState();
-    return sendJson(res, 200, { deleted: true });
+    try {
+      const result = await removeStreamerFromWatchlist(streamerMatch[1], "operator_delete_streamer");
+      await saveState();
+      return sendJson(res, 200, { deleted: true, stoppedSessions: result.stoppedSessions || [] });
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message);
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/watch-sessions") {
+    await ensureActiveWatchSessionCandidateCoverage("watch_sessions_refresh");
     return sendJson(res, 200, {
       sessions: state.watchSessions.map(publicWatchSession),
       active: activeWatchSessions().map(publicWatchSession)
@@ -7037,6 +11696,7 @@ async function handleApi(req, res, pathname, searchParams) {
   }
 
   if (req.method === "GET" && pathname === "/api/watch-sessions/active") {
+    await ensureActiveWatchSessionCandidateCoverage("active_watch_sessions_refresh");
     return sendJson(res, 200, {
       workerId: WATCH_WORKER_ID,
       sessions: activeWatchSessions().map(publicWatchSession),
@@ -7080,6 +11740,7 @@ async function handleApi(req, res, pathname, searchParams) {
     }
 
     if (req.method === "GET" && action === "detail") {
+      await ensureActiveWatchSessionCandidateCoverage("watch_session_detail_refresh");
       return sendJson(res, 200, {
         session: publicWatchSession(session),
         events: watchEventsFor(session.id),
@@ -7095,6 +11756,7 @@ async function handleApi(req, res, pathname, searchParams) {
     }
 
     if (req.method === "GET" && action === "candidates") {
+      await ensureActiveWatchSessionCandidateCoverage("watch_session_candidates_refresh");
       return sendJson(res, 200, {
         candidates: state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id)
       });
@@ -7118,7 +11780,36 @@ async function handleApi(req, res, pathname, searchParams) {
     if (req.method === "POST" && action === "pause") return sendJson(res, 200, { session: await pauseWatchSession(session.id) });
     if (req.method === "POST" && action === "resume") return sendJson(res, 200, { session: await resumeWatchSession(session.id) });
     if (req.method === "POST" && action === "reconnect") return sendJson(res, 200, { session: await resumeWatchSession(session.id) });
-    if (req.method === "POST" && action === "stop") return sendJson(res, 200, { session: await stopWatchSession(session.id, "cancelled") });
+    if (req.method === "POST" && action === "capture") {
+      const body = await readJsonBody(req);
+      const streamer = state.streamers.find((item) => item.id === session.streamerId);
+      const mission = state.clipMissions.find((item) => item.id === session.clipProfileId || item.id === session.missionId) || ensureClipMission(streamer);
+      const requestedIndex = body.recordingWindowIndex ?? body.windowIndex;
+      const windowIndex = Number.isFinite(Number(requestedIndex))
+        ? Math.max(0, Number(requestedIndex))
+        : Math.max(0, Math.floor(Number(session.analyzedSeconds || 0) / WATCH_RECORDING_WINDOW_SECONDS));
+      const source = await captureLiveWindowForSession(session, { streamer, mission, windowIndex });
+      await ensureWatchSessionCandidates(session);
+      if (source) await autoStageCapturedCandidatesForBuilder(session, source, "manual_capture");
+      const candidates = state.clipCandidates.filter((candidate) => candidate.watchSessionId === session.id);
+      return sendJson(res, source ? 201 : 200, {
+        session: publicWatchSession(session),
+        source: source ? publicMediaSource(source) : null,
+        candidates,
+        recorder: await liveRecorderStatus()
+      });
+    }
+    if (req.method === "POST" && action === "stop") {
+      const body = await readJsonBody(req).catch(() => ({}));
+      const stopped = await stopWatchSession(session.id, "cancelled", {
+        reason: cleanText(body.reason) || "operator_stop",
+        operatorAction: true
+      });
+      const stoppedSessions = (body.stopAll || shouldTreatAsSingleWatch())
+        ? await stopOtherActiveWatchSessions(stopped.id, "operator_stop_single_watch")
+        : [];
+      return sendJson(res, 200, { session: stopped, stoppedSessions });
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/watch/run") {
@@ -7155,23 +11846,40 @@ async function handleApi(req, res, pathname, searchParams) {
           session: watch.session,
           reason: watch.summary?.capabilities?.hasLiveVideo
             ? "Backend watcher is analyzing verified media."
-            : "Backend watcher is metadata-only; no candidate will be created without playable media."
+            : `Backend watcher is creating ${WATCH_RECORDING_WINDOW_SECONDS}s review windows while playable media capture is pending.`
         }],
         dailyLimit: dailyLimitStatus()
       });
     }
     const results = [];
-    for (const streamer of state.streamers.filter((item) => item.monitorEnabled)) {
-      if (streamer.isDemo || streamer.permissionStatus === "demo_approved" || streamer.platform === "demo") {
-        results.push({
-          streamerId: streamer.id,
-          live: null,
-          skipped: true,
-          official: false,
-          reason: "Practice streamer hidden from real watch cycle."
-        });
-        continue;
-      }
+    const pendingStreamers = state.streamers.filter((item) =>
+      !isApprovedStreamer(item)
+      && !isPracticeStreamer(item)
+      && (item.monitorEnabled || (item.allowedUse || []).includes("clips"))
+    );
+    for (const streamer of pendingStreamers) {
+      const blocked = {
+        streamerId: streamer.id,
+        live: null,
+        skipped: true,
+        official: false,
+        reason: `Permission gate: ${streamer.displayName || streamer.channelId || "streamer"} is ${streamer.permissionStatus || "pending"}, so no live scan or clip capture was run.`
+      };
+      results.push(blocked);
+      await logEvent("permission_blocked", "Watch skipped before live scan", {
+        streamerId: streamer.id,
+        reason: blocked.reason
+      });
+    }
+    let monitoredStreamers = state.streamers.filter((item) => item.monitorEnabled && isApprovedStreamer(item) && !isPracticeStreamer(item));
+    if (monitoredStreamers.length > 1) {
+      await enforceSingleWatchedStreamer(monitoredStreamers[0].id, "watch_run_single_stream_cleanup");
+      monitoredStreamers = state.streamers.filter((item) => item.monitorEnabled && isApprovedStreamer(item) && !isPracticeStreamer(item));
+    }
+    const runCapacity = watchCapacity();
+    const activeStreamers = monitoredStreamers.slice(0, runCapacity.limit);
+    const overflowStreamers = monitoredStreamers.slice(runCapacity.limit);
+    for (const streamer of activeStreamers) {
       let stream = null;
       let liveCheck = null;
       try {
@@ -7233,15 +11941,83 @@ async function handleApi(req, res, pathname, searchParams) {
         sourceMode: "real"
       });
     }
+    for (const streamer of overflowStreamers) {
+      results.push({
+        streamerId: streamer.id,
+        live: null,
+        skipped: true,
+        official: false,
+        reason: `Watch capacity is capped at ${runCapacity.limit}. Pause another stream before monitoring this one.`
+      });
+      await logEvent("watch_capacity_skipped", "Streamer skipped because watch capacity is full", {
+        streamerId: streamer.id,
+        capacity: watchCapacity()
+      });
+    }
     await saveState();
-    return sendJson(res, 200, { mode: "real", results, dailyLimit: dailyLimitStatus() });
+    return sendJson(res, 200, {
+      mode: "real",
+      results,
+      watchCapacity: watchCapacity(),
+      dailyLimit: dailyLimitStatus()
+    });
   }
 
   if (req.method === "GET" && pathname === "/api/clips/candidates") {
+    await ensureActiveWatchSessionCandidateCoverage("radar_refresh");
+    const projectId = cleanText(searchParams.get("projectId"));
+    const sourceId = cleanText(searchParams.get("sourceId"));
+    const watchSessionId = cleanText(searchParams.get("watchSessionId"));
+    const streamerId = cleanText(searchParams.get("streamerId"));
+    let candidates = filterClipCandidatesForRadar(state.clipCandidates, { projectId, sourceId });
+    if (watchSessionId) candidates = candidates.filter((candidate) => candidate.watchSessionId === watchSessionId);
+    if (streamerId) candidates = candidates.filter((candidate) => candidate.streamerId === streamerId);
     return sendJson(res, 200, {
-      candidates: state.clipCandidates,
+      candidates,
       streamers: state.streamers
     });
+  }
+
+  const clipCandidateApproveBuilderMatch = pathname.match(/^\/api\/clips\/candidates\/([^/]+)\/approve-builder$/);
+  if (clipCandidateApproveBuilderMatch && req.method === "POST") {
+    try {
+      return sendJson(res, 200, await approveClipCandidateForBuilder(clipCandidateApproveBuilderMatch[1]));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const clipCandidateDeclineMatch = pathname.match(/^\/api\/clips\/candidates\/([^/]+)\/decline$/);
+  if (clipCandidateDeclineMatch && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await declineClipCandidate(
+        clipCandidateDeclineMatch[1],
+        cleanText(body.reason) || "Declined from Clips by operator."
+      ));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const clipCandidateCapCutInputsMatch = pathname.match(/^\/api\/clips\/candidates\/([^/]+)\/capcut-workflow-inputs$/);
+  if (clipCandidateCapCutInputsMatch && req.method === "GET") {
+    try {
+      return sendJson(res, 200, await capcutWorkflowInputsForCandidate(clipCandidateCapCutInputsMatch[1]));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const legacyClipCandidateDeleteMatch = pathname.match(/^\/api\/clips\/candidates\/([^/]+)$/);
+  if (legacyClipCandidateDeleteMatch && req.method === "DELETE") {
+    try {
+      const stopWatcher = ["1", "true", "yes"].includes(String(searchParams.get("stopWatcher") || searchParams.get("stopWatchers") || "").toLowerCase());
+      const result = await deleteClipCandidate(legacyClipCandidateDeleteMatch[1], "operator_delete", { stopWatcher });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/clips/packages") {
@@ -7272,6 +12048,8 @@ async function handleApi(req, res, pathname, searchParams) {
       status: "saved",
       updatedAt: now()
     };
+    candidate.status = "in_builder";
+    candidate.movedToBuilderAt = now();
     candidate.updatedAt = now();
     await logEvent("builder_draft_saved", "Clip builder draft saved", { candidateId: candidate.id });
     await saveState();
@@ -7281,76 +12059,18 @@ async function handleApi(req, res, pathname, searchParams) {
   if (req.method === "POST" && pathname === "/api/clips/package") {
     const body = await readJsonBody(req);
     const candidate = state.clipCandidates.find((item) => item.id === body.candidateId);
-    if (!candidate) return sendError(res, 404, "Candidate not found");
-    const streamer = findStreamer(candidate.streamerId);
-    const source = findExistingMediaSource(candidate.sourceId);
-    if (!source) {
-      await logEvent("candidate_blocked", "Package blocked because candidate has no verified media source", {
-        candidateId: candidate.id,
-        sourceId: candidate.sourceId || ""
-      });
-      return sendError(res, 422, "Candidate generation blocked: no verified playable media.");
-    }
     try {
-      await assertSourceIsPlayable(source);
-      assertCandidateReferencesSource(candidate, source);
-      assertCandidateTimesValid(candidate, source);
-    } catch (error) {
-      await logEvent("candidate_blocked", "Package blocked by source verification", {
-        candidateId: candidate.id,
-        sourceId: candidate.sourceId,
-        error: error.message
-      });
-      return sendError(res, 422, error.message);
-    }
-    if (!isSafeInternalDraftSource(source) && !isRealApprovedStreamer(streamer)) {
-      await logEvent("permission_blocked", "Package blocked for unapproved streamer", { candidateId: candidate.id });
-      return sendError(res, 403, "Streamer permission is not approved");
-    }
-    const packagePlan = buildPackage({ ...candidate, ...body });
-    const packageArtifact = await writeArtifact("clip_package", packagePlan.title, {
-      candidate,
-      streamer,
-      packagePlan,
-      createdAt: now()
-    });
-    const clipPackage = {
-      id: newId("package"),
-      candidateId: candidate.id,
-      format: "9:16",
-      resolution: "1080x1920",
-      targetDuration: Number(body.targetDuration || candidate.duration || 30),
-      hook: packagePlan.hook,
-      captionOverlays: packagePlan.captionOverlays,
-      cutInstructions: packagePlan.cutInstructions,
-      capcutBriefId: null,
-      postingDrafts: [],
-      approvalStatus: "pending",
-      artifacts: [packageArtifact],
-      sourceId: source.id,
-      sourceProvenance: source.provenance,
-      renderedArtifactId: candidate.renderedArtifactId || null,
-      packagePlan,
-      createdAt: now(),
-      updatedAt: now()
-    };
-    state.clipPackages.unshift(clipPackage);
-    candidate.status = "packaged";
-    candidate.updatedAt = now();
-    await logEvent("package_created", "Clip package created", {
-      candidateId: candidate.id,
-      clipPackageId: clipPackage.id,
-      sourceId: source.id,
-      postingDraftsCreated: 0,
-      approvalRequestsCreated: 0
-    });
-    await saveState();
-    return sendJson(res, 201, {
-      clipPackage,
-      packagePlan,
+      const result = await createClipPackageForCandidate(candidate, body, { createdBy: "Operator" });
+      await saveState();
+      return sendJson(res, result.reused ? 200 : 201, {
+      clipPackage: result.clipPackage,
+      packagePlan: result.packagePlan,
       postingDrafts: [],
       message: "Clip package created from verified source. Posting drafts are blocked until a rendered clip artifact passes verification."
     });
+    } catch (error) {
+      return sendError(res, error.statusCode || 422, error.message);
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/clips/capcut-brief") {
@@ -7574,18 +12294,52 @@ async function handleApi(req, res, pathname, searchParams) {
       const streamer = findStreamer(request.linkedId);
       if (streamer) {
         streamer.permissionStatus = "approved";
+        try {
+          pruneLiveWindowsForStreamerBeforeWatchStart(streamer.id, "human_gate_approval_cleanup", "", { forceSingleWatch: true });
+          if (streamer.permissionStatus === "approved") {
+            const sessions = state.watchSessions.filter((session) => session.streamerId === streamer.id && session.id);
+            for (const session of sessions) {
+              purgeUnresolvedLiveWindowCandidatesForSession(session, "human_gate_approval_cleanup");
+            }
+          }
+        } catch (error) {
+          await logEvent("watch_cleanup_for_approval_failed", "Failed cleanup old watch candidates before starting approved watcher", {
+            requestId: request.id,
+            streamerId: streamer.id,
+            error: error.message
+          });
+        }
+        if (liveProviderConfigured(streamer.platform)) {
+          try {
+            assertWatchCapacity({ monitorEnabled: true, permissionStatus: "approved", excludeId: streamer.id });
+            streamer.monitorEnabled = true;
+            streamer.monitorPausedAt = null;
+          } catch (error) {
+            await logEvent("watch_auto_start_blocked", "Streamer approved but watch capacity is full", {
+              streamerId: streamer.id,
+              error: error.message
+            });
+          }
+        }
         streamer.updatedAt = now();
       }
     }
     request.status = action;
     request.decidedAt = now();
     request.decisionNotes = cleanText(body.notes);
+    let watch = null;
+    if (request.type === "streamer_permission" && action === "approved") {
+      const streamer = findStreamer(request.linkedId);
+      if (streamer?.monitorEnabled) {
+        watch = await startLiveWatchForApprovedStreamer(streamer, "human_gate_approval");
+      }
+    }
     await logEvent(action === "approved" ? "approved" : "approval_decision", `Human Gate ${action}`, {
       requestId: request.id,
       type: request.type
     });
     await saveState();
-    return sendJson(res, 200, { request, dailyLimit: dailyLimitStatus() });
+    return sendJson(res, 200, { request, dailyLimit: dailyLimitStatus(), watchSession: watch?.session || null });
   }
 
   if (req.method === "GET" && pathname === "/api/artifacts") {
@@ -7684,7 +12438,10 @@ async function handleRequest(req, res) {
   }
 }
 
-const readyPromise = ensureStorage().then(recoverWatchSessions);
+const readyPromise = ensureCaptureTools()
+  .then(ensureStorage)
+  .then(recoverWatchSessions)
+  .then(recoverApprovedLiveMonitors);
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await readyPromise;

@@ -18,6 +18,7 @@ const state = {
   kick: { configured: false, status: "checking" },
   streams: [],
   clips: [],
+  openJourneys: new Set(),
   lastQuery: "",
   visibleCount: 5,
   selectedStreamKey: "",
@@ -586,6 +587,35 @@ function clipDeclined(clip = {}) {
   return Boolean(clip.operatorDeclined || clip.declinedAt || clip.status === "rejected" || clip.decision === "rejected");
 }
 
+function renderClipJourney(clip) {
+  const journey = Array.isArray(clip.journey) ? clip.journey : [];
+  if (!journey.length) return "";
+  const open = state.openJourneys.has(clip.id);
+  const doneCount = journey.filter((step) => step.status === "done").length;
+  const failed = journey.some((step) => step.status === "failed");
+  return `
+    <div class="clip-journey">
+      <button type="button" class="clip-journey-toggle ${failed ? "failed" : ""}" data-journey-toggle="${esc(clip.id)}">
+        ${open ? "▾" : "▸"} Journey · ${doneCount}/${journey.length} stages${failed ? " · needs attention" : ""}
+      </button>
+      ${open ? `
+        <ol class="clip-journey-steps">
+          ${journey.map((step) => `
+            <li class="${esc(step.status)}">
+              <i></i>
+              <div>
+                <b>${esc(step.label)}</b>
+                <span>${esc(step.detail || "")}</span>
+                ${step.at ? `<small>${esc(step.at)}</small>` : ""}
+              </div>
+            </li>
+          `).join("")}
+        </ol>
+      ` : ""}
+    </div>
+  `;
+}
+
 function renderClipItem(clip) {
   const playback = clipPlaybackUrl(clip);
   const score = Number(clip.score || clip.qualityScore || 0);
@@ -596,6 +626,7 @@ function renderClipItem(clip) {
         <span>${esc(clipStatusLabel(clip))}</span>
         <strong>${esc(clip.title || "Clip window")}</strong>
         <small>${esc(clip.streamerName || "Watched stream")} · ${formatSeconds(clip.durationSeconds || clip.duration || state.config?.recordingWindowSeconds || 30)} · ${score ? `${score}% signal` : "scoring pending"} · target 9:16</small>
+        ${renderClipJourney(clip)}
       </div>
       <div class="clip-actions">
         ${playback ? `<a href="${esc(playback)}" target="_blank" rel="noreferrer">View MP4</a>` : `<button type="button" disabled>Pending</button>`}
@@ -1710,6 +1741,11 @@ function renderWatchArea() {
         </div>
         <span class="watch-chip ${state.watch.error ? "bad" : session ? "good" : "idle"}">${esc(stage)}</span>
         <span class="watch-chip ${capabilities.hasLiveVideo ? "good" : "idle"}">${esc(watchMediaStatus(capabilities))}</span>
+        ${session?.chatSignalState === "dead" ? `
+          <span class="watch-chip warn" title="Chat has been silent 3+ minutes despite the viewer count — view-botted channels look exactly like this. The watcher now samples windows on a fixed cadence and lets audio/transcript/vision scoring filter them.">Chat silent — sampling fallback on</span>
+        ` : session?.chatSignalState === "warming_up" ? `
+          <span class="watch-chip idle">Chat warming up…</span>
+        ` : ""}
         <button type="button" class="watch-chip keyword" data-open-keywords title="Open all watch keywords">
           <span>Top keys</span>
           <b>${esc(keywordSummary)}</b>
@@ -2675,6 +2711,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (toggleDeterminismButton) {
       state.capcut.monitorCollapsed = !state.capcut.monitorCollapsed;
       localStorage.setItem("capcutMonitorCollapsed", String(state.capcut.monitorCollapsed));
+      renderClipsArea();
+      return;
+    }
+    const journeyToggleButton = event.target.closest("[data-journey-toggle]");
+    if (journeyToggleButton) {
+      const clipId = journeyToggleButton.dataset.journeyToggle;
+      if (state.openJourneys.has(clipId)) state.openJourneys.delete(clipId);
+      else state.openJourneys.add(clipId);
       renderClipsArea();
       return;
     }

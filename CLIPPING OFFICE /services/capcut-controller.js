@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { CapCutMacroStorage } from "./capcut-macro-storage.js";
@@ -2734,19 +2735,51 @@ CFRunLoopRun()
     }
   }
 
+  /**
+   * `swift -e` recompiles the recorder from source on every start — 3–15s of
+   * dead air during which the operator's first clicks hit no event tap at
+   * all. Compile once to a cached binary keyed by the source hash so every
+   * later start is instant. Falls back to `swift -e` if swiftc is missing.
+   */
+  async compiledRecorderBinary({ emergencyOnly = false } = {}) {
+    const source = this.swiftTeachRecorderCode({ emergencyOnly });
+    const hash = crypto.createHash("sha256").update(source).digest("hex").slice(0, 12);
+    const dir = path.join(this.macroDir(), "recorder-bin");
+    const binPath = path.join(dir, `${emergencyOnly ? "capcut-emergency-listener" : "capcut-teach-recorder"}-${hash}`);
+    if (await exists(binPath)) return binPath;
+    if (!(await commandExists("/usr/bin/swiftc"))) return "";
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      const sourcePath = `${binPath}.swift`;
+      await fs.writeFile(sourcePath, source, "utf8");
+      await run("/usr/bin/swiftc", ["-O", "-o", binPath, sourcePath], { timeoutMs: 180000 });
+      await this.logAction("compileTeachRecorder", "complete", { binPath, emergencyOnly });
+      return binPath;
+    } catch (error) {
+      await this.logAction("compileTeachRecorder", "failed", { error: cleanText(error.message).slice(0, 300), emergencyOnly });
+      return "";
+    }
+  }
+
   async spawnTeachRecorder() {
     if (!(await commandExists("/usr/bin/swift"))) {
       throw new Error("Teach Mode requires /usr/bin/swift on macOS.");
     }
     if (this.teachProcess) {
-      this.teachProcess.kill("SIGTERM");
+      // Detach before killing so the old child's close handler can't touch
+      // the new session (it used to stamp fresh sessions recorder_exit_SIGTERM).
+      const previous = this.teachProcess;
       this.teachProcess = null;
+      previous.kill("SIGTERM");
     }
     this.teachBuffer = "";
-    const child = spawn("/usr/bin/swift", ["-e", this.swiftTeachRecorderCode()], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env
-    });
+    const binPath = await this.compiledRecorderBinary();
+    const child = binPath
+      ? spawn(binPath, [], { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+      : spawn("/usr/bin/swift", ["-e", this.swiftTeachRecorderCode()], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env
+      });
     this.teachProcess = child;
     const control = this.controlState();
     const session = control.teach;
@@ -2783,38 +2816,55 @@ CFRunLoopRun()
     });
 
     child.on("close", (code, signal) => {
-      if (this.teachProcess === child) this.teachProcess = null;
+      // Only the ACTIVE recorder may mutate the session. A child that was
+      // replaced or intentionally stopped closing late must never mark the
+      // new session as failed — that raced every phase re-record into a
+      // spurious recorder_exit_SIGTERM.
+      if (this.teachProcess !== child) return;
+      this.teachProcess = null;
       const current = this.controlState().teach;
       if (!current) return;
       if (current.recording) {
         current.recording = false;
         current.status = code === 0 ? "stopped" : "error";
-        current.stopReason = current.stopReason || (code === 0 ? "recorder_stopped" : `recorder_exit_${code ?? signal ?? "unknown"}`);
+        const lastStderr = (current.recorderMessages || []).filter((item) => item.type === "stderr").at(-1)?.message || "";
+        current.stopReason = current.stopReason
+          || (code === 0
+            ? "recorder_stopped"
+            : `recorder_exit_${code ?? signal ?? "unknown"}${lastStderr ? ` — ${lastStderr.slice(0, 160)}` : ""}`);
         current.stoppedAt = now();
         this.helpers.saveState?.();
       }
     });
 
+    // Recording must not report "started" until the event tap is actually
+    // live. Wait for the recorder_ready event; a blind 2.5s resolve used to
+    // let the operator click into a recorder that did not exist yet.
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(resolve, 2500);
-      child.once("error", (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      });
-      child.once("close", (code) => {
-        if (!session?.recorderReady && code !== 0) {
-          clearTimeout(timeout);
-          reject(new Error(`Teach recorder exited before it was ready (${code}).`));
+      const startedAt = Date.now();
+      const readyTimeoutMs = binPath ? 10000 : 30000;
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(readyCheck);
+        fn(value);
+      };
+      child.once("error", (error) => finish(reject, error));
+      child.once("close", (code, signal) => {
+        if (!session?.recorderReady) {
+          const lastStderr = (session?.recorderMessages || []).filter((item) => item.type === "stderr").at(-1)?.message || "";
+          finish(reject, new Error(`Teach recorder exited before it was ready (${code ?? signal ?? "unknown"}).${lastStderr ? ` ${lastStderr.slice(0, 200)}` : " Check Accessibility + Input Monitoring permissions for the app running the office."}`));
         }
       });
       const readyCheck = setInterval(() => {
-        if (session?.recorderReady) {
-          clearTimeout(timeout);
-          clearInterval(readyCheck);
-          resolve();
+        if (session?.recorderReady) return finish(resolve);
+        if (Date.now() - startedAt > readyTimeoutMs) {
+          if (this.teachProcess === child) this.teachProcess = null;
+          child.kill("SIGTERM");
+          finish(reject, new Error(`Teach recorder did not become ready within ${Math.round(readyTimeoutMs / 1000)}s. Check Accessibility + Input Monitoring permissions for the app running the office, then try again.`));
         }
       }, 100);
-      setTimeout(() => clearInterval(readyCheck), 2600);
     });
   }
 
@@ -4215,10 +4265,13 @@ if let data = try? JSONSerialization.data(withJSONObject: rows, options: []),
 
   async startReplayEmergencyListener() {
     if (this.replayEmergencyProcess || !(await commandExists("/usr/bin/swift"))) return;
-    const child = spawn("/usr/bin/swift", ["-e", this.swiftTeachRecorderCode({ emergencyOnly: true })], {
-      stdio: ["ignore", "pipe", "ignore"],
-      env: process.env
-    });
+    const binPath = await this.compiledRecorderBinary({ emergencyOnly: true });
+    const child = binPath
+      ? spawn(binPath, [], { stdio: ["ignore", "pipe", "ignore"], env: process.env })
+      : spawn("/usr/bin/swift", ["-e", this.swiftTeachRecorderCode({ emergencyOnly: true })], {
+        stdio: ["ignore", "pipe", "ignore"],
+        env: process.env
+      });
     this.replayEmergencyProcess = child;
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {

@@ -53,20 +53,15 @@ test("public homepage and legal routes work while signed out", async () => {
   for (const [route, expected] of routes) {
     const response = await fetch(`${ORIGIN}${route}`);
     assert.equal(response.status, 200, route);
+    assert.equal(response.headers.get("x-argentum-site"), "public", route);
     assert.match(await response.text(), expected, route);
   }
 });
 
-test("operator console stays private", async () => {
-  const app = await fetch(`${ORIGIN}/app`, { redirect: "manual" });
-  assert.equal(app.status, 302);
-  assert.equal(app.headers.get("location"), "/login");
-
-  const login = await fetch(`${ORIGIN}/login`, { redirect: "manual" });
-  assert.equal(login.status, 302);
-  assert.equal(login.headers.get("location"), "/setup");
-
-  const setup = await fetch(`${ORIGIN}/setup`);
-  assert.equal(setup.status, 200);
-  assert.match(await setup.text(), /Create Admin Login/);
+test("admin login and setup routes are removed from the public website", async () => {
+  for (const route of ["/app", "/app/", "/login", "/setup"]) {
+    const response = await fetch(`${ORIGIN}${route}`, { redirect: "manual" });
+    assert.equal(response.status, 302, route);
+    assert.equal(response.headers.get("location"), "/", route);
+  }
 });

@@ -5669,6 +5669,7 @@ function handlePublicWebsite(req, res, url) {
       ...securityHeaders(req),
       "content-type": type,
       "cache-control": extension === ".html" ? "no-store" : "public, max-age=3600",
+      "x-argentum-site": "public",
     });
     res.end(req.method === "HEAD" ? undefined : body);
   });
@@ -5749,6 +5750,10 @@ const server = http.createServer(async (req, res) => {
   try {
     assertTrustedOrigin(req);
     if (handlePublicWebsite(req, res, url)) {
+      return;
+    }
+    if (["/login", "/setup", "/app", "/app/"].includes(url.pathname)) {
+      redirect(res, "/", req);
       return;
     }
     if (await handleSetup(req, res)) {

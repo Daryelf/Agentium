@@ -21,6 +21,7 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
 const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
+const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
@@ -226,7 +227,10 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 
 function now() {
@@ -795,7 +799,7 @@ function setupPage(errorMessage = "") {
     title: "Create Admin Login",
     eyebrow: "Argentum OS first-run setup",
     copy: "Create the owner login before Argentum opens the console.",
-    action: "/",
+    action: "/setup",
     fields: `
       <label>
         Username
@@ -4489,32 +4493,23 @@ function issueSession(res, req, user, options = {}) {
     ...securityHeaders(req),
     "set-cookie": sessionCookie(req, token, sessionTtlMs),
     "cache-control": "no-store",
-    location: "/",
+    location: "/app",
   });
   res.end();
 }
 
 async function handleSetup(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
-  const isRootRoute = url.pathname === "/";
   const isSetupRoute = url.pathname === "/setup";
-  if (!isRootRoute && !isSetupRoute) return false;
+  if (!isSetupRoute) return false;
 
   const store = readAuthStore();
   if (activeUserCount(store) > 0) {
-    if (isSetupRoute) {
-      redirect(res, currentSession(req) ? "/" : "/login", req);
-      return true;
-    }
-    return false;
-  }
-
-  if (isSetupRoute && req.method === "GET") {
-    redirect(res, "/", req);
+    redirect(res, currentSession(req) ? "/app" : "/login", req);
     return true;
   }
 
-  if (isRootRoute && req.method === "GET") {
+  if (req.method === "GET") {
     sendHtml(req, res, 200, setupPage());
     return true;
   }
@@ -4545,11 +4540,11 @@ async function handleSetup(req, res) {
 async function handleLogin(req, res) {
   if (req.method === "GET" && req.url.startsWith("/login")) {
     if (activeUserCount(readAuthStore()) === 0) {
-      redirect(res, "/", req);
+      redirect(res, "/setup", req);
       return true;
     }
     if (currentSession(req)) {
-      redirect(res, "/", req);
+      redirect(res, "/app", req);
       return true;
     }
     sendHtml(req, res, 200, loginPage());
@@ -4561,7 +4556,7 @@ async function handleLogin(req, res) {
       if (req.url.startsWith("/api/login")) {
         sendJson(res, 409, { error: "Create the first admin login before signing in." });
       } else {
-        redirect(res, "/", req);
+        redirect(res, "/setup", req);
       }
       return true;
     }
@@ -5586,7 +5581,7 @@ async function handleApi(req, res, url) {
 }
 
 function serveStatic(req, res, url) {
-  let filePath = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
+  let filePath = url.pathname === "/app" ? "/index.html" : decodeURIComponent(url.pathname);
   filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const absolutePath = path.join(ROOT, filePath);
 
@@ -5612,6 +5607,72 @@ function serveStatic(req, res, url) {
     });
     res.end(data);
   });
+}
+
+const PUBLIC_WEBSITE_ROUTES = new Map([
+  ["/terms", "terms.html"],
+  ["/terms/", "terms.html"],
+  ["/privacy", "privacy.html"],
+  ["/privacy/", "privacy.html"],
+  ["/support", "support.html"],
+  ["/support/", "support.html"],
+  ["/website.css", "website.css"],
+  ["/favicon.svg", "favicon.svg"],
+  ["/og.png", "og.png"],
+  ["/robots.txt", "robots.txt"],
+  ["/site.webmanifest", "site.webmanifest"],
+]);
+
+function publicWebsiteFile(url) {
+  if (url.pathname === "/") return path.join(PUBLIC_SITE_DIR, "index.html");
+  const routeFile = PUBLIC_WEBSITE_ROUTES.get(url.pathname);
+  if (routeFile) return path.join(PUBLIC_SITE_DIR, routeFile);
+  if (/^\/[A-Za-z0-9._-]+\.txt$/.test(url.pathname)) {
+    return path.join(PUBLIC_SITE_DIR, path.basename(url.pathname));
+  }
+  return "";
+}
+
+function publicRequestOrigin(req) {
+  const forwardedProtocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
+  const protocol = ["http", "https"].includes(forwardedProtocol)
+    ? forwardedProtocol
+    : req.socket?.encrypted
+      ? "https"
+      : "http";
+  const forwardedHost = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  const host = /^[A-Za-z0-9.-]+(?::\d{1,5})?$/.test(forwardedHost) ? forwardedHost : "127.0.0.1";
+  return `${protocol}://${host}`;
+}
+
+function handlePublicWebsite(req, res, url) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const absolutePath = publicWebsiteFile(url);
+  if (!absolutePath) return false;
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, {
+        ...securityHeaders(req),
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    const body = extension === ".html"
+      ? Buffer.from(data.toString("utf8").replaceAll("{{PUBLIC_ORIGIN}}", publicRequestOrigin(req)))
+      : data;
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": extension === ".html" ? "no-store" : "public, max-age=3600",
+    });
+    res.end(req.method === "HEAD" ? undefined : body);
+  });
+  return true;
 }
 
 let clippingOfficeModulePromise = null;
@@ -5687,6 +5748,9 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   try {
     assertTrustedOrigin(req);
+    if (handlePublicWebsite(req, res, url)) {
+      return;
+    }
     if (await handleSetup(req, res)) {
       return;
     }
@@ -5699,6 +5763,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       redirect(res, "/login", req);
+      return;
+    }
+    if (url.pathname === "/app/") {
+      redirect(res, "/app", req);
       return;
     }
     if (url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {

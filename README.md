@@ -38,6 +38,10 @@ Use a unique admin username, a strong admin password with at least 12 characters
 
 Argentum is a plain Node.js app. It reads `process.env.PORT` and binds to `0.0.0.0`, so it is ready for hosts such as Railway.
 
+The cloud service exposes the public Argentum product website at `/`, with Terms of Service at `/terms`, Privacy Policy at `/privacy`, and support/data-request information at `/support`. The authenticated operator console is available at `/app`; `/login` and `/setup` remain the private access paths.
+
+For TikTok developer review preparation, see [`docs/tiktok-app-review.md`](docs/tiktok-app-review.md). A real monitored contact address, legal operator identity, stable HTTPS domain, verified URLs, matching OAuth callback, sandbox-tested integration, and demo video are still required before submission.
+
 Railway path:
 
 1. Push this project to a GitHub repository.

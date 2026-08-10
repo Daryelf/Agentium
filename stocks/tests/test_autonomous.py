@@ -15,7 +15,7 @@ from tests.test_intraday_loop import account, intraday_frame, lifecycle_with_pos
 
 
 def armed_settings():
-    return replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only")
+    return replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order")
 
 
 def optimization_path(tmp_path, eligible_symbols=None):
@@ -45,7 +45,7 @@ def optimization_path(tmp_path, eligible_symbols=None):
     return path
 
 
-def test_autonomous_cycle_places_when_gate_is_armed(monkeypatch, tmp_path) -> None:
+def test_autonomous_cycle_generates_plan_but_cannot_bypass_human_gate(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("stock_guru.autonomous.download_history", lambda *args, **kwargs: intraday_frame())
     broker = DryRunBrokerClient(
         account=account(),
@@ -73,9 +73,12 @@ def test_autonomous_cycle_places_when_gate_is_armed(monkeypatch, tmp_path) -> No
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
     lifecycle = json.loads((tmp_path / "lifecycle.json").read_text())
 
-    assert report.placed_orders == 1
+    assert report.placed_orders == 0
     assert heartbeat["live_auto_armed"] is True
-    assert lifecycle["order_plans"][0]["placed_order_id"]
+    assert heartbeat["direct_broker_placement_enabled"] is False
+    assert lifecycle["order_plans"][0]["status"] == "READY_TO_PLACE"
+    assert not lifecycle["order_plans"][0]["placed_order_id"]
+    assert "Argentum Human Gate" in report.next_action
 
 
 def test_autonomous_kill_switch_blocks_buys(monkeypatch, tmp_path) -> None:
@@ -143,10 +146,13 @@ def test_autonomous_kill_switch_still_allows_stop_exit(monkeypatch, tmp_path) ->
 
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
 
-    assert report.placed_orders == 1
+    lifecycle = json.loads(lifecycle_path.read_text())
+
+    assert report.placed_orders == 0
     assert heartbeat["allow_buys"] is False
     assert heartbeat["allow_sells"] is True
-    assert broker.placed_orders[0].side == "sell"
+    assert not broker.placed_orders
+    assert any(plan["side"] == "sell" and plan["status"] == "READY_TO_PLACE" for plan in lifecycle["order_plans"])
 
 
 def test_autonomous_strategy_health_blocks_buys(monkeypatch, tmp_path) -> None:
@@ -277,7 +283,7 @@ def test_autonomous_cycle_stands_down_without_broker_calls_when_gate_fully_block
     assert report.placed_orders == 0
     assert report.gate.armed is False
     assert heartbeat["live_auto_armed"] is False
-    assert heartbeat["next_action"] == "stand down; live auto gate is blocked"
+    assert heartbeat["next_action"] == "stand down; supervised planning gate is blocked"
     assert "live auto trading is disabled" in lifecycle["intents"][0]["rejection_reasons"]
     assert "explicit Agentic account number is required" in lifecycle["intents"][0]["rejection_reasons"]
 

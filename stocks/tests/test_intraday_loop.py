@@ -10,8 +10,14 @@ from stock_guru.broker_client import BrokerOrder, BrokerOrderResult, BrokerPosit
 from stock_guru.config import Settings
 from stock_guru.data import MarketData
 from stock_guru.evaluator import QuoteSnapshot
-from stock_guru.intraday_loop import merge_order_plan_history, reconcile_positions, run_intraday_control_cycle
+from stock_guru.intraday_loop import merge_order_plan_history, reconcile_positions, run_intraday_control_cycle as run_control_cycle_without_approval
 from stock_guru.lifecycle import DailyRiskState, IntradayLifecycleState, LivePositionPlan, OrderPlan
+
+
+def run_intraday_control_cycle(**kwargs):
+    """Test-only exact approval stand-in for placement-path unit tests."""
+    kwargs.setdefault("human_gate_authorizer", lambda plan: bool(plan.ref_id))
+    return run_control_cycle_without_approval(**kwargs)
 
 
 def settings() -> Settings:
@@ -155,7 +161,28 @@ def test_no_broker_client_means_no_live_order() -> None:
     assert "broker client missing" in result.rejected_reasons
 
 
-def test_aligned_90_plus_places_buy_through_broker() -> None:
+def test_ready_plan_does_not_place_without_human_gate_authorizer() -> None:
+    broker = DryRunBrokerClient(
+        account=account(),
+        quotes={"TEST": quote("TEST"), "SPY": quote("SPY"), "QQQ": quote("QQQ")},
+    )
+
+    result = run_control_cycle_without_approval(
+        data=intraday_frame(),
+        symbols=["TEST"],
+        settings=settings(),
+        broker=broker,
+        account_number="A123",
+        lifecycle=IntradayLifecycleState(daily_risk=DailyRiskState(date="2026-06-08")),
+        now=now(),
+    )
+
+    assert not result.placed_orders
+    assert not broker.placed_orders
+    assert result.state.order_plans[0].status == "READY_TO_PLACE"
+
+
+def test_aligned_90_plus_places_buy_after_test_human_gate_approval() -> None:
     broker = DryRunBrokerClient(
         account=account(),
         quotes={"TEST": quote("TEST"), "SPY": quote("SPY"), "QQQ": quote("QQQ")},

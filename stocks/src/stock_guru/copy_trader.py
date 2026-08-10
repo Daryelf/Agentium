@@ -107,6 +107,7 @@ class MirrorCandidate:
     mirror_notional_dollars: float
     mirror_shares: float
     human_gate_eligible: bool
+    broker_position_required: bool
     reasons: tuple[str, ...]
     notes: str
 
@@ -385,6 +386,7 @@ def _candidate_for_signal(
 
     reasons: list[str] = []
     status = "paper_ready"
+    broker_position_required = False
     if fingerprint in seen:
         status = "duplicate"
         reasons.append("This exact public signal is already in the mirror history or the current batch.")
@@ -453,7 +455,8 @@ def _candidate_for_signal(
         reasons.append("Current price moved too far from the disclosed transaction price; chasing is blocked.")
     elif signal.side == "SELL" and signal.current_position_shares <= 0:
         status = "research_only"
-        reasons.append("A copy sell cannot create a short position; no paper shares were supplied to reduce.")
+        broker_position_required = True
+        reasons.append("No paper shares were supplied to reduce. A copy sell cannot create a short position, but Stock Office may review this signal only after a fresh official broker snapshot proves owned shares.")
 
     mirror_notional = 0.0
     mirror_shares = 0.0
@@ -509,6 +512,7 @@ def _candidate_for_signal(
         mirror_notional_dollars=round(mirror_notional, 2),
         mirror_shares=round(mirror_shares, 8),
         human_gate_eligible=status == "paper_ready",
+        broker_position_required=broker_position_required,
         reasons=tuple(reasons),
         notes=signal.notes,
     )
@@ -656,6 +660,7 @@ def write_mirror_plan(
                     f"- Current price observed: {candidate.current_price_observed_at} ({candidate.current_price_age_hours:.1f}h old)",
                     f"- Evidence: {candidate.evidence_score:.3f} ({candidate.evidence_status}; source samples {candidate.source_evidence_samples}, trader samples {candidate.trader_evidence_samples})",
                     f"- Planned paper notional: ${candidate.mirror_notional_dollars:.2f}",
+                    f"- Broker position required for exit review: {'yes' if candidate.broker_position_required else 'no'}",
                     f"- Provenance: {candidate.source_url}",
                     f"- Reasons: {'; '.join(candidate.reasons) or 'none recorded'}",
                     "",

@@ -31,26 +31,39 @@ def test_live_auto_defaults_to_blocked() -> None:
     assert not live_auto_enabled(settings(), account_number="")
 
 
-def test_live_auto_arms_with_account_and_broker_review_policy() -> None:
+def test_supervised_planning_arms_with_account_and_argentum_human_gate_policy() -> None:
     armed = replace(
         settings(),
         live_auto_trading_enabled=True,
-        live_order_confirmation_policy="broker_review_only",
+        live_order_confirmation_policy="argentum_human_gate_per_order",
     )
 
     assert live_auto_enabled(armed, account_number="A123")
 
 
 def test_live_auto_blocks_manual_confirmation_policy() -> None:
-    manual = replace(settings(), live_auto_trading_enabled=True)
+    manual = replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="manual_per_order")
 
     reasons = live_auto_reasons(manual, account_number="A123")
 
-    assert "confirmation policy still requires manual per-order approval" in reasons
+    assert "confirmation policy must use Argentum Human Gate approval per order" in reasons
+
+
+def test_broker_review_alone_cannot_arm_direct_placement() -> None:
+    unsafe = replace(
+        settings(),
+        live_auto_trading_enabled=True,
+        live_order_confirmation_policy="broker_review_only",
+    )
+
+    reasons = live_auto_reasons(unsafe, account_number="A123")
+
+    assert "broker review alone cannot authorize placement; Argentum Human Gate approval is required per order" in reasons
+    assert not live_auto_enabled(unsafe, account_number="A123")
 
 
 def test_live_session_gate_arms_during_regular_market_hours(tmp_path) -> None:
-    armed = replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only")
+    armed = replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order")
 
     gate = live_session_gate(
         armed,
@@ -66,7 +79,7 @@ def test_live_session_gate_arms_during_regular_market_hours(tmp_path) -> None:
 
 def test_kill_switch_blocks_buys_but_allows_sells(tmp_path) -> None:
     path = write_kill_switch(True, reason="panic", path=tmp_path / "kill.json")
-    armed = replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only")
+    armed = replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order")
 
     gate = live_session_gate(
         armed,

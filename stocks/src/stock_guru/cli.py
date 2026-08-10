@@ -941,7 +941,7 @@ def live_auto_preflight(
     require_account_health: bool = typer.Option(False, "--require-account-health", help="Block readiness unless a fresh safe broker account-health report exists."),
     require_capital_policy: bool = typer.Option(False, "--require-capital-policy", help="Block readiness unless a fresh safe capital policy report exists."),
 ) -> None:
-    """Run production-readiness checks before arming autonomous live trading."""
+    """Run production-readiness checks before arming supervised proposal generation."""
     settings = load_settings()
     account = account_number or settings.live_account_number
     report = build_readiness_report(
@@ -1530,14 +1530,13 @@ def live_auto_session(
     forever: bool = typer.Option(False, "--forever", help="Run until the live gate blocks, runtime expires, or the process is stopped."),
     max_runtime_seconds: Optional[float] = typer.Option(None, "--max-runtime-seconds", min=1.0, help="Optional wall-clock runtime cap."),
     max_consecutive_errors: int = typer.Option(3, "--max-consecutive-errors", min=1, help="Enable the kill switch after this many failed cycles."),
-    dry_run: bool = typer.Option(True, "--dry-run/--live", help="Local CLI only supports dry-run; live requires Codex-injected MCP broker functions."),
-    simulate_placement: bool = typer.Option(False, "--simulate-placement", help="Let DryRunBrokerClient mark ready orders as filled."),
+    dry_run: bool = typer.Option(True, "--dry-run/--live", help="Local CLI only supports proposal-only dry-run; live orders require Argentum Human Gate."),
 ) -> None:
-    """Run a supervised autonomous live-auto session loop."""
+    """Run a supervised scanning and proposal session loop without broker placement."""
     if not dry_run:
         console.print(
-            "Live MCP execution cannot be started by local Python alone. "
-            "Run this through Codex with an injected CodexMcpBrokerClient/RobintradeBrokerClient."
+            "Live MCP execution cannot be started by local Python. "
+            "Use Argentum Stock Office so each exact order passes Human Gate and official Robinhood preflight."
         )
         raise typer.Exit(code=1)
 
@@ -1573,7 +1572,7 @@ def live_auto_session(
         max_cycles=None if forever else cycles,
         max_runtime_seconds=max_runtime_seconds,
         max_consecutive_errors=max_consecutive_errors,
-        execute=simulate_placement,
+        execute=False,
         session_path=SESSION_STATE_PATH,
     )
     table = Table(title="Live Auto Session")
@@ -1586,7 +1585,7 @@ def live_auto_session(
         table.add_row(
             str(cycle.cycle),
             "armed" if cycle.gate_armed else "blocked",
-            f"placed={cycle.placed_orders} ready={cycle.ready_orders} rejected={cycle.rejected_orders}",
+            f"placed=0 ready={cycle.ready_orders} rejected={cycle.rejected_orders}",
             cycle.next_action,
             cycle.error or "; ".join(cycle.reasons) or "none",
         )

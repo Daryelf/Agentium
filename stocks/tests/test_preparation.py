@@ -13,7 +13,7 @@ from tests.test_intraday_loop import intraday_frame, now, settings
 def test_prepare_live_auto_writes_evidence_artifacts(tmp_path) -> None:
     report = prepare_live_auto(
         symbols=["TEST"],
-        settings=replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only"),
+        settings=replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order"),
         account_number="A123",
         now=now(),
         data=intraday_frame(),
@@ -40,7 +40,7 @@ def test_prepare_live_auto_can_include_local_evidence_bundle(tmp_path) -> None:
 
     report = prepare_live_auto(
         symbols=["TEST"],
-        settings=replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only"),
+        settings=replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order"),
         account_number="A123",
         now=now(),
         data=intraday_frame(),

@@ -44,7 +44,7 @@ class Settings:
     live_cash_reserve_dollars: float = 0.0
     live_lock_profits: bool = True
     live_auto_trading_enabled: bool = False
-    live_order_confirmation_policy: str = "manual_per_order"
+    live_order_confirmation_policy: str = "argentum_human_gate_per_order"
     live_allow_market_notional_entries: bool = True
     live_heartbeat_stale_minutes: int = 5
     live_min_strategy_trades: int = 20
@@ -59,7 +59,7 @@ class Settings:
     live_use_optimized_intraday_settings: bool = True
     live_require_walk_forward_optimization: bool = True
     trading_mode: str = TRADING_MODE_INTRADAY
-    execution_policy: str = EXECUTION_POLICY_FULL_AUTO
+    execution_policy: str = EXECUTION_POLICY_APPROVAL
     trade_direction: str = TRADE_DIRECTION_LONG_ONLY
     intraday_min_entry_score: int = 85
     intraday_auto_order_score: int = 90

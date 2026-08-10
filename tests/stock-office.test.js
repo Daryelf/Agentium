@@ -322,3 +322,37 @@ test("missing optional Stock Office sources stay missing instead of becoming rea
   assert.equal(snapshot.sourceHealth.missing > 0, true);
   assert.equal(snapshot.sources.every((source) => source.status === "missing"), true);
 });
+
+test("approved local guardrail overrides survive normalization and replace inert file defaults", () => {
+  const { root } = makeWorkspace();
+  const snapshot = loadStockOfficeSnapshot({
+    rootDir: root,
+    now: "2026-06-19T12:00:00.000Z",
+    state: {
+      stockOffice: {
+        activeGuardrails: {
+          principalDollars: 250,
+          maxTotalDollars: 125,
+          maxOrderDollars: 25,
+          minOrderDollars: 1,
+          cashReserveDollars: 50,
+          dailyLossLimitPct: 0.015,
+          riskPerTradePct: 0.005,
+          maxPositions: 5,
+          maxTradesPerDay: 2,
+          minEntryScore: 90,
+        },
+        guardrailsAppliedAt: "2026-06-19T11:59:00.000Z",
+        guardrailsApprovalId: "approval-limits",
+      },
+    },
+  });
+
+  assert.equal(snapshot.guardrails.principalDollars, 250);
+  assert.equal(snapshot.guardrails.maxTotalDollars, 125);
+  assert.equal(snapshot.guardrails.riskPerTradePct, 0.005);
+  assert.equal(snapshot.guardrails.maxTradesPerDay, 2);
+  assert.equal(snapshot.guardrailsSource.type, "human_gate_override");
+  assert.equal(snapshot.guardrailsSource.approvalId, "approval-limits");
+  assert.equal(stockOverview(snapshot).guardrailsSource.type, "human_gate_override");
+});

@@ -11,7 +11,7 @@ from tests.test_intraday_loop import now, settings
 
 
 def armed_settings():
-    return replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="broker_review_only")
+    return replace(settings(), live_auto_trading_enabled=True, live_order_confirmation_policy="argentum_human_gate_per_order")
 
 
 def test_readiness_blocks_when_live_gate_is_not_armed(tmp_path) -> None:

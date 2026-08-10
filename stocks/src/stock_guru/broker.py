@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-from .config import REPORT_DIR, Settings
+from .config import EXECUTION_POLICY_APPROVAL, REPORT_DIR, Settings
 from .intraday import AUTO_ORDER_READY, INTRADAY_EXIT, LARGE_AUTO_ORDER_READY, IntradayExitDecision
 from .lifecycle import BrokerReview, OrderPlan, TradeIntent
 
@@ -159,8 +159,8 @@ def build_auto_order_plan(
     existing_symbol_exposure: float = 0.0,
 ) -> OrderPlan:
     ready, reasons = account_state_ready(account)
-    if settings.execution_policy != "full_auto_orders":
-        reasons.append("execution policy is not full auto")
+    if settings.execution_policy != EXECUTION_POLICY_APPROVAL:
+        reasons.append("execution policy must require Argentum Human Gate approval")
     if intent.status not in {AUTO_ORDER_READY, LARGE_AUTO_ORDER_READY}:
         reasons.append(f"trade intent is not auto-order ready: {intent.status}")
     if broker_review is None:

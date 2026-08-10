@@ -51,6 +51,20 @@
 
         <div id="brokerMetrics" class="broker-metrics"></div>
 
+        <article class="portfolio-planner">
+          <div class="broker-card-head">
+            <div>
+              <p class="eyebrow">Continuous supervised copy portfolio</p>
+              <h3>Capital deployment and exit plan</h3>
+              <p>Recalculates from the official account, pending orders, risk budget, copy signals, stops, targets, and evaluator evidence. It can stage exact drafts; it cannot approve itself.</p>
+            </div>
+            <span id="portfolioPlanStatus">Waiting for verified capital</span>
+          </div>
+          <div id="portfolioCapitalMetrics" class="portfolio-capital-metrics"></div>
+          <div id="portfolioProposals" class="portfolio-proposals"></div>
+          <p id="portfolioPlanFeedback" class="broker-feedback" aria-live="polite"></p>
+        </article>
+
         <div class="broker-grid">
           <article class="broker-card connector-card">
             <div class="broker-card-head">
@@ -75,8 +89,12 @@
               <label>Maximum per order <input id="maxOrderDollars" type="number" min="1" max="1000000" step="1" required /></label>
               <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
               <label>Daily loss lock <span class="input-suffix"><input id="dailyLossLimitPct" type="number" min="0.1" max="25" step="0.1" required /><em>%</em></span></label>
+              <label>Risk per trade <span class="input-suffix"><input id="riskPerTradePct" type="number" min="0.1" max="10" step="0.1" required /><em>%</em></span></label>
               <label>Maximum positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
+              <label>Maximum trades per day <input id="maxTradesPerDay" type="number" min="1" max="100" step="1" required /></label>
+              <label>Minimum entry score <input id="minEntryScore" type="number" min="1" max="100" step="1" required /></label>
               <button type="submit">Request exact limits</button>
+              <button id="applyGuardrails" class="secondary" type="button" hidden>Apply approved limits</button>
             </form>
             <p id="guardrailFeedback" class="broker-feedback" aria-live="polite"></p>
           </article>

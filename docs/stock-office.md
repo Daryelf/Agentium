@@ -120,8 +120,14 @@ All routes require the existing Argentum session.
 - `GET /api/stock-office/broker-control`
 - `POST /api/stock-office/broker-connect/human-gate`
 - `POST /api/stock-office/guardrails/human-gate`
+- `POST /api/stock-office/guardrails/apply`
+- `GET /api/stock-office/robinhood/status`
+- `POST /api/stock-office/robinhood/oauth/start`
+- `GET /api/stock-office/robinhood/oauth/callback`
+- `POST /api/stock-office/robinhood/refresh`
 - `POST /api/stock-office/orders/draft`
 - `POST /api/stock-office/orders/:draftId/human-gate`
+- `POST /api/stock-office/orders/:draftId/dispatch/execute`
 - `POST /api/stock-office/orders/:draftId/dispatch/claim`
 - `POST /api/stock-office/orders/:draftId/dispatch/result`
 - `GET /api/stock-office/chat`
@@ -138,6 +144,7 @@ All routes require the existing Argentum session.
 - Server-side only: no frontend direct access to Stock Guru files.
 - Auth required: endpoints use the current Argentum session.
 - Guarded execution only: connector onboarding, capital changes, and exact orders enter Human Gate. A dispatch token is raw-returned once, SHA-256 stored, expires after two minutes, cannot be replayed, and must reconcile Robinhood review/result state.
+- Enforced capital policy: allocated principal, maximum deployed capital, cash reserve, per-order and per-symbol caps, risk-per-trade sizing, daily P&L lock, daily trade count, position count, buying power, pending buys, and owned-share limits are recalculated from the fresh official snapshot before a BUY can advance.
 - No deposits or account mutation: Stock Office does not move money, change broker settings, scrape credentials, or access a primary brokerage account.
 - Secret hygiene: credential files are never parsed or exposed.
 - Redaction: suspicious secret-like tokens and account numbers are masked before responses.
@@ -161,6 +168,31 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - one-click staging from a fresh paper-ready copy candidate into the guarded order-draft form; staging never creates an approval or places a trade
 - exact Human Gate controls for connection, capital limits, and fresh order drafts
 - explicit Robinhood registration, OAuth, official endpoint, required-equity-tool, and account-snapshot readiness
+- a continuous supervised portfolio plan that ranks copy entries, owned-position copy exits, stop exits, profit-lock exits, strategy exits, and native evaluator entries; every proposal is independently revalidated before it becomes a draft
+- live allocated/deployed/pending/available capital, daily P&L lock, trades-per-day usage, and derived per-symbol allocation
+
+### Applying allocated capital limits
+
+Capital-limit review is deliberately two-step so a Human Gate decision cannot silently mutate the active order policy:
+
+1. the operator enters allocated principal, maximum deployed capital, per-order cap, cash reserve, daily-loss percentage, risk-per-trade percentage, maximum positions, maximum trades per day, and minimum entry score;
+2. Stock Office creates a fingerprinted Human Gate request and leaves the current policy unchanged;
+3. after the exact request is approved, the capital card displays **Apply approved limits**;
+4. applying verifies the approval is approved, unused, unexpired, and fingerprint-identical, then stores the policy in ignored local Argentum state and consumes the approval.
+
+Applying limits does not fund the account, move money, modify Robinhood settings, or place an order. Funding the dedicated Agentic account remains an operator action in Robinhood.
+
+### Continuous portfolio planner
+
+The broker-control poll refreshes the official read-only account at most once per minute while OAuth is connected. The planner then:
+
+- prices every owned position, counts pending BUY commitments, and refuses new entries if any notional is unknown;
+- requires official current-day P&L and order history before it can verify daily-loss and daily-trade locks;
+- sizes BUYs against the fresh stop distance and the approved risk-per-trade budget;
+- prevents aggregate deployment above principal/maximum-deployed limits and prevents a symbol from exceeding the equal-allocation cap implied by maximum positions;
+- converts a fresh attributable Form 4 sale into an exit proposal only if Robinhood proves that the Agentic account owns sellable shares;
+- prioritizes copy exits, stops, and profit locks before new entries;
+- stages proposals only as exact drafts. It never batch-approves or grants recurring authority.
 
 ### Approved-order handoff
 

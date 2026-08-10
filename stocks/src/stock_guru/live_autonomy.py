@@ -11,7 +11,8 @@ from .market import market_state
 
 BROKER_REVIEW_ONLY = "broker_review_only"
 MANUAL_PER_ORDER = "manual_per_order"
-VALID_CONFIRMATION_POLICIES = {BROKER_REVIEW_ONLY, MANUAL_PER_ORDER}
+ARGENTUM_HUMAN_GATE_PER_ORDER = "argentum_human_gate_per_order"
+VALID_CONFIRMATION_POLICIES = {ARGENTUM_HUMAN_GATE_PER_ORDER, MANUAL_PER_ORDER}
 KILL_SWITCH_PATH = DATA_DIR / "live_auto_kill_switch.json"
 
 
@@ -30,10 +31,12 @@ def live_auto_reasons(settings: Settings, *, account_number: str) -> list[str]:
         reasons.append("live auto trading is disabled")
     if not account_number.strip():
         reasons.append("explicit Agentic account number is required")
-    if settings.live_order_confirmation_policy not in VALID_CONFIRMATION_POLICIES:
+    if settings.live_order_confirmation_policy == BROKER_REVIEW_ONLY:
+        reasons.append("broker review alone cannot authorize placement; Argentum Human Gate approval is required per order")
+    elif settings.live_order_confirmation_policy not in VALID_CONFIRMATION_POLICIES:
         reasons.append("live order confirmation policy is unsupported")
-    if settings.live_order_confirmation_policy != BROKER_REVIEW_ONLY:
-        reasons.append("confirmation policy still requires manual per-order approval")
+    elif settings.live_order_confirmation_policy != ARGENTUM_HUMAN_GATE_PER_ORDER:
+        reasons.append("confirmation policy must use Argentum Human Gate approval per order")
     if settings.live_principal_dollars <= 0 or settings.live_max_total_dollars <= 0:
         reasons.append("live bankroll guardrails are not configured")
     if settings.live_max_order_dollars <= 0:

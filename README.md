@@ -77,7 +77,9 @@ Frontend JavaScript never receives API keys. Use Settings -> AI Providers to che
 
 ## Stock Office
 
-Stock Office can read a local Stock Guru workspace in read-only mode for evaluator records, source freshness, readiness blockers, masked broker snapshots, and operator review notes. It never places trades, moves money, changes broker settings, or exposes provider credentials.
+Stock Office combines the local Stock Guru research workspace with a guarded server-side connection to Robinhood's official Agentic Trading MCP. It can continuously refresh the dedicated Agentic account, calculate deployed capital, pending commitments, daily-loss/trade locks, risk-sized copy/evaluator proposals, and owned-position exits. It can place one exact equity order only after a fingerprint-bound Human Gate decision, an action-time confirmation, fresh account/quote/tradability checks, Robinhood review, one placement attempt, and independent order-history reconciliation. It never deposits or transfers money, changes broker settings, exposes credentials, trades a primary account, or grants recurring order authority.
+
+Capital settings are not active merely because a proposal was created. The operator requests exact limits, approves them in Human Gate, then explicitly applies that unused approval. The active policy is stored in ignored local Argentum state and is rechecked at dispatch time.
 
 Set `STOCK_GURU_PATH` only if the Stock Guru folder is not at `./stocks`. See [`docs/stock-office.md`](docs/stock-office.md) for routes, safety boundaries, and validation steps.
 

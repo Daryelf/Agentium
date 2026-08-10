@@ -5,6 +5,8 @@ const BROKER_SNAPSHOT_FRESH_MINUTES = 5;
 const ORDER_DRAFT_TTL_MINUTES = 5;
 const DISPATCH_CLAIM_TTL_MINUTES = 2;
 const MAX_ORDER_DRAFTS = 80;
+const FINAL_NON_TRADE_STATES = new Set(["cancelled", "canceled", "rejected", "failed", "expired"]);
+const FINAL_ORDER_STATES = new Set([...FINAL_NON_TRADE_STATES, "filled", "complete", "completed"]);
 const REQUIRED_EQUITY_TOOLS = [
   "get_accounts",
   "get_portfolio",
@@ -112,6 +114,11 @@ function normalizeTradeDraft(draft = {}) {
     cappedDollars: clamp(draft.cappedDollars, 0, 1_000_000, 0),
     estimatedQuantity: clamp(draft.estimatedQuantity, 0, 1_000_000, 0),
     referencePrice: clamp(draft.referencePrice, 0, 10_000_000, 0),
+    deployedBeforeDollars: clamp(draft.deployedBeforeDollars, 0, 1_000_000_000, 0),
+    capitalAfterDollars: clamp(draft.capitalAfterDollars, 0, 1_000_000_000, 0),
+    positionAfterDollars: clamp(draft.positionAfterDollars, 0, 1_000_000_000, 0),
+    riskBudgetDollars: clamp(draft.riskBudgetDollars, 0, 1_000_000_000, 0),
+    riskSizedMaxDollars: clamp(draft.riskSizedMaxDollars, 0, 1_000_000_000, 0),
     orderType: draft.orderType === "limit" ? "limit" : "market",
     timeInForce: "gfd",
     marketHours: "regular_hours",
@@ -147,6 +154,120 @@ function normalizeTradeDraft(draft = {}) {
   };
 }
 
+function roundedMoney(value) {
+  return Math.round(finiteNumber(value, 0) * 100) / 100;
+}
+
+function marketDayKey(value, timeZone = "America/New_York") {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parsed);
+}
+
+function orderIsActive(order = {}) {
+  const state = String(order.state || order.status || "").toLowerCase();
+  return Boolean(state) && !FINAL_ORDER_STATES.has(state);
+}
+
+function orderNotional(order = {}, positionPrices = {}) {
+  const direct = finiteNumber(order.dollarAmount ?? order.dollar_amount ?? order.notional ?? order.amount, null);
+  if (direct !== null && direct >= 0) return direct;
+  const quantity = finiteNumber(order.quantity ?? order.shares, null);
+  const symbol = normalizeSymbol(order.symbol);
+  const price = finiteNumber(order.price ?? order.limitPrice ?? order.limit_price ?? positionPrices[symbol], null);
+  return quantity !== null && quantity >= 0 && price !== null && price > 0 ? quantity * price : null;
+}
+
+function portfolioCapitalState(snapshot = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const broker = snapshot.broker || {};
+  const guardrails = normalizeGuardrails(snapshot.guardrails || {});
+  const positions = Array.isArray(broker.positions) ? broker.positions : [];
+  const positionPrices = {};
+  const positionValues = [];
+  const unknownPositionPrices = [];
+  for (const position of positions) {
+    const symbol = normalizeSymbol(position?.symbol);
+    const quantity = finiteNumber(position?.quantity, 0);
+    const currentPrice = finiteNumber(position?.currentPrice ?? position?.current_price, null);
+    if (!symbol || quantity <= 0) continue;
+    if (currentPrice === null || currentPrice <= 0) {
+      unknownPositionPrices.push(symbol);
+      positionValues.push({ symbol, quantity, currentPrice: null, marketValue: null });
+      continue;
+    }
+    positionPrices[symbol] = currentPrice;
+    positionValues.push({ symbol, quantity, currentPrice, marketValue: roundedMoney(quantity * currentPrice) });
+  }
+  const deployedDollars = roundedMoney(positionValues.reduce((sum, item) => sum + finiteNumber(item.marketValue, 0), 0));
+  const orders = Array.isArray(broker.orders)
+    ? broker.orders
+    : (Array.isArray(broker.openOrders) ? broker.openOrders.filter((item) => item && typeof item === "object") : []);
+  const openOrders = (Array.isArray(broker.openOrders) ? broker.openOrders : orders.filter(orderIsActive))
+    .filter((item) => item && typeof item === "object");
+  let pendingBuyDollars = 0;
+  const unknownPendingBuyOrders = [];
+  for (const order of openOrders) {
+    if (String(order.side || "").toUpperCase() !== "BUY" || !orderIsActive(order)) continue;
+    const notional = orderNotional(order, positionPrices);
+    if (notional === null) unknownPendingBuyOrders.push(String(order.orderId || order.clientRefId || order.symbol || "unknown").slice(0, 160));
+    else pendingBuyDollars += notional;
+  }
+  pendingBuyDollars = roundedMoney(pendingBuyDollars);
+  const currentDay = marketDayKey(at);
+  const tradeOrdersToday = orders.filter((order) => {
+    if (order?.planned === true || FINAL_NON_TRADE_STATES.has(String(order?.state || order?.status || "").toLowerCase())) return false;
+    return marketDayKey(order?.createdAt || order?.created_at) === currentDay;
+  });
+  const tradeCountEvidenceAvailable = Array.isArray(broker.orders);
+  const tradesToday = tradeCountEvidenceAvailable ? tradeOrdersToday.length : null;
+  const principalLimit = Math.min(guardrails.principalDollars, guardrails.maxTotalDollars);
+  const committedDollars = roundedMoney(deployedDollars + pendingBuyDollars);
+  const buyingPowerDollars = moneyNumber(broker.buyingPower);
+  const availableByPolicy = Math.max(0, principalLimit - committedDollars);
+  const availableByCash = Math.max(0, buyingPowerDollars - guardrails.cashReserveDollars - pendingBuyDollars);
+  const availableForNewBuys = roundedMoney(Math.min(availableByPolicy, availableByCash));
+  const rawDayPnl = finiteNumber(broker.dayPnlDollars ?? broker.day_pnl_dollars, null);
+  const dayPnlDollars = rawDayPnl === null ? null : roundedMoney(rawDayPnl);
+  const dailyLossEvidenceAvailable = dayPnlDollars !== null;
+  const dailyLossLimitDollars = roundedMoney(guardrails.principalDollars * guardrails.dailyLossLimitPct);
+  const dailyLossLocked = dailyLossEvidenceAvailable && dayPnlDollars <= -dailyLossLimitDollars;
+  const tradeLimitReached = tradesToday !== null && tradesToday >= guardrails.maxTradesPerDay;
+  const positionPricesVerified = unknownPositionPrices.length === 0;
+  const pendingOrdersVerified = unknownPendingBuyOrders.length === 0;
+  const verified = positionPricesVerified && pendingOrdersVerified && dailyLossEvidenceAvailable && tradeCountEvidenceAvailable;
+  return {
+    verified,
+    principalDollars: guardrails.principalDollars,
+    maxDeployedDollars: guardrails.maxTotalDollars,
+    deployedDollars,
+    pendingBuyDollars,
+    committedDollars,
+    availableForNewBuys,
+    cashReserveDollars: guardrails.cashReserveDollars,
+    buyingPowerDollars,
+    positionValues,
+    unknownPositionPrices,
+    unknownPendingBuyOrders,
+    positionPricesVerified,
+    pendingOrdersVerified,
+    dayPnlDollars,
+    dailyLossEvidenceAvailable,
+    dailyLossLimitDollars,
+    dailyLossLocked,
+    tradesToday,
+    maxTradesPerDay: guardrails.maxTradesPerDay,
+    tradeCountEvidenceAvailable,
+    tradeLimitReached,
+    maxPositionDollars: roundedMoney(guardrails.maxTotalDollars / Math.max(1, guardrails.maxPositions)),
+  };
+}
+
 function normalizeTradeDrafts(drafts = []) {
   return (Array.isArray(drafts) ? drafts : [])
     .map(normalizeTradeDraft)
@@ -164,6 +285,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   const toolContract = verifyRobinhoodToolContract(broker.connector || {}, { now: at });
   const authenticationVerified = snapshotFresh && toolContract.verified;
   const buyingPower = moneyNumber(broker.buyingPower);
+  const capital = portfolioCapitalState(snapshot, { now: at });
   const killSwitchActive = snapshot.killSwitch?.active !== false;
   const connectorStatus = !toolContract.registered || !toolContract.oauthAuthenticated
     ? "oauth_required"
@@ -182,6 +304,13 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   if (!broker.account) blockers.push("A dedicated Robinhood Agentic account has not been verified.");
   if (!broker.accountIdentityHash) blockers.push("The live snapshot is not cryptographically bound to one dedicated Agentic account.");
   if (buyingPower <= 0) blockers.push("Verified buying power is unavailable or zero.");
+  if (!capital.positionPricesVerified) blockers.push(`Live market value is unavailable for owned position(s): ${capital.unknownPositionPrices.join(", ")}.`);
+  if (!capital.pendingOrdersVerified) blockers.push("One or more pending BUY orders has no verifiable notional; deployed capital cannot be calculated safely.");
+  if (!capital.dailyLossEvidenceAvailable) blockers.push("Today's account P&L is unavailable; the daily-loss lock cannot be verified.");
+  if (capital.dailyLossLocked) blockers.push(`Today's P&L reached the $${capital.dailyLossLimitDollars.toFixed(2)} daily-loss lock.`);
+  if (!capital.tradeCountEvidenceAvailable) blockers.push("Today's official Robinhood order history is unavailable; the daily trade limit cannot be verified.");
+  if (capital.tradeLimitReached) blockers.push(`The ${capital.maxTradesPerDay}-trade daily limit has been reached.`);
+  if (capital.availableForNewBuys <= 0) blockers.push("No deployable capital remains after current positions, pending buys, and the cash reserve.");
   if (killSwitchActive) blockers.push("The live-order kill switch is active or has not been explicitly cleared.");
   if (!snapshot.readiness?.readyForLiveAuto) blockers.push(...(snapshot.readiness?.blockers || ["Strict live-readiness evidence has not passed."]).slice(0, 4));
   return {
@@ -202,6 +331,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     openOrderCount: Array.isArray(broker.openOrders) ? broker.openOrders.length : 0,
     killSwitchActive,
     guardrails,
+    capital,
     liveReady: blockers.length === 0,
     buyReady: blockers.length === 0,
     exitReady: authenticationVerified && Boolean(broker.account) && controlHasOwnedPositions(broker),
@@ -240,6 +370,14 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     : null;
   const position = (snapshot.positions || []).find((item) => item.symbol === symbol) || null;
   const referencePrice = finiteNumber(mirror?.currentPrice ?? record?.currentPrice ?? position?.currentPrice, 0);
+  const estimatedQuantity = referencePrice > 0 ? Math.floor((requestedDollars / referencePrice) * 1_000_000) / 1_000_000 : 0;
+  const capital = control.capital;
+  const symbolPositionValue = capital.positionValues.find((item) => item.symbol === symbol)?.marketValue || 0;
+  const pendingSymbolBuyDollars = (Array.isArray(snapshot.broker?.openOrders) ? snapshot.broker.openOrders : [])
+    .filter((order) => order && typeof order === "object" && orderIsActive(order) && String(order.side || "").toUpperCase() === "BUY" && normalizeSymbol(order.symbol) === symbol)
+    .reduce((sum, order) => sum + finiteNumber(orderNotional(order, Object.fromEntries(capital.positionValues.map((item) => [item.symbol, item.currentPrice]))), 0), 0);
+  const conflictingOpenOrder = (Array.isArray(snapshot.broker?.openOrders) ? snapshot.broker.openOrders : [])
+    .some((order) => order && typeof order === "object" && orderIsActive(order) && normalizeSymbol(order.symbol) === symbol);
   const blockers = [];
   const checks = [];
 
@@ -255,24 +393,37 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   }
   addCheck(checks, blockers, "order_minimum", requestedDollars >= guardrails.minOrderDollars, `Order must be at least $${guardrails.minOrderDollars.toFixed(2)}.`);
   addCheck(checks, blockers, "order_cap", requestedDollars <= guardrails.maxOrderDollars, `Order exceeds the $${guardrails.maxOrderDollars.toFixed(2)} per-order cap.`);
-  addCheck(checks, blockers, "open_orders", control.openOrderCount === 0, "Existing open broker orders must be reconciled first.");
+  addCheck(checks, blockers, "open_orders", !conflictingOpenOrder, `An active broker order already exists for ${symbol || "this symbol"}; reconcile it first.`);
 
   if (side === "BUY") {
     addCheck(checks, blockers, "valid_setup", record?.status === "valid_setup", "BUY requires a current valid evaluator setup.");
     addCheck(checks, blockers, "entry_score", finiteNumber(record?.score, 0) >= guardrails.minEntryScore, `BUY score must be at least ${guardrails.minEntryScore}.`);
     addCheck(checks, blockers, "buying_power", control.buyingPowerDollars - guardrails.cashReserveDollars >= requestedDollars, "Verified buying power after the cash reserve is insufficient.");
     addCheck(checks, blockers, "position_count", control.positions.length < guardrails.maxPositions || Boolean(position), `Maximum ${guardrails.maxPositions} positions reached.`);
+    addCheck(checks, blockers, "capital_evidence", capital.verified, "Official position values, pending-order notionals, today's P&L, and today's order history must all be verified.");
+    addCheck(checks, blockers, "maximum_deployed", requestedDollars <= capital.availableForNewBuys, `Order exceeds the $${capital.availableForNewBuys.toFixed(2)} remaining deployable capital.`);
+    addCheck(checks, blockers, "daily_loss_lock", !capital.dailyLossLocked, `Today's P&L reached the $${capital.dailyLossLimitDollars.toFixed(2)} daily-loss lock.`);
+    addCheck(checks, blockers, "daily_trade_limit", !capital.tradeLimitReached, `The ${guardrails.maxTradesPerDay}-trade daily limit has been reached.`);
+    addCheck(checks, blockers, "position_concentration", symbolPositionValue + pendingSymbolBuyDollars + requestedDollars <= capital.maxPositionDollars + 0.01, `Position would exceed the $${capital.maxPositionDollars.toFixed(2)} per-symbol allocation implied by maximum deployed capital and maximum positions.`);
+    const stopLoss = finiteNumber(record?.stopLoss, null);
+    const stopDistancePct = stopLoss !== null && stopLoss > 0 && stopLoss < referencePrice ? (referencePrice - stopLoss) / referencePrice : null;
+    const riskBudgetDollars = guardrails.principalDollars * guardrails.riskPerTradePct;
+    const riskSizedMaxDollars = stopDistancePct ? riskBudgetDollars / stopDistancePct : 0;
+    addCheck(checks, blockers, "defined_downside", stopDistancePct !== null, "BUY requires a positive stop below the fresh reference price.");
+    addCheck(checks, blockers, "risk_per_trade", stopDistancePct !== null && requestedDollars <= riskSizedMaxDollars + 0.01, `Order exceeds risk-per-trade sizing; maximum is $${riskSizedMaxDollars.toFixed(2)} at the current stop.`);
   } else {
     const availableShares = finiteNumber(position?.sharesAvailableForSells ?? position?.quantity, 0);
     const holdingValue = availableShares * referencePrice;
     addCheck(checks, blockers, "owned_position", availableShares > 0, "SELL requires a verified owned long position; short selling is blocked.");
     addCheck(checks, blockers, "sell_size", holdingValue + 0.01 >= requestedDollars, "SELL notional exceeds verified shares available.");
+    addCheck(checks, blockers, "sell_quantity", estimatedQuantity > 0 && estimatedQuantity <= availableShares, "SELL must resolve to a positive exact quantity within verified shares available.");
   }
 
   if (mirror) {
-    addCheck(checks, blockers, "mirror_source", mirror.humanGateEligible && mirror.status === "paper_ready" && !snapshot.mirror?.stale, "Copy signal must be fresh, attributable, and paper-ready.");
+    const ownedPositionExit = side === "SELL" && mirror.brokerPositionRequired === true && Boolean(position);
+    addCheck(checks, blockers, "mirror_source", ((mirror.humanGateEligible && mirror.status === "paper_ready") || ownedPositionExit) && !snapshot.mirror?.stale, "Copy signal must be fresh, attributable, and eligible for either paper mirroring or an owned-position exit review.");
     addCheck(checks, blockers, "mirror_side", mirror.side === side && mirror.symbol === symbol, "Copy signal does not match the proposed order.");
-    addCheck(checks, blockers, "mirror_cap", requestedDollars <= finiteNumber(mirror.mirrorNotionalDollars, 0), "Order exceeds the source-specific copy cap.");
+    if (!ownedPositionExit) addCheck(checks, blockers, "mirror_cap", requestedDollars <= finiteNumber(mirror.mirrorNotionalDollars, 0), "Order exceeds the source-specific copy cap.");
   }
 
   const cappedDollars = blockers.length
@@ -280,7 +431,6 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     : side === "BUY"
       ? Math.min(requestedDollars, guardrails.maxOrderDollars, Math.max(0, control.buyingPowerDollars - guardrails.cashReserveDollars))
       : Math.min(requestedDollars, guardrails.maxOrderDollars);
-  const estimatedQuantity = referencePrice > 0 ? Math.floor((requestedDollars / referencePrice) * 1_000_000) / 1_000_000 : 0;
   const sourceType = mirror ? "copy_signal" : "evaluator";
   const sourceId = mirror?.fingerprint || record?.id || "";
   const core = {
@@ -292,6 +442,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     sourceId,
     recordUpdatedAt: record?.lastUpdated || null,
     accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
+    guardrailFingerprint: stableFingerprint(guardrails),
   };
   const createdAt = now.toISOString();
   return normalizeTradeDraft({
@@ -304,6 +455,13 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     cappedDollars,
     estimatedQuantity,
     referencePrice,
+    deployedBeforeDollars: capital.deployedDollars,
+    capitalAfterDollars: side === "BUY" ? capital.committedDollars + requestedDollars : Math.max(0, capital.committedDollars - requestedDollars),
+    positionAfterDollars: side === "BUY" ? symbolPositionValue + pendingSymbolBuyDollars + requestedDollars : Math.max(0, symbolPositionValue - requestedDollars),
+    riskBudgetDollars: side === "BUY" ? guardrails.principalDollars * guardrails.riskPerTradePct : 0,
+    riskSizedMaxDollars: side === "BUY" && finiteNumber(record?.stopLoss, null) > 0 && finiteNumber(record?.stopLoss, null) < referencePrice
+      ? (guardrails.principalDollars * guardrails.riskPerTradePct) / ((referencePrice - finiteNumber(record.stopLoss, 0)) / referencePrice)
+      : 0,
     orderType: "market",
     sourceType,
     sourceId,
@@ -321,16 +479,160 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   });
 }
 
+function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const control = brokerControlOverview(snapshot, { now: at });
+  const guardrails = control.guardrails;
+  const proposals = [];
+  const seen = new Set();
+  const positionBySymbol = Object.fromEntries((control.positions || []).map((position) => [normalizeSymbol(position.symbol), position]));
+  const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, reasons = [] }) => {
+    const key = `${side}:${symbol}`;
+    if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= 12) return;
+    seen.add(key);
+    const draft = buildTradeDraft({
+      symbol,
+      side,
+      requestedDollars,
+      candidateId: candidate?.id,
+    }, snapshot, { now: at });
+    const proposalCore = {
+      accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
+      kind,
+      symbol,
+      side,
+      requestedDollars: roundedMoney(requestedDollars),
+      sourceId: candidate?.fingerprint || draft.sourceId,
+      generatedAt: snapshot.mirror?.generatedAt || snapshot.generatedAt || null,
+    };
+    proposals.push({
+      id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
+      fingerprint: stableFingerprint(proposalCore),
+      kind,
+      symbol,
+      side,
+      requestedDollars: roundedMoney(requestedDollars),
+      candidateId: candidate?.id || "",
+      traderName: candidate?.traderName || "",
+      rankingScore: finiteNumber(candidate?.rankingScore, finiteNumber((snapshot.records || []).find((item) => item.ticker === symbol)?.score, 0) / 100),
+      draftEligible: draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
+      blockers: draft.blockers,
+      reasons: [...new Set(reasons)].slice(0, 6),
+      referencePrice: draft.referencePrice,
+      riskSizedMaxDollars: draft.riskSizedMaxDollars,
+      capitalAfterDollars: draft.capitalAfterDollars,
+    });
+  };
+
+  const mirrorCandidates = [...(snapshot.mirror?.candidates || [])].sort((a, b) => {
+    const exitDelta = (b.side === "SELL" ? 1 : 0) - (a.side === "SELL" ? 1 : 0);
+    return exitDelta || finiteNumber(b.rankingScore, 0) - finiteNumber(a.rankingScore, 0);
+  });
+  for (const candidate of mirrorCandidates) {
+    if (candidate.assetType !== "equity" || !["BUY", "SELL"].includes(candidate.side)) continue;
+    const position = positionBySymbol[candidate.symbol];
+    if (candidate.side === "SELL") {
+      const signalEligible = candidate.status === "paper_ready" || candidate.brokerPositionRequired === true;
+      if (!signalEligible || !position) continue;
+      const holdingValue = finiteNumber(position.sharesAvailableForSells ?? position.quantity, 0) * finiteNumber(position.currentPrice, 0);
+      pushProposal({
+        kind: "copy_exit",
+        symbol: candidate.symbol,
+        side: "SELL",
+        requestedDollars: Math.min(holdingValue, guardrails.maxOrderDollars),
+        candidate,
+        reasons: [`${candidate.traderName} disclosed a sale.`, "This can only reduce verified owned shares."],
+      });
+      continue;
+    }
+    if (candidate.status !== "paper_ready" || !candidate.humanGateEligible) continue;
+    pushProposal({
+      kind: "copy_entry",
+      symbol: candidate.symbol,
+      side: "BUY",
+      requestedDollars: Math.min(candidate.mirrorNotionalDollars, guardrails.maxOrderDollars),
+      candidate,
+      reasons: [`${candidate.traderName} disclosed a purchase.`, `Evidence-weighted rank ${(finiteNumber(candidate.rankingScore, 0) * 100).toFixed(1)}%.`],
+    });
+  }
+
+  for (const position of control.positions || []) {
+    const symbol = normalizeSymbol(position.symbol);
+    if (!symbol || seen.has(`SELL:${symbol}`)) continue;
+    const record = (snapshot.records || []).find((item) => item.ticker === symbol);
+    const currentPrice = finiteNumber(position.currentPrice, 0);
+    const stopLoss = finiteNumber(position.stopLoss ?? record?.stopLoss, null);
+    const target1 = finiteNumber(position.target1 ?? record?.target1, null);
+    const decision = String(record?.decision || "").toUpperCase();
+    const reasons = [];
+    let kind = "";
+    if (stopLoss !== null && currentPrice > 0 && currentPrice <= stopLoss) {
+      kind = "risk_exit";
+      reasons.push(`Current price is at or below the ${formatMoneyForReason(stopLoss)} stop.`);
+    } else if (guardrails.lockProfits && target1 !== null && currentPrice >= target1) {
+      kind = "profit_exit";
+      reasons.push(`Current price reached the ${formatMoneyForReason(target1)} first target.`);
+    } else if (/SELL|EXIT|AVOID|REJECT/.test(decision)) {
+      kind = "strategy_exit_review";
+      reasons.push(`Current evaluator decision is ${record?.decision || "risk review"}.`);
+    }
+    if (!kind) continue;
+    const holdingValue = finiteNumber(position.sharesAvailableForSells ?? position.quantity, 0) * currentPrice;
+    pushProposal({ kind, symbol, side: "SELL", requestedDollars: Math.min(holdingValue, guardrails.maxOrderDollars), reasons });
+  }
+
+  for (const record of snapshot.records || []) {
+    if (proposals.length >= 12) break;
+    if (record.status !== "valid_setup" || !record.dataFresh || seen.has(`BUY:${record.ticker}`)) continue;
+    const requested = Math.min(guardrails.maxOrderDollars, control.capital.availableForNewBuys);
+    pushProposal({
+      kind: "native_entry",
+      symbol: record.ticker,
+      side: "BUY",
+      requestedDollars: requested,
+      reasons: [`Evaluator score ${record.score ?? "unknown"}.`, record.mainRisk || "Fresh risk review required."],
+    });
+  }
+
+  const ready = proposals.filter((proposal) => proposal.draftEligible).length;
+  return {
+    version: 1,
+    generatedAt: at.toISOString(),
+    accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
+    mode: "continuous_research_exact_order_human_gate",
+    capital: control.capital,
+    summary: {
+      proposals: proposals.length,
+      readyForExactDraft: ready,
+      blocked: proposals.length - ready,
+      copyEntries: proposals.filter((item) => item.kind === "copy_entry").length,
+      copyExits: proposals.filter((item) => item.kind === "copy_exit").length,
+      riskExits: proposals.filter((item) => ["risk_exit", "profit_exit", "strategy_exit_review"].includes(item.kind)).length,
+    },
+    proposals,
+    warnings: [
+      "This planner continuously ranks and sizes proposals, but every live order is a separate exact Human Gate decision.",
+      "Public disclosures can be delayed and incomplete; no proposal promises profit.",
+      "Deposits and transfers are never performed by Stock Office.",
+    ],
+  };
+}
+
+function formatMoneyForReason(value) {
+  return `$${roundedMoney(value).toFixed(2)}`;
+}
+
 function executionEnvelope(draft) {
   const normalized = normalizeTradeDraft(draft);
   const reviewArgs = {
     symbol: normalized.symbol,
     side: normalized.side.toLowerCase(),
     type: normalized.orderType,
-    dollar_amount: normalized.cappedDollars.toFixed(2),
     time_in_force: normalized.timeInForce,
     market_hours: normalized.marketHours,
   };
+  if (normalized.side === "SELL") reviewArgs.quantity = normalized.estimatedQuantity.toFixed(6).replace(/\.?0+$/, "");
+  else reviewArgs.dollar_amount = normalized.cappedDollars.toFixed(2);
   const placementArgs = { ...reviewArgs, ref_id: normalized.clientRefId };
   return {
     provider: "robinhood_agentic_mcp",
@@ -373,7 +675,11 @@ function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
   if (stableFingerprint(approvedEnvelope) !== stableFingerprint(expectedEnvelope)) reasons.push("Approved broker review/placement contract does not match the current exact envelope.");
   if (String(approvedArgs.ref_id || "") !== normalized.clientRefId) reasons.push("Approved one-use broker reference ID does not match.");
   if (normalizeSymbol(approvedArgs.symbol) !== normalized.symbol || String(approvedArgs.side || "").toUpperCase() !== normalized.side) reasons.push("Approved broker envelope symbol or side does not match.");
-  if (Math.abs(moneyNumber(approvedArgs.dollar_amount) - normalized.cappedDollars) > 0.001) reasons.push("Approved broker envelope notional does not match.");
+  if (normalized.side === "SELL") {
+    if (Math.abs(finiteNumber(approvedArgs.quantity, -1) - normalized.estimatedQuantity) > 0.0000001) reasons.push("Approved broker envelope sell quantity does not match.");
+  } else if (Math.abs(moneyNumber(approvedArgs.dollar_amount) - normalized.cappedDollars) > 0.001) {
+    reasons.push("Approved broker envelope notional does not match.");
+  }
   if (Math.abs(finiteNumber(details.maxNotionalDollars, -1) - normalized.cappedDollars) > 0.001) reasons.push("Human Gate maximum notional does not match.");
   if (String(details.accountScope || "") !== "dedicated_agentic_account_only") reasons.push("Human Gate account scope is not the dedicated Agentic account.");
   if (!normalized.accountIdentityHash || String(approvedEnvelope.accountIdentityHash || "") !== normalized.accountIdentityHash) reasons.push("Approved Agentic-account identity does not match the live broker account.");
@@ -535,11 +841,13 @@ module.exports = {
   REQUIRED_EQUITY_TOOLS,
   ROBINHOOD_MCP_URL,
   brokerControlOverview,
+  buildCopyPortfolioPlan,
   buildTradeDraft,
   claimApprovedDispatch,
   executionEnvelope,
   moneyNumber,
   normalizeGuardrails,
+  portfolioCapitalState,
   normalizeTradeDraft,
   normalizeTradeDrafts,
   approvalMatchesDraft,

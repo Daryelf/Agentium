@@ -3,10 +3,12 @@ const test = require("node:test");
 
 const {
   brokerControlOverview,
+  buildCopyPortfolioPlan,
   buildTradeDraft,
   claimApprovedDispatch,
   executionEnvelope,
   normalizeTradeDrafts,
+  portfolioCapitalState,
   settleApprovedDispatch,
   tradeDraftWithApprovalState,
   REQUIRED_EQUITY_TOOLS,
@@ -23,8 +25,10 @@ function snapshot(overrides = {}) {
       accountValue: "$100.00",
       cash: "$100.00",
       buyingPower: "$100.00",
+      dayPnlDollars: 0,
       positions: [],
       openOrders: [],
+      orders: [],
       updatedAt: "2026-08-10T16:59:00.000Z",
       connector: {
         registered: true,
@@ -58,6 +62,7 @@ function snapshot(overrides = {}) {
       decision: "VALID_BUY_SETUP",
       score: 90,
       currentPrice: 100,
+      stopLoss: 95,
       dataFresh: true,
       lastUpdated: "2026-08-10T16:59:00.000Z",
       mainRisk: "Use a hard stop.",
@@ -187,6 +192,84 @@ test("stale broker data fails closed before a BUY reaches Human Gate", () => {
   assert.equal(draft.liveOrderPlaced, false);
 });
 
+test("allocated-capital, daily-loss, daily-trade, concentration, and stop-risk limits are enforced", () => {
+  const owned = { symbol: "MSFT", quantity: 0.9, sharesAvailableForSells: 0.9, currentPrice: 100 };
+  const base = snapshot({
+    broker: { ...snapshot().broker, positions: [owned], buyingPower: "$100.00" },
+    positions: [owned],
+    guardrails: { ...snapshot().guardrails, maxTotalDollars: 100, maxPositions: 2 },
+  });
+  const capital = portfolioCapitalState(base, { now: "2026-08-10T17:00:00.000Z" });
+  const overDeployed = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 20 }, base, { now: "2026-08-10T17:00:00.000Z" });
+  assert.equal(capital.deployedDollars, 90);
+  assert.equal(capital.availableForNewBuys, 10);
+  assert.match(overDeployed.blockers.join(" "), /remaining deployable capital/i);
+
+  const lossLocked = snapshot({ broker: { ...snapshot().broker, dayPnlDollars: -2 } });
+  assert.match(buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, lossLocked, { now: "2026-08-10T17:00:00.000Z" }).blockers.join(" "), /daily-loss lock/i);
+
+  const orders = Array.from({ length: 3 }, (_, index) => ({
+    orderId: `order-${index}`,
+    symbol: "AAPL",
+    side: "BUY",
+    state: "filled",
+    dollarAmount: 1,
+    createdAt: `2026-08-10T1${index}:00:00.000Z`,
+  }));
+  const tradeLocked = snapshot({ broker: { ...snapshot().broker, orders } });
+  assert.match(buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, tradeLocked, { now: "2026-08-10T17:00:00.000Z" }).blockers.join(" "), /daily limit/i);
+
+  const concentrated = snapshot({
+    broker: { ...snapshot().broker, positions: [{ symbol: "NET", quantity: 0.15, sharesAvailableForSells: 0.15, currentPrice: 100 }] },
+    positions: [{ symbol: "NET", quantity: 0.15, sharesAvailableForSells: 0.15, currentPrice: 100 }],
+  });
+  assert.match(buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, concentrated, { now: "2026-08-10T17:00:00.000Z" }).blockers.join(" "), /per-symbol allocation/i);
+
+  const wideStop = snapshot({ records: [{ ...snapshot().records[0], stopLoss: 90 }] });
+  assert.match(buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 15 }, wideStop, { now: "2026-08-10T17:00:00.000Z" }).blockers.join(" "), /risk-per-trade sizing/i);
+});
+
+test("missing official day P&L or order history evidence blocks new entries but not owned-position exits", () => {
+  const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
+  const current = snapshot({
+    broker: { ...snapshot().broker, dayPnlDollars: null, orders: undefined, positions: [position] },
+    positions: [position],
+  });
+  const buy = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 5 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const sell = buildTradeDraft({ symbol: "NET", side: "SELL", requestedDollars: 5 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  assert.match(buy.blockers.join(" "), /P&L|order history/i);
+  assert.equal(sell.status, "ready_for_broker_review");
+});
+
+test("copy portfolio planner prioritizes owned-position exits and only marks fully checked drafts ready", () => {
+  const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
+  const exitSignal = {
+    id: "copy-exit-net",
+    fingerprint: "c".repeat(64),
+    traderName: "Named reporting owner",
+    assetType: "equity",
+    symbol: "NET",
+    side: "SELL",
+    status: "research_only",
+    humanGateEligible: false,
+    brokerPositionRequired: true,
+    currentPrice: 100,
+    rankingScore: 0.9,
+    mirrorNotionalDollars: 0,
+  };
+  const current = snapshot({
+    broker: { ...snapshot().broker, positions: [position] },
+    positions: [position],
+    mirror: { stale: false, generatedAt: "2026-08-10T16:59:00.000Z", candidates: [exitSignal] },
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  assert.equal(plan.proposals[0].kind, "copy_exit");
+  assert.equal(plan.proposals[0].side, "SELL");
+  assert.equal(plan.proposals[0].draftEligible, true);
+  assert.equal(plan.summary.copyExits, 1);
+  assert.equal(plan.warnings.some((item) => /Human Gate/.test(item)), true);
+});
+
 test("risk-reducing SELL can be drafted with the entry kill switch on and no buying power", () => {
   const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
   const current = snapshot({
@@ -200,6 +283,11 @@ test("risk-reducing SELL can be drafted with the entry kill switch on and no buy
   assert.equal(draft.status, "ready_for_broker_review");
   assert.equal(draft.cappedDollars, 10);
   assert.equal(draft.blockers.length, 0);
+  const envelope = executionEnvelope(draft);
+  assert.equal(envelope.reviewArgs.quantity, "0.1");
+  assert.equal(envelope.placementArgs.quantity, "0.1");
+  assert.equal(envelope.reviewArgs.dollar_amount, undefined);
+  assert.equal(envelope.placementArgs.ref_id, draft.clientRefId);
 });
 
 test("SELL cannot create a short position or exceed verified owned shares", () => {
@@ -212,6 +300,34 @@ test("SELL cannot create a short position or exceed verified owned shares", () =
 
   assert.match(noPosition.blockers.join(" "), /owned position/i);
   assert.match(tooLarge.blockers.join(" "), /exceeds verified shares/i);
+});
+
+test("exact SELL approval binds share quantity and rejects quantity tampering", () => {
+  const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
+  const current = snapshot({
+    broker: { ...snapshot().broker, positions: [position] },
+    positions: [position],
+  });
+  const draft = buildTradeDraft({ symbol: "NET", side: "SELL", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = approvedApproval(draft);
+  const tampered = {
+    ...approval,
+    grantedDetails: {
+      ...approval.grantedDetails,
+      executionEnvelope: {
+        ...approval.grantedDetails.executionEnvelope,
+        args: { ...approval.grantedDetails.executionEnvelope.args, quantity: "0.2" },
+        placementArgs: { ...approval.grantedDetails.executionEnvelope.placementArgs, quantity: "0.2" },
+      },
+    },
+  };
+
+  assert.throws(
+    () => claimApprovedDispatch({ ...draft, approvalId: approval.id, status: "approved" }, tampered, current, { now: "2026-08-10T17:00:20.000Z" }),
+    /contract does not match|sell quantity does not match/i,
+  );
+  const claimed = claimApprovedDispatch({ ...draft, approvalId: approval.id, status: "approved" }, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+  assert.equal(claimed.claim.envelope.placementArgs.quantity, "0.1");
 });
 
 test("trade draft persistence remains bounded and never invents a live fill", () => {
@@ -254,7 +370,15 @@ test("approved exact order becomes a two-minute one-use dispatch claim", () => {
     () => claimApprovedDispatch(approved, tamperedApproval, current, { now: "2026-08-10T17:00:20.000Z" }),
     /review\/placement contract does not match/i,
   );
-  const claimed = claimApprovedDispatch(approved, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+  assert.throws(
+    () => claimApprovedDispatch(approved, approval, {
+      ...current,
+      guardrails: { ...current.guardrails, maxOrderDollars: 19 },
+    }, { now: "2026-08-10T17:00:20.000Z" }),
+    /evidence changed/i,
+  );
+  const changedButSafePnl = { ...current, broker: { ...current.broker, dayPnlDollars: 0.5 } };
+  const claimed = claimApprovedDispatch(approved, approval, changedButSafePnl, { now: "2026-08-10T17:00:20.000Z" });
 
   assert.equal(approved.status, "approved");
   assert.equal(claimed.draft.status, "dispatch_claimed");

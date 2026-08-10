@@ -246,6 +246,92 @@ button {
   padding: 16px;
 }
 
+.portfolio-planner {
+  margin: 0 16px 16px;
+  padding: 15px;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(6, 78, 59, 0.22), rgba(2, 6, 23, 0.66));
+}
+
+.portfolio-planner .broker-card-head p {
+  max-width: 860px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.portfolio-capital-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.portfolio-proposals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.portfolio-proposal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.portfolio-proposal.ready {
+  border-color: rgba(52, 211, 153, 0.24);
+}
+
+.portfolio-proposal.blocked {
+  border-color: rgba(251, 191, 36, 0.18);
+}
+
+.portfolio-proposal span,
+.portfolio-proposal strong,
+.portfolio-proposal small,
+.portfolio-proposal em {
+  display: block;
+}
+
+.portfolio-proposal span {
+  color: #5eead4;
+  font-size: 0.61rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.portfolio-proposal strong {
+  margin-top: 3px;
+  font-size: 0.82rem;
+}
+
+.portfolio-proposal small,
+.portfolio-proposal em {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.portfolio-proposal.blocked em {
+  color: #fde68a;
+}
+
+.portfolio-proposal button {
+  min-width: 126px;
+}
+
 .broker-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1191,6 +1277,7 @@ select {
   }
 
   .broker-metrics,
+  .portfolio-capital-metrics,
   .broker-asset-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1206,6 +1293,8 @@ select {
 
   .hero-metrics,
   .broker-metrics,
+  .portfolio-capital-metrics,
+  .portfolio-proposals,
   .broker-asset-strip,
   .mirror-metrics,
   .mirror-candidate-metrics,
@@ -1230,7 +1319,8 @@ select {
   }
 
   .mirror-boundary,
-  .mirror-source {
+  .mirror-source,
+  .portfolio-proposal {
     grid-template-columns: 1fr;
   }
 

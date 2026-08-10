@@ -12,7 +12,7 @@ def test_required_config_changes_show_exact_live_auto_fields() -> None:
     changes = required_config_changes(settings(), account_number="A123")
 
     fields = {change.field for change in changes}
-    assert fields == {"live_account_number", "live_auto_trading_enabled", "live_order_confirmation_policy"}
+    assert fields == {"live_account_number", "live_auto_trading_enabled"}
 
 
 def test_arm_plan_default_settings_are_not_armable() -> None:
@@ -34,7 +34,7 @@ def test_arm_plan_ready_when_config_and_readiness_are_clean(monkeypatch) -> None
         settings(),
         live_account_number="A123",
         live_auto_trading_enabled=True,
-        live_order_confirmation_policy="broker_review_only",
+        live_order_confirmation_policy="argentum_human_gate_per_order",
     )
 
     plan = build_live_auto_arm_plan(settings=armed, account_number="A123", now=now())

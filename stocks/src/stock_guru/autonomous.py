@@ -74,9 +74,9 @@ def next_action(result: IntradayCycleResult, gate: LiveSessionGate, strategy_rea
     if gate.allow_sells and not gate.allow_buys:
         return "kill switch active; exits only"
     if not gate.armed:
-        return "stand down; live auto gate is blocked"
+        return "stand down; supervised planning gate is blocked"
     if any(plan.status == "READY_TO_PLACE" for plan in result.state.order_plans):
-        return "place ready broker-reviewed order"
+        return "send ready plan to Argentum Human Gate for exact per-order approval"
     return "wait for a cleaner setup"
 
 
@@ -95,6 +95,7 @@ def write_heartbeat(
     payload = {
         "updated_at": now.isoformat(timespec="seconds"),
         "live_auto_armed": gate.armed,
+        "direct_broker_placement_enabled": False,
         "allow_buys": gate.allow_buys,
         "allow_sells": gate.allow_sells,
         "gate_reasons": gate.reasons,

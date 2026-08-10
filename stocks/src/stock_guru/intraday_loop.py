@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from .broker import BrokerAccountState, BrokerGuardrails, build_auto_order_plan, build_exit_order_plan
@@ -135,8 +136,11 @@ def place_if_ready(
     plan: OrderPlan,
     *,
     execute: bool,
+    human_gate_authorizer: Callable[[OrderPlan], bool] | None = None,
 ) -> BrokerOrderResult | None:
     if plan.status != "READY_TO_PLACE" or not execute:
+        return None
+    if human_gate_authorizer is None or not human_gate_authorizer(plan):
         return None
     return broker.place_order(account_number, plan)
 
@@ -264,6 +268,7 @@ def run_intraday_control_cycle(
     execute_exits: bool | None = None,
     allow_entries: bool = True,
     entry_block_reasons: list[str] | None = None,
+    human_gate_authorizer: Callable[[OrderPlan], bool] | None = None,
 ) -> IntradayCycleResult:
     execute_entries = execute if execute_entries is None else execute_entries
     execute_exits = execute if execute_exits is None else execute_exits
@@ -380,7 +385,13 @@ def run_intraday_control_cycle(
         plan = build_exit_order_plan(decision, account=account, broker_review=review, ref_id=ref_id)
         order_plans.append(plan)
         try:
-            result = place_if_ready(broker, account_number, plan, execute=execute_exits)
+            result = place_if_ready(
+                broker,
+                account_number,
+                plan,
+                execute=execute_exits,
+                human_gate_authorizer=human_gate_authorizer,
+            )
         except Exception as exc:
             rejected_reasons.append(f"{symbol}: broker placement failed: {exc}")
             order_plans[-1] = order_plan_with_placement_failure(plan, exc, now)
@@ -450,7 +461,13 @@ def run_intraday_control_cycle(
             plan = seed_plan
         order_plans.append(plan)
         try:
-            result = place_if_ready(broker, account_number, plan, execute=execute_entries)
+            result = place_if_ready(
+                broker,
+                account_number,
+                plan,
+                execute=execute_entries,
+                human_gate_authorizer=human_gate_authorizer,
+            )
         except Exception as exc:
             rejected_reasons.append(f"{symbol}: broker placement failed: {exc}")
             order_plans[-1] = order_plan_with_placement_failure(plan, exc, now)

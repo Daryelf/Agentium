@@ -319,6 +319,7 @@ function readSource(stockRoot, definition, at = new Date()) {
 
 function normalizeStockOfficeState(input = {}) {
   const value = isPlainObject(input) ? input : {};
+  const activeGuardrails = isPlainObject(value.activeGuardrails) ? normalizeGuardrails(value.activeGuardrails) : null;
   return {
     workspaceId: STOCK_WORKSPACE_ID,
     lastLocalSyncAt: safeDate(value.lastLocalSyncAt),
@@ -327,6 +328,9 @@ function normalizeStockOfficeState(input = {}) {
     syncRuns: normalizeSyncRuns(value.syncRuns || []),
     assistantRuns: normalizeAssistantRuns(value.assistantRuns || []),
     tradeDrafts: normalizeTradeDrafts(value.tradeDrafts || []),
+    activeGuardrails,
+    guardrailsAppliedAt: safeDate(value.guardrailsAppliedAt),
+    guardrailsApprovalId: String(value.guardrailsApprovalId || "").slice(0, 120),
   };
 }
 
@@ -451,8 +455,11 @@ function normalizeBrokerStatus(data, source) {
       accountValue: null,
       cash: null,
       buyingPower: null,
+      dayPnlDollars: null,
+      dayPnlPct: null,
       positions: [],
       openOrders: [],
+      orders: [],
       connector: {
         registered: false,
         oauthAuthenticated: false,
@@ -463,6 +470,27 @@ function normalizeBrokerStatus(data, source) {
       updatedAt: source?.lastModified || null,
     };
   }
+  const normalizeOrder = (order) => {
+    if (!isPlainObject(order)) return null;
+    const symbol = String(order.symbol || order.ticker || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    const state = String(order.state || order.status || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60);
+    if (!symbol || !state) return null;
+    return {
+      orderId: String(order.order_id || order.orderId || order.id || "").slice(0, 160),
+      clientRefId: String(order.ref_id || order.client_ref_id || order.clientRefId || "").slice(0, 160),
+      symbol,
+      side: String(order.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY",
+      state,
+      dollarAmount: Number.isFinite(Number(order.dollar_amount ?? order.dollarAmount ?? order.notional)) ? Number(order.dollar_amount ?? order.dollarAmount ?? order.notional) : null,
+      quantity: Number.isFinite(Number(order.quantity ?? order.shares)) ? Number(order.quantity ?? order.shares) : null,
+      createdAt: safeDate(order.created_at || order.createdAt || order.submitted_at),
+    };
+  };
+  const orders = (Array.isArray(data.orders) ? data.orders : []).map(normalizeOrder).filter(Boolean).slice(0, 200);
+  const openOrders = (Array.isArray(data.open_orders) ? data.open_orders : [])
+    .map(normalizeOrder)
+    .filter(Boolean)
+    .slice(0, 100);
   return {
     configured: true,
     account: maskAccountNumber(data.account_number),
@@ -470,6 +498,8 @@ function normalizeBrokerStatus(data, source) {
     accountValue: formatUsd(data.account_value),
     cash: formatUsd(data.cash),
     buyingPower: formatUsd(data.buying_power),
+    dayPnlDollars: Number.isFinite(Number(data.day_pnl_dollars ?? data.day_pnl)) ? Number(data.day_pnl_dollars ?? data.day_pnl) : null,
+    dayPnlPct: Number.isFinite(Number(data.day_pnl_pct)) ? Number(data.day_pnl_pct) : null,
     deployedPrincipal: formatUsd(data.deployed_principal),
     lockedProfit: formatUsd(data.locked_profit),
     updatedAt: safeDate(data.updated_at) || source?.generatedAt || source?.lastModified || null,
@@ -495,7 +525,8 @@ function normalizeBrokerStatus(data, source) {
       target1: Number.isFinite(Number(position.target_1)) ? Number(position.target_1) : null,
       target2: Number.isFinite(Number(position.target_2)) ? Number(position.target_2) : null,
     })),
-    openOrders: (Array.isArray(data.open_orders) ? data.open_orders : []).slice(0, 20).map((order) => redactSensitiveText(JSON.stringify(order)).slice(0, 280)),
+    openOrders,
+    orders,
   };
 }
 
@@ -590,6 +621,7 @@ function normalizeMirrorPlan(data, source) {
         mirrorNotionalDollars: Number.isFinite(notional) ? Math.max(0, notional) : 0,
         mirrorShares: Number.isFinite(shares) ? Math.max(0, shares) : 0,
         humanGateEligible: status === "paper_ready" && Boolean(candidate.human_gate_eligible),
+        brokerPositionRequired: candidate.broker_position_required === true,
         reasons: (Array.isArray(candidate.reasons) ? candidate.reasons : []).map((item) => redactSensitiveText(item).slice(0, 300)).filter(Boolean).slice(0, 8),
         notes: redactSensitiveText(String(candidate.notes || "")).slice(0, 500),
       };
@@ -998,7 +1030,12 @@ function loadStockOfficeSnapshot(options = {}) {
         importer13f: normalizeCopyImportStatus(null, null),
         knowledge: normalizeCopyKnowledge(null, null),
       },
-      guardrails: normalizeGuardrails({}),
+      guardrails: workspaceState.activeGuardrails || normalizeGuardrails({}),
+      guardrailsSource: workspaceState.activeGuardrails ? {
+        type: "human_gate_override",
+        appliedAt: workspaceState.guardrailsAppliedAt,
+        approvalId: workspaceState.guardrailsApprovalId,
+      } : { type: "default", appliedAt: null, approvalId: "" },
       killSwitch: normalizeKillSwitch(null, null),
       tradeDrafts: workspaceState.tradeDrafts,
       watchlist: [],
@@ -1039,7 +1076,16 @@ function loadStockOfficeSnapshot(options = {}) {
     importer13f: normalizeCopyImportStatus(byId.sec_13f_import_status?.data, byId.sec_13f_import_status?.source),
     knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
   };
-  const guardrails = normalizeGuardrails(byId.settings?.data || {});
+  const guardrails = workspaceState.activeGuardrails || normalizeGuardrails(byId.settings?.data || {});
+  const guardrailsSource = workspaceState.activeGuardrails ? {
+    type: "human_gate_override",
+    appliedAt: workspaceState.guardrailsAppliedAt,
+    approvalId: workspaceState.guardrailsApprovalId,
+  } : {
+    type: "stock_guru_settings",
+    appliedAt: byId.settings?.source?.generatedAt || byId.settings?.source?.lastModified || null,
+    approvalId: "",
+  };
   const killSwitch = normalizeKillSwitch(byId.live_auto_kill_switch?.data, byId.live_auto_kill_switch?.source);
   const ticket = parseTicketReport(byId.latest_ticket?.data || "");
   const metrics = metricCounts(records, watchlist, broker, readiness, sourceHealth, mirror);
@@ -1055,6 +1101,7 @@ function loadStockOfficeSnapshot(options = {}) {
     readiness,
     mirror,
     guardrails,
+    guardrailsSource,
     killSwitch,
     tradeDrafts: workspaceState.tradeDrafts,
     watchlist,
@@ -1188,6 +1235,7 @@ function stockOverview(snapshot) {
     },
     mirror: snapshot.mirror,
     guardrails: snapshot.guardrails,
+    guardrailsSource: snapshot.guardrailsSource,
     killSwitch: snapshot.killSwitch,
     tradeDrafts: snapshot.tradeDrafts.slice(0, 12),
     broker: {

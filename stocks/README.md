@@ -288,7 +288,7 @@ The platform now defaults to `INTRADAY_SAME_DAY`. This mode is built for strict 
 - no new entries after the configured intraday cutoff
 - forced exit checks before market close
 - long-only in v1
-- full-auto order planning only after fresh quote data, broker-account state, broker review, and daily risk checks all pass
+- approval-bound order proposals only after fresh quote data, broker-account state, broker review, and daily risk checks all pass
 
 Run a strict intraday evaluation with explicit live quote and account state:
 
@@ -308,20 +308,20 @@ The production path is broker-adapter based:
 
 - `BrokerClient` defines portfolio, positions, orders, quotes, tradability, review, place, and cancel operations.
 - `DryRunBrokerClient` powers tests and local simulations.
-- `RobintradeBrokerClient` is an adapter boundary for approved Robintrade/MCP callables; real execution must be explicitly injected by the host process.
-- Every placeable order must have a prior passing broker review and a UUID/ref id for idempotency.
+- `RobintradeBrokerClient` remains a low-level adapter boundary, but no production Python caller supplies the Human Gate authorizer required by the control loop.
+- Every placeable order must have a prior passing broker review, a UUID/ref id for idempotency, and Argentum's exact one-use Human Gate authorization.
 
 The Copy Trader engine is intentionally not connected directly to `BrokerClient.place_order`. Argentum owns the separate official Robinhood connector boundary: exact draft, Human Gate approval, two-minute one-use dispatch claim, broker review, and result reconciliation. A mirror score can never bypass that chain.
 
 The control loop reconciles broker positions as source of truth, blocks duplicate entries when an open order exists, updates daily risk from realized/unrealized P/L, evaluates exits on each live position, and generates same-day sell plans for stop, target, VWAP failure, market reversal, daily lockout, or end-of-day rules.
 
-Autonomous live trading is deliberately account-scoped. It is blocked unless:
+Continuous supervised planning is deliberately account-scoped. It is blocked unless:
 
 - `live_account_number` is set or `--account-number` is passed
 - `live_auto_trading_enabled` is `true`
-- `live_order_confirmation_policy` is `broker_review_only`
+- `live_order_confirmation_policy` is `argentum_human_gate_per_order`
 
-With those enabled, the intended behavior is not manual per-order confirmation. The broker review becomes the confirmation gate, and the system still rejects anything outside quote, tradability, spread, score, cutoff, and risk limits.
+With those enabled, Stock Guru may continuously scan, reconcile, score, and prepare `READY_TO_PLACE` proposals. That status is a proposal handoff, not permission to call the broker. The Python control loop has no production Human Gate authorizer and therefore cannot place those proposals. Argentum separately requires an exact fingerprint-bound Human Gate approval, an action-time confirmation, fresh official account checks, and Robinhood review for every BUY or SELL.
 
 Check the live-auto gate and latest heartbeat:
 
@@ -329,7 +329,7 @@ Check the live-auto gate and latest heartbeat:
 ./bin/stock-guru live-auto-status --account-number YOUR_AGENTIC_ACCOUNT_NUMBER
 ```
 
-Run production preflight checks before arming live auto:
+Run production preflight checks before arming supervised planning:
 
 ```bash
 ./bin/stock-guru live-auto-preflight --account-number YOUR_AGENTIC_ACCOUNT_NUMBER
@@ -370,7 +370,7 @@ The local health command checks dry-run account values, quote presence/freshness
 
 The launch checklist writes `data/live_auto_launch_checklist.json` and aggregates heartbeat, broker reconciliation, account health, performance audit, capital policy, strategy health, replay optimization, and strict preflight blockers into one go/no-go view.
 
-The arm plan writes `data/live_auto_arm_plan.json`. It does not edit `config/settings.json`; it shows the exact fields that would need to change, including `live_account_number`, `live_auto_trading_enabled`, and `live_order_confirmation_policy`, plus all strict preflight blockers.
+The arm plan writes `data/live_auto_arm_plan.json`. It does not edit `config/settings.json`; it shows the exact fields that would need to change, including `live_account_number`, `live_auto_trading_enabled`, and `live_order_confirmation_policy`, plus all strict preflight blockers. Legacy artifact and command names still contain `live_auto`, but they now describe readiness for supervised proposal generation, never recurring order authority.
 
 The local evidence bundle writes account health, reconciliation, performance audit, capital policy, and launch checklist artifacts in one pass. It is still dry-run/local broker state unless Codex/MCP live broker wiring feeds equivalent modules with real Robintrade data.
 
@@ -411,7 +411,7 @@ Check that tuned settings survive later candles instead of only fitting the trai
 
 The replay report includes per-symbol attribution and an eligible-symbol list. Preflight checks the live session gate, lifecycle state, heartbeat freshness, kill switch, and strategy-health metrics in `data/strategy_health.json`. Weak expectancy, too few completed trades, or excessive drawdown block live-auto readiness.
 
-Lifecycle preflight also blocks unreconciled `READY_TO_PLACE` orders and intraday positions carried past their same-day exit deadline unless an explicit overnight override exists. Those states must be reconciled against broker orders/positions before live auto is armed.
+Lifecycle preflight also blocks unreconciled `READY_TO_PLACE` proposals and intraday positions carried past their same-day exit deadline unless an explicit overnight override exists. Those states must be reconciled against broker orders/positions before supervised planning is armed.
 
 The broker reconciliation report writes `data/broker_reconciliation_report.json` and blocks arming when broker positions, open broker orders, lifecycle positions, or lifecycle order plans disagree. This is the guard against duplicate entries, phantom positions, and missed exit obligations.
 
@@ -427,7 +427,7 @@ The optimizer can write `data/replay_optimization.json`. With `live_require_walk
 
 If `live_use_optimized_intraday_settings` is `true`, autonomous entry decisions use the fresh optimizer report's intraday thresholds. Only decision knobs are applied: entry score, auto-order score, relative volume, and max spread. Bankroll and live risk guardrails are never overwritten by replay optimization.
 
-The autonomous runner uses the same strategy-health gate for entries. If `live_require_strategy_health_for_entries` is `true`, missing or weak strategy metrics block new buys even when the account gate is armed. Risk-reducing sells remain allowed when the account/session gate permits exits.
+The supervised runner uses the same strategy-health gate for entry proposals. If `live_require_strategy_health_for_entries` is `true`, missing or weak strategy metrics block new buy proposals even when the account gate is armed. Risk-reducing sell proposals remain available when the account/session gate permits exits; placement still requires a separate exact Human Gate approval.
 
 When strategy health includes `eligible_symbols`, autonomous entry evaluation is restricted to those replay-qualified symbols. This keeps one strong aggregate result from hiding weak names that should not receive new capital.
 
@@ -443,17 +443,17 @@ Re-arm buys after review:
 ./bin/stock-guru live-auto-kill --disabled --reason "resume"
 ```
 
-The Codex-run live path uses `CodexMcpBrokerClient` with injected Robintrade MCP functions. The local Python app does not import MCP tools directly; Codex supplies the live broker calls during an autonomous execution session.
+The live path is owned by Argentum's server-side official Robinhood MCP client. The local Python app does not import OAuth tokens or MCP tools and never receives recurring placement authority.
 
-Run a supervised autonomous dry-run session:
+Run a supervised proposal-only dry-run session:
 
 ```bash
 ./bin/stock-guru live-auto-session --tickers AAPL,NVDA,MSFT --cycles 5 --interval-seconds 60
 ```
 
-This writes `data/live_auto_session.json` plus the normal live-auto heartbeat. By default it is review-only and does not even simulate filled orders. Add `--simulate-placement` only when you want `DryRunBrokerClient` to mark ready orders as filled for local testing.
+This writes `data/live_auto_session.json` plus the normal live-auto heartbeat. It scans and writes proposals but never simulates or places filled orders.
 
-The local command deliberately refuses `--live`. Real placement requires Codex to inject `CodexMcpBrokerClient`/`RobintradeBrokerClient` callables so every cycle can use Robintrade portfolio, positions, orders, quotes, tradability, broker review, and placement functions. The supervised session loop stops on hard cycle/runtime limits, stops when the live gate is fully blocked, and enables the kill switch after repeated broker/transport failures.
+The local command deliberately refuses `--live`. Real placement is available only through Argentum's official connector and exact one-use Human Gate workflow. The supervised session loop stops on hard cycle/runtime limits, stops when the planning gate is fully blocked, and enables the kill switch after repeated broker/transport failures.
 
 Required Codex/Robintrade MCP tools for live placement:
 

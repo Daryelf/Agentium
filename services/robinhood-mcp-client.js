@@ -103,6 +103,7 @@ function firstValue(objects, keys) {
 }
 
 function finiteNumber(value, fallback = null) {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return fallback;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const parsed = Number(String(value ?? "").replace(/[$,%\s,]/g, ""));
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -254,6 +255,7 @@ function createRobinhoodMcpClient(options = {}) {
   let activeAccount = null;
   let lastError = "";
   let rpcId = 0;
+  let refreshPromise = null;
 
   function loadRegistration() {
     if (registration) return registration;
@@ -460,7 +462,7 @@ function createRobinhoodMcpClient(options = {}) {
     return toolResultValue(result);
   }
 
-  async function refreshBrokerSnapshot() {
+  async function readBrokerSnapshot() {
     try {
       await discoverTools();
       const accountsPayload = await callTool("get_accounts", {});
@@ -482,8 +484,16 @@ function createRobinhoodMcpClient(options = {}) {
       if (symbols.length) {
         const definition = toolDefinition("get_equity_quotes");
         const properties = definition?.inputSchema?.properties || {};
-        const quoteExtra = properties.symbols ? { symbols } : properties.symbol ? { symbol: symbols[0] } : {};
-        quotesPayload = await callTool("get_equity_quotes", accountArgs("get_equity_quotes", account, quoteExtra));
+        if (properties.symbols) {
+          quotesPayload = await callTool("get_equity_quotes", accountArgs("get_equity_quotes", account, { symbols }));
+        } else if (properties.symbol) {
+          quotesPayload = await Promise.all(symbols.map((symbol) => callTool(
+            "get_equity_quotes",
+            accountArgs("get_equity_quotes", account, { symbol }),
+          )));
+        } else {
+          throw new Error("Robinhood get_equity_quotes does not expose a supported symbol or symbols argument.");
+        }
       }
       const quotesBySymbol = {};
       for (const object of walkObjects(quotesPayload)) {
@@ -498,6 +508,8 @@ function createRobinhoodMcpClient(options = {}) {
       const accountValue = moneyValue(portfolioObjects, ["portfolio_value", "account_value", "equity", "total_value"]);
       const buyingPower = moneyValue(portfolioObjects, ["buying_power", "real_time_buying_power", "available_buying_power"]);
       const cash = moneyValue(portfolioObjects, ["cash", "cash_available", "withdrawable_cash"]);
+      const dayPnlDollars = moneyValue(portfolioObjects, ["day_pnl", "today_pnl", "day_gain_loss", "today_gain_loss", "todays_profit_loss", "today_profit_loss", "todays_return"]);
+      const dayPnlPct = finiteNumber(firstValue(portfolioObjects, ["day_pnl_pct", "today_pnl_pct", "day_gain_loss_percent", "today_gain_loss_percent", "todays_return_percent"]), null);
       brokerSnapshot = {
         configured: true,
         account: maskAccount(account.accountNumber || account.accountId),
@@ -505,6 +517,8 @@ function createRobinhoodMcpClient(options = {}) {
         accountValue: accountValue === null ? null : `$${accountValue.toFixed(2)}`,
         cash: cash === null ? null : `$${cash.toFixed(2)}`,
         buyingPower: buyingPower === null ? null : `$${buyingPower.toFixed(2)}`,
+        dayPnlDollars,
+        dayPnlPct,
         positions,
         openOrders: orders.filter((order) => !["filled", "cancelled", "canceled", "rejected", "failed", "expired"].includes(order.state)),
         orders,
@@ -528,6 +542,24 @@ function createRobinhoodMcpClient(options = {}) {
     }
   }
 
+  async function refreshBrokerSnapshot() {
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = readBrokerSnapshot();
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshPromise = null;
+    }
+  }
+
+  async function refreshIfStale(maxAgeMs = 60_000) {
+    const current = loadTokens();
+    if (!current?.accessToken) return currentBrokerSnapshot();
+    const ageMs = brokerSnapshot?.updatedAt ? now().getTime() - new Date(brokerSnapshot.updatedAt).getTime() : Number.POSITIVE_INFINITY;
+    if (brokerSnapshot && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= Math.max(5_000, finiteNumber(maxAgeMs, 60_000))) return brokerSnapshot;
+    return refreshBrokerSnapshot();
+  }
+
   function currentBrokerSnapshot() {
     if (brokerSnapshot) return brokerSnapshot;
     const current = loadTokens();
@@ -539,6 +571,9 @@ function createRobinhoodMcpClient(options = {}) {
       buyingPower: null,
       positions: [],
       openOrders: [],
+      orders: [],
+      dayPnlDollars: null,
+      dayPnlPct: null,
       connector: {
         registered: Boolean(loadRegistration()?.client_id),
         oauthAuthenticated: Boolean(current?.accessToken),
@@ -665,6 +700,7 @@ function createRobinhoodMcpClient(options = {}) {
     executeApprovedEnvelope,
     publicStatus,
     refreshBrokerSnapshot,
+    refreshIfStale,
   };
 }
 

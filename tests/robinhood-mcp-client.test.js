@@ -47,7 +47,9 @@ function fakeRobinhood(options = {}) {
   schemas.get_portfolio = { type: "object", properties: { account_number: { type: "string" } }, required: ["account_number"] };
   schemas.get_equity_positions = schemas.get_portfolio;
   schemas.get_equity_orders = schemas.get_portfolio;
-  schemas.get_equity_quotes = { type: "object", properties: { symbols: { type: "array" } }, required: ["symbols"] };
+  schemas.get_equity_quotes = options.scalarQuotes
+    ? { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] }
+    : { type: "object", properties: { symbols: { type: "array" } }, required: ["symbols"] };
   schemas.get_equity_tradability = { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] };
 
   async function fetchImpl(url, init = {}) {
@@ -66,13 +68,17 @@ function fakeRobinhood(options = {}) {
     if (name === "get_accounts") return mcpResult(body.id, toolResult({ accounts: [{ account_number: "12345678", account_type: "Agentic Trading" }, { account_number: "87654321", account_type: "Individual" }] }));
     if (name === "get_portfolio") {
       assert.equal(args.account_number, "12345678");
-      return mcpResult(body.id, toolResult({ portfolio_value: "100.00", buying_power: "50.00", cash: "50.00" }));
+      return mcpResult(body.id, toolResult({ portfolio_value: "100.00", buying_power: "50.00", cash: "50.00", day_pnl: "1.25", day_pnl_pct: "0.0125" }));
     }
-    if (name === "get_equity_positions") return mcpResult(body.id, toolResult({ positions: [{ symbol: "AAPL", quantity: "1", shares_available_for_sells: "1", current_price: "100" }] }));
+    if (name === "get_equity_positions") return mcpResult(body.id, toolResult({ positions: options.positions || [{ symbol: "AAPL", quantity: "1", shares_available_for_sells: "1", current_price: "100" }] }));
     if (name === "get_equity_orders") return mcpResult(body.id, toolResult({ orders: placed ? [{ order_id: "rh-order-1", ref_id: "one-use-ref", symbol: "AAPL", side: "buy", state: "queued", dollar_amount: "5.00" }] : [] }));
     if (name === "get_equity_quotes") {
-      assert.deepEqual(args.symbols, ["AAPL"]);
-      return mcpResult(body.id, toolResult({ quotes: [{ symbol: "AAPL", price: String(options.quotePrice ?? 100.5) }] }));
+      if (options.scalarQuotes) {
+        assert.ok(args.symbol);
+        return mcpResult(body.id, toolResult({ symbol: args.symbol, price: String(options.quotePrices?.[args.symbol] ?? options.quotePrice ?? 100.5) }));
+      }
+      assert.deepEqual(args.symbols, (options.positions || [{ symbol: "AAPL" }]).map((item) => item.symbol));
+      return mcpResult(body.id, toolResult({ quotes: args.symbols.map((symbol) => ({ symbol, price: String(options.quotePrices?.[symbol] ?? options.quotePrice ?? 100.5) })) }));
     }
     if (name === "get_equity_tradability") {
       assert.equal(args.symbol, "AAPL");
@@ -123,6 +129,9 @@ test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliatio
   assert.equal(snapshot.account, "Agentic ••••5678");
   assert.equal(snapshot.accountIdentityHash.length, 64);
   assert.equal(snapshot.buyingPower, "$50.00");
+  assert.equal(snapshot.dayPnlDollars, 1.25);
+  assert.equal(snapshot.dayPnlPct, 0.0125);
+  assert.deepEqual(snapshot.orders, []);
   assert.equal(snapshot.positions[0].symbol, "AAPL");
   assert.equal(snapshot.provenance, "official_robinhood_mcp_live_read");
 
@@ -144,6 +153,11 @@ test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliatio
     if (call.url !== MCP_ENDPOINT) return false;
     return JSON.parse(call.init.body || "{}").params?.name === "place_equity_order";
   }).length, 1);
+
+  const callsBeforeCachedRefresh = fake.calls.length;
+  const cached = await client.refreshIfStale(60_000);
+  assert.equal(cached.updatedAt, snapshot.updatedAt);
+  assert.equal(fake.calls.length, callsBeforeCachedRefresh);
 });
 
 test("Agentic account selection fails closed on ambiguity and never selects the primary account", () => {
@@ -152,6 +166,32 @@ test("Agentic account selection fails closed on ambiguity and never selects the 
     { account_number: "2", nickname: "Agentic" },
   ] }), /more than one Agentic account/i);
   assert.throws(() => identifyAgenticAccount({ accounts: [{ account_number: "1", account_type: "Individual" }] }), /not found/i);
+});
+
+test("scalar quote schemas refresh every owned position instead of silently pricing only the first", async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-scalar-quotes-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let stored = null;
+  const tokenStore = { ready: () => true, load: () => stored, save: (value) => { stored = structuredClone(value); }, clear: () => { stored = null; } };
+  const fake = fakeRobinhood({
+    scalarQuotes: true,
+    positions: [
+      { symbol: "AAPL", quantity: "1", shares_available_for_sells: "1" },
+      { symbol: "MSFT", quantity: "2", shares_available_for_sells: "2" },
+    ],
+    quotePrices: { AAPL: 101, MSFT: 202 },
+  });
+  const client = createRobinhoodMcpClient({ dataDir, tokenStore, fetchImpl: fake.fetchImpl, now: () => new Date("2026-08-10T17:00:00.000Z") });
+  const started = await client.beginAuthorization({ redirectUri: "http://127.0.0.1:5173/api/stock-office/robinhood/oauth/callback", approvalId: "approval-connect" });
+  await client.completeAuthorization({ state: new URL(started.authorizationUrl).searchParams.get("state"), code: "oauth-code" });
+  const snapshot = await client.refreshBrokerSnapshot();
+
+  assert.deepEqual(snapshot.positions.map((item) => [item.symbol, item.currentPrice]), [["AAPL", 101], ["MSFT", 202]]);
+  const quoteCalls = fake.calls.filter((call) => {
+    if (call.url !== MCP_ENDPOINT) return false;
+    return JSON.parse(call.init.body || "{}").params?.name === "get_equity_quotes";
+  });
+  assert.equal(quoteCalls.length, 2);
 });
 
 test("live quote drift stops before Robinhood review or placement", async (t) => {

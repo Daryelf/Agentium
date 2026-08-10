@@ -22,6 +22,7 @@ const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./se
 const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
 const {
   brokerControlOverview,
+  buildCopyPortfolioPlan,
   buildTradeDraft,
   claimApprovedDispatch,
   executionEnvelope,
@@ -5377,14 +5378,20 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
       const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        await robinhoodMcpClient.refreshIfStale(60_000).catch(() => null);
+      }
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
       const tradeDrafts = snapshot.tradeDrafts
         .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
         .slice(0, 20);
       const connectionApproval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      const guardrailApproval = (state.approvals || []).find((item) => item.actionType === "change_stock_trading_guardrails" && !item.consumedAt) || null;
+      const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
       sendJson(res, 200, {
         brokerControl: brokerControlOverview(snapshot),
+        portfolioPlan: buildCopyPortfolioPlan(snapshot),
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
         connectionApproval: connectionApproval ? {
           id: connectionApproval.id,
@@ -5392,6 +5399,14 @@ async function handleApi(req, res, url) {
           consumedAt: connectionApproval.consumedAt || null,
           expiresAt: connectionApproval.expiresAt || null,
         } : null,
+        guardrailApproval: guardrailApproval ? {
+          id: guardrailApproval.id,
+          status: guardrailApproval.status,
+          expiresAt: guardrailApproval.expiresAt || null,
+          fingerprint: String(guardrailDetails.fingerprint || ""),
+          guardrails: normalizeGuardrails(guardrailDetails.guardrails || {}),
+        } : null,
+        guardrailsSource: snapshot.guardrailsSource,
         tradeDrafts,
         permissions: access.permissions,
       });
@@ -5580,6 +5595,58 @@ async function handleApi(req, res, url) {
         rollbackPlan: "Reject or supersede this proposal before applying it; if later applied, create a new approval to restore prior limits.",
       });
       sendJson(res, 200, { ...approvalResult, guardrails: requested, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/apply") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails-apply", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval || approval.actionType !== "change_stock_trading_guardrails") throw guardedError("Approved capital-policy request not found.", 404);
+      if (approval.status !== "approved" || approval.consumedAt || Number(approval.useCount || 0) > 0) {
+        throw guardedError("Capital-policy approval is not approved and unused.", 409);
+      }
+      if (approval.expiresAt && new Date(approval.expiresAt).getTime() <= Date.now()) throw guardedError("Capital-policy approval expired.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      const requested = normalizeGuardrails(details.guardrails || {});
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      if (!details.fingerprint || details.fingerprint !== fingerprint || approval.linkedId !== `stock-office:guardrails:${fingerprint}`) {
+        throw guardedError("Capital-policy approval fingerprint does not match the exact limits.", 409);
+      }
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0
+        || requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Approved capital limits are internally invalid.", 409);
+      }
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const appliedAt = now();
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        activeGuardrails: requested,
+        guardrailsAppliedAt: appliedAt,
+        guardrailsApprovalId: approval.id,
+      });
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = appliedAt;
+      approval.executionOutcome = "stock_guardrails_applied_locally";
+      audit(state, "Stock Office capital limits applied", `Exact Human Gate fingerprint ${fingerprint} became the active local order policy. No deposit, transfer, broker setting, or order occurred.`);
+      writeState(state);
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        guardrails: snapshot.guardrails,
+        guardrailsSource: snapshot.guardrailsSource,
+        brokerControl: brokerControlOverview(snapshot),
+        portfolioPlan: buildCopyPortfolioPlan(snapshot),
+        approval: { id: approval.id, status: approval.status, consumedAt: approval.consumedAt },
+        moneyMoved: false,
+        liveOrderPlaced: false,
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

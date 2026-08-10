@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import DATA_DIR, Settings
-from .live_autonomy import BROKER_REVIEW_ONLY
+from .live_autonomy import ARGENTUM_HUMAN_GATE_PER_ORDER
 from .readiness import ReadinessReport, build_readiness_report
 
 
@@ -42,7 +42,7 @@ def required_config_changes(settings: Settings, *, account_number: str) -> list[
                 field="live_account_number",
                 current=settings.live_account_number,
                 required=account_number,
-                reason="live auto requires an explicit Agentic account identifier",
+                reason="continuous supervised planning requires an explicit Agentic account identifier",
             )
         )
     if not settings.live_auto_trading_enabled:
@@ -51,16 +51,16 @@ def required_config_changes(settings: Settings, *, account_number: str) -> list[
                 field="live_auto_trading_enabled",
                 current=settings.live_auto_trading_enabled,
                 required=True,
-                reason="autonomous live trading must be explicitly enabled",
+                reason="continuous supervised scanning and proposal generation must be explicitly enabled",
             )
         )
-    if settings.live_order_confirmation_policy != BROKER_REVIEW_ONLY:
+    if settings.live_order_confirmation_policy != ARGENTUM_HUMAN_GATE_PER_ORDER:
         changes.append(
             ConfigChange(
                 field="live_order_confirmation_policy",
                 current=settings.live_order_confirmation_policy,
-                required=BROKER_REVIEW_ONLY,
-                reason="autonomous mode uses broker review as the confirmation gate",
+                required=ARGENTUM_HUMAN_GATE_PER_ORDER,
+                reason="every broker placement must use Argentum's exact one-use Human Gate approval",
             )
         )
     return changes

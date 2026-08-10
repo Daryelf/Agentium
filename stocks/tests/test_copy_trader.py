@@ -123,6 +123,7 @@ def test_form4_open_market_buy_becomes_bounded_paper_candidate(tmp_path: Path) -
     assert candidate.mirror_notional_dollars == 5
     assert candidate.mirror_shares == round(5 / 102, 8)
     assert candidate.human_gate_eligible is True
+    assert candidate.broker_position_required is False
     assert plan.summary["live_orders_placed"] == 0
 
 
@@ -158,6 +159,9 @@ def test_price_chasing_duplicate_and_short_creation_are_blocked(tmp_path: Path) 
     assert sum(status == "research_only" for status in statuses) == 2
     assert any("chasing is blocked" in reason for candidate in plan.candidates for reason in candidate.reasons)
     assert any("cannot create a short" in reason for candidate in plan.candidates for reason in candidate.reasons)
+    sell = next(candidate for candidate in plan.candidates if candidate.side == "SELL")
+    assert sell.broker_position_required is True
+    assert sell.human_gate_eligible is False
 
 
 def test_form4_transaction_code_must_match_reported_direction(tmp_path: Path) -> None:

@@ -28,10 +28,19 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(html, /Robinhood Agentic Trading/);
   assert.match(html, /Build an exact buy\/sell draft/);
   assert.match(html, /Allocated principal/);
+  assert.match(html, /Capital deployment and exit plan/);
+  assert.match(html, /Risk per trade/);
+  assert.match(html, /Maximum trades per day/);
+  assert.match(html, /Apply approved limits/);
   assert.match(html, /Kill switch/);
   assert.match(script, /\/api\/stock-office\/broker-control/);
   assert.match(script, /\/api\/stock-office\/orders\/draft/);
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
+  assert.match(script, /\/api\/stock-office\/guardrails\/apply/);
+  assert.match(script, /portfolioPlan/);
+  assert.match(script, /data-portfolio-draft/);
+  assert.match(script, /New-buy room/);
+  assert.match(script, /Today P&L/);
   assert.match(script, /Send exact order to Human Gate/);
   assert.match(script, /Prepare 2-minute Robinhood handoff/);
   assert.match(script, /Complete Robinhood OAuth on desktop/);
@@ -66,4 +75,6 @@ test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores",
   assert.match(html, /Stage guarded order/);
   assert.match(script, /candidateId/);
   assert.match(script, /data-mirror-draft/);
+  assert.match(script, /brokerPositionRequired/);
+  assert.match(html, /Continuous supervised copy portfolio/);
 });

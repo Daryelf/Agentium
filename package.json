@@ -11,7 +11,7 @@
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "start": "node server.js",
-    "check": "node --check server.js && node --check script.js && node --check services/stock-office.js && node --check services/stock-guru-refresh.js && node --check services/stock-guru-workspace.js && node --check apps/stock-office/stock-office.js",
+    "check": "node --check server.js && node --check script.js && node --check services/stock-office.js && node --check services/stock-guru-refresh.js && node --check services/stock-guru-workspace.js && node --check services/stock-broker-control.js && node --check apps/stock-office/stock-office.js",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

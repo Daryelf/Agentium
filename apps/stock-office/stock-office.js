@@ -10,6 +10,8 @@ const state = {
   recordTotal: 0,
   loading: false,
   refresh: null,
+  brokerControl: null,
+  tradeDrafts: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -88,6 +90,81 @@ function renderMetrics() {
   $("#metricGrid").innerHTML = cards.map(([label, value, hint]) => metricCard(label, value, hint)).join("");
   $("#stockStatusPill").textContent = sourceHealth.status ? `Sources: ${sourceHealth.status}` : "Read only";
   $("#safetyCopy").textContent = state.overview?.workspace?.safetyRule || "Research and analytics only. No broker actions are available.";
+}
+
+function brokerStatusLabel(value) {
+  const labels = {
+    live_snapshot_verified: "Live account verified",
+    stale_snapshot: "Reconnect required",
+    oauth_required: "OAuth required",
+  };
+  return labels[value] || "Setup required";
+}
+
+function renderTradeDraft(draft) {
+  const target = $("#orderDraftResult");
+  if (!draft) {
+    target.innerHTML = `<p>No order draft yet. Building a draft never places a trade.</p>`;
+    return;
+  }
+  const ready = draft.status === "ready_for_broker_review" && !draft.blockers?.length;
+  target.dataset.status = ready ? "ready" : "blocked";
+  target.innerHTML = `
+    <div class="order-draft-heading">
+      <div><span>${escapeHtml(draft.side)} ${escapeHtml(draft.symbol)}</span><strong>${escapeHtml(formatMoney(draft.requestedDollars))}</strong></div>
+      <em class="tag ${ready ? "ready" : "rejected"}">${escapeHtml(String(draft.status || "blocked").replaceAll("_", " "))}</em>
+    </div>
+    <p>${escapeHtml(draft.thesis || "No thesis recorded.")}</p>
+    <div class="order-draft-stats">
+      <span><small>Reference</small><b>${escapeHtml(formatMoney(draft.referencePrice))}</b></span>
+      <span><small>Estimated shares</small><b>${escapeHtml(Number(draft.estimatedQuantity || 0).toFixed(6))}</b></span>
+      <span><small>Expires</small><b>${escapeHtml(formatTime(draft.expiresAt))}</b></span>
+    </div>
+    ${draft.blockers?.length ? `<ul>${draft.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p class="order-ready-copy">Local gates passed. Robinhood must still review the order and return no warnings.</p>`}
+    <button type="button" data-order-gate="${escapeHtml(draft.id)}" ${ready ? "" : "disabled"}>Send exact order to Human Gate</button>
+    <small>Live order placed: ${draft.liveOrderPlaced ? "yes" : "no"}</small>
+  `;
+}
+
+function renderBrokerControl() {
+  const control = state.brokerControl || {};
+  const guardrails = control.guardrails || {};
+  const pill = $("#brokerStatusPill");
+  pill.textContent = brokerStatusLabel(control.connectorStatus);
+  pill.className = `status-pill ${control.authenticationVerified ? "ready" : control.connectorStatus === "stale_snapshot" ? "warning" : "muted"}`;
+  $("#brokerAccountLabel").textContent = control.accountLabel || "Not verified";
+  $("#orderKillSwitch").textContent = control.killSwitchActive ? "Kill switch ON" : "Kill switch cleared";
+  $("#orderKillSwitch").className = control.killSwitchActive ? "danger-copy" : "ready-copy";
+  $("#brokerMetrics").innerHTML = [
+    ["Connector", control.registrationStatus === "registered_in_codex" ? "Registered" : "Setup required", "official Robinhood MCP"],
+    ["Authentication", control.authenticationVerified ? "Verified" : "Not verified", control.snapshotAgeMinutes === null ? "no live snapshot" : `${control.snapshotAgeMinutes}m snapshot age`],
+    ["Buying power", formatMoney(control.buyingPowerDollars), "live broker value required"],
+    ["Positions", control.positions?.length || 0, `${control.openOrderCount || 0} open order(s)`],
+    ["Per-order cap", formatMoney(guardrails.maxOrderDollars), `principal ${formatMoney(guardrails.principalDollars)}`],
+    ["Live entry", control.buyReady ? "Ready" : "Blocked", control.killSwitchActive ? "kill switch active" : "strict checks"],
+  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+
+  $("#brokerOnboarding").innerHTML = [
+    [true, "Official Trading MCP registered"],
+    [control.authenticationVerified, "Robinhood OAuth and Agentic account verified"],
+    [control.buyingPowerDollars > 0, "Dedicated account funded with settled buying power"],
+    [control.buyReady, "Fresh portfolio, quotes, risk evidence, and kill switch ready"],
+  ].map(([done, label]) => `<li class="${done ? "done" : "waiting"}"><i>${done ? "✓" : "•"}</i><span>${escapeHtml(label)}</span></li>`).join("");
+  $("#brokerBlockers").innerHTML = control.blockers?.length
+    ? `<strong>Before any new BUY:</strong><ul>${control.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<strong>New-entry preflight is clear.</strong><p>Every exact order still requires Robinhood review and Human Gate.</p>`;
+
+  if (!$("#guardrailForm").dataset.loaded) {
+    $("#principalDollars").value = guardrails.principalDollars || 25;
+    $("#maxTotalDollars").value = guardrails.maxTotalDollars || 25;
+    $("#maxOrderDollars").value = guardrails.maxOrderDollars || 5;
+    $("#cashReserveDollars").value = guardrails.cashReserveDollars || 0;
+    $("#dailyLossLimitPct").value = ((guardrails.dailyLossLimitPct || 0.02) * 100).toFixed(1);
+    $("#maxPositions").value = guardrails.maxPositions || 5;
+    $("#orderDollars").value = Math.min(guardrails.maxOrderDollars || 5, 5);
+    $("#guardrailForm").dataset.loaded = "true";
+  }
+  renderTradeDraft(state.tradeDrafts[0] || null);
 }
 
 function mirrorStatusLabel(value) {
@@ -193,6 +270,7 @@ function renderRecords() {
 async function selectRecord(ticker) {
   if (!ticker) return;
   state.selectedTicker = ticker;
+  if ($("#orderSymbol")) $("#orderSymbol").value = ticker;
   renderRecords();
   $("#recordDetail").innerHTML = `<h2>${escapeHtml(ticker)}</h2><p>Loading record...</p>`;
   try {
@@ -286,13 +364,14 @@ async function loadApp() {
       sort: "score_desc",
       pageSize: "30",
     });
-    const [overview, records, sources, activity, chat, mirrorPayload] = await Promise.all([
+    const [overview, records, sources, activity, chat, mirrorPayload, brokerPayload] = await Promise.all([
       api("/api/stock-office/overview"),
       api(`/api/stock-office/records?${query.toString()}`),
       api("/api/stock-office/sources"),
       api("/api/stock-office/activity"),
       api("/api/stock-office/chat"),
       api("/api/stock-office/mirror"),
+      api("/api/stock-office/broker-control"),
     ]);
     state.overview = overview;
     state.records = records.records || [];
@@ -301,12 +380,15 @@ async function loadApp() {
     state.activity = [...(activity.syncRuns || []), ...(activity.activity || []), ...(activity.assistantRuns || [])].sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     state.messages = chat.messages || [];
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
+    state.brokerControl = brokerPayload.brokerControl || null;
+    state.tradeDrafts = brokerPayload.tradeDrafts || [];
     renderMetrics();
     renderRecords();
     renderSources();
     renderActivity();
     renderChat();
     renderMirror();
+    renderBrokerControl();
     if (!state.records.some((record) => record.ticker === state.selectedTicker)) {
       state.selectedTicker = state.records[0]?.ticker || null;
     }
@@ -333,6 +415,83 @@ async function sendMirrorToHumanGate(candidateId) {
     renderMirror();
   } catch (error) {
     feedback.textContent = error.message;
+  }
+}
+
+async function requestBrokerConnection() {
+  const button = $("#brokerConnectGate");
+  button.disabled = true;
+  button.textContent = "Creating exact connection request...";
+  try {
+    const payload = await api("/api/stock-office/broker-connect/human-gate", { method: "POST", body: "{}" });
+    button.textContent = payload.approval?.status === "pending" ? "Connection request is in Human Gate" : "Connection request already exists";
+  } catch (error) {
+    button.textContent = error.message;
+  } finally {
+    window.setTimeout(() => { button.disabled = false; }, 1200);
+  }
+}
+
+async function requestGuardrails(event) {
+  event.preventDefault();
+  const feedback = $("#guardrailFeedback");
+  feedback.textContent = "Creating a fingerprinted capital-policy request...";
+  try {
+    const payload = await api("/api/stock-office/guardrails/human-gate", {
+      method: "POST",
+      body: JSON.stringify({
+        principalDollars: Number($("#principalDollars").value),
+        maxTotalDollars: Number($("#maxTotalDollars").value),
+        maxOrderDollars: Number($("#maxOrderDollars").value),
+        cashReserveDollars: Number($("#cashReserveDollars").value),
+        dailyLossLimitPct: Number($("#dailyLossLimitPct").value) / 100,
+        maxPositions: Number($("#maxPositions").value),
+      }),
+    });
+    feedback.textContent = payload.approval?.status === "pending"
+      ? "Exact limits sent to Human Gate. No money moved and no broker setting changed."
+      : "An identical limits request is already pending.";
+  } catch (error) {
+    feedback.textContent = error.message;
+  }
+}
+
+async function buildOrderDraft(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  button.textContent = "Running risk checks...";
+  try {
+    const payload = await api("/api/stock-office/orders/draft", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol: $("#orderSymbol").value,
+        side: $("#orderSide").value,
+        requestedDollars: Number($("#orderDollars").value),
+      }),
+    });
+    state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+    state.brokerControl = payload.brokerControl || state.brokerControl;
+    renderBrokerControl();
+  } catch (error) {
+    $("#orderDraftResult").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Build guarded draft";
+  }
+}
+
+async function sendOrderToHumanGate(draftId) {
+  const button = $(`[data-order-gate="${CSS.escape(draftId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating one-use approval...";
+  }
+  try {
+    const payload = await api(`/api/stock-office/orders/${encodeURIComponent(draftId)}/human-gate`, { method: "POST", body: "{}" });
+    if (button) button.textContent = payload.approval?.status === "pending" ? "Exact order is in Human Gate" : "Approval already exists";
+  } catch (error) {
+    if (button) button.textContent = error.message;
   }
 }
 
@@ -418,11 +577,18 @@ async function askStockGuru(event) {
 }
 
 document.addEventListener("click", (event) => {
+  const brokerConnect = event.target.closest("#brokerConnectGate");
+  if (brokerConnect) requestBrokerConnection();
+  const orderGate = event.target.closest("[data-order-gate]");
+  if (orderGate) sendOrderToHumanGate(orderGate.dataset.orderGate);
   const row = event.target.closest("[data-ticker]");
   if (row) selectRecord(row.dataset.ticker);
   const mirrorGate = event.target.closest("[data-mirror-gate]");
   if (mirrorGate && !mirrorGate.disabled) sendMirrorToHumanGate(mirrorGate.dataset.mirrorGate);
 });
+
+$("#guardrailForm").addEventListener("submit", requestGuardrails);
+$("#orderDraftForm").addEventListener("submit", buildOrderDraft);
 
 $("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);

@@ -19,6 +19,12 @@ const {
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
 const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
+const {
+  brokerControlOverview,
+  buildTradeDraft,
+  executionEnvelope,
+  normalizeGuardrails,
+} = require("./services/stock-broker-control");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -888,6 +894,7 @@ function defaultState() {
       chatMessages: [],
       syncRuns: [],
       assistantRuns: [],
+      tradeDrafts: [],
     },
     toolConnections: {
       openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
@@ -4731,6 +4738,11 @@ function requireStockOfficeAccess(req, capability = "view") {
     assistant: "canUseAssistant",
     sync: "canTriggerSync",
     mirror_request: "canRequestMirrorApproval",
+    broker_view: "canViewWorkspace",
+    broker_connect: "canRequestBrokerConnection",
+    broker_guardrails: "canRequestGuardrailChange",
+    order_draft: "canDraftBrokerOrder",
+    order_approval: "canRequestOrderApproval",
   };
   const permissionKey = capabilityMap[capability] || "canViewWorkspace";
   if (!permissions[permissionKey]) {
@@ -5341,6 +5353,182 @@ async function handleApi(req, res, url) {
     }
     return;
   }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/broker-control") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, {
+        brokerControl: brokerControlOverview(snapshot),
+        tradeDrafts: snapshot.tradeDrafts.slice(0, 20),
+        permissions: access.permissions,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/broker-connect/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-connect", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const snapshot = stockOfficeSnapshot(readState());
+      const control = brokerControlOverview(snapshot);
+      const approvalResult = createHumanGateRequest({
+        actionType: "connect_robinhood_agentic_mcp",
+        title: "Connect the dedicated Robinhood Agentic account",
+        riskLevel: "high",
+        linkedId: "stock-office:robinhood-agentic-mcp:onboarding",
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Robinhood Trading MCP is registered at ${control.endpoint}. Current connector status: ${control.connectorStatus}. Authentication is not treated as complete until a fresh account snapshot is returned.`,
+        action: "Authorize opening Robinhood's official OAuth/onboarding flow for a dedicated Agentic Trading account. This approval does not authorize a deposit, transfer, order, option trade, crypto trade, or event contract.",
+        exactScope: `Connect only the official Robinhood Trading MCP endpoint ${control.endpoint}, authenticate through Robinhood, and verify the dedicated Agentic account. No money movement or order placement is included.`,
+        details: {
+          officeId: "stock-office",
+          provider: "robinhood_agentic_mcp",
+          endpoint: control.endpoint,
+          accountScope: control.accountScope,
+          allowedResult: "fresh_read_only_account_snapshot",
+          orderPlacementAuthorized: false,
+          moneyMovementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Robinhood OAuth returns a fresh read-only Agentic-account snapshot and required MCP tool availability; no order is placed.",
+        rollbackPlan: "Disconnect the Robinhood Trading MCP from Robinhood or Codex and keep the live-order kill switch active.",
+      });
+      sendJson(res, 200, { ...approvalResult, brokerControl: control, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requested = normalizeGuardrails(payload);
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0) {
+        throw guardedError("Principal, maximum deployed capital, and per-order cap must be greater than zero.", 400);
+      }
+      if (requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Per-order cap must not exceed maximum deployed capital, and maximum deployed capital must not exceed principal.", 400);
+      }
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      const approvalResult = createHumanGateRequest({
+        actionType: "change_stock_trading_guardrails",
+        title: "Review Stock Office capital limits",
+        riskLevel: "high",
+        linkedId: `stock-office:guardrails:${fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Requested principal $${requested.principalDollars.toFixed(2)}, maximum deployed $${requested.maxTotalDollars.toFixed(2)}, maximum order $${requested.maxOrderDollars.toFixed(2)}, cash reserve $${requested.cashReserveDollars.toFixed(2)}, daily loss lock ${(requested.dailyLossLimitPct * 100).toFixed(2)}%.`,
+        action: "Review these exact risk limits. Approval changes no Robinhood setting and moves no money by itself.",
+        exactScope: `Approve only guardrail fingerprint ${fingerprint}: ${JSON.stringify(requested)}. No deposit, transfer, account change, or broker order is included.`,
+        details: {
+          officeId: "stock-office",
+          fingerprint,
+          guardrails: requested,
+          moneyMovementAuthorized: false,
+          orderPlacementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "The exact capital-policy proposal is approved for a later controlled configuration apply; no external financial action occurs.",
+        rollbackPlan: "Reject or supersede this proposal before applying it; if later applied, create a new approval to restore prior limits.",
+      });
+      sendJson(res, 200, { ...approvalResult, guardrails: requested, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/orders/draft") {
+    try {
+      enforceStockOfficeRateLimit(req, "order-draft", 20, 300_000);
+      const access = requireStockOfficeAccess(req, "order_draft");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draft = buildTradeDraft({
+        symbol: payload.symbol,
+        side: payload.side,
+        requestedDollars: payload.requestedDollars,
+        candidateId: payload.candidateId,
+      }, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [draft, ...current.tradeDrafts.filter((item) => item.fingerprint !== draft.fingerprint)],
+      });
+      audit(state, "Stock Office order draft", `${draft.side} ${draft.symbol} $${draft.requestedDollars.toFixed(2)}: ${draft.status}; ${draft.blockers.length} blocker(s); no live order placed.`);
+      writeState(state);
+      sendJson(res, 200, {
+        draft,
+        brokerControl: brokerControlOverview(stockOfficeSnapshot(readState(), access.permissions)),
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockOrderGateMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockOrderGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-human-gate", 10, 300_000);
+      requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === decodeURIComponent(stockOrderGateMatch[1]));
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      if (new Date(draft.expiresAt).getTime() <= Date.now()) throw guardedError("Order draft expired. Rebuild it with fresh market and broker data.", 409);
+      if (draft.status !== "ready_for_broker_review" || draft.blockers.length) {
+        throw guardedError(`Order draft is blocked: ${draft.blockers[0] || "fresh broker review is unavailable"}`, 409);
+      }
+      const envelope = executionEnvelope(draft);
+      const approvalResult = createHumanGateRequest({
+        actionType: "place_robinhood_equity_order",
+        title: `Approve exact Robinhood order: ${draft.side} ${draft.symbol}`,
+        riskLevel: "critical",
+        linkedId: `stock-office:order:${draft.fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        expiresAt: draft.expiresAt,
+        evidence: `${draft.thesis} Reference price $${draft.referencePrice.toFixed(2)}; requested and capped notional $${draft.cappedDollars.toFixed(2)}; all local capital, position, freshness, and kill-switch checks passed. Robinhood review must still return no warnings before placement.`,
+        action: `Review and, only if Robinhood's review_equity_order returns no warning or scope change before ${draft.expiresAt}, place this one ${draft.side} ${draft.symbol} order in the dedicated Agentic account.`,
+        exactScope: `One-use order fingerprint ${draft.fingerprint}: ${draft.side} ${draft.symbol}, market notional no more than $${draft.cappedDollars.toFixed(2)}, regular market hours, GFD, ref_id ${draft.clientRefId}. Reject on any broker warning, repricing outside policy, account mismatch, stale data, or scope change.`,
+        details: {
+          officeId: "stock-office",
+          draftId: draft.id,
+          fingerprint: draft.fingerprint,
+          executionEnvelope: envelope,
+          maxNotionalDollars: draft.cappedDollars,
+          accountScope: "dedicated_agentic_account_only",
+          moneyMovementAuthorized: false,
+          recurringAuthorization: false,
+        },
+        reversible: false,
+        expectedPostcondition: "The exact order is broker-reviewed, placed at most once, and reconciled to a Robinhood order ID; otherwise no order is placed.",
+        rollbackPlan: "If still open, cancel the exact broker order; if filled, stop automation and create a separate explicit SELL review. Never create an offsetting order automatically.",
+      });
+      sendJson(res, 200, { ...approvalResult, draft, envelope, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
 
   const stockMirrorGateMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/([^/]+)\/human-gate$/);
   if (req.method === "POST" && stockMirrorGateMatch) {

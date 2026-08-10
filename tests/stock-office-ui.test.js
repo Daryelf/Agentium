@@ -18,3 +18,19 @@ test("Stock Office UI exposes a real refresh outcome and useful filter feedback"
   assert.doesNotMatch(script, /stock-guru copy-refresh-sec|continuous watcher/);
   assert.doesNotMatch(`${html}\n${script}`, /scanner\/evaluator outside Argentum|Sync local files/);
 });
+
+test("Stock Office UI exposes official Robinhood onboarding, capital policy, and guarded order drafting", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /Robinhood Agentic Trading/);
+  assert.match(html, /Build an exact buy\/sell draft/);
+  assert.match(html, /Allocated principal/);
+  assert.match(html, /Kill switch/);
+  assert.match(script, /\/api\/stock-office\/broker-control/);
+  assert.match(script, /\/api\/stock-office\/orders\/draft/);
+  assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
+  assert.match(script, /Send exact order to Human Gate/);
+  assert.match(html, /No password scraping, private API/);
+  assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
+});

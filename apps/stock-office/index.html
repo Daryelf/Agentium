@@ -33,10 +33,76 @@
       <section class="hero-panel">
         <div>
           <p class="eyebrow">Safety boundary</p>
-          <h2>Research, paper mirrors, and Human Gate. No automatic live orders.</h2>
-          <p id="safetyCopy">Stock Guru data is visible for review only while Argentum keeps all trading execution blocked.</p>
+          <h2>Official Robinhood connector, strict risk controls, and one-use order approval.</h2>
+          <p id="safetyCopy">Argentum prepares exact buy/sell drafts. Live placement remains blocked until Robinhood, broker review, risk checks, and Human Gate all agree.</p>
         </div>
         <div class="hero-metrics" id="metricGrid"></div>
+      </section>
+
+      <section class="panel broker-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Official broker control</p>
+            <h2>Robinhood Agentic Trading</h2>
+            <p>Dedicated Agentic account through Robinhood's official Trading MCP. No password scraping, private API, or access to your primary account.</p>
+          </div>
+          <span id="brokerStatusPill" class="status-pill muted">Checking connector</span>
+        </div>
+
+        <div id="brokerMetrics" class="broker-metrics"></div>
+
+        <div class="broker-grid">
+          <article class="broker-card connector-card">
+            <div class="broker-card-head">
+              <div><p class="eyebrow">Connection</p><h3>Agentic account link</h3></div>
+              <span id="brokerAccountLabel">Not verified</span>
+            </div>
+            <ol id="brokerOnboarding" class="broker-onboarding"></ol>
+            <div id="brokerBlockers" class="broker-blockers" aria-live="polite"></div>
+            <button id="brokerConnectGate" type="button">Authorize official connection setup</button>
+            <small>This creates an exact Human Gate request for Robinhood OAuth only. It cannot deposit money or place an order.</small>
+          </article>
+
+          <article class="broker-card capital-card">
+            <div class="broker-card-head">
+              <div><p class="eyebrow">Capital policy</p><h3>Money and loss limits</h3></div>
+              <span>Human Gate</span>
+            </div>
+            <form id="guardrailForm" class="guardrail-form">
+              <label>Allocated principal <input id="principalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+              <label>Maximum deployed <input id="maxTotalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+              <label>Maximum per order <input id="maxOrderDollars" type="number" min="1" max="1000000" step="1" required /></label>
+              <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
+              <label>Daily loss lock <span class="input-suffix"><input id="dailyLossLimitPct" type="number" min="0.1" max="25" step="0.1" required /><em>%</em></span></label>
+              <label>Maximum positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
+              <button type="submit">Request exact limits</button>
+            </form>
+            <p id="guardrailFeedback" class="broker-feedback" aria-live="polite"></p>
+          </article>
+
+          <article class="broker-card order-card">
+            <div class="broker-card-head">
+              <div><p class="eyebrow">Order desk</p><h3>Build an exact buy/sell draft</h3></div>
+              <span id="orderKillSwitch">Kill switch checking</span>
+            </div>
+            <form id="orderDraftForm" class="order-draft-form">
+              <label>Symbol <input id="orderSymbol" type="text" maxlength="12" placeholder="AAPL" autocomplete="off" required /></label>
+              <label>Side <select id="orderSide"><option value="BUY">Buy</option><option value="SELL">Sell owned shares</option></select></label>
+              <label>Dollars <input id="orderDollars" type="number" min="1" max="1000000" step="0.01" required /></label>
+              <button type="submit">Build guarded draft</button>
+            </form>
+            <div id="orderDraftResult" class="order-draft-result" aria-live="polite">
+              <p>No order draft yet. Building a draft never places a trade.</p>
+            </div>
+          </article>
+        </div>
+
+        <div class="broker-asset-strip">
+          <div><strong>Equities</strong><span>Official MCP path</span></div>
+          <div><strong>Options</strong><span>Broker supports; Argentum disabled</span></div>
+          <div><strong>Crypto</strong><span>Separate official API; not connected</span></div>
+          <div><strong>Event contracts</strong><span>App-only; no supported API path</span></div>
+        </div>
       </section>
 
       <section class="panel mirror-panel">

@@ -4759,7 +4759,7 @@ function stockOfficeAlertMarkup() {
     return `<div class="stock-office-alert bad"><strong>Stock Office error</strong><span>${escapeHtml(stockOfficeError)}</span></div>`;
   }
   if (!alerts.length) {
-    return `<div class="stock-office-alert good"><strong>Read-only boundary active</strong><span>Stock Guru data is visible for review only. No trades or money movement exist in this office.</span></div>`;
+    return `<div class="stock-office-alert good"><strong>Guarded broker controls available</strong><span>Open View app for Robinhood connection status, capital limits, and exact buy/sell drafts. Every live order still requires fresh checks and one-use Human Gate approval.</span></div>`;
   }
   return alerts
     .map(
@@ -4895,7 +4895,7 @@ function stockReadinessMarkup() {
           .map((item) => `<li>${escapeHtml(item)}</li>`)
           .join("")}
       </ul>
-      <small>No order, transfer, broker account, or trade-execution endpoint is exposed here.</small>
+      <small>Use View app for official Robinhood connection status and guarded order drafting. Deposits, transfers, and unattended live orders remain blocked.</small>
     </section>
   `;
 }
@@ -4976,8 +4976,8 @@ function stockOfficeMarkup(card) {
   const workspace = stockOfficeOverview?.workspace || {
     title: "Stock Office",
     description: profile.goal,
-    mode: "read_only_guarded",
-    safetyRule: "Research and analytics only. No broker actions are available.",
+    mode: "broker_onboarding_guarded",
+    safetyRule: "Exact broker drafts are available; live placement requires current broker review and one-use Human Gate approval.",
   };
   const metricCards = [
     ["Records", metrics.trackedRecords ?? "—", `${metrics.validSetups ?? 0} valid setup(s)`],

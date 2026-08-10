@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { normalizeGuardrails, normalizeTradeDrafts } = require("./stock-broker-control");
 
 const STOCK_WORKSPACE_ID = "stock-guru-local";
 const STOCK_OFFICE_ID = "stock-office";
@@ -88,6 +89,13 @@ const SOURCE_DEFINITIONS = [
     type: "json",
     category: "readiness",
     staleAfterHours: 72,
+  },
+  {
+    id: "live_auto_kill_switch",
+    label: "Live-order kill switch",
+    relPath: "data/live_auto_kill_switch.json",
+    type: "json",
+    category: "readiness",
   },
   {
     id: "performance_audit",
@@ -302,6 +310,7 @@ function normalizeStockOfficeState(input = {}) {
     chatMessages: normalizeStockChatMessages(value.chatMessages || []),
     syncRuns: normalizeSyncRuns(value.syncRuns || []),
     assistantRuns: normalizeAssistantRuns(value.assistantRuns || []),
+    tradeDrafts: normalizeTradeDrafts(value.tradeDrafts || []),
   };
 }
 
@@ -452,6 +461,21 @@ function normalizeBrokerStatus(data, source) {
       target2: Number.isFinite(Number(position.target_2)) ? Number(position.target_2) : null,
     })),
     openOrders: (Array.isArray(data.open_orders) ? data.open_orders : []).slice(0, 20).map((order) => redactSensitiveText(JSON.stringify(order)).slice(0, 280)),
+  };
+}
+
+function normalizeKillSwitch(data, source) {
+  if (!isPlainObject(data)) {
+    return {
+      active: true,
+      reason: "No explicit kill-switch state is available; live orders fail closed.",
+      updatedAt: source?.lastModified || null,
+    };
+  }
+  return {
+    active: data.enabled !== false,
+    reason: redactSensitiveText(String(data.reason || (data.enabled === false ? "Operator explicitly cleared the switch." : "Live-order kill switch is active."))).slice(0, 260),
+    updatedAt: safeDate(data.updated_at || data.updatedAt) || source?.generatedAt || source?.lastModified || null,
   };
 }
 
@@ -819,6 +843,9 @@ function loadStockOfficeSnapshot(options = {}) {
       broker: normalizeBrokerStatus(null, null),
       readiness: normalizeReadiness(null, null, {}),
       mirror: { ...normalizeMirrorPlan(null, null), importer: normalizeCopyImportStatus(null, null) },
+      guardrails: normalizeGuardrails({}),
+      killSwitch: normalizeKillSwitch(null, null),
+      tradeDrafts: workspaceState.tradeDrafts,
       watchlist: [],
       ticket: parseTicketReport(""),
       metrics: metricCounts([], [], normalizeBrokerStatus(null, null), normalizeReadiness(null, null, {}), sourceHealth, normalizeMirrorPlan(null, null)),
@@ -855,6 +882,8 @@ function loadStockOfficeSnapshot(options = {}) {
     ...normalizeMirrorPlan(byId.copy_trader_plan?.data, byId.copy_trader_plan?.source),
     importer: normalizeCopyImportStatus(byId.copy_import_status?.data, byId.copy_import_status?.source),
   };
+  const guardrails = normalizeGuardrails(byId.settings?.data || {});
+  const killSwitch = normalizeKillSwitch(byId.live_auto_kill_switch?.data, byId.live_auto_kill_switch?.source);
   const ticket = parseTicketReport(byId.latest_ticket?.data || "");
   const metrics = metricCounts(records, watchlist, broker, readiness, sourceHealth, mirror);
   const snapshot = {
@@ -868,6 +897,9 @@ function loadStockOfficeSnapshot(options = {}) {
     broker,
     readiness,
     mirror,
+    guardrails,
+    killSwitch,
+    tradeDrafts: workspaceState.tradeDrafts,
     watchlist,
     ticket,
     metrics,
@@ -895,13 +927,13 @@ function baseWorkspace(stockRoot, available) {
     name: "Stock Guru",
     title: "Stock Office",
     domain: "financial_market_decision_support",
-    mode: "read_only_guarded",
-    description: "Financial-market scanner, guarded public-signal Mirror Lab, paper-trading journal, and broker decision-support workspace.",
+    mode: "broker_onboarding_guarded",
+    description: "Financial-market scanner, guarded public-signal Mirror Lab, paper journal, and official Robinhood Agentic Trading onboarding workspace.",
     rootConfigured: Boolean(process.env.STOCK_GURU_PATH),
     rootAvailable: Boolean(available),
     rootLabel: redactSensitiveText(stockRoot),
-    externalActions: "Blocked by design",
-    safetyRule: "Research, paper mirroring, and Human Gate review only. Argentum never places trades, moves money, changes broker settings, or promises returns.",
+    externalActions: "Exact broker actions require a fresh official connector review and one-use Human Gate approval",
+    safetyRule: "Argentum can prepare exact buy/sell drafts and Robinhood MCP execution envelopes. Live placement remains blocked until the official connector, strict risk checks, broker review, and one-use Human Gate approval all pass.",
   };
 }
 
@@ -917,6 +949,10 @@ function stockPermissions(role = "admin") {
     canUseAssistant: admin,
     canTriggerSync: admin,
     canRequestMirrorApproval: admin,
+    canDraftBrokerOrder: admin,
+    canRequestBrokerConnection: admin,
+    canRequestGuardrailChange: admin,
+    canRequestOrderApproval: admin,
     canExport: false,
     canTrade: false,
     canMoveMoney: false,
@@ -931,6 +967,8 @@ function stockThreatModel() {
     "The connector can create internal paper plans and Human Gate review records, but no live broker, order, transfer, or account-changing calls are available.",
     "Imported report text is treated as untrusted content and redacted before display or assistant use.",
     "Refresh runs only the evaluator, optional official SEC intake, and guarded mirror-plan builder. It never invokes broker, order, transfer, or account commands.",
+    "Robinhood credentials and account authentication remain in Robinhood OAuth/Codex MCP; Stock Office never asks for or stores the Robinhood login password.",
+    "Every live equity order requires fresh broker data, deterministic order scope, broker preflight review, and a one-use Human Gate decision.",
   ];
 }
 
@@ -992,6 +1030,9 @@ function stockOverview(snapshot) {
       generatedAt: snapshot.readiness.generatedAt,
     },
     mirror: snapshot.mirror,
+    guardrails: snapshot.guardrails,
+    killSwitch: snapshot.killSwitch,
+    tradeDrafts: snapshot.tradeDrafts.slice(0, 12),
     broker: {
       account: snapshot.broker.account,
       accountValue: snapshot.broker.accountValue,

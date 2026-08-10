@@ -930,7 +930,7 @@ function stockThreatModel() {
     "All Stock Office APIs require the existing Argentum session before data is returned.",
     "The connector can create internal paper plans and Human Gate review records, but no live broker, order, transfer, or account-changing calls are available.",
     "Imported report text is treated as untrusted content and redacted before display or assistant use.",
-    "Manual sync only rescans local files and is idempotent for the current JSON-state prototype.",
+    "Refresh runs only the evaluator, optional official SEC intake, and guarded mirror-plan builder. It never invokes broker, order, transfer, or account commands.",
   ];
 }
 
@@ -1038,7 +1038,7 @@ function answerStockQuestion(snapshot, rawQuestion) {
       ? `Top Stock Guru records right now are ${top
           .map((record) => `${record.ticker} (${record.decision}, score ${record.score ?? "n/a"})`)
           .join(", ")}. This is research support only; it is not a trade instruction. Main repeated risk: ${top[0]?.mainRisk || "not recorded"}.`
-      : "No evaluator records are loaded yet. Run the Stock Guru scanner/evaluator outside Argentum, then rescan this read-only office.";
+      : "No evaluator records are loaded yet. Use Refresh Stock Office to run the local evaluator and rescan its guarded reports.";
   } else if (/(block|ready|arm|live|trade|broker)/.test(lower)) {
     cite("source", "live_auto_arm_plan", "Live auto arm plan");
     cite("source", "live_auto_launch_checklist", "Live launch checklist");
@@ -1052,7 +1052,7 @@ function answerStockQuestion(snapshot, rawQuestion) {
     answer = `Latest masked broker snapshot: account ${snapshot.broker.account || "not available"}, account value ${snapshot.broker.accountValue || "unknown"}, cash ${snapshot.broker.cash || "unknown"}, buying power ${snapshot.broker.buyingPower || "unknown"}, positions ${positions.length}. Argentum shows this for review only and does not submit broker orders.`;
   } else if (/(source|sync|fresh|stale|error|data)/.test(lower)) {
     snapshot.sources.slice(0, 5).forEach((source) => cite("source", source.id, source.label));
-    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Manual Stock Office sync only rescans local files; it does not call market or broker APIs.`;
+    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Refresh Stock Office can run the local evaluator and guarded public-signal plan builder; it has no broker-order or money-movement capability.`;
   } else if (/(risk|reject|avoid|liquidity|volume)/.test(lower)) {
     const rejected = snapshot.records.filter((record) => record.status === "rejected").slice(0, 5);
     rejected.forEach((record) => cite("record", record.ticker, `${record.ticker} rejected evaluator record`));

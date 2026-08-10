@@ -14,7 +14,9 @@ const {
   answerStockQuestion,
   redactSensitiveText,
   stockPermissions,
+  resolveStockRoot,
 } = require("./services/stock-office");
+const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -51,6 +53,7 @@ const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
+const stockGuruRefreshManager = createStockGuruRefreshManager();
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
@@ -4753,7 +4756,7 @@ function stockOfficeQueryOptions(url) {
   };
 }
 
-function createStockOfficeSyncRun(snapshot) {
+function createStockOfficeSyncRun(snapshot, refresh = null) {
   const warnings = [
     ...snapshot.alerts.filter((alert) => alert.level !== "error").map((alert) => `${alert.title}: ${alert.body}`),
     ...snapshot.sources.filter((source) => source.status === "stale").map((source) => `${source.label}: ${source.summary}`),
@@ -4764,13 +4767,16 @@ function createStockOfficeSyncRun(snapshot) {
     .slice(0, 8);
   return {
     id: `stock-sync-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    mode: "local_file_rescan",
-    status: errors.length ? "partial" : "success",
+    mode: "evaluator_and_mirror_refresh",
+    status: errors.length || ["partial", "failed"].includes(refresh?.status) ? "partial" : "success",
     recordsImported: snapshot.records.length,
     changedRecords: 0,
     warnings,
     errors,
-    startedAt: now(),
+    refreshStatus: refresh?.status || "rescan_only",
+    refreshMessage: refresh?.message || "Local reports rescanned.",
+    liveOrdersPlaced: 0,
+    startedAt: refresh?.startedAt || now(),
     completedAt: now(),
   };
 }
@@ -5465,19 +5471,32 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "sync", 8, 300_000);
       const access = requireStockOfficeAccess(req, "sync");
+      const refresh = await stockGuruRefreshManager.refresh({ stockRoot: resolveStockRoot(ROOT) });
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
-      const syncRun = createStockOfficeSyncRun(snapshot);
+      const syncRun = createStockOfficeSyncRun(snapshot, refresh);
       const current = normalizeStockOfficeState(state.stockOffice);
       state.stockOffice = normalizeStockOfficeState({
         ...current,
         lastLocalSyncAt: syncRun.completedAt,
         syncRuns: [syncRun, ...current.syncRuns],
       });
-      audit(state, "Stock Office local sync", `Rescanned ${syncRun.recordsImported} Stock Guru record(s) in read-only mode.`);
+      audit(state, "Stock Office data refresh", `Refresh ${refresh.status}; loaded ${syncRun.recordsImported} Stock Guru record(s); 0 live orders placed.`);
       writeState(state);
       const updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
-      sendJson(res, 200, { syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 20 }) });
+      sendJson(res, 200, { refresh, syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 30 }) });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/refresh-status") {
+    try {
+      enforceStockOfficeRateLimit(req, "refresh-status", 240, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      sendJson(res, 200, { refresh: stockGuruRefreshManager.getStatus() });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

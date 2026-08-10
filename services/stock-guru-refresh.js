@@ -1,0 +1,221 @@
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+
+const MAX_OUTPUT_CHARS = 4_000;
+const DEFAULT_TIMEOUT_MS = 180_000;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function cleanOutput(value) {
+  return String(value || "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\b(api[_-]?key|secret|token|password|authorization|bearer)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .trim()
+    .slice(-MAX_OUTPUT_CHARS);
+}
+
+function publicStatus(status) {
+  return JSON.parse(JSON.stringify(status));
+}
+
+function enabledSecWatchlistEntries(stockRoot, fsImpl = fs) {
+  try {
+    const raw = JSON.parse(fsImpl.readFileSync(path.join(stockRoot, "config", "copy_trader_watchlist.json"), "utf8"));
+    const entries = Array.isArray(raw) ? raw : Array.isArray(raw?.sec_form4) ? raw.sec_form4 : [];
+    return entries.filter((entry) => entry && entry.enabled !== false && String(entry.cik || "").trim()).length;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function validateWorkspace(stockRoot, fsImpl = fs) {
+  const resolved = path.resolve(String(stockRoot || ""));
+  const executable = path.join(resolved, ".venv", "bin", "python");
+  const packageRoot = path.join(resolved, "src", "stock_guru");
+  if (!fsImpl.existsSync(resolved) || !fsImpl.existsSync(packageRoot)) {
+    throw new Error("Stock Guru workspace is not connected.");
+  }
+  if (!fsImpl.existsSync(executable)) {
+    throw new Error("Stock Guru Python environment is missing. Rebuild the local .venv before refreshing.");
+  }
+  return { stockRoot: resolved, executable };
+}
+
+function createStockGuruRefreshManager(options = {}) {
+  const spawnImpl = options.spawnImpl || spawn;
+  const fsImpl = options.fsImpl || fs;
+  const environment = options.env || process.env;
+  const timeoutMs = Math.max(1_000, Number(options.timeoutMs || environment.STOCK_GURU_REFRESH_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+  let activePromise = null;
+  let status = {
+    id: null,
+    status: "idle",
+    stage: "idle",
+    message: "Ready to refresh evaluator records and the guarded mirror plan.",
+    startedAt: null,
+    completedAt: null,
+    recordsMayHaveChanged: false,
+    liveOrdersPlaced: 0,
+    commands: [],
+    warnings: [],
+    errors: [],
+  };
+
+  function update(patch = {}) {
+    status = { ...status, ...patch };
+    return publicStatus(status);
+  }
+
+  function runCommand(executable, args, commandLabel, stockRoot) {
+    const commandState = {
+      name: commandLabel,
+      status: "running",
+      startedAt: nowIso(),
+      completedAt: null,
+      detail: "",
+    };
+    status.commands.push(commandState);
+    update({ stage: commandLabel, message: commandLabel === "evaluate" ? "Refreshing market evaluator records..." : commandLabel === "copy_refresh_sec" ? "Refreshing official SEC Form 4 signals..." : "Rebuilding the guarded mirror plan..." });
+
+    return new Promise((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const childEnvironment = {
+        ...environment,
+        PYTHONPATH: [path.join(stockRoot, "src"), environment.PYTHONPATH].filter(Boolean).join(path.delimiter),
+        PYTHONPYCACHEPREFIX: environment.PYTHONPYCACHEPREFIX || path.join(os.tmpdir(), "argentum-stock-guru-pycache"),
+      };
+      const child = spawnImpl(executable, ["-m", "stock_guru", ...args], {
+        cwd: stockRoot,
+        env: childEnvironment,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        Object.assign(commandState, {
+          status: result.ok ? "success" : "failed",
+          completedAt: nowIso(),
+          detail: cleanOutput(result.detail || stderr || stdout),
+        });
+        resolve({ ...result, command: commandState });
+      };
+      const timer = setTimeout(() => {
+        child.kill?.("SIGTERM");
+        finish({ ok: false, detail: `${commandLabel} exceeded the ${Math.round(timeoutMs / 1000)} second safety timeout.` });
+      }, timeoutMs);
+      child.stdout?.on("data", (chunk) => {
+        stdout = `${stdout}${chunk}`.slice(-MAX_OUTPUT_CHARS * 2);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr = `${stderr}${chunk}`.slice(-MAX_OUTPUT_CHARS * 2);
+      });
+      child.once("error", (error) => finish({ ok: false, detail: error.message }));
+      child.once("close", (code, signal) => finish({
+        ok: code === 0,
+        detail: code === 0 ? stdout : `${stderr || stdout}\nExit ${code ?? "unknown"}${signal ? ` (${signal})` : ""}`,
+      }));
+    });
+  }
+
+  async function execute(stockRoot) {
+    const runId = `stock-refresh-${Date.now()}`;
+    status = {
+      id: runId,
+      status: "running",
+      stage: "preflight",
+      message: "Checking the Stock Guru workspace...",
+      startedAt: nowIso(),
+      completedAt: null,
+      recordsMayHaveChanged: false,
+      liveOrdersPlaced: 0,
+      commands: [],
+      warnings: [],
+      errors: [],
+    };
+
+    try {
+      const workspace = validateWorkspace(stockRoot, fsImpl);
+      if (environment.STOCK_GURU_REFRESH_DISABLED === "1") {
+        return update({
+          status: "skipped",
+          stage: "complete",
+          message: "Refresh runner is disabled in this environment; local reports were rescanned.",
+          completedAt: nowIso(),
+          warnings: ["Runner disabled by STOCK_GURU_REFRESH_DISABLED."],
+        });
+      }
+
+      const results = [];
+      results.push(await runCommand(workspace.executable, [
+        "evaluate",
+        "--cache-first-history",
+        "--history-cache-hours", "36",
+        "--max-symbols", "80",
+        "--rotate-count", "40",
+      ], "evaluate", workspace.stockRoot));
+
+      const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl);
+      if (secEntries > 0 && String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim()) {
+        results.push(await runCommand(workspace.executable, ["copy-refresh-sec", "--max-filings", "10"], "copy_refresh_sec", workspace.stockRoot));
+      } else {
+        const reason = secEntries > 0
+          ? "SEC refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
+          : "SEC refresh skipped because no named CIK watchlist entries are enabled.";
+        status.commands.push({ name: "copy_refresh_sec", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
+        status.warnings.push(reason);
+      }
+
+      results.push(await runCommand(workspace.executable, ["copy-plan"], "copy_plan", workspace.stockRoot));
+      const failures = results.filter((result) => !result.ok);
+      const warnings = [...status.warnings];
+      for (const result of failures) warnings.push(`${result.command.name}: ${result.command.detail || "command failed"}`);
+      return update({
+        status: failures.length ? "partial" : "success",
+        stage: "complete",
+        message: failures.length
+          ? "Refresh completed with warnings; the last safe local reports remain available."
+          : "Evaluator records and the guarded mirror plan are refreshed.",
+        completedAt: nowIso(),
+        recordsMayHaveChanged: results.some((result) => result.ok),
+        warnings: warnings.slice(0, 8),
+      });
+    } catch (error) {
+      return update({
+        status: "failed",
+        stage: "complete",
+        message: "The refresh could not start; the last safe local reports remain available.",
+        completedAt: nowIso(),
+        errors: [cleanOutput(error.message || error)],
+      });
+    }
+  }
+
+  function refresh({ stockRoot } = {}) {
+    if (activePromise) return activePromise;
+    activePromise = execute(stockRoot).finally(() => {
+      activePromise = null;
+    });
+    return activePromise;
+  }
+
+  return {
+    getStatus: () => publicStatus(status),
+    refresh,
+  };
+}
+
+module.exports = {
+  cleanOutput,
+  createStockGuruRefreshManager,
+  enabledSecWatchlistEntries,
+  validateWorkspace,
+};

@@ -143,6 +143,54 @@ button {
   white-space: nowrap;
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.refresh-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(34, 211, 238, 0.24);
+  border-radius: 16px;
+  color: #dbeafe;
+  background: rgba(8, 47, 73, 0.62);
+}
+
+.refresh-feedback[hidden] {
+  display: none;
+}
+
+.refresh-feedback[data-status="success"] {
+  border-color: rgba(52, 211, 153, 0.32);
+  background: rgba(5, 46, 22, 0.46);
+}
+
+.refresh-feedback[data-status="partial"],
+.refresh-feedback[data-status="failed"] {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(69, 26, 3, 0.46);
+}
+
+.refresh-feedback div {
+  display: grid;
+  gap: 3px;
+}
+
+.refresh-feedback span {
+  color: var(--soft);
+  font-size: 0.74rem;
+}
+
+.refresh-feedback > span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .status-pill.muted {
   border-color: rgba(125, 211, 252, 0.18);
   color: #dbeafe;
@@ -475,6 +523,15 @@ button {
   grid-template-columns: minmax(220px, 1fr) 150px auto;
   gap: 8px;
   min-width: min(560px, 100%);
+}
+
+.filter-feedback {
+  grid-column: 1 / -1;
+  min-height: 1em;
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 750;
+  text-align: right;
 }
 
 input,

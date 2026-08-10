@@ -18,9 +18,17 @@
         </div>
         <div class="top-actions">
           <span class="status-pill" id="stockStatusPill">Loading</span>
-          <button id="syncButton" type="button">Sync local files</button>
+          <button id="syncButton" type="button">Refresh Stock Office</button>
         </div>
       </header>
+
+      <section id="refreshFeedback" class="refresh-feedback" aria-live="polite" hidden>
+        <div>
+          <strong id="refreshFeedbackTitle">Preparing refresh</strong>
+          <span id="refreshFeedbackMessage">Checking the Stock Guru workspace...</span>
+        </div>
+        <span id="refreshFeedbackTime"></span>
+      </section>
 
       <section class="hero-panel">
         <div>
@@ -86,6 +94,7 @@
                 <option value="rejected">Rejected</option>
               </select>
               <button id="applyFilters" type="button">Apply</button>
+              <span id="filterFeedback" class="filter-feedback" aria-live="polite"></span>
             </div>
           </div>
           <div class="record-table">
@@ -104,7 +113,7 @@
           <p class="eyebrow">Selected record</p>
           <div id="recordDetail" class="record-detail">
             <h2>No record selected</h2>
-            <p>Run the Stock Guru scanner outside Argentum, then sync local files here.</p>
+            <p>Refresh Stock Office to run the local evaluator and load its guarded reports.</p>
           </div>
         </aside>
 

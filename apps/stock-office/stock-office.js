@@ -7,6 +7,9 @@ const state = {
   messages: [],
   mirror: null,
   mirrorApprovalIds: new Set(),
+  recordTotal: 0,
+  loading: false,
+  refresh: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -140,7 +143,7 @@ function renderMirror() {
           </article>
         `;
       }).join("")
-    : `<div class="empty-state mirror-empty"><div><h3>No public signals imported</h3><p>Add named SEC CIKs to the copy watchlist, configure the SEC contact identity, then run <code>stock-guru copy-refresh-sec</code> or the continuous watcher. The system fails closed if provenance, timing, or current prices are missing.</p></div></div>`;
+    : `<div class="empty-state mirror-empty"><div><h3>No eligible public signals yet</h3><p>The evaluator is working. Mirror candidates appear only after an approved, attributable source intake is configured with named SEC Form 4 CIKs and a compliant contact identity. Missing provenance, timing, or current prices fails closed.</p></div></div>`;
 
   $("#mirrorSources").innerHTML = sources.length
     ? sources.map((source) => `
@@ -156,13 +159,16 @@ function renderMirror() {
 
 function renderRecords() {
   const total = state.records.length;
-  $("#recordsTitle").textContent = `${total} ${total === 1 ? "record" : "records"}`;
+  $("#recordsTitle").textContent = `${state.recordTotal} ${state.recordTotal === 1 ? "record" : "records"}`;
   if (!total) {
+    const workspaceAvailable = state.overview?.available !== false;
+    const trackedRecords = Number(state.overview?.metrics?.trackedRecords || 0);
+    const filtered = trackedRecords > 0;
     $("#recordsList").innerHTML = `
       <div class="empty-state">
         <div>
-          <h2>No Stock Guru records loaded</h2>
-          <p>Run the Stock Guru scanner/evaluator outside Argentum, then press Sync local files here.</p>
+          <h2>${filtered ? "No records match these filters" : workspaceAvailable ? "No evaluator records are available yet" : "Stock Guru workspace is not connected"}</h2>
+          <p>${filtered ? "Clear the search or choose another status, then apply the filters again." : workspaceAvailable ? "Press Refresh Stock Office to run the evaluator and rebuild the guarded mirror plan." : "Keep the Argentum source drive connected and restart the app so it can auto-discover the Stock Guru workspace."}</p>
         </div>
       </div>
     `;
@@ -270,6 +276,9 @@ function renderChat() {
 }
 
 async function loadApp() {
+  if (state.loading) return;
+  state.loading = true;
+  $("#applyFilters").disabled = true;
   try {
     const query = new URLSearchParams({
       q: $("#searchInput")?.value || "",
@@ -287,6 +296,7 @@ async function loadApp() {
     ]);
     state.overview = overview;
     state.records = records.records || [];
+    state.recordTotal = Number(records.total || 0);
     state.sources = sources.sources || [];
     state.activity = [...(activity.syncRuns || []), ...(activity.activity || []), ...(activity.assistantRuns || [])].sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     state.messages = chat.messages || [];
@@ -297,10 +307,17 @@ async function loadApp() {
     renderActivity();
     renderChat();
     renderMirror();
-    if (!state.selectedTicker && state.records[0]?.ticker) selectRecord(state.records[0].ticker);
+    if (!state.records.some((record) => record.ticker === state.selectedTicker)) {
+      state.selectedTicker = state.records[0]?.ticker || null;
+    }
+    if (state.selectedTicker) selectRecord(state.selectedTicker);
+    else $("#recordDetail").innerHTML = `<h2>No record selected</h2><p>${state.overview?.metrics?.trackedRecords ? "No record matches the current filters." : "Refresh Stock Office to load evaluator records."}</p>`;
   } catch (error) {
     $("#stockStatusPill").textContent = "Error";
     $("#recordsList").innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  } finally {
+    state.loading = false;
+    $("#applyFilters").disabled = false;
   }
 }
 
@@ -319,19 +336,67 @@ async function sendMirrorToHumanGate(candidateId) {
   }
 }
 
+function renderRefreshFeedback(refresh) {
+  if (!refresh || refresh.status === "idle") return;
+  state.refresh = refresh;
+  const panel = $("#refreshFeedback");
+  panel.hidden = false;
+  panel.dataset.status = refresh.status;
+  $("#refreshFeedbackTitle").textContent = refresh.status === "running"
+    ? `Refreshing: ${String(refresh.stage || "starting").replaceAll("_", " ")}`
+    : refresh.status === "success"
+      ? "Stock Office refreshed"
+      : refresh.status === "partial"
+        ? "Refresh completed with warnings"
+        : refresh.status === "failed"
+          ? "Refresh could not start"
+          : "Local reports rescanned";
+  const issue = refresh.errors?.[0] || refresh.warnings?.[0];
+  $("#refreshFeedbackMessage").textContent = issue || refresh.message || "Refresh status updated.";
+  $("#refreshFeedbackTime").textContent = refresh.completedAt ? formatTime(refresh.completedAt) : "Working now";
+}
+
+async function pollRefreshStatus() {
+  try {
+    const payload = await api("/api/stock-office/refresh-status");
+    renderRefreshFeedback(payload.refresh);
+    const stage = String(payload.refresh?.stage || "refresh").replaceAll("_", " ");
+    $("#syncButton").textContent = payload.refresh?.status === "running" ? `Refreshing: ${stage}` : "Refresh Stock Office";
+  } catch (_error) {}
+}
+
 async function syncLocalFiles() {
   const button = $("#syncButton");
   button.disabled = true;
-  button.textContent = "Syncing...";
+  button.textContent = "Starting refresh...";
+  renderRefreshFeedback({ status: "running", stage: "preflight", message: "Connecting to the local evaluator...", startedAt: new Date().toISOString() });
+  const pollTimer = window.setInterval(pollRefreshStatus, 800);
   try {
-    await api("/api/stock-office/sync", { method: "POST", body: "{}" });
+    const payload = await api("/api/stock-office/sync", { method: "POST", body: "{}" });
+    renderRefreshFeedback(payload.refresh);
     await loadApp();
+    const count = Number(payload.syncRun?.recordsImported || state.overview?.metrics?.trackedRecords || 0);
+    $("#filterFeedback").textContent = `Loaded ${count} evaluator record${count === 1 ? "" : "s"}.`;
   } catch (error) {
-    $("#recordsList").innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+    renderRefreshFeedback({ status: "failed", stage: "complete", message: error.message, errors: [error.message], completedAt: new Date().toISOString() });
   } finally {
+    window.clearInterval(pollTimer);
     button.disabled = false;
-    button.textContent = "Sync local files";
+    button.textContent = "Refresh Stock Office";
   }
+}
+
+async function applyFilters() {
+  const button = $("#applyFilters");
+  const feedback = $("#filterFeedback");
+  button.disabled = true;
+  feedback.textContent = "Applying filters...";
+  await loadApp();
+  feedback.textContent = state.recordTotal
+    ? `Showing ${state.recordTotal} matching record${state.recordTotal === 1 ? "" : "s"}.`
+    : state.overview?.metrics?.trackedRecords
+      ? "No records match those filters."
+      : "No records are loaded yet. Use Refresh Stock Office first.";
 }
 
 async function askStockGuru(event) {
@@ -359,8 +424,8 @@ document.addEventListener("click", (event) => {
   if (mirrorGate && !mirrorGate.disabled) sendMirrorToHumanGate(mirrorGate.dataset.mirrorGate);
 });
 
-$("#applyFilters").addEventListener("click", loadApp);
+$("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);
 $("#stockChatForm").addEventListener("submit", askStockGuru);
 
-loadApp();
+Promise.all([loadApp(), pollRefreshStatus()]);

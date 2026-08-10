@@ -4781,7 +4781,7 @@ function selectedStockRecord() {
 function stockRecordsMarkup() {
   const rows = stockOfficeRecords.records || [];
   if (!rows.length) {
-    return `<div class="stock-empty-state"><strong>No Stock Guru records loaded</strong><p>Run the Stock Guru scanner/evaluator outside Argentum, then press Sync local files here.</p></div>`;
+    return `<div class="stock-empty-state"><strong>No Stock Guru records loaded</strong><p>Use Refresh data to run the local evaluator and load its guarded reports.</p></div>`;
   }
   return `
     <div class="stock-record-table" role="table" aria-label="Stock Guru evaluator records">
@@ -4851,7 +4851,7 @@ function stockSourcesMarkup() {
           <span>Source health</span>
           <h4>${escapeHtml(stockStatusLabel(stockOfficeOverview?.sourceHealth?.status || "partial"))}</h4>
         </div>
-        <button type="button" data-stock-action="sync">${stockOfficeLoading ? "Syncing..." : "Sync local files"}</button>
+        <button type="button" data-stock-action="sync">${stockOfficeLoading ? "Refreshing..." : "Refresh data"}</button>
       </div>
       <div class="stock-source-list">
         ${sources

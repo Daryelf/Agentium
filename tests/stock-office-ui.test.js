@@ -34,3 +34,15 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(html, /No password scraping, private API/);
   assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
 });
+
+test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /Copy knowledge/);
+  assert.match(html, /Scores start at 0\.500/);
+  assert.match(html, /prices observed after disclosure/);
+  assert.match(script, /knowledgeSummary\.measuredOutcomes/);
+  assert.match(script, /candidate\.evidenceScore/);
+  assert.match(script, /No matured outcomes/);
+});

@@ -1,10 +1,10 @@
 # Stock Office
 
-Stock Office is a guarded bridge from Argentum into the local Stock Guru workspace. It is built for research, source freshness, readiness review, masked broker snapshots, paper mirroring, and Human Gate review packages. It is not a live trading UI.
+Stock Office is a guarded bridge from Argentum into the local Stock Guru workspace and Robinhood's official Trading MCP boundary. It supports research, source freshness, outcome learning, masked broker snapshots, bounded buy/sell drafts, and exact Human Gate review. It is not an autonomous or bypass trading UI.
 
 ## Copy Trader Mirror Lab
 
-Mirror Lab turns attributable public-trade signals into bounded paper candidates. It does not assume that a public disclosure is timely enough to copy and it does not expose a live-order route.
+Mirror Lab turns attributable public-trade signals into bounded paper candidates. It does not assume that a public disclosure is timely enough to copy. Any candidate that later becomes an exact broker draft must still pass fresh Robinhood account/quote checks, risk limits, Human Gate, one-use dispatch, and Robinhood review.
 
 The local engine is `stocks/src/stock_guru/copy_trader.py`. Its policy lives in `stocks/config/copy_trader.json`; the input schema is demonstrated in `stocks/config/copy_signals.example.json`.
 
@@ -48,7 +48,21 @@ The engine:
 - treats Form 13F, congressional PTRs, and event contracts as research-only by default
 - writes `reports/copy_trader_plan.json` and `reports/copy_trader_plan.md`
 
-The dedicated Stock Office page displays the source registry, warnings, paper candidates, and exact signal evidence. `Send to Human Gate` creates a high-risk review record whose scope explicitly excludes order placement. Approval does not become a recurring authorization and no code consumes it as a broker order.
+### Evidence-weighted copy knowledge
+
+`stocks/src/stock_guru/copy_knowledge.py` builds `data/copy_knowledge.json` and `reports/copy_knowledge.md`. It:
+
+- freezes the first real post-disclosure baseline instead of using transaction-date hindsight
+- measures one-, five-, and twenty-day directional outcomes only after each horizon matures
+- records market-snapshot, paper-fill, or broker-fill provenance
+- tracks hit rate, mean directional return, volatility, maximum adverse excursion, risk-adjusted return, and market-regime breakdowns
+- shrinks small samples toward neutral with a configurable prior
+- applies disclosure-delay reliability and hard research-only caps
+- leaves missing outcomes null rather than inventing data
+
+The evidence score ranks candidates and can demote a sufficiently measured weak source. It cannot make a delayed source executable, expand bankroll limits, approve an order, or promise profit.
+
+The dedicated Stock Office page displays the source registry, outcome profiles, warnings, paper candidates, and exact signal evidence. Mirror review and broker order review remain distinct. An exact broker approval is fingerprint-bound, single-use, expires, and is consumed whether Robinhood review rejects the order or placement is attempted.
 
 ## Workspace
 
@@ -75,6 +89,7 @@ The connector currently reads these local files when present:
 - `config/copy_trader_watchlist.json`
 - `data/copy_import_status.json`
 - `reports/copy_trader_plan.json`
+- `data/copy_knowledge.json`
 
 `data/provider_keys.json` is detected only as configured or missing. Credential values are not read, returned, stored in Argentum state, or shown in the browser.
 
@@ -89,19 +104,28 @@ All routes require the existing Argentum session.
 - `GET /api/stock-office/activity`
 - `GET /api/stock-office/mirror`
 - `POST /api/stock-office/mirror/:candidateId/human-gate`
+- `GET /api/stock-office/broker-control`
+- `POST /api/stock-office/broker-connect/human-gate`
+- `POST /api/stock-office/guardrails/human-gate`
+- `POST /api/stock-office/orders/draft`
+- `POST /api/stock-office/orders/:draftId/human-gate`
+- `POST /api/stock-office/orders/:draftId/dispatch/claim`
+- `POST /api/stock-office/orders/:draftId/dispatch/result`
 - `GET /api/stock-office/chat`
 - `POST /api/stock-office/chat`
 - `POST /api/stock-office/assistant`
 - `POST /api/stock-office/sync`
+- `GET /api/stock-office/refresh-status`
 - `GET /api/stock-office/permissions`
 
-`POST /api/stock-office/sync` is a local file rescan. It does not call market APIs, broker APIs, or provider endpoints.
+`POST /api/stock-office/sync` runs the bounded local refresh pipeline: evaluator, optional official SEC intake when deliberately configured, mirror plan, and evidence ledger. It does not call Robinhood or place an order.
 
 ## Security Model
 
 - Server-side only: no frontend direct access to Stock Guru files.
 - Auth required: endpoints use the current Argentum session.
-- No live execution: no route can place trades, move money, change broker settings, or connect accounts. The mirror route can only create an internal Human Gate review record.
+- Guarded execution only: connector onboarding, capital changes, and exact orders enter Human Gate. A dispatch token is raw-returned once, SHA-256 stored, expires after two minutes, cannot be replayed, and must reconcile Robinhood review/result state.
+- No deposits or account mutation: Stock Office does not move money, change broker settings, scrape credentials, or access a primary brokerage account.
 - Secret hygiene: credential files are never parsed or exposed.
 - Redaction: suspicious secret-like tokens and account numbers are masked before responses.
 - Rate limiting: Stock Office routes have simple per-client action buckets.
@@ -119,7 +143,8 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - local activity and sync runs
 - a read-only Stock Office assistant with citations
 - Copy Trader source/delay/drift decisions and bounded paper sizing
-- an exact Human Gate review button for fresh `paper_ready` candidates
+- no-look-ahead source/trader evidence profiles and sample sizes
+- exact Human Gate controls for connection, capital limits, and fresh order drafts
 
 The assistant answers from the local snapshot only. It should not present output as financial advice or a trade instruction.
 
@@ -143,11 +168,11 @@ Manual checks:
 - Confirm Mirror Lab shows `Live orders: 0`.
 - Confirm research-only candidates cannot be sent to Human Gate.
 - Confirm a paper-ready candidate creates one deduplicated review record and still places no order.
-- Press `Sync local files` and confirm it records a local rescan only.
+- Press `Refresh Stock Office` and confirm it reports evaluator, Mirror Lab, and knowledge-ledger results.
 
 ## Future Work
 
 - Move runtime state from local JSON to a database.
 - Add richer Stock Guru artifact export only after access roles are ready.
 - Add congressional and 13F importers only if their weeks-late data remains explicitly research-only.
-- Add a broker execution adapter only if the broker supplies written authorization and an official supported order API; keep it separate from Stock Office review routes.
+- Complete interactive Robinhood OAuth and live connector contract tests with the operator present before treating dispatch as available.

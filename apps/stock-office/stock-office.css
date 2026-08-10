@@ -514,7 +514,7 @@ button {
 
 .mirror-metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   padding: 16px;
 }
@@ -620,7 +620,7 @@ button {
 
 .mirror-candidate-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 12px 0;
 }
@@ -689,6 +689,80 @@ button {
 
 .mirror-context > div {
   padding: 13px;
+}
+
+.knowledge-head,
+.knowledge-profile,
+.knowledge-profile > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.knowledge-head h3 {
+  margin: 0;
+}
+
+.knowledge-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 12px 0;
+}
+
+.knowledge-metrics span {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.knowledge-metrics small,
+.knowledge-metrics b,
+.knowledge-profile strong,
+.knowledge-profile small {
+  display: block;
+}
+
+.knowledge-metrics small,
+.knowledge-profile small {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.knowledge-metrics b {
+  margin-top: 3px;
+  font-size: 0.8rem;
+}
+
+.knowledge-profiles {
+  display: grid;
+  gap: 7px;
+}
+
+.knowledge-profile {
+  padding: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.09);
+  border-radius: 11px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.knowledge-profile > div:last-child {
+  flex-shrink: 0;
+}
+
+.knowledge-profile b {
+  color: #a5f3fc;
+  font-size: 0.76rem;
+}
+
+.knowledge-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
 }
 
 .mirror-source {
@@ -1060,6 +1134,10 @@ select {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .mirror-candidate-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .broker-metrics,
   .broker-asset-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1101,6 +1179,10 @@ select {
 
   .mirror-boundary,
   .mirror-source {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-metrics {
     grid-template-columns: 1fr;
   }
 

@@ -154,6 +154,11 @@ function makeWorkspace() {
         current_price: 40.12,
         price_drift_pct: 0.003,
         confidence: 0.95,
+        evidence_score: 0.514,
+        evidence_status: "small_sample",
+        source_evidence_samples: 3,
+        trader_evidence_samples: 2,
+        ranking_score: 0.7974,
         status: "paper_ready",
         mirror_notional_dollars: 5,
         mirror_shares: 0.1246,
@@ -162,6 +167,51 @@ function makeWorkspace() {
       },
     ],
     warnings: ["No live order, account action, deposit, or money movement is available from this plan."],
+  });
+  writeJson(path.join(stockRoot, "data/copy_knowledge.json"), {
+    version: 1,
+    generated_at: "2026-06-19T11:46:00Z",
+    methodology: {
+      outcome_clock: "first real price observed at or after public disclosure",
+      sample_prior_strength: 20,
+      minimum_samples_for_gate: 8,
+      score_neutral: 0.5,
+      look_ahead_allowed: false,
+      profit_guarantee: false,
+    },
+    summary: {
+      signals_seen: 4,
+      observations_seen: 9,
+      measured_outcomes: 3,
+      pending_outcomes: 1,
+      missing_baselines: 0,
+      live_orders_placed: 0,
+    },
+    source_profiles: [{
+      profile_id: "source:sec_form4",
+      source_id: "sec_form4",
+      trader_name: null,
+      source_type: "official_disclosure",
+      mirror_eligible: true,
+      sample_size: 3,
+      wins: 2,
+      losses: 1,
+      hit_rate: 0.666667,
+      mean_directional_return: 0.02,
+      return_volatility: 0.03,
+      average_maximum_adverse_excursion: -0.01,
+      risk_adjusted_return: 0.666667,
+      posterior_quality_score: 0.514,
+      delay_reliability: 0.8,
+      execution_score_cap: 1,
+      evidence_score: 0.5112,
+      evidence_status: "small_sample",
+      provenance_counts: { market_snapshot: 3 },
+      regime_breakdown: { bull: { sample_size: 3, hit_rate: 0.666667, mean_directional_return: 0.02 } },
+    }],
+    trader_profiles: [],
+    signal_outcomes: [],
+    warnings: ["Small samples are shrunk toward neutral."],
   });
   writeText(path.join(stockRoot, "reports/latest_ticket.md"), "- Action: PAPER_REVIEW\n- Ticker: BAC\n- Reason: Valid setup only\n");
   writeText(path.join(stockRoot, "reports/mission.md"), "Local Stock Guru mission.");
@@ -184,6 +234,9 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.summary.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.importer.enabledEntries, 1);
   assert.equal(snapshot.mirror.importer.liveOrdersPlaced, 0);
+  assert.equal(snapshot.mirror.knowledge.summary.measuredOutcomes, 3);
+  assert.equal(snapshot.mirror.knowledge.methodology.lookAheadAllowed, false);
+  assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");
 });
 
 test("Stock Office record APIs filter and retrieve sanitized records", () => {
@@ -222,6 +275,8 @@ test("Stock Office explains public-signal copy trading without claiming executio
   assert.match(answer.answer, /0 live orders/i);
   assert.match(answer.answer, /event contracts.*research-only/i);
   assert.equal(answer.citations.some((citation) => citation.id === "copy_trader_plan"), true);
+  assert.equal(answer.citations.some((citation) => citation.id === "copy_knowledge"), true);
+  assert.match(answer.answer, /small samples are shrunk toward neutral/i);
 });
 
 test("safeJoin blocks path traversal outside Stock Guru workspace", () => {

@@ -110,7 +110,7 @@
           <div>
             <p class="eyebrow">Public-signal copy trader</p>
             <h2>Mirror Lab</h2>
-            <p>Checks attributable public trades for disclosure delay, freshness, price drift, duplicates, and bankroll limits before creating a paper candidate.</p>
+            <p>Checks attributable public trades, then learns from real post-disclosure outcomes with no-look-ahead scoring, sample-size shrinkage, and regime context.</p>
           </div>
           <span id="mirrorStatusPill" class="status-pill muted">Loading plan</span>
         </div>
@@ -131,6 +131,15 @@
             <div id="mirrorCandidates" class="mirror-candidates"></div>
           </div>
           <aside class="mirror-context">
+            <div class="knowledge-card">
+              <div class="knowledge-head">
+                <div><p class="eyebrow">Evidence engine</p><h3>Copy knowledge</h3></div>
+                <span id="knowledgeStatus" class="status-pill muted">Neutral</span>
+              </div>
+              <div id="knowledgeMetrics" class="knowledge-metrics"></div>
+              <div id="knowledgeProfiles" class="knowledge-profiles"></div>
+              <p class="knowledge-note">Scores start at 0.500, use only prices observed after disclosure, and never override delayed-source or Human Gate rules.</p>
+            </div>
             <div>
               <p class="eyebrow">Source registry</p>
               <div id="mirrorSources" class="mirror-sources"></div>

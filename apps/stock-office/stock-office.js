@@ -205,6 +205,8 @@ function renderMirror() {
   const sources = mirror.sources || [];
   const warnings = mirror.warnings || [];
   const importer = mirror.importer || {};
+  const knowledge = mirror.knowledge || {};
+  const knowledgeSummary = knowledge.summary || {};
   const pill = $("#mirrorStatusPill");
   pill.textContent = !mirror.available ? "Waiting for plan" : mirror.stale ? "Plan stale" : "Paper + Human Gate";
   pill.className = `status-pill ${mirror.stale ? "warning" : "muted"}`;
@@ -214,7 +216,8 @@ function renderMirror() {
     ["Research-only", summary.researchOnly ?? 0, "too delayed or unsupported"],
     ["Planned paper", summary.plannedPaperNotional || "$0.00", "bounded notional"],
     ["SEC intake", importer.available ? `${importer.enabledEntries || 0} enabled` : "Not run", importer.available ? `${importer.signalsImported || 0} latest signal(s)` : "opt-in named CIKs"],
-    ["Live orders", summary.liveOrdersPlaced ?? 0, "must remain zero"],
+    ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} outcomes pending`],
+    ["Live orders", summary.liveOrdersPlaced ?? 0, "must remain zero in this plan"],
   ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
 
   $("#mirrorCandidates").innerHTML = candidates.length
@@ -233,8 +236,9 @@ function renderMirror() {
             </div>
             <div class="mirror-candidate-metrics">
               <span><small>Source</small><b>${escapeHtml(candidate.sourceName)}</b></span>
-              <span><small>Disclosure lag</small><b>${escapeHtml(`${Number(candidate.disclosureLagHours || 0).toFixed(1)}h`)}</b></span>
+              <span><small>Lag / quote age</small><b>${escapeHtml(`${Number(candidate.disclosureLagHours || 0).toFixed(1)}h · ${Number(candidate.currentPriceAgeHours || 0).toFixed(1)}h`)}</b></span>
               <span><small>Price drift</small><b>${escapeHtml(candidate.priceDriftPct === null ? "Unknown" : formatPercent(candidate.priceDriftPct, 2))}</b></span>
+              <span><small>Evidence</small><b>${escapeHtml(`${Number(candidate.evidenceScore ?? 0.5).toFixed(3)} · ${mirrorStatusLabel(candidate.evidenceStatus)}`)}</b></span>
               <span><small>Paper cap</small><b>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</b></span>
             </div>
             <p>${escapeHtml(mainReason)}</p>
@@ -258,7 +262,28 @@ function renderMirror() {
         </article>
       `).join("")
     : `<p class="muted-copy">No source registry was loaded.</p>`;
-  $("#mirrorWarnings").innerHTML = warnings.slice(0, 6).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || `<li>No warning record was loaded.</li>`;
+  const profiles = knowledge.sourceProfiles || [];
+  $("#knowledgeStatus").textContent = !knowledge.available
+    ? "Neutral · no ledger"
+    : knowledge.stale
+      ? "Ledger stale"
+      : `${knowledgeSummary.measuredOutcomes || 0} measured`;
+  $("#knowledgeStatus").className = `status-pill ${knowledge.stale ? "warning" : "muted"}`;
+  $("#knowledgeMetrics").innerHTML = [
+    ["Observations", knowledgeSummary.observationsSeen ?? 0],
+    ["Measured", knowledgeSummary.measuredOutcomes ?? 0],
+    ["Missing baseline", knowledgeSummary.missingBaselines ?? 0],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join("");
+  $("#knowledgeProfiles").innerHTML = profiles.length
+    ? profiles.map((profile) => `
+        <article class="knowledge-profile">
+          <div><strong>${escapeHtml(profile.sourceId)}</strong><small>${escapeHtml(profile.sampleSize ? `${profile.sampleSize} sample(s) · ${formatPercent(profile.hitRate)} hit` : "No matured outcomes")}</small></div>
+          <div><b>${escapeHtml(Number(profile.evidenceScore ?? 0.5).toFixed(3))}</b><em class="tag ${profile.evidenceStatus === "measured" ? "ready" : "review"}">${escapeHtml(mirrorStatusLabel(profile.evidenceStatus))}</em></div>
+        </article>
+      `).join("")
+    : `<p class="muted-copy">No profiles yet. Scores stay neutral until real outcomes mature.</p>`;
+  const combinedWarnings = [...warnings, ...(knowledge.warnings || [])];
+  $("#mirrorWarnings").innerHTML = [...new Set(combinedWarnings)].slice(0, 8).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || `<li>No warning record was loaded.</li>`;
 }
 
 function renderRecords() {

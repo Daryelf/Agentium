@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="$ROOT/.venv/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+  echo "Missing virtualenv interpreter at $PYTHON" >&2
+  echo "Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install -e ." >&2
+  exit 1
+fi
+
+cd "$ROOT"
+exec "$PYTHON" -m stock_guru "$@"

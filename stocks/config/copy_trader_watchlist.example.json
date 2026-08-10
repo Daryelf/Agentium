@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "sec_form4": [
+    {
+      "cik": "0000315090",
+      "label": "Warren E. Buffett - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0000315090"
+    },
+    {
+      "cik": "0001494730",
+      "label": "Elon Musk - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001494730"
+    },
+    {
+      "cik": "0001197649",
+      "label": "Jen-Hsun Huang - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001197649"
+    },
+    {
+      "cik": "0001195345",
+      "label": "James Dimon - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001195345"
+    },
+    {
+      "cik": "0001214156",
+      "label": "Timothy D. Cook - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001214156"
+    }
+  ],
+  "operator_note": "Starter identities were checked against official SEC filing pages. They remain disabled until you deliberately copy selected entries into copy_trader_watchlist.json. Most Form 4 rows are grants, exercises, tax withholding, or planned sales; only fresh code P/S rows can reach Mirror Lab, and all live orders still require Human Gate."
+}

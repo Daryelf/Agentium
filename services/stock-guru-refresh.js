@@ -55,7 +55,7 @@ function createStockGuruRefreshManager(options = {}) {
     id: null,
     status: "idle",
     stage: "idle",
-    message: "Ready to refresh evaluator records and the guarded mirror plan.",
+    message: "Ready to refresh evaluator records, the guarded mirror plan, and its evidence ledger.",
     startedAt: null,
     completedAt: null,
     recordsMayHaveChanged: false,
@@ -79,7 +79,7 @@ function createStockGuruRefreshManager(options = {}) {
       detail: "",
     };
     status.commands.push(commandState);
-    update({ stage: commandLabel, message: commandLabel === "evaluate" ? "Refreshing market evaluator records..." : commandLabel === "copy_refresh_sec" ? "Refreshing official SEC Form 4 signals..." : "Rebuilding the guarded mirror plan..." });
+    update({ stage: commandLabel, message: commandLabel === "evaluate" ? "Refreshing market evaluator records..." : commandLabel === "copy_refresh_sec" ? "Refreshing official SEC Form 4 signals and price observations..." : "Rebuilding the guarded mirror plan and evidence ledger..." });
 
     return new Promise((resolve) => {
       let stdout = "";
@@ -183,7 +183,7 @@ function createStockGuruRefreshManager(options = {}) {
         stage: "complete",
         message: failures.length
           ? "Refresh completed with warnings; the last safe local reports remain available."
-          : "Evaluator records and the guarded mirror plan are refreshed.",
+          : "Evaluator records, the guarded mirror plan, and the evidence ledger are refreshed.",
         completedAt: nowIso(),
         recordsMayHaveChanged: results.some((result) => result.ok),
         warnings: warnings.slice(0, 8),

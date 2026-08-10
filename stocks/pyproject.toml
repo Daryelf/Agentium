@@ -1,0 +1,22 @@
+[project]
+name = "stock-guru"
+version = "0.1.0"
+description = "Live market scanner, risk dashboard, and paper-trading toolkit."
+requires-python = ">=3.9"
+dependencies = [
+  "yfinance>=0.2.61",
+  "pandas>=2.2.0",
+  "numpy>=1.26.0",
+  "rich>=13.7.0",
+  "typer>=0.12.0",
+]
+
+[project.scripts]
+stock-guru = "stock_guru.cli:app"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore:urllib3 v2 only supports OpenSSL.*",
+]

@@ -67,6 +67,14 @@ const SOURCE_DEFINITIONS = [
     staleAfterHours: COPY_PLAN_STALE_HOURS,
   },
   {
+    id: "copy_knowledge",
+    label: "Copy Trader knowledge ledger",
+    relPath: "data/copy_knowledge.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: 72,
+  },
+  {
     id: "broker_status",
     label: "Broker status snapshot",
     relPath: "data/broker_status.json",
@@ -542,8 +550,15 @@ function normalizeMirrorPlan(data, source) {
         signalAgeHours: clampNumber(candidate.signal_age_hours, 0, 24 * 365, 0),
         signalPrice: Number.isFinite(Number(candidate.signal_price)) ? Number(candidate.signal_price) : null,
         currentPrice: Number.isFinite(Number(candidate.current_price)) ? Number(candidate.current_price) : null,
+        currentPriceObservedAt: safeDate(candidate.current_price_observed_at),
+        currentPriceAgeHours: clampNumber(candidate.current_price_age_hours, 0, 24 * 30, 0),
         priceDriftPct: Number.isFinite(drift) ? drift : null,
         confidence: clampNumber(candidate.confidence, 0, 1, 0),
+        evidenceScore: clampNumber(candidate.evidence_score, 0, 1, 0.5),
+        evidenceStatus: ["unproven", "small_sample", "measured"].includes(candidate.evidence_status) ? candidate.evidence_status : "unproven",
+        sourceEvidenceSamples: clampNumber(candidate.source_evidence_samples, 0, 1_000_000, 0),
+        traderEvidenceSamples: clampNumber(candidate.trader_evidence_samples, 0, 1_000_000, 0),
+        rankingScore: clampNumber(candidate.ranking_score, 0, 1, 0),
         status,
         mirrorNotionalDollars: Number.isFinite(notional) ? Math.max(0, notional) : 0,
         mirrorShares: Number.isFinite(shares) ? Math.max(0, shares) : 0,
@@ -579,8 +594,14 @@ function normalizeMirrorPlan(data, source) {
       minimumConfidence: clampNumber(data.policy?.minimum_confidence, 0, 1, 0),
       maxPriceDriftPct: clampNumber(data.policy?.max_price_drift_pct, 0, 1, 0),
       maxSignalAgeHours: clampNumber(data.policy?.max_signal_age_hours, 0, 24 * 365, 0),
+      maxCurrentPriceAgeHours: clampNumber(data.policy?.max_current_price_age_hours, 0, 24 * 30, 24),
       allowedAssetTypes: (Array.isArray(data.policy?.allowed_asset_types) ? data.policy.allowed_asset_types : []).map((item) => String(item).slice(0, 40)).slice(0, 12),
       researchOnlyAssetTypes: (Array.isArray(data.policy?.research_only_asset_types) ? data.policy.research_only_asset_types : []).map((item) => String(item).slice(0, 40)).slice(0, 12),
+      knowledge: {
+        priorStrength: clampNumber(data.policy?.knowledge?.prior_strength, 1, 10_000, 20),
+        minimumSamplesForGate: clampNumber(data.policy?.knowledge?.minimum_samples_for_gate, 1, 10_000, 8),
+        minimumEvidenceScore: clampNumber(data.policy?.knowledge?.minimum_evidence_score, 0, 1, 0.4),
+      },
     },
     sources: (Array.isArray(data.sources) ? data.sources : []).slice(0, 30).map((item) => ({
       id: String(item?.id || "").slice(0, 80),
@@ -592,6 +613,94 @@ function normalizeMirrorPlan(data, source) {
       notes: redactSensitiveText(String(item?.notes || "")).slice(0, 600),
     })),
     candidates,
+    warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
+  };
+}
+
+function normalizeCopyKnowledge(data, source) {
+  const empty = {
+    available: false,
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsSeen: 0,
+      observationsSeen: 0,
+      measuredOutcomes: 0,
+      pendingOutcomes: 0,
+      missingBaselines: 0,
+      liveOrdersPlaced: 0,
+    },
+    methodology: {
+      lookAheadAllowed: false,
+      profitGuarantee: false,
+      scoreNeutral: 0.5,
+    },
+    sourceProfiles: [],
+    traderProfiles: [],
+    warnings: ["No post-disclosure knowledge ledger is loaded yet. Evidence scores remain neutral."],
+  };
+  if (!isPlainObject(data)) return empty;
+  const normalizeRegimeBreakdown = (value) => isPlainObject(value)
+    ? Object.fromEntries(Object.entries(value).slice(0, 8).map(([key, item]) => {
+      const metrics = isPlainObject(item) ? item : {};
+      return [String(key).slice(0, 40), {
+        sampleSize: clampNumber(metrics.sample_size, 0, 1_000_000, 0),
+        hitRate: clampNumber(metrics.hit_rate, 0, 1, 0.5),
+        meanDirectionalReturn: clampNumber(metrics.mean_directional_return, -10, 10, 0),
+      }];
+    }))
+    : {};
+  const profile = (item) => {
+    if (!isPlainObject(item)) return null;
+    return {
+      id: String(item.profile_id || "").slice(0, 240),
+      sourceId: String(item.source_id || "").slice(0, 80),
+      traderName: item.trader_name ? redactSensitiveText(String(item.trader_name)).slice(0, 160) : null,
+      sourceType: String(item.source_type || "unknown").slice(0, 80),
+      mirrorEligible: Boolean(item.mirror_eligible),
+      sampleSize: clampNumber(item.sample_size, 0, 1_000_000, 0),
+      wins: clampNumber(item.wins, 0, 1_000_000, 0),
+      losses: clampNumber(item.losses, 0, 1_000_000, 0),
+      hitRate: clampNumber(item.hit_rate, 0, 1, 0.5),
+      meanDirectionalReturn: clampNumber(item.mean_directional_return, -10, 10, 0),
+      returnVolatility: clampNumber(item.return_volatility, 0, 10, 0),
+      averageMaximumAdverseExcursion: clampNumber(item.average_maximum_adverse_excursion, -10, 0, 0),
+      riskAdjustedReturn: clampNumber(item.risk_adjusted_return, -100, 100, 0),
+      posteriorQualityScore: clampNumber(item.posterior_quality_score, 0, 1, 0.5),
+      delayReliability: clampNumber(item.delay_reliability, 0, 1, 1),
+      executionScoreCap: clampNumber(item.execution_score_cap, 0, 1, 0.45),
+      evidenceScore: clampNumber(item.evidence_score, 0, 1, 0.5),
+      evidenceStatus: ["unproven", "small_sample", "measured"].includes(item.evidence_status) ? item.evidence_status : "unproven",
+      provenanceCounts: isPlainObject(item.provenance_counts)
+        ? Object.fromEntries(Object.entries(item.provenance_counts).slice(0, 8).map(([key, value]) => [String(key).slice(0, 40), clampNumber(value, 0, 1_000_000, 0)]))
+        : {},
+      regimeBreakdown: normalizeRegimeBreakdown(item.regime_breakdown),
+    };
+  };
+  const summary = isPlainObject(data.summary) ? data.summary : {};
+  const methodology = isPlainObject(data.methodology) ? data.methodology : {};
+  return {
+    available: true,
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsSeen: clampNumber(summary.signals_seen, 0, 1_000_000, 0),
+      observationsSeen: clampNumber(summary.observations_seen, 0, 10_000_000, 0),
+      measuredOutcomes: clampNumber(summary.measured_outcomes, 0, 1_000_000, 0),
+      pendingOutcomes: clampNumber(summary.pending_outcomes, 0, 1_000_000, 0),
+      missingBaselines: clampNumber(summary.missing_baselines, 0, 1_000_000, 0),
+      liveOrdersPlaced: clampNumber(summary.live_orders_placed, 0, 1_000_000, 0),
+    },
+    methodology: {
+      lookAheadAllowed: methodology.look_ahead_allowed === true,
+      profitGuarantee: methodology.profit_guarantee === true,
+      scoreNeutral: clampNumber(methodology.score_neutral, 0, 1, 0.5),
+      priorStrength: clampNumber(methodology.sample_prior_strength, 1, 10_000, 20),
+      minimumSamplesForGate: clampNumber(methodology.minimum_samples_for_gate, 1, 10_000, 8),
+      outcomeClock: redactSensitiveText(String(methodology.outcome_clock || "post-disclosure observations only")).slice(0, 220),
+    },
+    sourceProfiles: (Array.isArray(data.source_profiles) ? data.source_profiles : []).map(profile).filter(Boolean).slice(0, 50),
+    traderProfiles: (Array.isArray(data.trader_profiles) ? data.trader_profiles : []).map(profile).filter(Boolean).slice(0, 250),
     warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
   };
 }
@@ -733,7 +842,7 @@ function buildAlerts({ available, sources, records, readiness, broker, sourceHea
     alerts.push({ level: "warning", title: "Live auto is not armable", body: "Readiness checks block autonomous live-broker behavior. Paper mirroring and Human Gate review remain available." });
   }
   if (broker.configured && broker.buyingPower === "$0.00") {
-    alerts.push({ level: "info", title: "No buying power", body: "The latest broker snapshot shows zero buying power. This office will not place orders." });
+    alerts.push({ level: "info", title: "No buying power", body: "The latest broker snapshot blocks BUY orders. A risk-reducing SELL would still require fresh verified holdings, exact Human Gate approval, and Robinhood review." });
   }
   if (sources.some((source) => source.id === "provider_keys" && source.status === "configured")) {
     alerts.push({ level: "info", title: "Provider keys detected locally", body: "Credential values are not read by Argentum and are never returned to the browser." });
@@ -746,7 +855,12 @@ function buildAlerts({ available, sources, records, readiness, broker, sourceHea
   } else if (mirror.summary.liveOrdersPlaced > 0) {
     alerts.push({ level: "error", title: "Copy plan safety mismatch", body: "The mirror report claims a live order. Treat the plan as blocked and inspect its provenance." });
   } else if (mirror.summary.paperReady > 0) {
-    alerts.push({ level: "info", title: "Paper mirror candidates ready", body: `${mirror.summary.paperReady} public signal(s) passed delay, drift, provenance, and bankroll checks. Live execution is still unavailable.` });
+    alerts.push({ level: "info", title: "Paper mirror candidates ready", body: `${mirror.summary.paperReady} public signal(s) passed delay, drift, provenance, and bankroll checks. Live execution still requires a separate fresh broker draft and exact Human Gate approval.` });
+  }
+  if (mirror?.knowledge?.summary?.liveOrdersPlaced > 0) {
+    alerts.push({ level: "error", title: "Knowledge ledger safety mismatch", body: "The evidence report claims a live order. Ignore its scores and inspect the generating process." });
+  } else if (mirror?.knowledge?.available && mirror.knowledge.summary.measuredOutcomes > 0) {
+    alerts.push({ level: "info", title: "Copy evidence matured", body: `${mirror.knowledge.summary.measuredOutcomes} post-disclosure outcome(s) now inform source/trader rankings with small-sample shrinkage.` });
   }
   return alerts.slice(0, 8);
 }
@@ -797,6 +911,15 @@ function buildActivity({ state, records, readiness, broker, ticket, sources, mir
       createdAt: mirror.generatedAt,
     });
   }
+  if (mirror?.knowledge?.available) {
+    entries.push({
+      id: "copy-knowledge-activity",
+      type: "copy_knowledge",
+      title: `${mirror.knowledge.summary.measuredOutcomes} measured copy outcome(s)`,
+      body: `${mirror.knowledge.summary.observationsSeen} real observation(s); ${mirror.knowledge.summary.pendingOutcomes} outcome(s) pending; no look-ahead allowed.`,
+      createdAt: mirror.knowledge.generatedAt,
+    });
+  }
   const best = records[0];
   if (best) {
     entries.push({
@@ -842,7 +965,7 @@ function loadStockOfficeSnapshot(options = {}) {
       positions: [],
       broker: normalizeBrokerStatus(null, null),
       readiness: normalizeReadiness(null, null, {}),
-      mirror: { ...normalizeMirrorPlan(null, null), importer: normalizeCopyImportStatus(null, null) },
+      mirror: { ...normalizeMirrorPlan(null, null), importer: normalizeCopyImportStatus(null, null), knowledge: normalizeCopyKnowledge(null, null) },
       guardrails: normalizeGuardrails({}),
       killSwitch: normalizeKillSwitch(null, null),
       tradeDrafts: workspaceState.tradeDrafts,
@@ -881,6 +1004,7 @@ function loadStockOfficeSnapshot(options = {}) {
   const mirror = {
     ...normalizeMirrorPlan(byId.copy_trader_plan?.data, byId.copy_trader_plan?.source),
     importer: normalizeCopyImportStatus(byId.copy_import_status?.data, byId.copy_import_status?.source),
+    knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
   };
   const guardrails = normalizeGuardrails(byId.settings?.data || {});
   const killSwitch = normalizeKillSwitch(byId.live_auto_kill_switch?.data, byId.live_auto_kill_switch?.source);
@@ -964,7 +1088,7 @@ function stockThreatModel() {
   return [
     "Broker and provider credentials stay server-side and are not read by this connector.",
     "All Stock Office APIs require the existing Argentum session before data is returned.",
-    "The connector can create internal paper plans and Human Gate review records, but no live broker, order, transfer, or account-changing calls are available.",
+    "The paper-plan connector cannot trade. Live equity orders require the separate guarded Robinhood dispatch flow; transfers and account-changing calls are not available.",
     "Imported report text is treated as untrusted content and redacted before display or assistant use.",
     "Refresh runs only the evaluator, optional official SEC intake, and guarded mirror-plan builder. It never invokes broker, order, transfer, or account commands.",
     "Robinhood credentials and account authentication remain in Robinhood OAuth/Codex MCP; Stock Office never asks for or stores the Robinhood login password.",
@@ -1067,10 +1191,12 @@ function answerStockQuestion(snapshot, rawQuestion) {
 
   if (/(copy|mirror|famous|infamous|trader|disclosure|13f|form 4|congress|event contract|prediction)/.test(lower)) {
     cite("source", "copy_trader_plan", "Copy Trader mirror plan");
+    cite("source", "copy_knowledge", "Copy Trader knowledge ledger");
     const mirror = snapshot.mirror;
+    const knowledge = mirror.knowledge;
     const ready = mirror.candidates.filter((candidate) => candidate.status === "paper_ready").slice(0, 5);
     answer = mirror.available
-      ? `Mirror Lab evaluated ${mirror.summary.signalsReceived} attributable public signal(s): ${mirror.summary.paperReady} paper-ready, ${mirror.summary.researchOnly} research-only, and ${mirror.summary.rejected} rejected. ${ready.length ? `Paper-ready examples: ${ready.map((candidate) => `${candidate.side} ${candidate.symbol} from ${candidate.traderName}, capped at ${formatUsd(candidate.mirrorNotionalDollars)}`).join("; ")}.` : "No signal currently passes every delay, provenance, price-drift, and bankroll check."} ${mirror.importer?.available ? `The official SEC importer has ${mirror.importer.enabledEntries} enabled watchlist entr${mirror.importer.enabledEntries === 1 ? "y" : "ies"} and imported ${mirror.importer.signalsImported} signal(s) on its latest run. ` : "The official SEC importer has not run yet. "}The plan placed 0 live orders; event contracts and delayed 13F/congressional disclosures stay research-only.`
+      ? `Mirror Lab evaluated ${mirror.summary.signalsReceived} attributable public signal(s): ${mirror.summary.paperReady} paper-ready, ${mirror.summary.researchOnly} research-only, and ${mirror.summary.rejected} rejected. ${ready.length ? `Paper-ready examples: ${ready.map((candidate) => `${candidate.side} ${candidate.symbol} from ${candidate.traderName}, evidence ${candidate.evidenceScore.toFixed(3)}, capped at ${formatUsd(candidate.mirrorNotionalDollars)}`).join("; ")}.` : "No signal currently passes every delay, provenance, price-drift, and bankroll check."} ${knowledge?.available ? `The knowledge ledger has ${knowledge.summary.measuredOutcomes} measured post-disclosure outcome(s), ${knowledge.summary.pendingOutcomes} pending, and ${knowledge.summary.observationsSeen} real price/fill observation(s); small samples are shrunk toward neutral and look-ahead is disabled. ` : "No outcome ledger is loaded, so evidence scores remain neutral. "}${mirror.importer?.available ? `The official SEC importer has ${mirror.importer.enabledEntries} enabled watchlist entr${mirror.importer.enabledEntries === 1 ? "y" : "ies"} and imported ${mirror.importer.signalsImported} signal(s) on its latest run. ` : "The official SEC importer has not run yet. "}The plan itself placed 0 live orders; event contracts and delayed 13F/congressional disclosures stay research-only regardless of score.`
       : "Mirror Lab is configured but has no generated plan. Add named CIKs to the SEC watchlist and run copy-refresh-sec or copy-watch-sec. Anonymous posts, stale 13F/congressional disclosures, and event contracts cannot become automatic Robinhood orders.";
   } else if (/(top|best|setup|ticker|watch|valid)/.test(lower)) {
     const top = snapshot.records.slice(0, 5);
@@ -1085,15 +1211,15 @@ function answerStockQuestion(snapshot, rawQuestion) {
     cite("source", "live_auto_launch_checklist", "Live launch checklist");
     const blockers = snapshot.readiness.blockers.slice(0, 4);
     answer = snapshot.readiness.readyForLiveAuto
-      ? "The latest readiness data says live auto is ready, but Stock Office still exposes only research, paper mirroring, and Human Gate review. No broker order endpoint is available here."
-      : `Live auto is not armable. Blockers: ${blockers.length ? blockers.join("; ") : "readiness data does not mark it ready"}. Argentum will not place trades, move money, or change broker settings.`;
+      ? "The latest readiness data says strategy checks are ready. Stock Office can build an exact order and route it through Human Gate, one-use dispatch, Robinhood review, and result reconciliation; it cannot bypass any of those controls."
+      : `Live entry is not armable. Blockers: ${blockers.length ? blockers.join("; ") : "readiness data does not mark it ready"}. Risk-reducing sells may still be drafted, but no trade can bypass Human Gate and Robinhood review.`;
   } else if (/(position|cash|buying|account|pnl|broker)/.test(lower)) {
     cite("source", "broker_status", "Masked broker status snapshot");
     const positions = snapshot.broker.positions || [];
-    answer = `Latest masked broker snapshot: account ${snapshot.broker.account || "not available"}, account value ${snapshot.broker.accountValue || "unknown"}, cash ${snapshot.broker.cash || "unknown"}, buying power ${snapshot.broker.buyingPower || "unknown"}, positions ${positions.length}. Argentum shows this for review only and does not submit broker orders.`;
+    answer = `Latest masked broker snapshot: account ${snapshot.broker.account || "not available"}, account value ${snapshot.broker.accountValue || "unknown"}, cash ${snapshot.broker.cash || "unknown"}, buying power ${snapshot.broker.buyingPower || "unknown"}, positions ${positions.length}. Argentum uses this snapshot for review and deterministic checks; any submitted order still requires fresh Robinhood evidence, exact Human Gate approval, a one-use dispatch claim, and Robinhood preflight review.`;
   } else if (/(source|sync|fresh|stale|error|data)/.test(lower)) {
     snapshot.sources.slice(0, 5).forEach((source) => cite("source", source.id, source.label));
-    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Refresh Stock Office can run the local evaluator and guarded public-signal plan builder; it has no broker-order or money-movement capability.`;
+    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Refresh Stock Office runs the evaluator and guarded public-signal/knowledge builders. Broker orders require a separate exact Human Gate approval and one-use Robinhood dispatch; deposits and money movement are not implemented.`;
   } else if (/(risk|reject|avoid|liquidity|volume)/.test(lower)) {
     const rejected = snapshot.records.filter((record) => record.status === "rejected").slice(0, 5);
     rejected.forEach((record) => cite("record", record.ticker, `${record.ticker} rejected evaluator record`));
@@ -1104,7 +1230,7 @@ function answerStockQuestion(snapshot, rawQuestion) {
     const metrics = snapshot.metrics;
     cite("source", "evaluations", "Evaluator report");
     cite("source", "broker_status", "Masked broker status snapshot");
-    answer = `Stock Office is in read-only guarded mode with ${metrics.trackedRecords} evaluator records, ${metrics.validSetups} valid setups, ${metrics.rejectedRecords} rejected records, ${metrics.watchlistCount} watchlist tickers, and source health ${metrics.sourceStatus}. Ask for top setups, blockers, source freshness, or the masked broker snapshot for more detail.`;
+    answer = `Stock Office is in guarded broker-onboarding mode with ${metrics.trackedRecords} evaluator records, ${metrics.validSetups} valid setups, ${metrics.rejectedRecords} rejected records, ${metrics.watchlistCount} watchlist tickers, and source health ${metrics.sourceStatus}. Research and drafts are local; every live order still requires fresh broker evidence, Human Gate, and Robinhood review.`;
   }
 
   return {

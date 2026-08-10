@@ -36,7 +36,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -474,6 +475,46 @@ button {
 .order-ready-copy {
   color: #bbf7d0;
   font-size: 0.72rem;
+}
+
+.order-handoff {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid rgba(34, 211, 238, 0.24);
+  border-radius: 12px;
+  color: #cffafe;
+  background: rgba(8, 47, 73, 0.38);
+}
+
+.order-handoff p,
+.order-handoff small {
+  margin: 0;
+  color: var(--muted);
+}
+
+.order-handoff label {
+  display: grid;
+  gap: 5px;
+  color: #bae6fd;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.order-handoff textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 11px;
+  color: var(--text);
+  background: rgba(2, 6, 23, 0.8);
+  padding: 9px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  line-height: 1.45;
 }
 
 .broker-asset-strip {

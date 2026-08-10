@@ -12,6 +12,7 @@ const state = {
   refresh: null,
   brokerControl: null,
   tradeDrafts: [],
+  dispatchHandoff: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -136,6 +137,27 @@ function renderTradeDraft(draft) {
           : completed
             ? "Approval consumed"
             : "Order blocked";
+  const actionButton = ready
+    ? `<button type="button" data-order-gate="${escapeHtml(draft.id)}">Send exact order to Human Gate</button>`
+    : draft.status === "approved"
+      ? `<button type="button" data-order-claim="${escapeHtml(draft.id)}">Prepare 2-minute Robinhood handoff</button>`
+      : `<button type="button" disabled>${gateLabel}</button>`;
+  const handoff = state.dispatchHandoff?.draftId === draft.id ? state.dispatchHandoff : null;
+  const handoffPanel = handoff
+    ? `<div class="order-handoff">
+        <strong>Robinhood handoff is ready until ${escapeHtml(formatTime(handoff.claim.expiresAt))}</strong>
+        <p>Copy the exact broker job into Codex. Keep this window open: the one-use claim token stays only in this page and is never copied.</p>
+        <button type="button" data-copy-order-handoff="${escapeHtml(draft.id)}">Copy exact Robinhood job</button>
+        <label>Exact broker job
+          <textarea id="brokerHandoffJson" rows="8" readonly>${escapeHtml(JSON.stringify(brokerHandoffJob(handoff), null, 2))}</textarea>
+        </label>
+        <label>Broker result JSON
+          <textarea id="brokerResultJson" rows="5" placeholder='{"reviewPassed":false,"warnings":["reason"],"placementAttempted":false}'></textarea>
+        </label>
+        <button type="button" data-record-order-result="${escapeHtml(draft.id)}">Record Robinhood result</button>
+        <small id="orderHandoffFeedback" aria-live="polite">No live result recorded yet.</small>
+      </div>`
+    : "";
   target.dataset.status = completed || ready ? "ready" : pending ? "pending" : "blocked";
   target.innerHTML = `
     <div class="order-draft-heading">
@@ -149,9 +171,37 @@ function renderTradeDraft(draft) {
       <span><small>Expires</small><b>${escapeHtml(formatTime(draft.expiresAt))}</b></span>
     </div>
     ${statusCopy}
-    <button type="button" data-order-gate="${escapeHtml(draft.id)}" ${ready ? "" : "disabled"}>${gateLabel}</button>
+    ${actionButton}
+    ${handoffPanel}
     <small>Live order placed: ${draft.liveOrderPlaced ? "yes" : "no"}</small>
   `;
+}
+
+function brokerHandoffJob(handoff) {
+  return {
+    version: 1,
+    purpose: "execute_one_approved_robinhood_equity_order",
+    claimId: handoff.claim.id,
+    expiresAt: handoff.claim.expiresAt,
+    policy: handoff.claim.policy,
+    envelope: handoff.claim.envelope,
+    instructions: [
+      "Use only Robinhood's official Trading MCP and the dedicated Agentic account.",
+      "Refresh get_accounts, get_portfolio, get_equity_positions, get_equity_orders, get_equity_quotes, and get_equity_tradability; stop on any account, balance, position, order, price, or tradability mismatch.",
+      "Call review_equity_order with the exact envelope.reviewArgs before any placement.",
+      "If review returns any warning, mismatch, repricing, or scope change, do not place the order.",
+      "If review passes exactly, call place_equity_order once with envelope.placementArgs and its one-use ref_id.",
+      "Return only the broker result JSON described by resultSchema; do not claim a fill without a broker order ID and state.",
+    ],
+    resultSchema: {
+      reviewPassed: "boolean",
+      warnings: ["string"],
+      placementAttempted: "boolean",
+      brokerOrderId: "string or empty",
+      brokerState: "string or empty",
+      error: "string or empty",
+    },
+  };
 }
 
 function renderBrokerControl() {
@@ -597,6 +647,98 @@ async function sendOrderToHumanGate(draftId) {
   }
 }
 
+async function copyOrderHandoff(draftId) {
+  const feedback = $("#orderHandoffFeedback");
+  const handoff = state.dispatchHandoff;
+  if (!handoff || handoff.draftId !== draftId) {
+    if (feedback) feedback.textContent = "This handoff is unavailable or expired. Prepare a fresh one.";
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(brokerHandoffJob(handoff), null, 2));
+    if (feedback) feedback.textContent = "Exact Robinhood job copied. Paste it into Codex now and return the broker result before expiry.";
+    return true;
+  } catch (error) {
+    if (feedback) feedback.textContent = `Clipboard copy failed: ${error.message}`;
+    return false;
+  }
+}
+
+async function claimOrderDispatch(draftId) {
+  const button = $(`[data-order-claim="${CSS.escape(draftId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Preparing one-use handoff...";
+  }
+  try {
+    const payload = await api(`/api/stock-office/orders/${encodeURIComponent(draftId)}/dispatch/claim`, { method: "POST", body: "{}" });
+    state.dispatchHandoff = { draftId, claim: payload.claim };
+    state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+    renderBrokerControl();
+    await copyOrderHandoff(draftId);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = error.message;
+    }
+  }
+}
+
+async function recordOrderDispatchResult(draftId) {
+  const feedback = $("#orderHandoffFeedback");
+  const handoff = state.dispatchHandoff;
+  if (!handoff || handoff.draftId !== draftId) {
+    if (feedback) feedback.textContent = "The one-use handoff token is not available in this page. Build and approve a fresh draft.";
+    return;
+  }
+  let brokerResult;
+  try {
+    brokerResult = JSON.parse($("#brokerResultJson")?.value || "");
+  } catch (_error) {
+    if (feedback) feedback.textContent = "Paste valid broker result JSON before recording the result.";
+    return;
+  }
+  if (!brokerResult || typeof brokerResult !== "object" || Array.isArray(brokerResult)) {
+    if (feedback) feedback.textContent = "Broker result must be one JSON object.";
+    return;
+  }
+  if (feedback) feedback.textContent = "Recording the one-use Robinhood result...";
+  try {
+    const payload = await api(`/api/stock-office/orders/${encodeURIComponent(draftId)}/dispatch/result`, {
+      method: "POST",
+      body: JSON.stringify({
+        claimToken: handoff.claim.token,
+        reviewPassed: brokerResult.reviewPassed === true,
+        warnings: Array.isArray(brokerResult.warnings) ? brokerResult.warnings : [],
+        placementAttempted: brokerResult.placementAttempted === true,
+        brokerOrderId: String(brokerResult.brokerOrderId || ""),
+        brokerState: String(brokerResult.brokerState || ""),
+        error: String(brokerResult.error || ""),
+      }),
+    });
+    state.dispatchHandoff = null;
+    state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+    renderBrokerControl();
+  } catch (error) {
+    if (feedback) feedback.textContent = error.message;
+  }
+}
+
+async function pollBrokerControl() {
+  if (state.loading) return;
+  try {
+    const payload = await api("/api/stock-office/broker-control");
+    state.brokerControl = payload.brokerControl || state.brokerControl;
+    state.tradeDrafts = payload.tradeDrafts || state.tradeDrafts;
+    const activeDraft = state.dispatchHandoff
+      ? state.tradeDrafts.find((draft) => draft.id === state.dispatchHandoff.draftId)
+      : null;
+    if (state.dispatchHandoff && activeDraft?.status === "dispatch_claimed") return;
+    if (state.dispatchHandoff) state.dispatchHandoff = null;
+    renderBrokerControl();
+  } catch (_error) {}
+}
+
 function renderRefreshFeedback(refresh) {
   if (!refresh || refresh.status === "idle") return;
   state.refresh = refresh;
@@ -691,6 +833,12 @@ document.addEventListener("click", (event) => {
   if (brokerConnect) requestBrokerConnection();
   const orderGate = event.target.closest("[data-order-gate]");
   if (orderGate) sendOrderToHumanGate(orderGate.dataset.orderGate);
+  const orderClaim = event.target.closest("[data-order-claim]");
+  if (orderClaim) claimOrderDispatch(orderClaim.dataset.orderClaim);
+  const handoffCopy = event.target.closest("[data-copy-order-handoff]");
+  if (handoffCopy) copyOrderHandoff(handoffCopy.dataset.copyOrderHandoff);
+  const resultRecord = event.target.closest("[data-record-order-result]");
+  if (resultRecord) recordOrderDispatchResult(resultRecord.dataset.recordOrderResult);
   const row = event.target.closest("[data-ticker]");
   if (row) selectRecord(row.dataset.ticker);
   const mirrorGate = event.target.closest("[data-mirror-gate]");
@@ -707,3 +855,4 @@ $("#syncButton").addEventListener("click", syncLocalFiles);
 $("#stockChatForm").addEventListener("submit", askStockGuru);
 
 Promise.all([loadApp(), pollRefreshStatus()]);
+window.setInterval(pollBrokerControl, 3_000);

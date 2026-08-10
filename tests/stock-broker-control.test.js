@@ -113,6 +113,9 @@ test("fresh official connector and strict checks produce an exact BUY review env
   assert.equal(envelope.reviewTool, "review_equity_order");
   assert.equal(envelope.placementTool, "place_equity_order");
   assert.equal(envelope.args.ref_id, draft.clientRefId);
+  assert.equal(envelope.reviewArgs.ref_id, undefined);
+  assert.equal(envelope.placementArgs.ref_id, draft.clientRefId);
+  assert.deepEqual(envelope.args, envelope.placementArgs);
   assert.equal(envelope.args.dollar_amount, "10.00");
   assert.equal(envelope.accountScope, "dedicated_agentic_account_only");
 });
@@ -235,6 +238,20 @@ test("approved exact order becomes a two-minute one-use dispatch claim", () => {
     () => claimApprovedDispatch({ ...approved, clientRefId: "tampered-ref" }, approval, current, { now: "2026-08-10T17:00:20.000Z" }),
     /reference ID does not match/i,
   );
+  const tamperedApproval = {
+    ...approval,
+    grantedDetails: {
+      ...approval.grantedDetails,
+      executionEnvelope: {
+        ...approval.grantedDetails.executionEnvelope,
+        reviewArgs: { ...approval.grantedDetails.executionEnvelope.reviewArgs, symbol: "BAD" },
+      },
+    },
+  };
+  assert.throws(
+    () => claimApprovedDispatch(approved, tamperedApproval, current, { now: "2026-08-10T17:00:20.000Z" }),
+    /review\/placement contract does not match/i,
+  );
   const claimed = claimApprovedDispatch(approved, approval, current, { now: "2026-08-10T17:00:20.000Z" });
 
   assert.equal(approved.status, "approved");
@@ -247,6 +264,9 @@ test("approved exact order becomes a two-minute one-use dispatch claim", () => {
     () => claimApprovedDispatch(claimed.draft, approval, current, { now: "2026-08-10T17:00:30.000Z" }),
     /already has a dispatch claim|not approved for dispatch/i,
   );
+  const expired = tradeDraftWithApprovalState(claimed.draft, [approval], { now: "2026-08-10T17:03:00.000Z" });
+  assert.equal(expired.status, "expired");
+  assert.match(expired.lastDispatchError, /handoff expired/i);
 });
 
 test("broker review warnings consume the one-use approval without recording an order", () => {

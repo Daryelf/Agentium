@@ -314,20 +314,23 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
 
 function executionEnvelope(draft) {
   const normalized = normalizeTradeDraft(draft);
+  const reviewArgs = {
+    symbol: normalized.symbol,
+    side: normalized.side.toLowerCase(),
+    type: normalized.orderType,
+    dollar_amount: normalized.cappedDollars.toFixed(2),
+    time_in_force: normalized.timeInForce,
+    market_hours: normalized.marketHours,
+  };
+  const placementArgs = { ...reviewArgs, ref_id: normalized.clientRefId };
   return {
     provider: "robinhood_agentic_mcp",
     accountScope: "dedicated_agentic_account_only",
     reviewTool: "review_equity_order",
     placementTool: "place_equity_order",
-    args: {
-      symbol: normalized.symbol,
-      side: normalized.side.toLowerCase(),
-      type: normalized.orderType,
-      dollar_amount: normalized.cappedDollars.toFixed(2),
-      time_in_force: normalized.timeInForce,
-      market_hours: normalized.marketHours,
-      ref_id: normalized.clientRefId,
-    },
+    reviewArgs,
+    placementArgs,
+    args: placementArgs,
     fingerprint: normalized.fingerprint,
     expiresAt: normalized.expiresAt,
   };
@@ -345,6 +348,7 @@ function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
   const details = approvalDetails(approval);
   const approvedEnvelope = details.executionEnvelope && typeof details.executionEnvelope === "object" ? details.executionEnvelope : {};
   const approvedArgs = approvedEnvelope.args && typeof approvedEnvelope.args === "object" ? approvedEnvelope.args : {};
+  const expectedEnvelope = executionEnvelope(normalized);
   const expiresAt = safeDate(approval.expiresAt);
   const reasons = [];
   if (approval.actionType !== "place_robinhood_equity_order") reasons.push("Human Gate action type does not authorize an equity order.");
@@ -354,6 +358,7 @@ function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
   if (String(details.draftId || "") !== normalized.id) reasons.push("Human Gate draft ID does not match.");
   if (String(details.fingerprint || "") !== normalized.fingerprint) reasons.push("Human Gate order fingerprint does not match.");
   if (String(approvedEnvelope.fingerprint || "") !== normalized.fingerprint) reasons.push("Approved broker envelope fingerprint does not match.");
+  if (stableFingerprint(approvedEnvelope) !== stableFingerprint(expectedEnvelope)) reasons.push("Approved broker review/placement contract does not match the current exact envelope.");
   if (String(approvedArgs.ref_id || "") !== normalized.clientRefId) reasons.push("Approved one-use broker reference ID does not match.");
   if (normalizeSymbol(approvedArgs.symbol) !== normalized.symbol || String(approvedArgs.side || "").toUpperCase() !== normalized.side) reasons.push("Approved broker envelope symbol or side does not match.");
   if (Math.abs(moneyNumber(approvedArgs.dollar_amount) - normalized.cappedDollars) > 0.001) reasons.push("Approved broker envelope notional does not match.");
@@ -367,7 +372,18 @@ function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
 function tradeDraftWithApprovalState(draft = {}, approvals = [], options = {}) {
   const at = options.now ? new Date(options.now) : new Date();
   const normalized = normalizeTradeDraft(draft);
-  if (["dispatch_claimed", "review_rejected", "dispatched", "filled", "rejected", "cancelled"].includes(normalized.status)) return normalized;
+  if (normalized.status === "dispatch_claimed") {
+    if (!normalized.dispatchExpiresAt || new Date(normalized.dispatchExpiresAt).getTime() <= at.getTime()) {
+      return normalizeTradeDraft({
+        ...normalized,
+        status: "expired",
+        lastDispatchError: "The one-use Robinhood handoff expired before a broker result was recorded. Build and approve a fresh draft.",
+        updatedAt: at.toISOString(),
+      });
+    }
+    return normalized;
+  }
+  if (["review_rejected", "dispatched", "filled", "rejected", "cancelled"].includes(normalized.status)) return normalized;
   if (new Date(normalized.expiresAt).getTime() <= at.getTime()) return normalizeTradeDraft({ ...normalized, status: "expired", updatedAt: at.toISOString() });
   const approval = (Array.isArray(approvals) ? approvals : []).find((item) => item?.id === normalized.approvalId)
     || (Array.isArray(approvals) ? approvals : []).find((item) => item?.linkedId === `stock-office:order:${normalized.fingerprint}`);

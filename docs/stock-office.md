@@ -162,6 +162,18 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - exact Human Gate controls for connection, capital limits, and fresh order drafts
 - explicit Robinhood registration, OAuth, official endpoint, required-equity-tool, and account-snapshot readiness
 
+### Approved-order handoff
+
+Human Gate approval is not the end of the visible flow. Stock Office polls approval state every three seconds. When the exact draft becomes approved, the order card enables **Prepare 2-minute Robinhood handoff**. That action:
+
+1. re-runs every broker, source, price, risk, account, and fingerprint check;
+2. issues one claim that expires within two minutes;
+3. copies a token-free job containing the exact `review_equity_order` / `place_equity_order` envelope and stop conditions;
+4. keeps the raw one-use claim token only in page memory;
+5. accepts the official executor's result JSON and consumes the approval whether review rejects the order or a placement result is recorded.
+
+The operator must keep the page open until the broker result is recorded. Reloading intentionally loses the raw claim token. An unrecorded claim becomes visibly expired after two minutes, and the operator must build and approve a fresh draft. This prevents a stale or orphaned handoff from remaining actionable.
+
 The assistant answers from the local snapshot only. It should not present output as financial advice or a trade instruction.
 
 ## Validation

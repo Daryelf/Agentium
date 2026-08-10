@@ -13,6 +13,7 @@ Argentum is a supervised AI operating company console. Its first agent, Depo, ga
 - Runtime state is stored locally in `data/argentum-state.json`.
 - Core safety rule: Argentum may propose and draft. Money movement, account changes, publishing, customer contact, deployment, and system changes require Human Gate. A Robinhood equity order may proceed only through the exact fingerprint-bound Human Gate approval, fresh official connector/account checks, Robinhood review, and a two-minute one-use dispatch; unattended or recurring trade permission remains forbidden.
 - Stock Office includes evaluator research, evidence-weighted public-signal copying, research-only official Form 13F manager comparisons, candidate-to-order staging, masked Robinhood account state, bounded capital controls, and guarded order dispatch/result reconciliation.
+- Approved Stock Office orders now surface a two-minute, token-isolated Robinhood handoff in the order card, poll Human Gate state automatically, accept a bounded broker-result JSON, and visibly expire orphaned claims instead of leaving them stuck.
 - The official Robinhood Trading MCP is registered in Codex, but operator-present OAuth and controlled live tool-contract/account verification are still required before any live order can be considered available.
 
 ## Useful commands

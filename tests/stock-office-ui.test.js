@@ -33,6 +33,13 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /\/api\/stock-office\/orders\/draft/);
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
   assert.match(script, /Send exact order to Human Gate/);
+  assert.match(script, /Prepare 2-minute Robinhood handoff/);
+  assert.match(script, /Copy exact Robinhood job/);
+  assert.match(script, /\/dispatch\/claim/);
+  assert.match(script, /\/dispatch\/result/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
+  assert.match(script, /window\.setInterval\(pollBrokerControl, 3_000\)/);
+  assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
   assert.match(script, /Tool contract/);
   assert.match(script, /toolContract\.registered/);
   assert.match(html, /No password scraping, private API/);

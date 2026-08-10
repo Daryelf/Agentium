@@ -1,6 +1,7 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { URL, pathToFileURL } = require("node:url");
 const {
@@ -17,11 +18,31 @@ const {
   resolveStockRoot,
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
+const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
+const STOCK_GURU_USER_DATA_DIR = path.resolve(process.env.ARGENTUM_STOCK_GURU_DATA_DIR || (
+  process.platform === "darwin"
+    ? path.join(os.homedir(), "Library", "Application Support", "Argentum OS")
+    : path.join(os.homedir(), ".argentum-os")
+));
+const stockGuruSourceWorkspace = resolveStockGuruWorkspace({
+  workspaceRoot: ROOT,
+  userDataPath: STOCK_GURU_USER_DATA_DIR,
+});
+if (stockGuruSourceWorkspace.available) {
+  const stockGuruRuntime = materializeStockGuruRuntime({
+    sourcePath: stockGuruSourceWorkspace.path,
+    userDataPath: STOCK_GURU_USER_DATA_DIR,
+  });
+  if (stockGuruRuntime.available) {
+    process.env.STOCK_GURU_SOURCE_PATH = stockGuruSourceWorkspace.path;
+    process.env.STOCK_GURU_PATH = stockGuruRuntime.path;
+  }
+}
 const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
 const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
 const PUBLIC_SITE_DIR = path.join(ROOT, "website");

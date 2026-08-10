@@ -47,6 +47,13 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /shadowPortfolio/);
   assert.match(script, /\/api\/stock-office\/shadow\/reset/);
   assert.match(script, /No Robinhood call or money movement occurred/);
+  assert.match(html, /Always-on intelligence loop/);
+  assert.match(html, /Market research freshness/);
+  assert.match(html, /This loop has no Robinhood client, cannot move money, and cannot place an order/);
+  assert.match(script, /intelligenceScheduler/);
+  assert.match(script, /SEC Form 4/);
+  assert.match(script, /SEC 13F/);
+  assert.match(script, /Continuous refresh active/);
   assert.match(script, /Send exact order to Human Gate/);
   assert.match(script, /Prepare 2-minute Robinhood handoff/);
   assert.match(script, /Complete Robinhood OAuth on desktop/);

@@ -93,6 +93,25 @@ test("official SEC 13F manager comparison runs as a separate research-only intak
   assert.deepEqual(calls.map((call) => call.args[2]), ["evaluate", "copy-refresh-13f", "copy-plan"]);
 });
 
+test("automatic cadence can defer Form 4 and 13F independently without skipping evaluator work", async (t) => {
+  const stockRoot = createRunnableWorkspace(t, {
+    sec_form4: [{ label: "Named reporting person", cik: "0000123456", enabled: true }],
+    sec_13f: [{ label: "Named manager", cik: "0001067983", enabled: true }],
+  });
+  const calls = [];
+  const manager = createStockGuruRefreshManager({
+    spawnImpl: successfulSpawn(calls),
+    env: { STOCK_GURU_SEC_USER_AGENT: "Argentum test contact@example.com" },
+    timeoutMs: 2_000,
+  });
+  const result = await manager.refresh({ stockRoot, includeSecForm4: false, includeSec13f: true });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.liveOrdersPlaced, 0);
+  assert.deepEqual(calls.map((call) => call.args[2]), ["evaluate", "copy-refresh-13f", "copy-plan"]);
+  assert.match(result.commands.find((command) => command.name === "copy_refresh_sec").detail, /deferred/i);
+});
+
 test("missing workspace fails closed and preserves zero live orders", async () => {
   const manager = createStockGuruRefreshManager({ env: {}, timeoutMs: 1_000 });
   const result = await manager.refresh({ stockRoot: "/missing/stock-guru-workspace" });

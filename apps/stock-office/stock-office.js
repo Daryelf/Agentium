@@ -13,6 +13,7 @@ const state = {
   brokerControl: null,
   portfolioPlan: null,
   shadowPortfolio: null,
+  intelligenceScheduler: null,
   robinhoodConnection: null,
   connectionApproval: null,
   guardrailApproval: null,
@@ -67,6 +68,15 @@ function formatPercent(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Unknown";
   return `${(number * 100).toFixed(digits)}%`;
+}
+
+function formatCadence(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return "Unknown";
+  if (value < 60) return `${value} min`;
+  if (value % (24 * 60) === 0) return `${value / (24 * 60)} day`;
+  if (value % 60 === 0) return `${value / 60} hr`;
+  return `${value} min`;
 }
 
 function statusClass(value) {
@@ -205,6 +215,50 @@ function renderShadowPortfolio() {
     startingCash.value = portfolio.initialCashDollars;
     startingCash.dataset.loaded = "true";
   }
+}
+
+function renderIntelligenceMonitor() {
+  const scheduler = state.intelligenceScheduler || {};
+  const result = scheduler.lastResult || {};
+  const history = [...(scheduler.history || [])].reverse().slice(0, 4);
+  const status = $("#intelligenceStatus");
+  if (!status) return;
+  const healthy = scheduler.enabled && !scheduler.running && ["idle", "success", "skipped"].includes(result.status || "idle");
+  status.textContent = !scheduler.enabled
+    ? "Paused by environment"
+    : scheduler.running
+      ? `Running · ${String(scheduler.currentStage || "refreshing").replaceAll("_", " ")}`
+      : result.status === "failed"
+        ? "Last cycle failed safely"
+        : result.status === "partial"
+          ? "Current with warnings"
+          : scheduler.lastCompletedAt
+            ? "Continuous refresh active"
+            : "First cycle scheduled";
+  status.className = healthy ? "ready-copy" : scheduler.running ? "ready-copy" : "danger-copy";
+  $("#intelligenceMetrics").innerHTML = [
+    ["Active cadence", formatCadence(scheduler.activeCadenceMinutes), "weekdays 8am–6pm ET"],
+    ["Quiet cadence", formatCadence(scheduler.quietCadenceMinutes), "nights and weekends"],
+    ["Last completed", scheduler.lastCompletedAt ? formatTime(scheduler.lastCompletedAt) : "Pending", result.status || "idle"],
+    ["Next cycle", scheduler.nextRunAt ? formatTime(scheduler.nextRunAt) : scheduler.running ? "Running now" : "Pending", scheduler.marketWindow === "market_day_active" ? "active market window" : "quiet window"],
+    ["SEC Form 4", scheduler.secIdentityConfigured ? formatCadence(scheduler.form4CadenceMinutes) : "Blocked", "official filing intake"],
+    ["SEC 13F", scheduler.secIdentityConfigured ? formatCadence(scheduler.form13fCadenceMinutes) : "Blocked", "delayed research only"],
+  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+  const blocker = scheduler.blockers?.[0];
+  const currentMessage = scheduler.running ? scheduler.currentMessage : result.errors?.[0] || result.warnings?.[0] || result.message;
+  $("#intelligenceMessage").innerHTML = `
+    <strong>${escapeHtml(blocker ? "Source action needed" : scheduler.running ? "Cycle in progress" : "Latest scheduler result")}</strong>
+    <p>${escapeHtml(blocker || currentMessage || "The first bounded intelligence cycle is scheduled.")}</p>
+  `;
+  $("#intelligenceHistory").innerHTML = history.length
+    ? history.map((run) => `
+        <article class="intelligence-run ${escapeHtml(run.status)}">
+          <div><strong>${escapeHtml(String(run.trigger || "scheduled").replaceAll("_", " "))}</strong><span>${escapeHtml(run.status || "unknown")}</span></div>
+          <p>${escapeHtml(run.message || "Refresh completed.")}</p>
+          <small>${escapeHtml(formatTime(run.completedAt))} · SEC Form 4 ${run.includeSecForm4 ? "attempted" : "deferred"} · 13F ${run.includeSec13f ? "attempted" : "deferred"}</small>
+        </article>
+      `).join("")
+    : `<div class="empty-state"><p>No completed intelligence cycle yet.</p></div>`;
 }
 
 function renderTradeDraft(draft) {
@@ -402,6 +456,7 @@ function renderBrokerControl() {
     $("#guardrailFeedback").textContent = `Approved limits are active since ${formatTime(state.guardrailsSource.appliedAt)}. No money was moved.`;
   }
   renderPortfolioPlan();
+  renderIntelligenceMonitor();
   renderShadowPortfolio();
   renderTradeDraft(state.tradeDrafts[0] || null);
 }
@@ -655,6 +710,7 @@ async function loadApp() {
     state.brokerControl = brokerPayload.brokerControl || null;
     state.portfolioPlan = brokerPayload.portfolioPlan || null;
     state.shadowPortfolio = brokerPayload.shadowPortfolio || null;
+    state.intelligenceScheduler = brokerPayload.intelligenceScheduler || null;
     state.robinhoodConnection = brokerPayload.robinhoodConnection || null;
     state.connectionApproval = brokerPayload.connectionApproval || null;
     state.guardrailApproval = brokerPayload.guardrailApproval || null;
@@ -1030,6 +1086,7 @@ async function pollBrokerControl() {
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
     state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.connectionApproval = payload.connectionApproval || state.connectionApproval;
     state.guardrailApproval = payload.guardrailApproval || null;
@@ -1088,6 +1145,8 @@ function renderRefreshFeedback(refresh) {
 async function pollRefreshStatus() {
   try {
     const payload = await api("/api/stock-office/refresh-status");
+    state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
+    renderIntelligenceMonitor();
     renderRefreshFeedback(payload.refresh);
     const stage = String(payload.refresh?.stage || "refresh").replaceAll("_", " ");
     $("#syncButton").textContent = payload.refresh?.status === "running" ? `Refreshing: ${stage}` : "Refresh Stock Office";

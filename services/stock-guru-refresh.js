@@ -136,7 +136,9 @@ function createStockGuruRefreshManager(options = {}) {
     });
   }
 
-  async function execute(stockRoot) {
+  async function execute(stockRoot, runOptions = {}) {
+    const includeSecForm4 = runOptions.includeSecForm4 !== false;
+    const includeSec13f = runOptions.includeSec13f !== false;
     const runId = `stock-refresh-${Date.now()}`;
     status = {
       id: runId,
@@ -175,23 +177,27 @@ function createStockGuruRefreshManager(options = {}) {
 
       const secIdentityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
       const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_form4");
-      if (secEntries > 0 && secIdentityConfigured) {
+      if (includeSecForm4 && secEntries > 0 && secIdentityConfigured) {
         results.push(await runCommand(workspace.executable, ["copy-refresh-sec", "--max-filings", "10"], "copy_refresh_sec", workspace.stockRoot));
       } else {
-        const reason = secEntries > 0
-          ? "SEC refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
-          : "SEC refresh skipped because no named CIK watchlist entries are enabled.";
+        const reason = !includeSecForm4
+          ? "SEC Form 4 refresh deferred until its bounded automatic cadence."
+          : secEntries > 0
+            ? "SEC refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
+            : "SEC refresh skipped because no named CIK watchlist entries are enabled.";
         status.commands.push({ name: "copy_refresh_sec", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
         status.warnings.push(reason);
       }
 
       const sec13fEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_13f");
-      if (sec13fEntries > 0 && secIdentityConfigured) {
+      if (includeSec13f && sec13fEntries > 0 && secIdentityConfigured) {
         results.push(await runCommand(workspace.executable, ["copy-refresh-13f", "--max-filings", "3"], "copy_refresh_13f", workspace.stockRoot));
       } else {
-        const reason = sec13fEntries > 0
-          ? "SEC 13F research refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
-          : "SEC 13F research refresh skipped because no named manager CIK entries are enabled.";
+        const reason = !includeSec13f
+          ? "SEC Form 13F refresh deferred until its bounded automatic cadence."
+          : sec13fEntries > 0
+            ? "SEC 13F research refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
+            : "SEC 13F research refresh skipped because no named manager CIK entries are enabled.";
         status.commands.push({ name: "copy_refresh_13f", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
         status.warnings.push(reason);
       }
@@ -221,9 +227,9 @@ function createStockGuruRefreshManager(options = {}) {
     }
   }
 
-  function refresh({ stockRoot } = {}) {
+  function refresh({ stockRoot, includeSecForm4 = true, includeSec13f = true } = {}) {
     if (activePromise) return activePromise;
-    activePromise = execute(stockRoot).finally(() => {
+    activePromise = execute(stockRoot, { includeSecForm4, includeSec13f }).finally(() => {
       activePromise = null;
     });
     return activePromise;

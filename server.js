@@ -18,6 +18,7 @@ const {
   resolveStockRoot,
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
+const { createStockIntelligenceScheduler } = require("./services/stock-intelligence-scheduler");
 const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
 const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
 const {
@@ -65,6 +66,7 @@ const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
+const STOCK_INTELLIGENCE_STATUS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-intelligence-scheduler.json");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -92,6 +94,19 @@ const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
 const stockGuruRefreshManager = createStockGuruRefreshManager();
+const stockIntelligenceScheduler = createStockIntelligenceScheduler({
+  refreshManager: stockGuruRefreshManager,
+  stockRoot: resolveStockRoot(ROOT),
+  statusFile: STOCK_INTELLIGENCE_STATUS_FILE,
+  onCompleted: async (result) => {
+    if (!result.recordsMayHaveChanged || process.env.NODE_ENV === "test") return;
+    try {
+      refreshStockShadowPortfolio({ force: true });
+    } catch (error) {
+      console.warn("Stock paper-shadow follow-up cycle failed safely:", error.message);
+    }
+  },
+});
 const robinhoodMcpClient = createRobinhoodMcpClient({
   dataDir: path.join(STOCK_GURU_USER_DATA_DIR, "broker-auth"),
 });
@@ -5428,6 +5443,7 @@ async function handleApi(req, res, url) {
         brokerControl: brokerControlOverview(snapshot),
         portfolioPlan: buildCopyPortfolioPlan(snapshot),
         shadowPortfolio: refreshStockShadowPortfolio({ state }),
+        intelligenceScheduler: stockIntelligenceScheduler.getStatus(),
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
         connectionApproval: connectionApproval ? {
           id: connectionApproval.id,
@@ -6124,6 +6140,7 @@ async function handleApi(req, res, url) {
       enforceStockOfficeRateLimit(req, "sync", 8, 300_000);
       const access = requireStockOfficeAccess(req, "sync");
       const refresh = await stockGuruRefreshManager.refresh({ stockRoot: resolveStockRoot(ROOT) });
+      stockIntelligenceScheduler.recordManualRefresh(refresh);
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
       const syncRun = createStockOfficeSyncRun(snapshot, refresh);
@@ -6148,7 +6165,10 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "refresh-status", 240, 300_000);
       requireStockOfficeAccess(req, "sources");
-      sendJson(res, 200, { refresh: stockGuruRefreshManager.getStatus() });
+      sendJson(res, 200, {
+        refresh: stockGuruRefreshManager.getStatus(),
+        intelligenceScheduler: stockIntelligenceScheduler.getStatus(),
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -6565,6 +6585,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Argentum is running on ${HOST}:${PORT}`);
   if (process.env.NODE_ENV !== "test") {
+    stockIntelligenceScheduler.start();
     try {
       refreshStockShadowPortfolio({ force: true });
     } catch (error) {

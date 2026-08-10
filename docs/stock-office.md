@@ -91,6 +91,14 @@ The paper engine:
 
 Paper results are not live results and do not guarantee future performance. Resetting the paper portfolio is an authenticated local simulation action; it does not reset, fund, or change Robinhood.
 
+### Always-on market intelligence scheduler
+
+`services/stock-intelligence-scheduler.js` keeps the evaluator and copy plan current while Argentum is open, even when the Stock Office page is not visible. Its restart-safe state is stored with mode `0600` in the local Argentum application-support directory. The default cadence is every 15 minutes during weekdays from 8am through 6pm Eastern and every four hours during quiet windows. Official Form 4 attempts are limited to hourly and delayed Form 13F research attempts to daily.
+
+SEC jobs remain blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real app or organization name plus monitored contact email. The scheduler never invents that identity. It runs the existing bounded evaluator/mirror refresh manager, records status and history, and then asks the separate paper-shadow engine to consume any refreshed local evidence. It has no Robinhood import, broker tool, order draft, approval, or money-movement authority.
+
+Optional cadence environment variables are `STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES`, `STOCK_GURU_AUTO_REFRESH_QUIET_MINUTES`, `STOCK_GURU_AUTO_FORM4_MINUTES`, `STOCK_GURU_AUTO_13F_MINUTES`, and `STOCK_GURU_AUTO_REFRESH_STARTUP_DELAY_MS`. Set `STOCK_GURU_AUTO_REFRESH_DISABLED=1` to keep only manual refreshes.
+
 ## Workspace
 
 By default, Argentum reads `./stocks` relative to the project root. Override that with:
@@ -187,6 +195,7 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - a continuous supervised portfolio plan that ranks copy entries, owned-position copy exits, stop exits, profit-lock exits, strategy exits, and native evaluator entries; every proposal is independently revalidated before it becomes a draft
 - live allocated/deployed/pending/available capital, daily P&L lock, trades-per-day usage, and derived per-symbol allocation
 - a persistent paper-shadow portfolio with simulated cash/equity/P&L/drawdown, open positions, decision history, closed-trade learning profiles, and an explicit paper reset
+- a persistent market-intelligence monitor with active/quiet/SEC cadences, last and next cycle timestamps, source blockers, and bounded run history
 
 ### Applying allocated capital limits
 
@@ -212,6 +221,8 @@ The broker-control poll refreshes the official read-only account at most once pe
 - stages proposals only as exact drafts. It never batch-approves or grants recurring authority.
 
 The separate paper-shadow scheduler continues local simulation once per minute whenever the Argentum server is open, even when the Stock Office page is not visible. It consumes only the local snapshot already available to Argentum. The scheduler has no reference to the Robinhood client or review/place tools; moving from a paper result to a live order always starts a separate exact-draft and Human Gate flow.
+
+The market-intelligence scheduler independently refreshes the local evaluator and Mirror Lab plan throughout the day. A completed refresh can immediately feed the paper-shadow engine, but it cannot create a live draft or advance an approval. The UI reports whether the loop is active, its current stage, last result, next scheduled run, bounded source cadence, and SEC identity blocker.
 
 ### Approved-order handoff
 
@@ -258,6 +269,7 @@ Manual checks:
 - Confirm research-only candidates cannot be sent to Human Gate.
 - Confirm a paper-ready candidate creates one deduplicated review record and still places no order.
 - Confirm the paper-shadow section records at most one simulated fill for an unchanged source fingerprint, survives an app restart, and still reports `brokerCalled: false`.
+- Confirm the intelligence section persists across restart, schedules one timer, reports its next cycle, defers SEC work according to cadence, and still reports `liveOrdersPlaced: 0` and `brokerCalled: false`.
 - Reset the paper portfolio and confirm only simulated cash/history changes; Robinhood connection and positions remain untouched.
 - Press `Refresh Stock Office` and confirm it reports evaluator, Mirror Lab, and knowledge-ledger results.
 

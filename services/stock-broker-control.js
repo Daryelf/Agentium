@@ -48,6 +48,29 @@ function ageMinutes(value, at = new Date()) {
   return Math.max(0, (at.getTime() - new Date(timestamp).getTime()) / 60_000);
 }
 
+function verifyRobinhoodToolContract(connector = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const availableTools = [...new Set((Array.isArray(connector.tools) ? connector.tools : [])
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean))].sort();
+  const missingTools = REQUIRED_EQUITY_TOOLS.filter((tool) => !availableTools.includes(tool));
+  const observedAgeMinutes = ageMinutes(connector.observedAt, at);
+  const observedFresh = observedAgeMinutes !== null && observedAgeMinutes <= BROKER_SNAPSHOT_FRESH_MINUTES;
+  const registered = connector.registered === true;
+  const oauthAuthenticated = connector.oauthAuthenticated === true;
+  const endpointMatches = String(connector.endpoint || "").replace(/\/$/, "") === ROBINHOOD_MCP_URL;
+  return {
+    registered,
+    oauthAuthenticated,
+    endpointMatches,
+    observedAt: safeDate(connector.observedAt),
+    observedAgeMinutes: observedAgeMinutes === null ? null : Math.round(observedAgeMinutes * 10) / 10,
+    availableTools,
+    missingTools,
+    verified: registered && oauthAuthenticated && endpointMatches && observedFresh && missingTools.length === 0,
+  };
+}
+
 function stableFingerprint(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -134,11 +157,24 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   const guardrails = normalizeGuardrails(snapshot.guardrails || {});
   const snapshotAgeMinutes = ageMinutes(broker.updatedAt, at);
   const snapshotFresh = Boolean(broker.configured) && snapshotAgeMinutes !== null && snapshotAgeMinutes <= BROKER_SNAPSHOT_FRESH_MINUTES;
+  const toolContract = verifyRobinhoodToolContract(broker.connector || {}, { now: at });
+  const authenticationVerified = snapshotFresh && toolContract.verified;
   const buyingPower = moneyNumber(broker.buyingPower);
   const killSwitchActive = snapshot.killSwitch?.active !== false;
-  const connectorStatus = snapshotFresh ? "live_snapshot_verified" : broker.configured ? "stale_snapshot" : "oauth_required";
+  const connectorStatus = !toolContract.registered || !toolContract.oauthAuthenticated
+    ? "oauth_required"
+    : !toolContract.verified
+      ? "tool_contract_pending"
+      : snapshotFresh
+        ? "live_snapshot_verified"
+        : "stale_snapshot";
   const blockers = [];
-  if (!snapshotFresh) blockers.push(broker.configured ? "Broker snapshot is stale; reconnect Robinhood and refresh live account data." : "Robinhood OAuth and Agentic-account setup are not verified.");
+  if (!toolContract.registered) blockers.push("The official Robinhood Trading MCP registration has not been observed.");
+  if (toolContract.registered && !toolContract.oauthAuthenticated) blockers.push("Robinhood OAuth and Agentic-account setup are not verified.");
+  if (!toolContract.endpointMatches) blockers.push("The observed connector endpoint does not match the official Robinhood Trading MCP endpoint.");
+  if (toolContract.missingTools.length) blockers.push(`Required Robinhood equity tools are missing: ${toolContract.missingTools.join(", ")}.`);
+  if (toolContract.observedAgeMinutes === null || toolContract.observedAgeMinutes > BROKER_SNAPSHOT_FRESH_MINUTES) blockers.push("Robinhood connector/tool discovery is missing or stale; re-verify the tool contract.");
+  if (!snapshotFresh) blockers.push(broker.configured ? "Broker snapshot is stale; reconnect Robinhood and refresh live account data." : "A live Robinhood account snapshot has not been verified.");
   if (!broker.account) blockers.push("A dedicated Robinhood Agentic account has not been verified.");
   if (buyingPower <= 0) blockers.push("Verified buying power is unavailable or zero.");
   if (killSwitchActive) blockers.push("The live-order kill switch is active or has not been explicitly cleared.");
@@ -148,8 +184,9 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     transport: "official_streamable_http_mcp",
     endpoint: ROBINHOOD_MCP_URL,
     connectorStatus,
-    registrationStatus: options.registrationStatus || "registered_in_codex",
-    authenticationVerified: snapshotFresh,
+    registrationStatus: toolContract.registered ? "registered_in_codex" : "setup_required",
+    authenticationVerified,
+    toolContract,
     accountScope: "dedicated_agentic_account_only",
     accountLabel: broker.account || "Not verified",
     snapshotUpdatedAt: broker.updatedAt || null,
@@ -161,7 +198,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     guardrails,
     liveReady: blockers.length === 0,
     buyReady: blockers.length === 0,
-    exitReady: snapshotFresh && Boolean(broker.account) && controlHasOwnedPositions(broker),
+    exitReady: authenticationVerified && Boolean(broker.account) && controlHasOwnedPositions(broker),
     blockers: [...new Set(blockers)].slice(0, 10),
     requiredTools: REQUIRED_EQUITY_TOOLS,
     assets: {
@@ -460,4 +497,5 @@ module.exports = {
   approvalMatchesDraft,
   settleApprovedDispatch,
   tradeDraftWithApprovalState,
+  verifyRobinhoodToolContract,
 };

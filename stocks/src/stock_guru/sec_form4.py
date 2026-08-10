@@ -205,7 +205,7 @@ def _transaction_timestamp(value: str) -> str:
     return datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _acceptance_timestamp(value: Any, fallback: Any) -> str:
+def sec_acceptance_timestamp(value: Any, fallback: Any) -> str:
     raw = str(value or "").strip()
     try:
         if re.fullmatch(r"\d{14}", raw):
@@ -369,7 +369,7 @@ def refresh_sec_form4_signals(
             filings_scanned += 1
             try:
                 source_url = _archive_url(entry.cik, row.get("accessionNumber"), row.get("primaryDocument"))
-                disclosed_at = _acceptance_timestamp(row.get("acceptanceDateTime"), row.get("filingDate"))
+                disclosed_at = sec_acceptance_timestamp(row.get("acceptanceDateTime"), row.get("filingDate"))
                 imported.extend(
                     parse_form4_xml(
                         edgar.get_text(source_url),

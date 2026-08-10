@@ -2,7 +2,7 @@
 
 Live/delayed market scanner, ranking engine, paper-trading journal, and watch loop.
 
-This is decision-support software, not financial advice. It does not guarantee profit and it does not place real trades. Use it to form a watchlist, stress-test ideas, size risk, and keep yourself honest.
+This is decision-support software, not financial advice. It does not guarantee profit. The Stock Guru package does not place real trades; Argentum owns the separate exact-approval Robinhood dispatch boundary. Use Stock Guru to form a watchlist, stress-test ideas, size risk, and keep yourself honest.
 
 ## Copy Trader Mirror Lab
 
@@ -16,6 +16,10 @@ PYTHONPATH=src .venv/bin/python -m stock_guru copy-plan
 # STOCK_GURU_SEC_USER_AGENT="Argentum Stock Office contact@example.com"
 PYTHONPATH=src .venv/bin/python -m stock_guru copy-refresh-sec
 
+# Compare named managers' latest two official Form 13F periods. This is always
+# delayed research, never an executable copy order.
+PYTHONPATH=src .venv/bin/python -m stock_guru copy-refresh-13f
+
 # Keep official Form 4 intake and the mirror plan refreshed every 15 minutes
 PYTHONPATH=src .venv/bin/python -m stock_guru copy-watch-sec --interval-minutes 15
 
@@ -26,14 +30,14 @@ PYTHONPATH=src .venv/bin/python -m stock_guru copy-plan --apply-paper
 PYTHONPATH=src .venv/bin/python -m stock_guru copy-knowledge
 ```
 
-Start from `config/copy_signals.example.json` for manual signals. For automatic official intake, deliberately copy selected reporting-person or reporting-entity CIKs from the disabled, SEC-verified starter catalog in `config/copy_trader_watchlist.example.json` into `config/copy_trader_watchlist.json`. Source, bankroll, and evidence rules live in `config/copy_trader.json`.
+Start from `config/copy_signals.example.json` for manual signals. For automatic Form 4 intake, deliberately add selected reporting-person or reporting-entity CIKs to `config/copy_trader_watchlist.json`. Its 13F section ships with enabled SEC-verified manager CIKs for Berkshire Hathaway, Bridgewater Associates, Pershing Square, and Scion Asset Management. Source, bankroll, and evidence rules live in `config/copy_trader.json`.
 
-The SEC importer reads only `data.sec.gov` submissions and official `www.sec.gov/Archives` filing documents. It requires `STOCK_GURU_SEC_USER_AGENT` to contain an app/organization name and monitored contact email, rate-limits requests below the SEC ceiling, bounds response sizes, preserves manual signals, and de-duplicates automatic signals by accession and transaction. It preserves the first post-disclosure price/time instead of overwriting history, appends later price observations, and rebuilds the evidence ledger. The watcher never applies a paper trade or calls a broker.
+The SEC importers read only `data.sec.gov` submissions and official `www.sec.gov/Archives` filing documents. They require `STOCK_GURU_SEC_USER_AGENT` to contain an app/organization name and monitored contact email, rate-limit requests below the SEC ceiling, bound response sizes, preserve manual signals, and de-duplicate automatic signals. Form 4 intake preserves the first post-disclosure price/time instead of overwriting history, appends later price observations, and rebuilds the evidence ledger. Form 13F intake compares two reporting periods, preserves as-filed CUSIP references, and never invents a trade date, trade price, or ticker mapping. Neither path applies a paper trade or calls a broker.
 
 Default behavior:
 
 - SEC Form 4 open-market purchases/sales can become paper candidates when transaction code, disclosure lag, confidence, current price, and price drift all pass.
-- SEC Form 13F holdings and congressional periodic transaction reports stay research-only because their disclosure delay prevents faithful trade copying.
+- SEC Form 13F holding changes and congressional periodic transaction reports stay research-only because their disclosure delay prevents faithful trade copying. The 13F importer records period-end share changes, not claimed trades.
 - Prediction-market/event-contract signals stay research-only because the current broker adapter has no authorized event-contract execution interface.
 - Per-signal, per-source, and daily paper notional are capped; duplicates are ignored.
 - One-, five-, and twenty-day outcomes use only prices observed after disclosure. Tiny samples shrink toward neutral, source/trader scores include delay and adverse-excursion penalties, and delayed source types have a hard score cap.
@@ -210,7 +214,7 @@ The launchd watchdog also sends a compact Telegram heartbeat about every 2 minut
 
 ## Live Broker Mission
 
-Live Robinhood work uses the Agentic account only. The local app can write a broker-aware mission report, but it does not place real broker orders by itself.
+Live Robinhood work uses the Agentic account only. The Stock Guru mission command writes broker-aware evidence but never places an order. Any later live equity action belongs to Argentum's separate official Robinhood path and requires a fresh tool/account contract, an exact Human Gate approval, Robinhood review, and a one-use dispatch claim.
 
 Current default live guardrails are configured in [config/settings.json](/Users/ceo/Documents/stocks/config/settings.json):
 

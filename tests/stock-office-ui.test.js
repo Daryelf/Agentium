@@ -33,6 +33,8 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /\/api\/stock-office\/orders\/draft/);
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
   assert.match(script, /Send exact order to Human Gate/);
+  assert.match(script, /Tool contract/);
+  assert.match(script, /toolContract\.registered/);
   assert.match(html, /No password scraping, private API/);
   assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
 });
@@ -47,4 +49,7 @@ test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores",
   assert.match(script, /knowledgeSummary\.measuredOutcomes/);
   assert.match(script, /candidate\.evidenceScore/);
   assert.match(script, /No matured outcomes/);
+  assert.match(html, /Stage guarded order/);
+  assert.match(script, /candidateId/);
+  assert.match(script, /data-mirror-draft/);
 });

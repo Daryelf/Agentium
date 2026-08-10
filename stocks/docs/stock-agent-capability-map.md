@@ -16,6 +16,7 @@ Safety boundary: no real-money trades were placed, no provider secrets were read
 | Paper trading | `src/stock_guru/paper.py`, `bot.py`, `tests/test_bot.py` | Implemented simulated bot/ledger paths. | Medium |
 | Research/news | `src/stock_guru/research.py`, `tests/test_research.py` | Implemented source adapters and tests for profile/news formatting. | Medium |
 | Backtesting | `src/stock_guru/backtest.py`, `intraday_replay.py`, `copy_knowledge.py` | Historical replay plus post-disclosure outcome scoring with explicit evaluation clocks. | High; historical evidence still does not prove future profit |
+| Public disclosure intake | `src/stock_guru/sec_form4.py`, `src/stock_guru/sec_13f.py` | Official SEC Form 4 transactions plus delayed Form 13F period comparisons; 13F is permanently research-only. | High; disclosure timing and identifier mapping must not be presented as real-time copying |
 | Broker abstraction | `src/stock_guru/broker_client.py`, `src/stock_guru/intraday_loop.py` | Implemented protocol, dry-run client, Codex MCP broker adapter, review-before-place path, placement result handling. | Critical |
 | Live autonomy gate | `src/stock_guru/live_autonomy.py`, `tests/test_live_autonomy.py` | Implemented live-auto reasons, market-state gate, and kill switch. | Critical |
 | Secrets | `../services/stock-office.js`, `src/stock_guru/config.py`, `.gitignore` | Stock Office detects provider key file without reading values; nested repo ignores `data/` and `reports/`. | Critical |
@@ -38,7 +39,7 @@ Safety boundary: no real-money trades were placed, no provider secrets were read
 | Portfolio/risk explanation | `account_health.py`, `capital_policy.py`, `readiness.py` | Local account snapshots | Multiple tests | Partially implemented | No redacted authenticated portfolio benchmark endpoint. |
 | Backtesting | `backtest.py`, `intraday_replay.py`, `copy_knowledge.py` | Historical data and append-only outcome observations | No-look-ahead, maturity, provenance, and replay tests | Partially implemented | Backtests and public-signal outcomes do not prove future performance. |
 | Real brokerage review | `broker_client.py`, `intraday_loop.py` | Codex MCP broker tools | Static checks and tests | Unsafe for release | Requires controlled live-broker contract tests, tenant isolation proof, and explicit approval gates. |
-| Real brokerage placement | `broker_client.py`, `intraday_loop.py`, Argentum one-use dispatch | Broker client, ref_id, account match, market data, exact approval | Local deterministic suites pass; live OAuth/contract test remains pending | Unsafe for unattended release | Human Gate and live broker review remain mandatory. |
+| Real brokerage placement | `broker_client.py`, `intraday_loop.py`, Argentum one-use dispatch | Broker client, ref_id, account match, market data, exact approval, observed official-tool contract | Local deterministic suites pass; live OAuth/contract test remains pending | Unsafe for unattended release | Human Gate and live broker review remain mandatory. |
 | Telegram alerts | `notifier.py`, README | Telegram env vars | `tests/test_notifier.py` | Partially implemented | Depends on secrets outside repo and live operator setup. |
 | Argentum Stock Office assistant and order desk | `../services/stock-office.js`, `../services/stock-broker-control.js` | Sanitized local reports plus guarded Robinhood snapshot/result envelopes | `../tests/stock-office.test.js`, `../tests/stock-broker-control.test.js` | Partially implemented | Research answers are local snapshots; live dispatch remains blocked until OAuth and controlled connector contract tests pass. |
 
@@ -52,6 +53,7 @@ Stock Guru has these practical tool surfaces:
 - Paper ledger/state in `paper.py` and `bot.py`.
 - Broker client protocol and Codex MCP adapter in `broker_client.py`.
 - Argentum sanitized file bridge and guarded broker control plane in `../services/stock-office.js` and `../services/stock-broker-control.js`.
+- Official SEC Form 4 and research-only Form 13F ingestion in `sec_form4.py` and `sec_13f.py`.
 
 No direct model tool schema or prompt router for a Stock LLM agent was found. The new audit harness therefore marks behavioral prompts as `BLOCKED`.
 
@@ -67,6 +69,6 @@ No direct model tool schema or prompt router for a Stock LLM agent was found. Th
 
 ## Main Evidence
 
-- Stock Guru test result on 2026-08-10: 247 passed. Historical intraday fixtures now pass an explicit evaluation clock, so production stale/future-data rejection remains strict without making tests depend on wall-clock date.
+- Stock Guru test result on 2026-08-10: 254 passed. Historical intraday fixtures pass an explicit evaluation clock, and the official 13F parser/importer has bounded, configured-watchlist, idempotency, provenance, and zero-order tests, so production stale/future-data rejection remains strict without making tests depend on wall-clock date.
 - Copy Trader knowledge tests prove no-look-ahead horizon selection, null outcomes when observations are missing, provenance counts, small-sample shrinkage, delayed-source caps, and evidence-ranked plan ordering.
 - Eval harness run with dataset plus holdout: 200 behavior cases reported `BLOCKED`, static repository score 95.83%, one critical warning around live-auto release-gate review.

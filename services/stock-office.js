@@ -52,11 +52,19 @@ const SOURCE_DEFINITIONS = [
   },
   {
     id: "copy_import_status",
-    label: "Official SEC import status",
+    label: "Official SEC Form 4 import status",
     relPath: "data/copy_import_status.json",
     type: "json",
     category: "copy_signals",
     staleAfterHours: 24,
+  },
+  {
+    id: "sec_13f_import_status",
+    label: "Official SEC Form 13F research status",
+    relPath: "data/sec_13f_import_status.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: 24 * 120,
   },
   {
     id: "copy_trader_plan",
@@ -444,6 +452,13 @@ function normalizeBrokerStatus(data, source) {
       buyingPower: null,
       positions: [],
       openOrders: [],
+      connector: {
+        registered: false,
+        oauthAuthenticated: false,
+        endpoint: "",
+        tools: [],
+        observedAt: null,
+      },
       updatedAt: source?.lastModified || null,
     };
   }
@@ -456,6 +471,16 @@ function normalizeBrokerStatus(data, source) {
     deployedPrincipal: formatUsd(data.deployed_principal),
     lockedProfit: formatUsd(data.locked_profit),
     updatedAt: safeDate(data.updated_at) || source?.generatedAt || source?.lastModified || null,
+    connector: {
+      registered: data.connector?.registered === true,
+      oauthAuthenticated: data.connector?.oauth_authenticated === true,
+      endpoint: safePublicUrl(data.connector?.endpoint),
+      tools: (Array.isArray(data.connector?.tools) ? data.connector.tools : [])
+        .map((item) => String(item || "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 80),
+      observedAt: safeDate(data.connector?.observed_at),
+    },
     positions: (Array.isArray(data.positions) ? data.positions : []).slice(0, 20).map((position) => ({
       symbol: String(position.symbol || "").toUpperCase().slice(0, 12),
       quantity: Number.isFinite(Number(position.quantity)) ? Number(position.quantity) : null,
@@ -965,7 +990,12 @@ function loadStockOfficeSnapshot(options = {}) {
       positions: [],
       broker: normalizeBrokerStatus(null, null),
       readiness: normalizeReadiness(null, null, {}),
-      mirror: { ...normalizeMirrorPlan(null, null), importer: normalizeCopyImportStatus(null, null), knowledge: normalizeCopyKnowledge(null, null) },
+      mirror: {
+        ...normalizeMirrorPlan(null, null),
+        importer: normalizeCopyImportStatus(null, null),
+        importer13f: normalizeCopyImportStatus(null, null),
+        knowledge: normalizeCopyKnowledge(null, null),
+      },
       guardrails: normalizeGuardrails({}),
       killSwitch: normalizeKillSwitch(null, null),
       tradeDrafts: workspaceState.tradeDrafts,
@@ -1004,6 +1034,7 @@ function loadStockOfficeSnapshot(options = {}) {
   const mirror = {
     ...normalizeMirrorPlan(byId.copy_trader_plan?.data, byId.copy_trader_plan?.source),
     importer: normalizeCopyImportStatus(byId.copy_import_status?.data, byId.copy_import_status?.source),
+    importer13f: normalizeCopyImportStatus(byId.sec_13f_import_status?.data, byId.sec_13f_import_status?.source),
     knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
   };
   const guardrails = normalizeGuardrails(byId.settings?.data || {});
@@ -1192,12 +1223,15 @@ function answerStockQuestion(snapshot, rawQuestion) {
   if (/(copy|mirror|famous|infamous|trader|disclosure|13f|form 4|congress|event contract|prediction)/.test(lower)) {
     cite("source", "copy_trader_plan", "Copy Trader mirror plan");
     cite("source", "copy_knowledge", "Copy Trader knowledge ledger");
+    cite("source", "copy_import_status", "Official SEC Form 4 import status");
+    cite("source", "sec_13f_import_status", "Official SEC Form 13F research status");
     const mirror = snapshot.mirror;
     const knowledge = mirror.knowledge;
+    const thirteenF = mirror.importer13f;
     const ready = mirror.candidates.filter((candidate) => candidate.status === "paper_ready").slice(0, 5);
     answer = mirror.available
-      ? `Mirror Lab evaluated ${mirror.summary.signalsReceived} attributable public signal(s): ${mirror.summary.paperReady} paper-ready, ${mirror.summary.researchOnly} research-only, and ${mirror.summary.rejected} rejected. ${ready.length ? `Paper-ready examples: ${ready.map((candidate) => `${candidate.side} ${candidate.symbol} from ${candidate.traderName}, evidence ${candidate.evidenceScore.toFixed(3)}, capped at ${formatUsd(candidate.mirrorNotionalDollars)}`).join("; ")}.` : "No signal currently passes every delay, provenance, price-drift, and bankroll check."} ${knowledge?.available ? `The knowledge ledger has ${knowledge.summary.measuredOutcomes} measured post-disclosure outcome(s), ${knowledge.summary.pendingOutcomes} pending, and ${knowledge.summary.observationsSeen} real price/fill observation(s); small samples are shrunk toward neutral and look-ahead is disabled. ` : "No outcome ledger is loaded, so evidence scores remain neutral. "}${mirror.importer?.available ? `The official SEC importer has ${mirror.importer.enabledEntries} enabled watchlist entr${mirror.importer.enabledEntries === 1 ? "y" : "ies"} and imported ${mirror.importer.signalsImported} signal(s) on its latest run. ` : "The official SEC importer has not run yet. "}The plan itself placed 0 live orders; event contracts and delayed 13F/congressional disclosures stay research-only regardless of score.`
-      : "Mirror Lab is configured but has no generated plan. Add named CIKs to the SEC watchlist and run copy-refresh-sec or copy-watch-sec. Anonymous posts, stale 13F/congressional disclosures, and event contracts cannot become automatic Robinhood orders.";
+      ? `Mirror Lab evaluated ${mirror.summary.signalsReceived} attributable public signal(s): ${mirror.summary.paperReady} paper-ready, ${mirror.summary.researchOnly} research-only, and ${mirror.summary.rejected} rejected. ${ready.length ? `Paper-ready examples: ${ready.map((candidate) => `${candidate.side} ${candidate.symbol} from ${candidate.traderName}, evidence ${candidate.evidenceScore.toFixed(3)}, capped at ${formatUsd(candidate.mirrorNotionalDollars)}`).join("; ")}.` : "No signal currently passes every delay, provenance, price-drift, and bankroll check."} ${knowledge?.available ? `The knowledge ledger has ${knowledge.summary.measuredOutcomes} measured post-disclosure outcome(s), ${knowledge.summary.pendingOutcomes} pending, and ${knowledge.summary.observationsSeen} real price/fill observation(s); small samples are shrunk toward neutral and look-ahead is disabled. ` : "No outcome ledger is loaded, so evidence scores remain neutral. "}${mirror.importer?.available ? `The official Form 4 importer has ${mirror.importer.enabledEntries} enabled watchlist entr${mirror.importer.enabledEntries === 1 ? "y" : "ies"} and imported ${mirror.importer.signalsImported} signal(s) on its latest run. ` : "The official Form 4 importer has not run yet. "}${thirteenF?.available ? `The official Form 13F research intake tracks ${thirteenF.enabledEntries} manager(s) and produced ${thirteenF.signalsImported} delayed holding-change reference(s). ` : "The official Form 13F research intake has not run yet. "}The plan itself placed 0 live orders; event contracts and delayed 13F/congressional disclosures stay research-only regardless of score.`
+      : "Mirror Lab is configured but has no generated plan. Add named CIKs to the SEC watchlist and run the Stock Office refresh, copy-refresh-sec, or copy-refresh-13f. Anonymous posts, delayed 13F/congressional disclosures, and event contracts cannot become automatic Robinhood orders.";
   } else if (/(top|best|setup|ticker|watch|valid)/.test(lower)) {
     const top = snapshot.records.slice(0, 5);
     top.forEach((record) => cite("record", record.ticker, `${record.ticker} evaluator record`));

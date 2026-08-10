@@ -75,6 +75,19 @@ function makeWorkspace() {
     live_orders_placed: 0,
     warnings: [],
   });
+  writeJson(path.join(stockRoot, "data/sec_13f_import_status.json"), {
+    version: 1,
+    generated_at: "2026-06-19T11:41:00Z",
+    source: "official SEC EDGAR Form 13F submissions and XML information tables",
+    watchlist_entries: 4,
+    enabled_entries: 4,
+    filings_scanned: 8,
+    signals_imported: 12,
+    signals_retained: 13,
+    research_only: true,
+    live_orders_placed: 0,
+    warnings: ["13F is delayed research only."],
+  });
   writeJson(path.join(stockRoot, "data/broker_status.json"), {
     account_number: "123456789012",
     account_value: 24.99,
@@ -82,6 +95,18 @@ function makeWorkspace() {
     buying_power: 0,
     positions: [{ symbol: "BAC", quantity: 1, average_buy_price: 39.5, current_price: 40.12 }],
     open_orders: [],
+    updated_at: "2026-06-19T11:44:30Z",
+    connector: {
+      registered: true,
+      oauth_authenticated: true,
+      endpoint: "https://agent.robinhood.com/mcp/trading",
+      observed_at: "2026-06-19T11:44:30Z",
+      tools: [
+        "get_accounts", "get_portfolio", "get_equity_positions", "get_equity_orders",
+        "get_equity_quotes", "get_equity_tradability", "review_equity_order",
+        "place_equity_order", "cancel_equity_order",
+      ],
+    },
   });
   writeJson(path.join(stockRoot, "data/live_auto_arm_plan.json"), {
     action: "NOT_ARMABLE",
@@ -234,6 +259,9 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.summary.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.importer.enabledEntries, 1);
   assert.equal(snapshot.mirror.importer.liveOrdersPlaced, 0);
+  assert.equal(snapshot.mirror.importer13f.enabledEntries, 4);
+  assert.equal(snapshot.mirror.importer13f.signalsImported, 12);
+  assert.equal(snapshot.mirror.importer13f.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.knowledge.summary.measuredOutcomes, 3);
   assert.equal(snapshot.mirror.knowledge.methodology.lookAheadAllowed, false);
   assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");

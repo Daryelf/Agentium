@@ -32,5 +32,35 @@
       "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001214156"
     }
   ],
-  "operator_note": "Starter identities were checked against official SEC filing pages. They remain disabled until you deliberately copy selected entries into copy_trader_watchlist.json. Most Form 4 rows are grants, exercises, tax withholding, or planned sales; only fresh code P/S rows can reach Mirror Lab, and all live orders still require Human Gate."
+  "sec_13f": [
+    {
+      "cik": "0001067983",
+      "label": "Berkshire Hathaway Inc. - associated with Warren Buffett",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001067983",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001350694",
+      "label": "Bridgewater Associates, LP",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001350694",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001336528",
+      "label": "Pershing Square Capital Management, L.P.",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001336528",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001649339",
+      "label": "Scion Asset Management, LLC",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001649339",
+      "cusip_ticker_map": {}
+    }
+  ],
+  "operator_note": "Starter identities were checked against official SEC filing pages. Form 4 entries remain opt-in because most rows are grants, exercises, tax withholding, or planned sales; only fresh code P/S rows can reach Mirror Lab. Form 13F entries compare period-end holdings and always remain delayed research context, never executable copy orders. Every live order still requires a separate exact Human Gate approval."
 }

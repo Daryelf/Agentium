@@ -97,6 +97,7 @@ function brokerStatusLabel(value) {
     live_snapshot_verified: "Live account verified",
     stale_snapshot: "Reconnect required",
     oauth_required: "OAuth required",
+    tool_contract_pending: "Tool check required",
   };
   return labels[value] || "Setup required";
 }
@@ -156,6 +157,7 @@ function renderTradeDraft(draft) {
 function renderBrokerControl() {
   const control = state.brokerControl || {};
   const guardrails = control.guardrails || {};
+  const toolContract = control.toolContract || {};
   const pill = $("#brokerStatusPill");
   pill.textContent = brokerStatusLabel(control.connectorStatus);
   pill.className = `status-pill ${control.authenticationVerified ? "ready" : control.connectorStatus === "stale_snapshot" ? "warning" : "muted"}`;
@@ -163,7 +165,8 @@ function renderBrokerControl() {
   $("#orderKillSwitch").textContent = control.killSwitchActive ? "Kill switch ON" : "Kill switch cleared";
   $("#orderKillSwitch").className = control.killSwitchActive ? "danger-copy" : "ready-copy";
   $("#brokerMetrics").innerHTML = [
-    ["Connector", control.registrationStatus === "registered_in_codex" ? "Registered" : "Setup required", "official Robinhood MCP"],
+    ["Connector", toolContract.registered ? "Registered" : "Setup required", "official Robinhood MCP"],
+    ["Tool contract", toolContract.verified ? "Verified" : `${toolContract.missingTools?.length || 0} missing`, toolContract.endpointMatches ? "official endpoint" : "endpoint unverified"],
     ["Authentication", control.authenticationVerified ? "Verified" : "Not verified", control.snapshotAgeMinutes === null ? "no live snapshot" : `${control.snapshotAgeMinutes}m snapshot age`],
     ["Buying power", formatMoney(control.buyingPowerDollars), "live broker value required"],
     ["Positions", control.positions?.length || 0, `${control.openOrderCount || 0} open order(s)`],
@@ -172,7 +175,8 @@ function renderBrokerControl() {
   ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
 
   $("#brokerOnboarding").innerHTML = [
-    [true, "Official Trading MCP registered"],
+    [toolContract.registered, "Official Trading MCP registered"],
+    [toolContract.endpointMatches && !toolContract.missingTools?.length, "Official endpoint and required equity tools verified"],
     [control.authenticationVerified, "Robinhood OAuth and Agentic account verified"],
     [control.buyingPowerDollars > 0, "Dedicated account funded with settled buying power"],
     [control.buyReady, "Fresh portfolio, quotes, risk evidence, and kill switch ready"],
@@ -205,6 +209,7 @@ function renderMirror() {
   const sources = mirror.sources || [];
   const warnings = mirror.warnings || [];
   const importer = mirror.importer || {};
+  const importer13f = mirror.importer13f || {};
   const knowledge = mirror.knowledge || {};
   const knowledgeSummary = knowledge.summary || {};
   const pill = $("#mirrorStatusPill");
@@ -215,7 +220,8 @@ function renderMirror() {
     ["Paper-ready", summary.paperReady ?? 0, "passed all checks"],
     ["Research-only", summary.researchOnly ?? 0, "too delayed or unsupported"],
     ["Planned paper", summary.plannedPaperNotional || "$0.00", "bounded notional"],
-    ["SEC intake", importer.available ? `${importer.enabledEntries || 0} enabled` : "Not run", importer.available ? `${importer.signalsImported || 0} latest signal(s)` : "opt-in named CIKs"],
+    ["Form 4 intake", importer.available ? `${importer.enabledEntries || 0} enabled` : "Not run", importer.available ? `${importer.signalsImported || 0} latest signal(s)` : "named reporting owners"],
+    ["13F research", importer13f.available ? `${importer13f.enabledEntries || 0} managers` : "Not run", importer13f.available ? `${importer13f.signalsImported || 0} holding change(s)` : "delayed, never executable"],
     ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} outcomes pending`],
     ["Live orders", summary.liveOrdersPlaced ?? 0, "must remain zero in this plan"],
   ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
@@ -244,8 +250,11 @@ function renderMirror() {
             <p>${escapeHtml(mainReason)}</p>
             <div class="mirror-candidate-actions">
               ${candidate.sourceUrl ? `<a href="${escapeHtml(candidate.sourceUrl)}" target="_blank" rel="noreferrer">Open provenance</a>` : `<span>Provenance unavailable</span>`}
+              <button type="button" data-mirror-draft="${escapeHtml(candidate.id)}" ${gateEnabled ? "" : "disabled"}>
+                ${candidate.humanGateEligible ? mirror.stale ? "Refresh before drafting" : "Stage guarded order" : "No order path"}
+              </button>
               <button type="button" data-mirror-gate="${escapeHtml(candidate.id)}" ${gateEnabled ? "" : "disabled"}>
-                ${gateSent ? "Sent to Human Gate" : candidate.humanGateEligible ? mirror.stale ? "Refresh before review" : "Send to Human Gate" : "Research only"}
+                ${gateSent ? "Plan review sent" : candidate.humanGateEligible ? mirror.stale ? "Refresh before review" : "Review plan only" : "Research only"}
               </button>
             </div>
           </article>
@@ -470,6 +479,42 @@ async function sendMirrorToHumanGate(candidateId) {
   }
 }
 
+async function stageMirrorOrder(candidateId) {
+  const candidate = (state.mirror?.candidates || []).find((item) => item.id === candidateId);
+  const button = $(`[data-mirror-draft="${CSS.escape(candidateId)}"]`);
+  const feedback = $("#mirrorGateFeedback");
+  if (!candidate || !button) return;
+  button.disabled = true;
+  button.textContent = "Running broker checks...";
+  feedback.textContent = `Building a guarded ${candidate.side} ${candidate.symbol} draft from the exact copy signal...`;
+  $("#orderSymbol").value = candidate.symbol;
+  $("#orderSide").value = candidate.side;
+  $("#orderDollars").value = Number(candidate.mirrorNotionalDollars || 0).toFixed(2);
+  try {
+    const payload = await api("/api/stock-office/orders/draft", {
+      method: "POST",
+      body: JSON.stringify({
+        candidateId,
+        symbol: candidate.symbol,
+        side: candidate.side,
+        requestedDollars: Number(candidate.mirrorNotionalDollars || 0),
+      }),
+    });
+    state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+    state.brokerControl = payload.brokerControl || state.brokerControl;
+    renderBrokerControl();
+    feedback.textContent = payload.draft.status === "ready_for_broker_review"
+      ? "Copy signal staged as an exact guarded order draft. Review its details before Human Gate."
+      : `Draft created but blocked safely: ${payload.draft.blockers?.[0] || "fresh Robinhood evidence is required"}`;
+    document.querySelector(".order-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Stage guarded order";
+  }
+}
+
 async function requestBrokerConnection() {
   const button = $("#brokerConnectGate");
   button.disabled = true;
@@ -650,6 +695,8 @@ document.addEventListener("click", (event) => {
   if (row) selectRecord(row.dataset.ticker);
   const mirrorGate = event.target.closest("[data-mirror-gate]");
   if (mirrorGate && !mirrorGate.disabled) sendMirrorToHumanGate(mirrorGate.dataset.mirrorGate);
+  const mirrorDraft = event.target.closest("[data-mirror-draft]");
+  if (mirrorDraft && !mirrorDraft.disabled) stageMirrorOrder(mirrorDraft.dataset.mirrorDraft);
 });
 
 $("#guardrailForm").addEventListener("submit", requestGuardrails);

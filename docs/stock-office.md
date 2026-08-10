@@ -36,6 +36,18 @@ STOCK_GURU_SEC_USER_AGENT="Argentum Stock Office contact@example.com" \
 
 The importer uses only official SEC submissions and filing-document hosts, stays below 10 requests per second, rejects oversized or suspicious XML, imports non-derivative transactions, refreshes current prices, and writes `data/copy_import_status.json`, `data/copy_signals.json`, and the mirror plan. Imported sells do not assume that the local paper account owns the reporting person's shares. Missing prices, non-open-market codes, stale filings, and excessive price drift fail to research-only. The automatic watcher never applies a paper trade and never calls a broker.
 
+### Automatic official Form 13F research intake
+
+The 13F importer is `stocks/src/stock_guru/sec_13f.py`. The checked-in watchlist contains enabled SEC-verified manager CIKs for Berkshire Hathaway, Bridgewater Associates, Pershing Square, and Scion Asset Management. It still refuses network access until `STOCK_GURU_SEC_USER_AGENT` contains the operator's real app/organization name and monitored contact email.
+
+```bash
+cd stocks
+STOCK_GURU_SEC_USER_AGENT="Argentum Stock Office contact@example.com" \
+  PYTHONPATH=src .venv/bin/python -m stock_guru copy-refresh-13f
+```
+
+The importer compares the two latest parseable 13F reporting periods from official SEC complete submissions, aggregates duplicate holding rows, and records increases, decreases, and removals in `data/copy_signals.json`. It writes `data/sec_13f_import_status.json`. These signals always remain research-only: Form 13F reports period-end holdings rather than exact trade dates or prices, can arrive weeks after quarter end, omits shorts, and has no authoritative ticker field. Unmapped securities retain a `CUSIP:<id>` reference until the operator supplies a reviewed `cusip_ticker_map`; they cannot become an order.
+
 The engine:
 
 - requires an allowlisted, attributable HTTPS source
@@ -88,6 +100,7 @@ The connector currently reads these local files when present:
 - `config/copy_trader.json`
 - `config/copy_trader_watchlist.json`
 - `data/copy_import_status.json`
+- `data/sec_13f_import_status.json`
 - `reports/copy_trader_plan.json`
 - `data/copy_knowledge.json`
 
@@ -118,7 +131,7 @@ All routes require the existing Argentum session.
 - `GET /api/stock-office/refresh-status`
 - `GET /api/stock-office/permissions`
 
-`POST /api/stock-office/sync` runs the bounded local refresh pipeline: evaluator, optional official SEC intake when deliberately configured, mirror plan, and evidence ledger. It does not call Robinhood or place an order.
+`POST /api/stock-office/sync` runs the bounded local refresh pipeline: evaluator, optional official SEC Form 4 and Form 13F intake when deliberately configured, mirror plan, and evidence ledger. It does not call Robinhood or place an order.
 
 ## Security Model
 
@@ -143,8 +156,11 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - local activity and sync runs
 - a read-only Stock Office assistant with citations
 - Copy Trader source/delay/drift decisions and bounded paper sizing
+- separate Form 4 and delayed Form 13F source status
 - no-look-ahead source/trader evidence profiles and sample sizes
+- one-click staging from a fresh paper-ready copy candidate into the guarded order-draft form; staging never creates an approval or places a trade
 - exact Human Gate controls for connection, capital limits, and fresh order drafts
+- explicit Robinhood registration, OAuth, official endpoint, required-equity-tool, and account-snapshot readiness
 
 The assistant answers from the local snapshot only. It should not present output as financial advice or a trade instruction.
 
@@ -174,5 +190,5 @@ Manual checks:
 
 - Move runtime state from local JSON to a database.
 - Add richer Stock Guru artifact export only after access roles are ready.
-- Add congressional and 13F importers only if their weeks-late data remains explicitly research-only.
+- Add congressional import only if its delayed data remains explicitly research-only.
 - Complete interactive Robinhood OAuth and live connector contract tests with the operator present before treating dispatch as available.

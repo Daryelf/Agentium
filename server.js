@@ -5654,7 +5654,7 @@ async function handleApi(req, res, url) {
         officeId: "stock-office",
         workflowId: "workflow-stock-watch",
         evidence: `${candidate.traderName} public signal from ${candidate.sourceName}. Reported transaction ${candidate.transactionAt}; disclosed ${candidate.disclosedAt}; disclosure lag ${candidate.disclosureLagHours.toFixed(1)}h; current-price drift ${candidate.priceDriftPct === null ? "unknown" : `${(candidate.priceDriftPct * 100).toFixed(2)}%`}; provenance ${candidate.sourceUrl}.`,
-        action: `Review a capped ${mirrorNotionalLabel} ${candidate.side} ${candidate.symbol} mirror plan. Approval records the review decision only; Stock Office cannot submit a Robinhood or other broker order.`,
+        action: `Review a capped ${mirrorNotionalLabel} ${candidate.side} ${candidate.symbol} mirror plan. This plan-review approval records the decision only and is not an order approval.`,
         exactScope: `Review only: ${candidate.side} ${candidate.symbol}, maximum ${mirrorNotionalLabel}, source fingerprint ${candidate.fingerprint}. No order placement, money movement, account change, event-contract trade, or recurring authorization is included.`,
         details: {
           officeId: "stock-office",
@@ -5671,7 +5671,7 @@ async function handleApi(req, res, url) {
         },
         reversible: true,
         expectedPostcondition: "Human Gate records an operator decision on this exact mirror plan. No broker order is submitted.",
-        rollbackPlan: "No external rollback is needed because Stock Office has no broker execution path; reject or expire the review record.",
+        rollbackPlan: "No external rollback is needed because this review route performs no broker action; reject or expire the review record.",
       });
       sendJson(res, 200, { ...approvalResult, candidate, liveOrderPlaced: false });
     } catch (error) {

@@ -9,6 +9,9 @@ const {
   normalizeTradeDrafts,
   settleApprovedDispatch,
   tradeDraftWithApprovalState,
+  REQUIRED_EQUITY_TOOLS,
+  ROBINHOOD_MCP_URL,
+  verifyRobinhoodToolContract,
 } = require("../services/stock-broker-control");
 
 function snapshot(overrides = {}) {
@@ -22,6 +25,13 @@ function snapshot(overrides = {}) {
       positions: [],
       openOrders: [],
       updatedAt: "2026-08-10T16:59:00.000Z",
+      connector: {
+        registered: true,
+        oauthAuthenticated: true,
+        endpoint: ROBINHOOD_MCP_URL,
+        observedAt: "2026-08-10T16:59:30.000Z",
+        tools: REQUIRED_EQUITY_TOOLS,
+      },
     },
     guardrails: {
       principalDollars: 100,
@@ -95,6 +105,7 @@ test("fresh official connector and strict checks produce an exact BUY review env
   const envelope = executionEnvelope(draft);
 
   assert.equal(control.authenticationVerified, true);
+  assert.equal(control.toolContract.verified, true);
   assert.equal(control.buyReady, true);
   assert.equal(draft.status, "ready_for_broker_review");
   assert.equal(draft.blockers.length, 0);
@@ -104,6 +115,59 @@ test("fresh official connector and strict checks produce an exact BUY review env
   assert.equal(envelope.args.ref_id, draft.clientRefId);
   assert.equal(envelope.args.dollar_amount, "10.00");
   assert.equal(envelope.accountScope, "dedicated_agentic_account_only");
+});
+
+test("connector tool contract fails closed when an execution tool is missing", () => {
+  const connector = {
+    ...snapshot().broker.connector,
+    tools: REQUIRED_EQUITY_TOOLS.filter((tool) => tool !== "place_equity_order"),
+  };
+  const contract = verifyRobinhoodToolContract(connector, { now: "2026-08-10T17:00:00.000Z" });
+  const current = snapshot({ broker: { ...snapshot().broker, connector } });
+  const control = brokerControlOverview(current, { now: "2026-08-10T17:00:00.000Z" });
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(contract.verified, false);
+  assert.deepEqual(contract.missingTools, ["place_equity_order"]);
+  assert.equal(control.connectorStatus, "tool_contract_pending");
+  assert.equal(control.authenticationVerified, false);
+  assert.match(control.blockers.join(" "), /place_equity_order/);
+  assert.equal(draft.status, "blocked");
+});
+
+test("paper-ready copy candidate becomes a source-bound guarded order draft", () => {
+  const candidate = {
+    id: "candidate-net",
+    fingerprint: "a".repeat(64),
+    traderName: "Named reporting person",
+    symbol: "NET",
+    side: "BUY",
+    status: "paper_ready",
+    humanGateEligible: true,
+    currentPrice: 100,
+    mirrorNotionalDollars: 5,
+  };
+  const current = snapshot({ mirror: { stale: false, candidates: [candidate] } });
+  const draft = buildTradeDraft({
+    candidateId: candidate.id,
+    symbol: "NET",
+    side: "BUY",
+    requestedDollars: 5,
+  }, current, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(draft.status, "ready_for_broker_review");
+  assert.equal(draft.sourceType, "copy_signal");
+  assert.equal(draft.sourceId, candidate.fingerprint);
+  assert.equal(draft.requestedDollars, 5);
+  assert.match(draft.thesis, /Named reporting person BUY disclosure/);
+
+  const overCap = buildTradeDraft({
+    candidateId: candidate.id,
+    symbol: "NET",
+    side: "BUY",
+    requestedDollars: 6,
+  }, current, { now: "2026-08-10T17:00:00.000Z" });
+  assert.match(overCap.blockers.join(" "), /source-specific copy cap/i);
 });
 
 test("stale broker data fails closed before a BUY reaches Human Gate", () => {

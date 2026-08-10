@@ -85,6 +85,11 @@ from .paper import read_ledger, record_trade
 from .research import fetch_equity_research, money as research_money, pct as research_pct, ratio as research_ratio, write_research_report
 from .reports import write_markdown_report
 from .scoring import Candidate, score_candidates
+from .sec_13f import (
+    SEC_13F_IMPORT_STATUS_PATH,
+    SEC_13F_WATCHLIST_PATH,
+    refresh_sec_13f_signals,
+)
 from .sec_form4 import (
     SEC_FORM4_IMPORT_STATUS_PATH,
     SEC_FORM4_WATCHLIST_PATH,
@@ -416,6 +421,37 @@ def copy_refresh_sec(
     console.print(f"Updated signals: {refresh.signals_path}")
     console.print(f"Updated import status: {refresh.status_path}")
     console.print(f"Updated mirror plan: {output_json}")
+    for warning in refresh.warnings:
+        console.print(f"Warning: {warning}")
+
+
+@app.command("copy-refresh-13f")
+def copy_refresh_13f(
+    watchlist: Path = typer.Option(SEC_13F_WATCHLIST_PATH, "--watchlist", help="Named SEC institutional-manager CIK watchlist."),
+    signals_json: Path = typer.Option(COPY_SIGNALS_PATH, "--signals-json", help="Local public-signal inbox to update."),
+    status_json: Path = typer.Option(SEC_13F_IMPORT_STATUS_PATH, "--status-json", help="Bounded 13F importer status report."),
+    user_agent: Optional[str] = typer.Option(None, "--user-agent", envvar=SEC_USER_AGENT_ENV, help=f"SEC-compliant app/contact identity; prefer the {SEC_USER_AGENT_ENV} environment variable."),
+    max_filings: int = typer.Option(3, "--max-filings", min=2, max=8, help="Maximum distinct recent 13F reporting periods fetched per enabled manager."),
+) -> None:
+    """Import official 13F holding changes as delayed research-only signals."""
+    try:
+        refresh = refresh_sec_13f_signals(
+            watchlist_path=watchlist,
+            signals_path=signals_json,
+            status_path=status_json,
+            user_agent=user_agent,
+            max_filings_per_entry=max_filings,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console.print(f"SEC 13F refresh failed closed: {exc}")
+        raise typer.Exit(1)
+    console.print(
+        f"SEC 13F managers {refresh.enabled_entries}/{refresh.watchlist_entries} enabled | "
+        f"filings {refresh.filings_scanned} | research signals {refresh.signals_imported} | "
+        "live orders placed 0"
+    )
+    console.print(f"Updated signals: {refresh.signals_path}")
+    console.print(f"Updated 13F status: {refresh.status_path}")
     for warning in refresh.warnings:
         console.print(f"Warning: {warning}")
 

@@ -22,10 +22,11 @@ function publicStatus(status) {
   return JSON.parse(JSON.stringify(status));
 }
 
-function enabledSecWatchlistEntries(stockRoot, fsImpl = fs) {
+function enabledSecWatchlistEntries(stockRoot, fsImpl = fs, section = "sec_form4") {
   try {
+    if (!["sec_form4", "sec_13f"].includes(section)) return 0;
     const raw = JSON.parse(fsImpl.readFileSync(path.join(stockRoot, "config", "copy_trader_watchlist.json"), "utf8"));
-    const entries = Array.isArray(raw) ? raw : Array.isArray(raw?.sec_form4) ? raw.sec_form4 : [];
+    const entries = Array.isArray(raw?.[section]) ? raw[section] : [];
     return entries.filter((entry) => entry && entry.enabled !== false && String(entry.cik || "").trim()).length;
   } catch (_error) {
     return 0;
@@ -79,7 +80,16 @@ function createStockGuruRefreshManager(options = {}) {
       detail: "",
     };
     status.commands.push(commandState);
-    update({ stage: commandLabel, message: commandLabel === "evaluate" ? "Refreshing market evaluator records..." : commandLabel === "copy_refresh_sec" ? "Refreshing official SEC Form 4 signals and price observations..." : "Rebuilding the guarded mirror plan and evidence ledger..." });
+    update({
+      stage: commandLabel,
+      message: commandLabel === "evaluate"
+        ? "Refreshing market evaluator records..."
+        : commandLabel === "copy_refresh_sec"
+          ? "Refreshing official SEC Form 4 signals and price observations..."
+          : commandLabel === "copy_refresh_13f"
+            ? "Comparing official SEC Form 13F manager holdings as delayed research..."
+            : "Rebuilding the guarded mirror plan and evidence ledger...",
+    });
 
     return new Promise((resolve) => {
       let stdout = "";
@@ -163,14 +173,26 @@ function createStockGuruRefreshManager(options = {}) {
         "--rotate-count", "40",
       ], "evaluate", workspace.stockRoot));
 
-      const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl);
-      if (secEntries > 0 && String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim()) {
+      const secIdentityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
+      const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_form4");
+      if (secEntries > 0 && secIdentityConfigured) {
         results.push(await runCommand(workspace.executable, ["copy-refresh-sec", "--max-filings", "10"], "copy_refresh_sec", workspace.stockRoot));
       } else {
         const reason = secEntries > 0
           ? "SEC refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
           : "SEC refresh skipped because no named CIK watchlist entries are enabled.";
         status.commands.push({ name: "copy_refresh_sec", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
+        status.warnings.push(reason);
+      }
+
+      const sec13fEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_13f");
+      if (sec13fEntries > 0 && secIdentityConfigured) {
+        results.push(await runCommand(workspace.executable, ["copy-refresh-13f", "--max-filings", "3"], "copy_refresh_13f", workspace.stockRoot));
+      } else {
+        const reason = sec13fEntries > 0
+          ? "SEC 13F research refresh skipped until STOCK_GURU_SEC_USER_AGENT is configured."
+          : "SEC 13F research refresh skipped because no named manager CIK entries are enabled.";
+        status.commands.push({ name: "copy_refresh_13f", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
         status.warnings.push(reason);
       }
 

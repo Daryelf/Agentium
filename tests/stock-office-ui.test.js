@@ -10,11 +10,13 @@ test("Stock Office UI exposes a real refresh outcome and useful filter feedback"
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
   assert.match(html, /Refresh Stock Office/);
+  assert.match(html, /Filter records/);
   assert.match(html, /refreshFeedback[^]*aria-live="polite"/);
   assert.match(html, /filterFeedback[^]*aria-live="polite"/);
   assert.match(script, /\/api\/stock-office\/refresh-status/);
   assert.match(script, /No records match these filters/);
   assert.match(script, /Loaded \$\{count\} evaluator record/);
+  assert.match(script, /button\.textContent = "Filter records"/);
   assert.doesNotMatch(script, /stock-guru copy-refresh-sec|continuous watcher/);
   assert.doesNotMatch(`${html}\n${script}`, /scanner\/evaluator outside Argentum|Sync local files/);
 });

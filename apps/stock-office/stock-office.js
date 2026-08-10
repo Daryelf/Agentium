@@ -606,13 +606,21 @@ async function applyFilters() {
   const button = $("#applyFilters");
   const feedback = $("#filterFeedback");
   button.disabled = true;
-  feedback.textContent = "Applying filters...";
-  await loadApp();
-  feedback.textContent = state.recordTotal
-    ? `Showing ${state.recordTotal} matching record${state.recordTotal === 1 ? "" : "s"}.`
-    : state.overview?.metrics?.trackedRecords
-      ? "No records match those filters."
-      : "No records are loaded yet. Use Refresh Stock Office first.";
+  button.textContent = "Filtering...";
+  feedback.textContent = "Filtering records...";
+  try {
+    await loadApp();
+    feedback.textContent = state.recordTotal
+      ? `Showing ${state.recordTotal} matching record${state.recordTotal === 1 ? "" : "s"}.`
+      : state.overview?.metrics?.trackedRecords
+        ? "No records match those filters."
+        : "No records are loaded yet. Use Refresh Stock Office first.";
+  } catch (error) {
+    feedback.textContent = `Could not filter records: ${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Filter records";
+  }
 }
 
 async function askStockGuru(event) {

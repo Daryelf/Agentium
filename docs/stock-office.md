@@ -76,6 +76,21 @@ The evidence score ranks candidates and can demote a sufficiently measured weak 
 
 The dedicated Stock Office page displays the source registry, outcome profiles, warnings, paper candidates, and exact signal evidence. Mirror review and broker order review remain distinct. An exact broker approval is fingerprint-bound, single-use, expires, and is consumed whether Robinhood review rejects the order or placement is attempted.
 
+### Always-on paper shadow portfolio
+
+Argentum also maintains its own restart-safe paper shadow portfolio in the local Argentum application-support directory. While the server is running, `services/stock-shadow-portfolio.js` evaluates the latest already-loaded Mirror Lab and evaluator evidence once per minute. It does not fetch external sources, create live drafts, request approvals, or receive a Robinhood client.
+
+The paper engine:
+
+- starts with explicit simulated cash and never permits negative cash, short positions, or pyramiding;
+- applies the active maximum deployment, order, reserve, position, trade-count, daily-loss, entry-score, stop-distance risk, stop, and profit-lock rules;
+- prioritizes eligible copied sales, stops, targets, and evaluator exits before entries;
+- de-duplicates each source fingerprint across restarts;
+- records bounded simulated decisions and fills, marks open positions from current local evidence, and calculates equity, realized/unrealized P&L, high-water drawdown, hit rate, return, and per-source/strategy expectancy;
+- labels every record `paper_shadow_only`, `liveOrderPlaced: false`, and `brokerCalled: false`.
+
+Paper results are not live results and do not guarantee future performance. Resetting the paper portfolio is an authenticated local simulation action; it does not reset, fund, or change Robinhood.
+
 ## Workspace
 
 By default, Argentum reads `./stocks` relative to the project root. Override that with:
@@ -118,6 +133,7 @@ All routes require the existing Argentum session.
 - `GET /api/stock-office/mirror`
 - `POST /api/stock-office/mirror/:candidateId/human-gate`
 - `GET /api/stock-office/broker-control`
+- `POST /api/stock-office/shadow/reset`
 - `POST /api/stock-office/broker-connect/human-gate`
 - `POST /api/stock-office/guardrails/human-gate`
 - `POST /api/stock-office/guardrails/apply`
@@ -170,6 +186,7 @@ Open the Stock Guru office from the command floor. The office panel shows:
 - explicit Robinhood registration, OAuth, official endpoint, required-equity-tool, and account-snapshot readiness
 - a continuous supervised portfolio plan that ranks copy entries, owned-position copy exits, stop exits, profit-lock exits, strategy exits, and native evaluator entries; every proposal is independently revalidated before it becomes a draft
 - live allocated/deployed/pending/available capital, daily P&L lock, trades-per-day usage, and derived per-symbol allocation
+- a persistent paper-shadow portfolio with simulated cash/equity/P&L/drawdown, open positions, decision history, closed-trade learning profiles, and an explicit paper reset
 
 ### Applying allocated capital limits
 
@@ -193,6 +210,8 @@ The broker-control poll refreshes the official read-only account at most once pe
 - converts a fresh attributable Form 4 sale into an exit proposal only if Robinhood proves that the Agentic account owns sellable shares;
 - prioritizes copy exits, stops, and profit locks before new entries;
 - stages proposals only as exact drafts. It never batch-approves or grants recurring authority.
+
+The separate paper-shadow scheduler continues local simulation once per minute whenever the Argentum server is open, even when the Stock Office page is not visible. It consumes only the local snapshot already available to Argentum. The scheduler has no reference to the Robinhood client or review/place tools; moving from a paper result to a live order always starts a separate exact-draft and Human Gate flow.
 
 ### Approved-order handoff
 
@@ -238,6 +257,8 @@ Manual checks:
 - Confirm Mirror Lab shows `Live orders: 0`.
 - Confirm research-only candidates cannot be sent to Human Gate.
 - Confirm a paper-ready candidate creates one deduplicated review record and still places no order.
+- Confirm the paper-shadow section records at most one simulated fill for an unchanged source fingerprint, survives an app restart, and still reports `brokerCalled: false`.
+- Reset the paper portfolio and confirm only simulated cash/history changes; Robinhood connection and positions remain untouched.
 - Press `Refresh Stock Office` and confirm it reports evaluator, Mirror Lab, and knowledge-ledger results.
 
 ## Future Work

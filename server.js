@@ -21,6 +21,11 @@ const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh
 const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
 const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
 const {
+  normalizeShadowPortfolio,
+  resetShadowPortfolio,
+  runShadowPortfolioCycle,
+} = require("./services/stock-shadow-portfolio");
+const {
   brokerControlOverview,
   buildCopyPortfolioPlan,
   buildTradeDraft,
@@ -59,6 +64,7 @@ const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
 const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
+const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -4789,6 +4795,35 @@ function stockOfficeSnapshot(state, permissions) {
   return snapshot;
 }
 
+function readStockShadowPortfolio(snapshot = {}) {
+  try {
+    const stat = fs.statSync(STOCK_SHADOW_FILE);
+    if (!stat.isFile() || stat.size > 2_000_000) return normalizeShadowPortfolio({}, { snapshot });
+    return normalizeShadowPortfolio(JSON.parse(fs.readFileSync(STOCK_SHADOW_FILE, "utf8")), { snapshot });
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock shadow portfolio read failed safely:", error.message);
+    return normalizeShadowPortfolio({}, { snapshot });
+  }
+}
+
+function writeStockShadowPortfolio(portfolio) {
+  fs.mkdirSync(path.dirname(STOCK_SHADOW_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SHADOW_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(portfolio, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SHADOW_FILE);
+}
+
+function refreshStockShadowPortfolio(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const existing = readStockShadowPortfolio(snapshot);
+  const ageMs = existing.lastCycleAt ? Date.now() - new Date(existing.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < 55_000) return existing;
+  const updated = runShadowPortfolioCycle(existing, snapshot);
+  writeStockShadowPortfolio(updated);
+  return updated;
+}
+
 function stockOfficeErrorResponse(error) {
   const status = error.status || 500;
   return {
@@ -5392,6 +5427,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         brokerControl: brokerControlOverview(snapshot),
         portfolioPlan: buildCopyPortfolioPlan(snapshot),
+        shadowPortfolio: refreshStockShadowPortfolio({ state }),
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
         connectionApproval: connectionApproval ? {
           id: connectionApproval.id,
@@ -5410,6 +5446,33 @@ async function handleApi(req, res, url) {
         tradeDrafts,
         permissions: access.permissions,
       });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/shadow/reset") {
+    try {
+      enforceStockOfficeRateLimit(req, "shadow-reset", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requestedCash = payload.startingCashDollars === undefined ? null : Number(payload.startingCashDollars);
+      if (requestedCash !== null && (!Number.isFinite(requestedCash) || requestedCash < 1 || requestedCash > 1_000_000)) {
+        throw guardedError("Paper starting cash must be between $1 and $1,000,000.", 400);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const shadowPortfolio = resetShadowPortfolio(snapshot, { startingCashDollars: requestedCash });
+      writeStockShadowPortfolio(shadowPortfolio);
+      audit(
+        state,
+        "Stock Office paper shadow portfolio reset",
+        `A fresh $${shadowPortfolio.initialCashDollars.toFixed(2)} simulated portfolio was created. No broker call, money movement, or live order occurred.`,
+      );
+      writeState(state);
+      sendJson(res, 200, { shadowPortfolio, liveOrderPlaced: false, brokerCalled: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -6501,4 +6564,19 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Argentum is running on ${HOST}:${PORT}`);
+  if (process.env.NODE_ENV !== "test") {
+    try {
+      refreshStockShadowPortfolio({ force: true });
+    } catch (error) {
+      console.warn("Stock shadow portfolio startup cycle failed safely:", error.message);
+    }
+    const shadowTimer = setInterval(() => {
+      try {
+        refreshStockShadowPortfolio({ force: true });
+      } catch (error) {
+        console.warn("Stock shadow portfolio cycle failed safely:", error.message);
+      }
+    }, 60_000);
+    shadowTimer.unref();
+  }
 });

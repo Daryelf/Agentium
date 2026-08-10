@@ -332,6 +332,116 @@ button {
   min-width: 126px;
 }
 
+.shadow-portfolio {
+  margin: 0 16px 16px;
+  padding: 15px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.22), rgba(2, 6, 23, 0.72));
+}
+
+.shadow-portfolio .broker-card-head p {
+  max-width: 900px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.shadow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.shadow-grid > section {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 15px;
+  background: rgba(2, 6, 23, 0.54);
+}
+
+.shadow-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.shadow-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.46);
+}
+
+.shadow-row div,
+.shadow-row strong,
+.shadow-row span,
+.shadow-row b,
+.shadow-row small {
+  min-width: 0;
+}
+
+.shadow-row strong,
+.shadow-row b,
+.shadow-row span,
+.shadow-row small {
+  display: block;
+}
+
+.shadow-row strong,
+.shadow-row b {
+  font-size: 0.75rem;
+}
+
+.shadow-row span,
+.shadow-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.61rem;
+}
+
+.shadow-row.decision {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.shadow-row.decision p {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.shadow-reset-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) auto minmax(240px, 1fr);
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.shadow-reset-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shadow-reset-form small {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
 .broker-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1264,6 +1374,10 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .shadow-grid {
+    grid-template-columns: 1fr;
+  }
+
   .record-filters {
     min-width: 0;
   }
@@ -1303,6 +1417,10 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .shadow-reset-form {
+    grid-template-columns: 1fr;
+  }
+
   .guardrail-form,
   .order-draft-form,
   .order-draft-stats {
@@ -1321,6 +1439,11 @@ select {
   .mirror-boundary,
   .mirror-source,
   .portfolio-proposal {
+    grid-template-columns: 1fr;
+  }
+
+  .shadow-row,
+  .shadow-row.decision {
     grid-template-columns: 1fr;
   }
 

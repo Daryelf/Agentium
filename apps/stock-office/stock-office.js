@@ -12,6 +12,7 @@ const state = {
   refresh: null,
   brokerControl: null,
   portfolioPlan: null,
+  shadowPortfolio: null,
   robinhoodConnection: null,
   connectionApproval: null,
   guardrailApproval: null,
@@ -149,6 +150,61 @@ function renderPortfolioPlan() {
         </article>
       `).join("")
     : `<div class="empty-state"><p>No buy or sell proposal passes the currently loaded copy, position, and evaluator evidence.</p></div>`;
+}
+
+function renderShadowPortfolio() {
+  const portfolio = state.shadowPortfolio || {};
+  const positions = portfolio.positions || [];
+  const decisions = [...(portfolio.decisions || [])].reverse().slice(0, 8);
+  const learning = portfolio.learning || {};
+  const status = $("#shadowPortfolioStatus");
+  const running = portfolio.mode === "paper_shadow_only" && portfolio.initialCashDollars > 0;
+  status.textContent = running
+    ? `Paper only · ${portfolio.lastCycleAt ? formatTime(portfolio.lastCycleAt) : "first cycle pending"}`
+    : "Set paper starting cash";
+  status.className = running ? "ready-copy" : "danger-copy";
+  $("#shadowPortfolioMetrics").innerHTML = [
+    ["Paper equity", formatMoney(portfolio.equityDollars), `started ${formatMoney(portfolio.initialCashDollars)}`],
+    ["Paper cash", formatMoney(portfolio.cashDollars), `${formatMoney(portfolio.deployedDollars)} simulated deployment`],
+    ["Total paper P&L", formatMoney(portfolio.totalPnlDollars), formatPercent(portfolio.totalReturnPct || 0)],
+    ["Today paper P&L", formatMoney(portfolio.dayPnlDollars), portfolio.dailyLossLocked ? "new paper buys locked" : `lock ${formatMoney(portfolio.dailyLossLimitDollars)}`],
+    ["Paper drawdown", formatPercent(portfolio.currentDrawdownPct || 0), `maximum ${formatPercent(portfolio.maxDrawdownPct || 0)}`],
+    ["Closed outcomes", learning.closedTrades || 0, learning.hitRate === null || learning.hitRate === undefined ? "no closed sample yet" : `${formatPercent(learning.hitRate)} hit rate`],
+  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+  $("#shadowPositionTitle").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
+  $("#shadowPositions").innerHTML = positions.length
+    ? positions.map((position) => `
+        <article class="shadow-row">
+          <div><strong>${escapeHtml(position.symbol)}</strong><span>${escapeHtml(position.entryKind === "copy_entry" ? position.traderName || "Copy signal" : "Evaluator")}</span></div>
+          <div><b>${escapeHtml(formatMoney(position.marketValueDollars))}</b><small>${escapeHtml(Number(position.quantity || 0).toFixed(6))} shares</small></div>
+          <div class="${Number(position.unrealizedPnlDollars) >= 0 ? "ready-copy" : "danger-copy"}"><b>${escapeHtml(formatMoney(position.unrealizedPnlDollars))}</b><small>${escapeHtml(formatMoney(position.avgEntryPrice))} entry</small></div>
+        </article>
+      `).join("")
+    : `<div class="empty-state"><p>No paper position is open. The engine waits for fresh, eligible copy or evaluator evidence.</p></div>`;
+  $("#shadowDecisions").innerHTML = decisions.length
+    ? decisions.map((decision) => `
+        <article class="shadow-row decision">
+          <div><strong>${escapeHtml(decision.action)} ${escapeHtml(decision.symbol)}</strong><span>${escapeHtml(String(decision.outcome || "blocked").replaceAll("_", " "))}</span></div>
+          <p>${escapeHtml(decision.reason || "Paper review recorded.")}</p>
+          <small>${escapeHtml(formatTime(decision.observedAt))}</small>
+        </article>
+      `).join("")
+    : `<div class="empty-state"><p>No paper decision has been recorded yet.</p></div>`;
+  const profiles = learning.profiles || [];
+  $("#shadowLearning").innerHTML = learning.closedTrades
+    ? profiles.slice(0, 6).map((profile) => `
+        <article class="shadow-row learning">
+          <div><strong>${escapeHtml(profile.label)}</strong><span>${profile.trades} closed paper trade${profile.trades === 1 ? "" : "s"}</span></div>
+          <div><b>${escapeHtml(formatMoney(profile.totalPnlDollars))}</b><small>${profile.hitRate === null ? "no hit rate" : escapeHtml(formatPercent(profile.hitRate))}</small></div>
+          <div><b>${escapeHtml(formatMoney(profile.expectancyDollars))}</b><small>paper expectancy</small></div>
+        </article>
+      `).join("")
+    : `<div class="empty-state"><p>Learning starts after a simulated position closes. Small samples are evidence, not a promise of future profit.</p></div>`;
+  const startingCash = $("#shadowStartingCash");
+  if (!startingCash.dataset.loaded && portfolio.initialCashDollars > 0) {
+    startingCash.value = portfolio.initialCashDollars;
+    startingCash.dataset.loaded = "true";
+  }
 }
 
 function renderTradeDraft(draft) {
@@ -346,6 +402,7 @@ function renderBrokerControl() {
     $("#guardrailFeedback").textContent = `Approved limits are active since ${formatTime(state.guardrailsSource.appliedAt)}. No money was moved.`;
   }
   renderPortfolioPlan();
+  renderShadowPortfolio();
   renderTradeDraft(state.tradeDrafts[0] || null);
 }
 
@@ -597,6 +654,7 @@ async function loadApp() {
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
     state.brokerControl = brokerPayload.brokerControl || null;
     state.portfolioPlan = brokerPayload.portfolioPlan || null;
+    state.shadowPortfolio = brokerPayload.shadowPortfolio || null;
     state.robinhoodConnection = brokerPayload.robinhoodConnection || null;
     state.connectionApproval = brokerPayload.connectionApproval || null;
     state.guardrailApproval = brokerPayload.guardrailApproval || null;
@@ -971,6 +1029,7 @@ async function pollBrokerControl() {
     const payload = await api("/api/stock-office/broker-control");
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.connectionApproval = payload.connectionApproval || state.connectionApproval;
     state.guardrailApproval = payload.guardrailApproval || null;
@@ -983,6 +1042,27 @@ async function pollBrokerControl() {
     if (state.dispatchHandoff) state.dispatchHandoff = null;
     renderBrokerControl();
   } catch (_error) {}
+}
+
+async function resetShadowPortfolio(event) {
+  event.preventDefault();
+  const button = $("#shadowResetForm button");
+  const feedback = $("#shadowPortfolioFeedback");
+  button.disabled = true;
+  feedback.textContent = "Resetting the simulated ledger only...";
+  try {
+    const payload = await api("/api/stock-office/shadow/reset", {
+      method: "POST",
+      body: JSON.stringify({ startingCashDollars: Number($("#shadowStartingCash").value) }),
+    });
+    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    renderShadowPortfolio();
+    feedback.textContent = `Fresh ${formatMoney(state.shadowPortfolio?.initialCashDollars)} paper portfolio created. No Robinhood call or money movement occurred.`;
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderRefreshFeedback(refresh) {
@@ -1102,6 +1182,7 @@ document.addEventListener("click", (event) => {
 $("#guardrailForm").addEventListener("submit", requestGuardrails);
 $("#applyGuardrails").addEventListener("click", applyApprovedGuardrails);
 $("#orderDraftForm").addEventListener("submit", buildOrderDraft);
+$("#shadowResetForm").addEventListener("submit", resetShadowPortfolio);
 
 $("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);

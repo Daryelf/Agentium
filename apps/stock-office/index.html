@@ -65,6 +65,38 @@
           <p id="portfolioPlanFeedback" class="broker-feedback" aria-live="polite"></p>
         </article>
 
+        <article class="shadow-portfolio">
+          <div class="broker-card-head">
+            <div>
+              <p class="eyebrow">Always-on paper shadow</p>
+              <h3>Simulated portfolio and learning ledger</h3>
+              <p>Runs once per minute while Argentum is open, records simulated fills and exits, survives restarts, and measures closed-paper outcomes. This engine has no broker-call authority.</p>
+            </div>
+            <span id="shadowPortfolioStatus">Starting paper engine</span>
+          </div>
+          <div id="shadowPortfolioMetrics" class="portfolio-capital-metrics"></div>
+          <div class="shadow-grid">
+            <section>
+              <div class="subpanel-head"><div><p class="eyebrow">Open paper positions</p><h3 id="shadowPositionTitle">0 positions</h3></div></div>
+              <div id="shadowPositions" class="shadow-list"></div>
+            </section>
+            <section>
+              <div class="subpanel-head"><div><p class="eyebrow">Decision history</p><h3>Latest simulated actions</h3></div></div>
+              <div id="shadowDecisions" class="shadow-list"></div>
+            </section>
+            <section>
+              <div class="subpanel-head"><div><p class="eyebrow">Outcome feedback</p><h3>Paper learning only</h3></div></div>
+              <div id="shadowLearning" class="shadow-list"></div>
+            </section>
+          </div>
+          <form id="shadowResetForm" class="shadow-reset-form">
+            <label>Fresh paper starting cash <input id="shadowStartingCash" type="number" min="1" max="1000000" step="1" required /></label>
+            <button type="submit">Reset paper portfolio</button>
+            <small>This deletes only the simulated paper ledger and starts it fresh. It cannot reset, fund, or change Robinhood.</small>
+          </form>
+          <p id="shadowPortfolioFeedback" class="broker-feedback" aria-live="polite"></p>
+        </article>
+
         <div class="broker-grid">
           <article class="broker-card connector-card">
             <div class="broker-card-head">

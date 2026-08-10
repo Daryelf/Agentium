@@ -5,6 +5,8 @@ const state = {
   sources: [],
   activity: [],
   messages: [],
+  mirror: null,
+  mirrorApprovalIds: new Set(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -43,6 +45,18 @@ function formatTime(value) {
   }).format(new Date(value));
 }
 
+function formatMoney(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Unknown";
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(number);
+}
+
+function formatPercent(value, digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Unknown";
+  return `${(number * 100).toFixed(digits)}%`;
+}
+
 function statusClass(value) {
   return String(value || "muted").toLowerCase().replaceAll(" ", "_");
 }
@@ -66,11 +80,78 @@ function renderMetrics() {
     ["Rejected", metrics.rejectedRecords ?? 0, "risk filtered"],
     ["Sources", sourceHealth.ready ?? 0, `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
     ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
-    ["Live auto", metrics.readyForLiveAuto ? "Ready source" : "Blocked", "Argentum remains read-only"],
+    ["Mirror signals", metrics.mirrorSignals ?? 0, `${metrics.mirrorPaperReady ?? 0} paper-ready`],
   ];
   $("#metricGrid").innerHTML = cards.map(([label, value, hint]) => metricCard(label, value, hint)).join("");
   $("#stockStatusPill").textContent = sourceHealth.status ? `Sources: ${sourceHealth.status}` : "Read only";
   $("#safetyCopy").textContent = state.overview?.workspace?.safetyRule || "Research and analytics only. No broker actions are available.";
+}
+
+function mirrorStatusLabel(value) {
+  return String(value || "unknown").replaceAll("_", " ");
+}
+
+function renderMirror() {
+  const mirror = state.mirror || state.overview?.mirror || {};
+  const summary = mirror.summary || {};
+  const candidates = mirror.candidates || [];
+  const sources = mirror.sources || [];
+  const warnings = mirror.warnings || [];
+  const importer = mirror.importer || {};
+  const pill = $("#mirrorStatusPill");
+  pill.textContent = !mirror.available ? "Waiting for plan" : mirror.stale ? "Plan stale" : "Paper + Human Gate";
+  pill.className = `status-pill ${mirror.stale ? "warning" : "muted"}`;
+  $("#mirrorMetrics").innerHTML = [
+    ["Signals", summary.signalsReceived ?? 0, "attributable inputs"],
+    ["Paper-ready", summary.paperReady ?? 0, "passed all checks"],
+    ["Research-only", summary.researchOnly ?? 0, "too delayed or unsupported"],
+    ["Planned paper", summary.plannedPaperNotional || "$0.00", "bounded notional"],
+    ["SEC intake", importer.available ? `${importer.enabledEntries || 0} enabled` : "Not run", importer.available ? `${importer.signalsImported || 0} latest signal(s)` : "opt-in named CIKs"],
+    ["Live orders", summary.liveOrdersPlaced ?? 0, "must remain zero"],
+  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+
+  $("#mirrorCandidates").innerHTML = candidates.length
+    ? candidates.map((candidate) => {
+        const gateSent = state.mirrorApprovalIds.has(candidate.id);
+        const gateEnabled = candidate.humanGateEligible && !mirror.stale && !gateSent;
+        const mainReason = candidate.reasons?.[0] || "No evaluation reason recorded.";
+        return `
+          <article class="mirror-candidate ${escapeHtml(statusClass(candidate.status))}">
+            <div class="mirror-candidate-head">
+              <div>
+                <span class="mirror-signal">${escapeHtml(candidate.side)} ${escapeHtml(candidate.symbol)}</span>
+                <strong>${escapeHtml(candidate.traderName)}</strong>
+              </div>
+              <em class="tag ${escapeHtml(statusClass(candidate.status))}">${escapeHtml(mirrorStatusLabel(candidate.status))}</em>
+            </div>
+            <div class="mirror-candidate-metrics">
+              <span><small>Source</small><b>${escapeHtml(candidate.sourceName)}</b></span>
+              <span><small>Disclosure lag</small><b>${escapeHtml(`${Number(candidate.disclosureLagHours || 0).toFixed(1)}h`)}</b></span>
+              <span><small>Price drift</small><b>${escapeHtml(candidate.priceDriftPct === null ? "Unknown" : formatPercent(candidate.priceDriftPct, 2))}</b></span>
+              <span><small>Paper cap</small><b>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</b></span>
+            </div>
+            <p>${escapeHtml(mainReason)}</p>
+            <div class="mirror-candidate-actions">
+              ${candidate.sourceUrl ? `<a href="${escapeHtml(candidate.sourceUrl)}" target="_blank" rel="noreferrer">Open provenance</a>` : `<span>Provenance unavailable</span>`}
+              <button type="button" data-mirror-gate="${escapeHtml(candidate.id)}" ${gateEnabled ? "" : "disabled"}>
+                ${gateSent ? "Sent to Human Gate" : candidate.humanGateEligible ? mirror.stale ? "Refresh before review" : "Send to Human Gate" : "Research only"}
+              </button>
+            </div>
+          </article>
+        `;
+      }).join("")
+    : `<div class="empty-state mirror-empty"><div><h3>No public signals imported</h3><p>Add named SEC CIKs to the copy watchlist, configure the SEC contact identity, then run <code>stock-guru copy-refresh-sec</code> or the continuous watcher. The system fails closed if provenance, timing, or current prices are missing.</p></div></div>`;
+
+  $("#mirrorSources").innerHTML = sources.length
+    ? sources.map((source) => `
+        <article class="mirror-source">
+          <div><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(source.sourceType)}</small></div>
+          <em class="tag ${source.mirrorEligible && source.enabled ? "ready" : "review"}">${source.mirrorEligible && source.enabled ? "mirror eligible" : "research only"}</em>
+          <p>${escapeHtml(source.notes || "No source note recorded.")}</p>
+        </article>
+      `).join("")
+    : `<p class="muted-copy">No source registry was loaded.</p>`;
+  $("#mirrorWarnings").innerHTML = warnings.slice(0, 6).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || `<li>No warning record was loaded.</li>`;
 }
 
 function renderRecords() {
@@ -184,7 +265,7 @@ function renderChat() {
           </article>
         `,
       )
-      .join("") || `<article class="chat-message assistant"><strong>Stock Guru</strong><p>Ask a read-only question about local evaluator records, source freshness, or readiness blockers.</p></article>`;
+      .join("") || `<article class="chat-message assistant"><strong>Stock Guru</strong><p>Ask about evaluator records, Mirror Lab decisions, source delay, price drift, or readiness blockers.</p></article>`;
   $("#stockChat").scrollTop = $("#stockChat").scrollHeight;
 }
 
@@ -196,27 +277,45 @@ async function loadApp() {
       sort: "score_desc",
       pageSize: "30",
     });
-    const [overview, records, sources, activity, chat] = await Promise.all([
+    const [overview, records, sources, activity, chat, mirrorPayload] = await Promise.all([
       api("/api/stock-office/overview"),
       api(`/api/stock-office/records?${query.toString()}`),
       api("/api/stock-office/sources"),
       api("/api/stock-office/activity"),
       api("/api/stock-office/chat"),
+      api("/api/stock-office/mirror"),
     ]);
     state.overview = overview;
     state.records = records.records || [];
     state.sources = sources.sources || [];
     state.activity = [...(activity.syncRuns || []), ...(activity.activity || []), ...(activity.assistantRuns || [])].sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     state.messages = chat.messages || [];
+    state.mirror = mirrorPayload.mirror || overview.mirror || null;
     renderMetrics();
     renderRecords();
     renderSources();
     renderActivity();
     renderChat();
+    renderMirror();
     if (!state.selectedTicker && state.records[0]?.ticker) selectRecord(state.records[0].ticker);
   } catch (error) {
     $("#stockStatusPill").textContent = "Error";
     $("#recordsList").innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+async function sendMirrorToHumanGate(candidateId) {
+  const feedback = $("#mirrorGateFeedback");
+  feedback.textContent = "Creating an exact review record...";
+  try {
+    const payload = await api(`/api/stock-office/mirror/${encodeURIComponent(candidateId)}/human-gate`, { method: "POST", body: "{}" });
+    state.mirrorApprovalIds.add(candidateId);
+    feedback.textContent = payload.approval?.status === "pending"
+      ? "Human Gate review created. No live order was placed."
+      : "Existing Human Gate review found. No live order was placed.";
+    renderMirror();
+  } catch (error) {
+    feedback.textContent = error.message;
   }
 }
 
@@ -256,6 +355,8 @@ async function askStockGuru(event) {
 document.addEventListener("click", (event) => {
   const row = event.target.closest("[data-ticker]");
   if (row) selectRecord(row.dataset.ticker);
+  const mirrorGate = event.target.closest("[data-mirror-gate]");
+  if (mirrorGate && !mirrorGate.disabled) sendMirrorToHumanGate(mirrorGate.dataset.mirrorGate);
 });
 
 $("#applyFilters").addEventListener("click", loadApp);

@@ -4907,10 +4907,10 @@ function stockChatMarkup() {
     <section class="stock-chat-card">
       <div class="stock-section-head">
         <div>
-          <span>Read-only assistant</span>
+          <span>Guarded assistant</span>
           <h4>Ask Stock Guru data</h4>
         </div>
-        <em>Research only</em>
+        <em>Research + mirror review</em>
       </div>
       <div class="stock-chat-log">
         ${
@@ -4930,7 +4930,7 @@ function stockChatMarkup() {
                   `,
                 )
                 .join("")
-            : `<article class="assistant"><strong>Stock Office</strong><p>Ask about top setups, readiness blockers, stale sources, or the masked broker snapshot.</p></article>`
+            : `<article class="assistant"><strong>Stock Office</strong><p>Ask about evaluator records, Mirror Lab decisions, source delay, price drift, or readiness blockers.</p></article>`
         }
       </div>
       <div class="stock-chat-input">
@@ -4985,7 +4985,7 @@ function stockOfficeMarkup(card) {
     ["Rejected", metrics.rejectedRecords ?? "—", "risk filtered"],
     ["Sources", sourceHealth.ready ?? "—", `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
     ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
-    ["Live auto", metrics.readyForLiveAuto ? "Ready source" : "Blocked", "Argentum remains read-only"],
+    ["Mirror signals", metrics.mirrorSignals ?? "—", `${metrics.mirrorPaperReady ?? 0} paper-ready`],
   ];
   return `
     <div class="office-detail-panel stock-office-panel">

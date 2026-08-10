@@ -10,6 +10,7 @@ const {
   stockOverview,
   listStockRecords,
   getStockRecord,
+  getMirrorCandidate,
   answerStockQuestion,
   redactSensitiveText,
   stockPermissions,
@@ -3496,20 +3497,52 @@ function createClipsApprovalPackage(payload = {}) {
 function createHumanGateRequest(payload = {}) {
   const actionType = String(payload.actionType || detectRiskyAction(payload.message || payload.title || "") || "external_api_action");
   const state = readState();
+  const linkedId = String(payload.linkedId || "").slice(0, 240) || null;
+  const existing = linkedId
+    ? (state.approvals || []).find((item) => item.linkedId === linkedId && item.actionType === actionType && item.status === "pending")
+    : null;
+  if (existing) return { approval: existing, message: "Human Gate approval required.", requiresApproval: true, riskLevel: existing.riskLevel };
+  const evidenceObject = payload.evidence && typeof payload.evidence === "object" ? payload.evidence : null;
+  const details = payload.details && typeof payload.details === "object"
+    ? payload.details
+    : evidenceObject?.details && typeof evidenceObject.details === "object"
+      ? evidenceObject.details
+      : {};
+  const evidence = typeof payload.evidence === "string"
+    ? payload.evidence
+    : evidenceObject?.reason || "Agent 101 routed this request to Human Gate before any consequential action.";
   const approval = {
     id: `approval-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title: String(payload.title || `Review blocked action: ${actionType}`),
     actionType,
     risk: payload.riskLevel || "high",
     riskLevel: payload.riskLevel || "high",
-    evidence: String(payload.evidence || "Agent 101 routed this request to Human Gate before any external action."),
+    evidence: String(evidence).slice(0, 4000),
     action: String(payload.action || "Operator approval required. No external action was executed."),
+    exactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    originalExactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    details,
+    originalDetails: JSON.parse(JSON.stringify(details)),
+    grantedDetails: null,
+    linkedId,
+    officeId: payload.officeId || details.officeId || null,
+    workflowId: payload.workflowId || null,
+    runId: payload.runId || evidenceObject?.runId || null,
+    missionId: payload.missionId || null,
+    reversible: payload.reversible !== false,
+    expiresAt: payload.expiresAt || new Date(Date.now() + (1000 * 60 * 60 * 24)).toISOString(),
+    expectedPostcondition: String(payload.expectedPostcondition || "The exact approved action completes and is recorded in the audit trail.").slice(0, 2000),
+    rollbackPlan: String(payload.rollbackPlan || "Stop on mismatch; source edits use atomic rollback and output actions remain isolated.").slice(0, 2000),
     status: "pending",
+    useCount: 0,
+    consumedAt: null,
     createdBy: "agent-101",
     createdAt: now(),
   };
   state.approvals.unshift(approval);
-  state.approvals = state.approvals.slice(0, 50);
+  const activeApprovals = state.approvals.filter((item) => ["pending", "approved", "needs_revision"].includes(item.status) && !item.consumedAt);
+  const archivedApprovals = state.approvals.filter((item) => !activeApprovals.includes(item)).slice(0, Math.max(0, 50 - activeApprovals.length));
+  state.approvals = [...activeApprovals, ...archivedApprovals];
   audit(state, "Risky action blocked", `${actionType}: Human Gate approval required.`);
   writeState(state);
   return { approval, message: "Human Gate approval required.", requiresApproval: true, riskLevel: approval.riskLevel };
@@ -4673,6 +4706,7 @@ function requireStockOfficeAccess(req, capability = "view") {
     chat_write: "canPostChat",
     assistant: "canUseAssistant",
     sync: "canTriggerSync",
+    mirror_request: "canRequestMirrorApproval",
   };
   const permissionKey = capabilityMap[capability] || "canViewWorkspace";
   if (!permissions[permissionKey]) {
@@ -5261,6 +5295,71 @@ async function handleApi(req, res, url) {
       const access = requireStockOfficeAccess(req, "view");
       const snapshot = stockOfficeSnapshot(readState(), access.permissions);
       sendJson(res, 200, { activity: snapshot.activity, syncRuns: snapshot.syncRuns, assistantRuns: snapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/mirror") {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror", 60, 60_000);
+      const access = requireStockOfficeAccess(req, "view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { mirror: snapshot.mirror, safety: snapshot.workspace.safetyRule });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockMirrorGateMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockMirrorGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror-gate", 10, 300_000);
+      const access = requireStockOfficeAccess(req, "mirror_request");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const candidate = getMirrorCandidate(snapshot, decodeURIComponent(stockMirrorGateMatch[1]));
+      if (!candidate) throw guardedError("Copy Trader candidate not found.", 404);
+      if (snapshot.mirror.stale) throw guardedError("Copy Trader plan is stale. Refresh the public signal and current price before Human Gate review.", 409);
+      if (!candidate.humanGateEligible || candidate.status !== "paper_ready") {
+        throw guardedError("Only a fresh paper-ready mirror candidate can be sent to Human Gate.", 409);
+      }
+      if (!candidate.sourceUrl || !candidate.fingerprint) {
+        throw guardedError("Mirror candidate provenance is incomplete.", 409);
+      }
+      const mirrorNotionalLabel = `$${Number(candidate.mirrorNotionalDollars || 0).toFixed(2)}`;
+      const approvalResult = createHumanGateRequest({
+        actionType: "review_trade_plan",
+        title: `Review copy-mirror plan: ${candidate.side} ${candidate.symbol}`,
+        riskLevel: "high",
+        linkedId: `stock-mirror:${candidate.fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${candidate.traderName} public signal from ${candidate.sourceName}. Reported transaction ${candidate.transactionAt}; disclosed ${candidate.disclosedAt}; disclosure lag ${candidate.disclosureLagHours.toFixed(1)}h; current-price drift ${candidate.priceDriftPct === null ? "unknown" : `${(candidate.priceDriftPct * 100).toFixed(2)}%`}; provenance ${candidate.sourceUrl}.`,
+        action: `Review a capped ${mirrorNotionalLabel} ${candidate.side} ${candidate.symbol} mirror plan. Approval records the review decision only; Stock Office cannot submit a Robinhood or other broker order.`,
+        exactScope: `Review only: ${candidate.side} ${candidate.symbol}, maximum ${mirrorNotionalLabel}, source fingerprint ${candidate.fingerprint}. No order placement, money movement, account change, event-contract trade, or recurring authorization is included.`,
+        details: {
+          officeId: "stock-office",
+          candidateId: candidate.id,
+          fingerprint: candidate.fingerprint,
+          symbol: candidate.symbol,
+          side: candidate.side,
+          maxNotionalDollars: candidate.mirrorNotionalDollars,
+          sourceName: candidate.sourceName,
+          sourceUrl: candidate.sourceUrl,
+          disclosureLagHours: candidate.disclosureLagHours,
+          priceDriftPct: candidate.priceDriftPct,
+          executionAvailable: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Human Gate records an operator decision on this exact mirror plan. No broker order is submitted.",
+        rollbackPlan: "No external rollback is needed because Stock Office has no broker execution path; reject or expire the review record.",
+      });
+      sendJson(res, 200, { ...approvalResult, candidate, liveOrderPlaced: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

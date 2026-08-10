@@ -34,6 +34,12 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
   assert.match(script, /Send exact order to Human Gate/);
   assert.match(script, /Prepare 2-minute Robinhood handoff/);
+  assert.match(script, /Complete Robinhood OAuth on desktop/);
+  assert.match(script, /\/api\/stock-office\/robinhood\/oauth\/start/);
+  assert.match(script, /\/api\/stock-office\/robinhood\/refresh/);
+  assert.match(script, /Review and execute once with Robinhood/);
+  assert.match(script, /\/dispatch\/execute/);
+  assert.match(script, /Final action-time confirmation/);
   assert.match(script, /Copy exact Robinhood job/);
   assert.match(script, /\/dispatch\/claim/);
   assert.match(script, /\/dispatch\/result/);
@@ -43,6 +49,7 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /Tool contract/);
   assert.match(script, /toolContract\.registered/);
   assert.match(html, /No password scraping, private API/);
+  assert.match(html, /Tokens remain in Mac Keychain|No Robinhood password or token/);
   assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
 });
 

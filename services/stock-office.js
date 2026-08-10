@@ -447,6 +447,7 @@ function normalizeBrokerStatus(data, source) {
     return {
       configured: false,
       account: "",
+      accountIdentityHash: "",
       accountValue: null,
       cash: null,
       buyingPower: null,
@@ -465,6 +466,7 @@ function normalizeBrokerStatus(data, source) {
   return {
     configured: true,
     account: maskAccountNumber(data.account_number),
+    accountIdentityHash: String(data.account_identity_hash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
     accountValue: formatUsd(data.account_value),
     cash: formatUsd(data.cash),
     buyingPower: formatUsd(data.buying_power),

@@ -517,6 +517,17 @@ button {
   line-height: 1.45;
 }
 
+.order-actions {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.order-actions .secondary {
+  background: transparent;
+  border-color: rgba(125, 211, 252, 0.28);
+  color: #b8c7e6;
+}
+
 .broker-asset-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

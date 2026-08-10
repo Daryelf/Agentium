@@ -19,6 +19,7 @@ const {
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
 const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
+const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
 const {
   brokerControlOverview,
   buildTradeDraft,
@@ -84,6 +85,9 @@ const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
 const stockGuruRefreshManager = createStockGuruRefreshManager();
+const robinhoodMcpClient = createRobinhoodMcpClient({
+  dataDir: path.join(STOCK_GURU_USER_DATA_DIR, "broker-auth"),
+});
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
@@ -4768,6 +4772,18 @@ function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 6
 
 function stockOfficeSnapshot(state, permissions) {
   const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state });
+  if (!(process.env.NODE_ENV === "test" && process.env.ARGENTUM_TEST_TRUST_BROKER_FIXTURE === "1")) {
+    const officialBroker = robinhoodMcpClient.currentBrokerSnapshot();
+    snapshot.broker = officialBroker;
+    snapshot.positions = officialBroker.positions;
+    snapshot.metrics = {
+      ...snapshot.metrics,
+      brokerPositions: officialBroker.positions.length,
+      openOrders: officialBroker.openOrders.length,
+      accountValue: officialBroker.accountValue,
+      buyingPower: officialBroker.buyingPower,
+    };
+  }
   snapshot.permissions = permissions || snapshot.permissions;
   return snapshot;
 }
@@ -5366,10 +5382,124 @@ async function handleApi(req, res, url) {
       const tradeDrafts = snapshot.tradeDrafts
         .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
         .slice(0, 20);
+      const connectionApproval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
       sendJson(res, 200, {
         brokerControl: brokerControlOverview(snapshot),
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: connectionApproval ? {
+          id: connectionApproval.id,
+          status: connectionApproval.status,
+          consumedAt: connectionApproval.consumedAt || null,
+          expiresAt: connectionApproval.expiresAt || null,
+        } : null,
         tradeDrafts,
         permissions: access.permissions,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/status") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-status", 80, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: approval ? {
+          id: approval.id,
+          status: approval.status,
+          consumedAt: approval.consumedAt || null,
+          expiresAt: approval.expiresAt || null,
+        } : null,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/oauth/start") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-oauth-start", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding" && item.status === "approved" && !item.consumedAt);
+      if (!approval) throw guardedError("Approve the exact Robinhood connection request in Human Gate before starting OAuth.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      if (details.provider !== "robinhood_agentic_mcp" || details.accountScope !== "dedicated_agentic_account_only" || details.orderPlacementAuthorized !== false || details.moneyMovementAuthorized !== false) {
+        throw guardedError("The approved Robinhood connection scope does not match the required read-only Agentic-account onboarding contract.", 409);
+      }
+      const redirectUri = `http://127.0.0.1:${PORT}/api/stock-office/robinhood/oauth/callback`;
+      const started = await robinhoodMcpClient.beginAuthorization({ redirectUri, approvalId: approval.id });
+      approval.oauthStartedAt = now();
+      audit(state, "Robinhood OAuth handoff prepared", `Human Gate approval ${approval.id} opened only the official Robinhood OAuth flow; no order or money movement was authorized.`);
+      writeState(state);
+      sendJson(res, 200, { ...started, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/oauth/callback") {
+    try {
+      const completed = await robinhoodMcpClient.completeAuthorization({
+        state: url.searchParams.get("state") || "",
+        code: url.searchParams.get("code") || "",
+      });
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === completed.approvalId);
+      if (!approval || approval.status !== "approved" || approval.consumedAt) {
+        robinhoodMcpClient.disconnect();
+        throw guardedError("The Robinhood connection approval is no longer valid. The local OAuth token was removed.", 409);
+      }
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = now();
+      approval.executionOutcome = "robinhood_oauth_connected";
+      let refreshError = "";
+      try {
+        await robinhoodMcpClient.refreshBrokerSnapshot();
+      } catch (error) {
+        refreshError = error.message;
+      }
+      audit(state, "Robinhood OAuth completed", refreshError
+        ? `Official OAuth completed, but the dedicated Agentic-account snapshot did not verify: ${refreshError}`
+        : "Official OAuth and the dedicated Agentic-account read-only snapshot verified; no order or money movement occurred.");
+      writeState(state);
+      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=${refreshError ? "needs_refresh" : "connected"}` });
+      res.end();
+    } catch (error) {
+      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=connection_error` });
+      res.end();
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/refresh") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-refresh", 12, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const broker = await robinhoodMcpClient.refreshBrokerSnapshot();
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        brokerControl: brokerControlOverview(snapshot),
+        broker: {
+          account: broker.account,
+          buyingPower: broker.buyingPower,
+          positions: broker.positions.length,
+          openOrders: broker.openOrders.length,
+          updatedAt: broker.updatedAt,
+        },
+        liveOrderPlaced: false,
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -5543,6 +5673,90 @@ async function handleApi(req, res, url) {
       audit(latestState, "Stock Office order awaiting Human Gate", `${draft.side} ${draft.symbol} order fingerprint ${draft.fingerprint} is awaiting one-use approval; no live order placed.`);
       writeState(latestState);
       sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+
+  const stockDirectExecuteMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/execute$/);
+  if (req.method === "POST" && stockDirectExecuteMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-direct-execute", 3, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDirectExecuteMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      if (String(payload.confirmationFingerprint || "") !== draft.fingerprint) {
+        throw guardedError("Action-time order confirmation does not match the exact approved fingerprint.", 409);
+      }
+      const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+        || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const claimed = claimApprovedDispatch(draft, approval, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      approval.dispatchClaimId = claimed.claim.id;
+      approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+      approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+      approval.dispatchMode = "direct_official_robinhood_mcp";
+      audit(state, "Stock Office direct dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} was persisted before any official Robinhood broker call.`);
+      writeState(state);
+
+      let brokerResult;
+      try {
+        brokerResult = await robinhoodMcpClient.executeApprovedEnvelope(claimed.claim.envelope);
+      } catch (error) {
+        brokerResult = {
+          reviewPassed: false,
+          warnings: [],
+          placementAttempted: false,
+          brokerOrderId: "",
+          brokerState: "",
+          reconciliation: { matched: false },
+          error: `Official Robinhood execution stopped before a verified placement: ${error.message}`,
+        };
+      }
+
+      const latestState = readState();
+      const latestCurrent = normalizeStockOfficeState(latestState.stockOffice);
+      const latestDraft = latestCurrent.tradeDrafts.find((item) => item.id === draft.id);
+      const approvalIndex = (latestState.approvals || []).findIndex((item) => item.id === approval.id);
+      if (!latestDraft || approvalIndex < 0) throw guardedError("The persisted dispatch state changed during broker execution; manual reconciliation is required.", 409);
+      const settled = settleApprovedDispatch(
+        latestDraft,
+        latestState.approvals[approvalIndex],
+        brokerResult,
+        claimed.claim.token,
+        { trustedBrokerResult: true },
+      );
+      latestState.stockOffice = normalizeStockOfficeState({
+        ...latestCurrent,
+        tradeDrafts: [settled.draft, ...latestCurrent.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      latestState.approvals[approvalIndex] = settled.approval;
+      audit(
+        latestState,
+        settled.liveOrderPlaced ? "Stock Office broker order independently reconciled" : "Stock Office direct dispatch stopped or needs reconciliation",
+        settled.liveOrderPlaced
+          ? `${draft.side} ${draft.symbol} matched official Robinhood order ${settled.draft.brokerOrderId}; exact one-use approval consumed.`
+          : `${draft.side} ${draft.symbol}: ${settled.draft.lastDispatchError || "no independently verified order"}; exact one-use approval consumed and placement will not be retried.`,
+      );
+      writeState(latestState);
+      sendJson(res, 200, {
+        draft: settled.draft,
+        approval: settled.approval,
+        liveOrderPlaced: settled.liveOrderPlaced,
+        reconciliationRequired: settled.reconciliationRequired,
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

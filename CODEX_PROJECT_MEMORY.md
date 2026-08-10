@@ -13,8 +13,9 @@ Argentum is a supervised AI operating company console. Its first agent, Depo, ga
 - Runtime state is stored locally in `data/argentum-state.json`.
 - Core safety rule: Argentum may propose and draft. Money movement, account changes, publishing, customer contact, deployment, and system changes require Human Gate. A Robinhood equity order may proceed only through the exact fingerprint-bound Human Gate approval, fresh official connector/account checks, Robinhood review, and a two-minute one-use dispatch; unattended or recurring trade permission remains forbidden.
 - Stock Office includes evaluator research, evidence-weighted public-signal copying, research-only official Form 13F manager comparisons, candidate-to-order staging, masked Robinhood account state, bounded capital controls, and guarded order dispatch/result reconciliation.
-- Approved Stock Office orders now surface a two-minute, token-isolated Robinhood handoff in the order card, poll Human Gate state automatically, accept a bounded broker-result JSON, and visibly expire orphaned claims instead of leaving them stuck.
-- The official Robinhood Trading MCP is registered in Codex, but operator-present OAuth and controlled live tool-contract/account verification are still required before any live order can be considered available.
+- Stock Office now has a server-side official Robinhood MCP client contract: PKCE OAuth, Mac Keychain token storage, strict single-Agentic-account identity binding, live read-only snapshot refresh, one-use direct review/placement, and post-placement order-history reconciliation. It still requires operator-present OAuth before the first live read.
+- Approved orders surface both a direct official-MCP action and a two-minute manual fallback. Operator-pasted JSON can never mark an order live; only fresh official reconciliation of the account hash, one-use ref, and broker order ID can do that. Ambiguous placement consumes approval and is never retried automatically.
+- The official Robinhood Trading MCP is registered in Codex, but operator-present OAuth and controlled live tool-schema/account verification are still required before direct dispatch can be considered available.
 
 ## Useful commands
 

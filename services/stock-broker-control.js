@@ -98,7 +98,7 @@ function normalizeGuardrails(value = {}) {
 
 function normalizeTradeDraft(draft = {}) {
   const side = String(draft.side || "").toUpperCase();
-  const status = ["blocked", "ready_for_broker_review", "awaiting_human_gate", "approved", "dispatch_claimed", "review_rejected", "expired", "cancelled", "dispatched", "filled", "rejected"].includes(draft.status)
+  const status = ["blocked", "ready_for_broker_review", "awaiting_human_gate", "approved", "dispatch_claimed", "review_rejected", "reconciliation_required", "expired", "cancelled", "dispatched", "filled", "rejected"].includes(draft.status)
     ? draft.status
     : "blocked";
   return {
@@ -117,6 +117,7 @@ function normalizeTradeDraft(draft = {}) {
     marketHours: "regular_hours",
     sourceType: String(draft.sourceType || "evaluator").slice(0, 40),
     sourceId: String(draft.sourceId || "").slice(0, 180),
+    accountIdentityHash: String(draft.accountIdentityHash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
     thesis: String(draft.thesis || "").slice(0, 500),
     blockers: (Array.isArray(draft.blockers) ? draft.blockers : []).map((item) => String(item).slice(0, 260)).slice(0, 16),
     checks: (Array.isArray(draft.checks) ? draft.checks : []).map((item) => ({
@@ -135,6 +136,9 @@ function normalizeTradeDraft(draft = {}) {
     brokerWarnings: (Array.isArray(draft.brokerWarnings) ? draft.brokerWarnings : []).map((item) => String(item).slice(0, 260)).slice(0, 12),
     brokerOrderId: String(draft.brokerOrderId || "").slice(0, 160),
     brokerState: String(draft.brokerState || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60),
+    brokerReconciled: draft.brokerReconciled === true,
+    brokerEvidenceSource: String(draft.brokerEvidenceSource || "").replace(/[^a-z0-9_-]/gi, "").slice(0, 80),
+    reconciliationObservedAt: safeDate(draft.reconciliationObservedAt),
     lastDispatchError: String(draft.lastDispatchError || "").slice(0, 500),
     liveOrderPlaced: Boolean(draft.liveOrderPlaced),
     createdAt: safeDate(draft.createdAt) || new Date().toISOString(),
@@ -176,6 +180,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   if (toolContract.observedAgeMinutes === null || toolContract.observedAgeMinutes > BROKER_SNAPSHOT_FRESH_MINUTES) blockers.push("Robinhood connector/tool discovery is missing or stale; re-verify the tool contract.");
   if (!snapshotFresh) blockers.push(broker.configured ? "Broker snapshot is stale; reconnect Robinhood and refresh live account data." : "A live Robinhood account snapshot has not been verified.");
   if (!broker.account) blockers.push("A dedicated Robinhood Agentic account has not been verified.");
+  if (!broker.accountIdentityHash) blockers.push("The live snapshot is not cryptographically bound to one dedicated Agentic account.");
   if (buyingPower <= 0) blockers.push("Verified buying power is unavailable or zero.");
   if (killSwitchActive) blockers.push("The live-order kill switch is active or has not been explicitly cleared.");
   if (!snapshot.readiness?.readyForLiveAuto) blockers.push(...(snapshot.readiness?.blockers || ["Strict live-readiness evidence has not passed."]).slice(0, 4));
@@ -189,6 +194,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     toolContract,
     accountScope: "dedicated_agentic_account_only",
     accountLabel: broker.account || "Not verified",
+    accountIdentityHash: broker.accountIdentityHash || "",
     snapshotUpdatedAt: broker.updatedAt || null,
     snapshotAgeMinutes: snapshotAgeMinutes === null ? null : Math.round(snapshotAgeMinutes * 10) / 10,
     buyingPowerDollars: buyingPower,
@@ -239,6 +245,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
 
   addCheck(checks, blockers, "symbol", Boolean(symbol), "A valid equity symbol is required.");
   addCheck(checks, blockers, "official_connector", control.authenticationVerified, "Robinhood MCP must be authenticated and refreshed before order review.");
+  addCheck(checks, blockers, "agentic_account_identity", Boolean(snapshot.broker?.accountIdentityHash), "A cryptographically bound Agentic-account identity is required.");
   if (side === "BUY") {
     addCheck(checks, blockers, "kill_switch", !control.killSwitchActive, "The live-order kill switch must be explicitly cleared for a new BUY.");
     addCheck(checks, blockers, "live_readiness", Boolean(snapshot.readiness?.readyForLiveAuto), "Strict live-readiness evidence must pass before a new BUY.");
@@ -284,6 +291,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     sourceType,
     sourceId,
     recordUpdatedAt: record?.lastUpdated || null,
+    accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
   };
   const createdAt = now.toISOString();
   return normalizeTradeDraft({
@@ -299,6 +307,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     orderType: "market",
     sourceType,
     sourceId,
+    accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
     thesis: mirror
       ? `${mirror.traderName} ${side} disclosure passed current copy-source checks; broker review must reprice it.`
       : `${record?.decision || "Evaluator review"}; score ${record?.score ?? "unknown"}; ${record?.mainRisk || "risk note unavailable"}`,
@@ -326,11 +335,14 @@ function executionEnvelope(draft) {
   return {
     provider: "robinhood_agentic_mcp",
     accountScope: "dedicated_agentic_account_only",
+    accountIdentityHash: normalized.accountIdentityHash,
     reviewTool: "review_equity_order",
     placementTool: "place_equity_order",
     reviewArgs,
     placementArgs,
     args: placementArgs,
+    referencePrice: normalized.referencePrice,
+    maxPriceDriftPct: 0.02,
     fingerprint: normalized.fingerprint,
     expiresAt: normalized.expiresAt,
   };
@@ -364,6 +376,7 @@ function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
   if (Math.abs(moneyNumber(approvedArgs.dollar_amount) - normalized.cappedDollars) > 0.001) reasons.push("Approved broker envelope notional does not match.");
   if (Math.abs(finiteNumber(details.maxNotionalDollars, -1) - normalized.cappedDollars) > 0.001) reasons.push("Human Gate maximum notional does not match.");
   if (String(details.accountScope || "") !== "dedicated_agentic_account_only") reasons.push("Human Gate account scope is not the dedicated Agentic account.");
+  if (!normalized.accountIdentityHash || String(approvedEnvelope.accountIdentityHash || "") !== normalized.accountIdentityHash) reasons.push("Approved Agentic-account identity does not match the live broker account.");
   if (details.recurringAuthorization !== false) reasons.push("Recurring order authority is forbidden.");
   if (details.moneyMovementAuthorized !== false) reasons.push("The approval scope must not include money movement.");
   return { passed: reasons.length === 0, reasons, approval, details };
@@ -383,7 +396,7 @@ function tradeDraftWithApprovalState(draft = {}, approvals = [], options = {}) {
     }
     return normalized;
   }
-  if (["review_rejected", "dispatched", "filled", "rejected", "cancelled"].includes(normalized.status)) return normalized;
+  if (["review_rejected", "reconciliation_required", "dispatched", "filled", "rejected", "cancelled"].includes(normalized.status)) return normalized;
   if (new Date(normalized.expiresAt).getTime() <= at.getTime()) return normalizeTradeDraft({ ...normalized, status: "expired", updatedAt: at.toISOString() });
   const approval = (Array.isArray(approvals) ? approvals : []).find((item) => item?.id === normalized.approvalId)
     || (Array.isArray(approvals) ? approvals : []).find((item) => item?.linkedId === `stock-office:order:${normalized.fingerprint}`);
@@ -467,32 +480,51 @@ function settleApprovedDispatch(draft = {}, approval = {}, result = {}, claimTok
   const placementAttempted = result.placementAttempted === true;
   const brokerOrderId = String(result.brokerOrderId || "").trim().slice(0, 160);
   const brokerState = String(result.brokerState || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60);
-  const placementRecorded = reviewPassed && placementAttempted && Boolean(brokerOrderId) && Boolean(brokerState);
-  const finalStatus = placementRecorded ? (brokerState === "filled" ? "filled" : "dispatched") : reviewPassed ? "rejected" : "review_rejected";
-  const lastDispatchError = placementRecorded
+  const reconciliation = result.reconciliation && typeof result.reconciliation === "object" ? result.reconciliation : {};
+  const trustedReconciliation = options.trustedBrokerResult === true
+    && reconciliation.matched === true
+    && String(reconciliation.clientRefId || "") === normalized.clientRefId
+    && String(reconciliation.accountIdentityHash || "") === normalized.accountIdentityHash;
+  const placementReported = reviewPassed && placementAttempted;
+  const placementVerified = placementReported && trustedReconciliation && Boolean(brokerOrderId) && Boolean(brokerState);
+  const finalStatus = placementVerified
+    ? (brokerState === "filled" ? "filled" : "dispatched")
+    : placementReported
+      ? "reconciliation_required"
+      : reviewPassed
+        ? "rejected"
+        : "review_rejected";
+  const lastDispatchError = placementVerified
     ? ""
-    : String(result.error || (reviewPassed ? "Broker placement result was incomplete; approval consumed without recording a live order." : "Broker review failed or returned warnings; no order was placed.")).slice(0, 500);
+    : String(result.error || (placementReported
+      ? "Placement was reported but not independently reconciled to the exact official Robinhood order. Do not retry; refresh order history."
+      : reviewPassed
+        ? "Broker placement result was incomplete; approval consumed without recording a verified live order."
+        : "Broker review failed or returned warnings; no order was placed.")).slice(0, 500);
   const nextDraft = normalizeTradeDraft({
     ...normalized,
     status: finalStatus,
     dispatchAttempts: 1,
     brokerReviewPassed: reviewPassed,
     brokerWarnings: warnings,
-    brokerOrderId: placementRecorded ? brokerOrderId : "",
-    brokerState: placementRecorded ? brokerState : "",
+    brokerOrderId: placementReported ? brokerOrderId : "",
+    brokerState: placementReported ? (brokerState || "unknown") : "",
+    brokerReconciled: placementVerified,
+    brokerEvidenceSource: options.trustedBrokerResult === true ? "official_robinhood_mcp" : "operator_report",
+    reconciliationObservedAt: placementVerified ? reconciliation.observedAt : null,
     lastDispatchError,
-    liveOrderPlaced: placementRecorded,
+    liveOrderPlaced: placementVerified,
     updatedAt: at.toISOString(),
   });
   const nextApproval = {
     ...approval,
     useCount: finiteNumber(approval.useCount, 0) + 1,
     consumedAt: at.toISOString(),
-    executionOutcome: placementRecorded ? "broker_order_recorded" : reviewPassed ? "placement_not_recorded" : "broker_review_rejected",
+    executionOutcome: placementVerified ? "broker_order_verified" : placementReported ? "placement_outcome_unverified" : reviewPassed ? "placement_not_recorded" : "broker_review_rejected",
     executionDraftId: normalized.id,
-    executionBrokerOrderId: placementRecorded ? brokerOrderId : null,
+    executionBrokerOrderId: placementReported && brokerOrderId ? brokerOrderId : null,
   };
-  return { draft: nextDraft, approval: nextApproval, liveOrderPlaced: placementRecorded };
+  return { draft: nextDraft, approval: nextApproval, liveOrderPlaced: placementVerified, reconciliationRequired: placementReported && !placementVerified };
 }
 
 module.exports = {

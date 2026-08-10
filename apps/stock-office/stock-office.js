@@ -11,6 +11,8 @@ const state = {
   loading: false,
   refresh: null,
   brokerControl: null,
+  robinhoodConnection: null,
+  connectionApproval: null,
   tradeDrafts: [],
   dispatchHandoff: null,
 };
@@ -111,7 +113,7 @@ function renderTradeDraft(draft) {
   }
   const ready = draft.status === "ready_for_broker_review" && !draft.blockers?.length;
   const completed = ["dispatched", "filled"].includes(draft.status);
-  const pending = ["awaiting_human_gate", "approved", "dispatch_claimed"].includes(draft.status);
+  const pending = ["awaiting_human_gate", "approved", "dispatch_claimed", "reconciliation_required"].includes(draft.status);
   const statusClassName = completed ? "ready" : pending ? "warn" : ready ? "ready" : "rejected";
   const statusCopy = draft.blockers?.length
     ? `<ul>${draft.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
@@ -123,8 +125,10 @@ function renderTradeDraft(draft) {
           ? `<p class="order-ready-copy">Human Gate approved this exact fingerprint. A one-use broker-review claim may now be issued; placement is still not automatic.</p>`
           : draft.status === "dispatch_claimed"
             ? `<p class="order-ready-copy">A two-minute one-use dispatch is active. Robinhood review must complete first; a second claim is blocked.</p>`
+            : draft.status === "reconciliation_required"
+              ? `<p class="order-ready-copy">A placement attempt was reported, but Stock Office could not independently match the exact order in fresh Robinhood history. The approval is consumed and placement will not be retried.</p>`
             : completed
-              ? `<p class="order-ready-copy">Broker order recorded as ${escapeHtml(draft.brokerState || draft.status)}${draft.brokerOrderId ? ` · ${escapeHtml(draft.brokerOrderId)}` : ""}. The approval has been consumed.</p>`
+              ? `<p class="order-ready-copy">Broker order independently reconciled as ${escapeHtml(draft.brokerState || draft.status)}${draft.brokerOrderId ? ` · ${escapeHtml(draft.brokerOrderId)}` : ""}. The approval has been consumed.</p>`
               : `<p>${escapeHtml(draft.lastDispatchError || "This order draft did not advance to broker placement.")}</p>`;
   const gateLabel = ready
     ? "Send exact order to Human Gate"
@@ -137,10 +141,13 @@ function renderTradeDraft(draft) {
           : completed
             ? "Approval consumed"
             : "Order blocked";
+  const directExecutionReady = state.robinhoodConnection?.snapshotVerified === true && state.brokerControl?.authenticationVerified === true;
   const actionButton = ready
     ? `<button type="button" data-order-gate="${escapeHtml(draft.id)}">Send exact order to Human Gate</button>`
     : draft.status === "approved"
-      ? `<button type="button" data-order-claim="${escapeHtml(draft.id)}">Prepare 2-minute Robinhood handoff</button>`
+      ? directExecutionReady
+        ? `<div class="order-actions"><button type="button" data-order-execute="${escapeHtml(draft.id)}">Review and execute once with Robinhood</button><button class="secondary" type="button" data-order-claim="${escapeHtml(draft.id)}">Prepare manual 2-minute handoff</button></div>`
+        : `<button type="button" data-order-claim="${escapeHtml(draft.id)}">Prepare 2-minute Robinhood handoff</button>`
       : `<button type="button" disabled>${gateLabel}</button>`;
   const handoff = state.dispatchHandoff?.draftId === draft.id ? state.dispatchHandoff : null;
   const handoffPanel = handoff
@@ -206,6 +213,8 @@ function brokerHandoffJob(handoff) {
 
 function renderBrokerControl() {
   const control = state.brokerControl || {};
+  const connection = state.robinhoodConnection || {};
+  const connectionApproval = state.connectionApproval || {};
   const guardrails = control.guardrails || {};
   const toolContract = control.toolContract || {};
   const pill = $("#brokerStatusPill");
@@ -234,6 +243,34 @@ function renderBrokerControl() {
   $("#brokerBlockers").innerHTML = control.blockers?.length
     ? `<strong>Before any new BUY:</strong><ul>${control.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
     : `<strong>New-entry preflight is clear.</strong><p>Every exact order still requires Robinhood review and Human Gate.</p>`;
+
+  const connectionButton = $("#brokerConnectGate");
+  if (connection.oauthAuthenticated) {
+    connectionButton.dataset.action = "refresh";
+    connectionButton.disabled = false;
+    connectionButton.textContent = connection.snapshotVerified ? "Refresh live Robinhood account" : "Verify Agentic account now";
+  } else if (connectionApproval.status === "approved" && !connectionApproval.consumedAt) {
+    connectionButton.dataset.action = "oauth";
+    connectionButton.disabled = false;
+    connectionButton.textContent = "Complete Robinhood OAuth on desktop";
+  } else if (connectionApproval.status === "pending") {
+    connectionButton.dataset.action = "approval";
+    connectionButton.disabled = true;
+    connectionButton.textContent = "Waiting for Human Gate approval";
+  } else {
+    connectionButton.dataset.action = "approval";
+    connectionButton.disabled = false;
+    connectionButton.textContent = "Authorize official connection setup";
+  }
+  $("#brokerConnectionFeedback").textContent = connection.lastError
+    ? `Connection check stopped: ${connection.lastError}`
+    : connection.snapshotVerified
+      ? `Official live snapshot verified ${formatTime(connection.snapshotUpdatedAt)}. Tokens remain in Mac Keychain.`
+      : connection.oauthAuthenticated
+        ? "OAuth is connected, but the dedicated Agentic account still needs a successful live refresh."
+        : connection.keychainAvailable === false
+          ? "Mac Keychain is unavailable, so Stock Office refuses to store Robinhood OAuth tokens."
+          : "No Robinhood password or token is entered into Stock Office.";
 
   if (!$("#guardrailForm").dataset.loaded) {
     $("#principalDollars").value = guardrails.principalDollars || 25;
@@ -492,6 +529,8 @@ async function loadApp() {
     state.messages = chat.messages || [];
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
     state.brokerControl = brokerPayload.brokerControl || null;
+    state.robinhoodConnection = brokerPayload.robinhoodConnection || null;
+    state.connectionApproval = brokerPayload.connectionApproval || null;
     state.tradeDrafts = brokerPayload.tradeDrafts || [];
     renderMetrics();
     renderRecords();
@@ -576,6 +615,62 @@ async function requestBrokerConnection() {
     button.textContent = error.message;
   } finally {
     window.setTimeout(() => { button.disabled = false; }, 1200);
+  }
+}
+
+async function startRobinhoodOAuth() {
+  const button = $("#brokerConnectGate");
+  button.disabled = true;
+  button.textContent = "Opening Robinhood OAuth...";
+  try {
+    const payload = await api("/api/stock-office/robinhood/oauth/start", { method: "POST", body: "{}" });
+    window.location.href = payload.authorizationUrl;
+  } catch (error) {
+    $("#brokerConnectionFeedback").textContent = error.message;
+    button.disabled = false;
+    button.textContent = "Complete Robinhood OAuth on desktop";
+  }
+}
+
+async function refreshRobinhoodAccount() {
+  const button = $("#brokerConnectGate");
+  button.disabled = true;
+  button.textContent = "Reading official account...";
+  try {
+    const payload = await api("/api/stock-office/robinhood/refresh", { method: "POST", body: "{}" });
+    state.robinhoodConnection = payload.connection || state.robinhoodConnection;
+    state.brokerControl = payload.brokerControl || state.brokerControl;
+    await loadApp();
+  } catch (error) {
+    $("#brokerConnectionFeedback").textContent = error.message;
+  } finally {
+    button.disabled = false;
+    renderBrokerControl();
+  }
+}
+
+async function executeApprovedOrder(draftId) {
+  const draft = state.tradeDrafts.find((item) => item.id === draftId);
+  if (!draft) return;
+  const confirmed = window.confirm(`Final action-time confirmation\n\n${draft.side} ${draft.symbol}\nMaximum $${Number(draft.cappedDollars || 0).toFixed(2)}\nDedicated Agentic account only\n\nRobinhood will review first. Any warning stops placement. Continue once?`);
+  if (!confirmed) return;
+  const button = $(`[data-order-execute="${CSS.escape(draftId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Refreshing, reviewing, and reconciling...";
+  }
+  try {
+    const payload = await api(`/api/stock-office/orders/${encodeURIComponent(draftId)}/dispatch/execute`, {
+      method: "POST",
+      body: JSON.stringify({ confirmationFingerprint: draft.fingerprint }),
+    });
+    state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+    await loadApp();
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = error.message;
+    }
   }
 }
 
@@ -729,6 +824,8 @@ async function pollBrokerControl() {
   try {
     const payload = await api("/api/stock-office/broker-control");
     state.brokerControl = payload.brokerControl || state.brokerControl;
+    state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
+    state.connectionApproval = payload.connectionApproval || state.connectionApproval;
     state.tradeDrafts = payload.tradeDrafts || state.tradeDrafts;
     const activeDraft = state.dispatchHandoff
       ? state.tradeDrafts.find((draft) => draft.id === state.dispatchHandoff.draftId)
@@ -830,11 +927,15 @@ async function askStockGuru(event) {
 
 document.addEventListener("click", (event) => {
   const brokerConnect = event.target.closest("#brokerConnectGate");
-  if (brokerConnect) requestBrokerConnection();
+  if (brokerConnect && brokerConnect.dataset.action === "oauth") startRobinhoodOAuth();
+  else if (brokerConnect && brokerConnect.dataset.action === "refresh") refreshRobinhoodAccount();
+  else if (brokerConnect) requestBrokerConnection();
   const orderGate = event.target.closest("[data-order-gate]");
   if (orderGate) sendOrderToHumanGate(orderGate.dataset.orderGate);
   const orderClaim = event.target.closest("[data-order-claim]");
   if (orderClaim) claimOrderDispatch(orderClaim.dataset.orderClaim);
+  const orderExecute = event.target.closest("[data-order-execute]");
+  if (orderExecute) executeApprovedOrder(orderExecute.dataset.orderExecute);
   const handoffCopy = event.target.closest("[data-copy-order-handoff]");
   if (handoffCopy) copyOrderHandoff(handoffCopy.dataset.copyOrderHandoff);
   const resultRecord = event.target.closest("[data-record-order-result]");

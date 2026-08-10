@@ -164,15 +164,25 @@ Open the Stock Guru office from the command floor. The office panel shows:
 
 ### Approved-order handoff
 
-Human Gate approval is not the end of the visible flow. Stock Office polls approval state every three seconds. When the exact draft becomes approved, the order card enables **Prepare 2-minute Robinhood handoff**. That action:
+Human Gate approval is not the end of the visible flow. Stock Office polls approval state every three seconds. The preferred path is the built-in official Robinhood MCP client:
+
+1. an exact connection request must first be approved in Human Gate;
+2. the operator completes Robinhood's OAuth/Agentic-account onboarding in the desktop browser using PKCE;
+3. OAuth tokens remain in Mac Keychain and never enter browser JavaScript, project files, logs, or Stock Guru reports;
+4. every live refresh selects exactly one account whose official account metadata identifies it as Agentic, hashes that identity, and refuses ambiguity or account switching;
+5. a fresh read-only snapshot loads buying power, positions, open orders, quotes, tradability, and the current MCP tool contract.
+
+When an exact order becomes approved and the live snapshot is verified, the order card enables **Review and execute once with Robinhood**. After the operator's final action-time confirmation, the server persists the one-use claim before any broker call, refreshes the account, quote, tradability, positions, and orders, runs `review_equity_order`, stops on any warning or price drift, calls `place_equity_order` at most once, then reloads order history. An order is marked live only when fresh official history independently matches its one-use `ref_id`, broker order ID, and hashed Agentic-account identity. Ambiguous placement consumes the approval and becomes `reconciliation_required`; it is never retried automatically.
+
+The manual fallback remains **Prepare 2-minute Robinhood handoff**. That action:
 
 1. re-runs every broker, source, price, risk, account, and fingerprint check;
 2. issues one claim that expires within two minutes;
 3. copies a token-free job containing the exact `review_equity_order` / `place_equity_order` envelope and stop conditions;
 4. keeps the raw one-use claim token only in page memory;
-5. accepts the official executor's result JSON and consumes the approval whether review rejects the order or a placement result is recorded.
+5. accepts an operator-reported result JSON and consumes the approval whether review rejects or placement is reported.
 
-The operator must keep the page open until the broker result is recorded. Reloading intentionally loses the raw claim token. An unrecorded claim becomes visibly expired after two minutes, and the operator must build and approve a fresh draft. This prevents a stale or orphaned handoff from remaining actionable.
+Manual JSON can never mark an order live. It becomes `reconciliation_required` until the official MCP path independently finds the exact order. The operator must keep the page open until the report is recorded. Reloading intentionally loses the raw claim token. An unrecorded claim becomes visibly expired after two minutes, and the operator must build and approve a fresh draft. This prevents a stale or orphaned handoff from remaining actionable.
 
 The assistant answers from the local snapshot only. It should not present output as financial advice or a trade instruction.
 
@@ -203,4 +213,4 @@ Manual checks:
 - Move runtime state from local JSON to a database.
 - Add richer Stock Guru artifact export only after access roles are ready.
 - Add congressional import only if its delayed data remains explicitly research-only.
-- Complete interactive Robinhood OAuth and live connector contract tests with the operator present before treating dispatch as available.
+- Complete interactive Robinhood OAuth, live tool-schema discovery, Agentic-account identity verification, and a controlled no-order read test with the operator present before treating direct dispatch as available.

@@ -12,7 +12,7 @@ Stock Guru is a live/delayed market scanner, ranking engine, paper-trading journ
 - Scanner blends momentum, trend, liquidity, volatility, and distance from highs into a 0-100 score.
 - Paper bot can simulate fractional trades and write state under `data/`.
 - Telegram alerts and approval polling are supported when configured.
-- Live broker mission is guarded for the Agentic account and requires explicit human approval before any real order.
+- Live broker mission is guarded for the Agentic account and requires explicit human approval before any real order. Argentum owns the separate server-side Robinhood MCP OAuth and one-use execution boundary; Stock Guru never receives OAuth tokens or calls order tools.
 - Copy Trader Mirror Lab now evaluates attributable public signals for disclosure delay, freshness, price drift, duplicates, and bounded paper sizing. An opt-in, rate-limited official SEC Form 4 importer can refresh named-CIK watchlists and rebuild the plan continuously. Form 13F, congressional PTRs, and event contracts remain research-only. Neither importer nor engine has a live-order call; Stock Office can create an exact Human Gate review record only.
 
 ## Useful commands

@@ -19,6 +19,7 @@ function snapshot(overrides = {}) {
     broker: {
       configured: true,
       account: "acct-****1234",
+      accountIdentityHash: "b".repeat(64),
       accountValue: "$100.00",
       cash: "$100.00",
       buyingPower: "$100.00",
@@ -118,6 +119,7 @@ test("fresh official connector and strict checks produce an exact BUY review env
   assert.deepEqual(envelope.args, envelope.placementArgs);
   assert.equal(envelope.args.dollar_amount, "10.00");
   assert.equal(envelope.accountScope, "dedicated_agentic_account_only");
+  assert.equal(envelope.accountIdentityHash, "b".repeat(64));
 });
 
 test("connector tool contract fails closed when an execution tool is missing", () => {
@@ -287,7 +289,7 @@ test("broker review warnings consume the one-use approval without recording an o
   assert.ok(settled.approval.consumedAt);
 });
 
-test("a passing review records one broker order ID and blocks replay", () => {
+test("operator-reported placement JSON cannot invent a verified live order", () => {
   const current = snapshot();
   const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
   const approval = approvedApproval(draft);
@@ -300,12 +302,41 @@ test("a passing review records one broker order ID and blocks replay", () => {
     brokerState: "queued",
   }, claimed.claim.token, { now: "2026-08-10T17:00:40.000Z" });
 
-  assert.equal(settled.liveOrderPlaced, true);
-  assert.equal(settled.draft.status, "dispatched");
+  assert.equal(settled.liveOrderPlaced, false);
+  assert.equal(settled.reconciliationRequired, true);
+  assert.equal(settled.draft.status, "reconciliation_required");
+  assert.equal(settled.draft.brokerReconciled, false);
   assert.equal(settled.draft.brokerOrderId, "rh-order-123");
-  assert.equal(settled.approval.executionOutcome, "broker_order_recorded");
+  assert.equal(settled.approval.executionOutcome, "placement_outcome_unverified");
   assert.throws(
     () => settleApprovedDispatch(settled.draft, settled.approval, { reviewPassed: true }, claimed.claim.token, { now: "2026-08-10T17:00:50.000Z" }),
     /already been consumed|no active dispatch claim|already been recorded/i,
   );
+});
+
+test("only trusted official reconciliation records a live Robinhood order", () => {
+  const current = snapshot();
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = approvedApproval(draft);
+  const claimed = claimApprovedDispatch({ ...draft, approvalId: approval.id, status: "approved" }, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+  const settled = settleApprovedDispatch(claimed.draft, approval, {
+    reviewPassed: true,
+    warnings: [],
+    placementAttempted: true,
+    brokerOrderId: "rh-order-verified",
+    brokerState: "queued",
+    reconciliation: {
+      matched: true,
+      clientRefId: draft.clientRefId,
+      accountIdentityHash: draft.accountIdentityHash,
+      observedAt: "2026-08-10T17:00:38.000Z",
+    },
+  }, claimed.claim.token, { now: "2026-08-10T17:00:40.000Z", trustedBrokerResult: true });
+
+  assert.equal(settled.liveOrderPlaced, true);
+  assert.equal(settled.reconciliationRequired, false);
+  assert.equal(settled.draft.status, "dispatched");
+  assert.equal(settled.draft.brokerReconciled, true);
+  assert.equal(settled.draft.brokerEvidenceSource, "official_robinhood_mcp");
+  assert.equal(settled.approval.executionOutcome, "broker_order_verified");
 });

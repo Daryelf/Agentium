@@ -22,8 +22,11 @@ const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./se
 const {
   brokerControlOverview,
   buildTradeDraft,
+  claimApprovedDispatch,
   executionEnvelope,
   normalizeGuardrails,
+  settleApprovedDispatch,
+  tradeDraftWithApprovalState,
 } = require("./services/stock-broker-control");
 
 const PORT = Number(process.env.PORT || 5173);
@@ -5358,10 +5361,14 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
       const access = requireStockOfficeAccess(req, "broker_view");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const tradeDrafts = snapshot.tradeDrafts
+        .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
+        .slice(0, 20);
       sendJson(res, 200, {
         brokerControl: brokerControlOverview(snapshot),
-        tradeDrafts: snapshot.tradeDrafts.slice(0, 20),
+        tradeDrafts,
         permissions: access.permissions,
       });
     } catch (error) {
@@ -5521,7 +5528,99 @@ async function handleApi(req, res, url) {
         expectedPostcondition: "The exact order is broker-reviewed, placed at most once, and reconciled to a Robinhood order ID; otherwise no order is placed.",
         rollbackPlan: "If still open, cancel the exact broker order; if filled, stop automation and create a separate explicit SELL review. Never create an offsetting order automatically.",
       });
-      sendJson(res, 200, { ...approvalResult, draft, envelope, liveOrderPlaced: false });
+      const latestState = readState();
+      const current = normalizeStockOfficeState(latestState.stockOffice);
+      const awaitingDraft = tradeDraftWithApprovalState({
+        ...draft,
+        approvalId: approvalResult.approval.id,
+        status: "awaiting_human_gate",
+        updatedAt: now(),
+      }, [approvalResult.approval]);
+      latestState.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      audit(latestState, "Stock Office order awaiting Human Gate", `${draft.side} ${draft.symbol} order fingerprint ${draft.fingerprint} is awaiting one-use approval; no live order placed.`);
+      writeState(latestState);
+      sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+
+  const stockDispatchClaimMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/claim$/);
+  if (req.method === "POST" && stockDispatchClaimMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-claim", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchClaimMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+        || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const claimed = claimApprovedDispatch(draft, approval, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      approval.dispatchClaimId = claimed.claim.id;
+      approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+      approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+      audit(state, "Stock Office one-use dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} expires ${claimed.claim.expiresAt}; broker review required before any placement.`);
+      writeState(state);
+      sendJson(res, 200, {
+        claim: claimed.claim,
+        draft: claimed.draft,
+        liveOrderPlaced: false,
+        warning: "This claim is single-use. Run Robinhood review first and submit the result before expiry; never place on warnings or changed scope.",
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockDispatchResultMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/result$/);
+  if (req.method === "POST" && stockDispatchResultMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-result", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchResultMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approvalIndex = (state.approvals || []).findIndex((item) => item.id === draft.approvalId || item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (approvalIndex < 0) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const settled = settleApprovedDispatch(draft, state.approvals[approvalIndex], payload, payload.claimToken);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [settled.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      state.approvals[approvalIndex] = settled.approval;
+      audit(
+        state,
+        settled.liveOrderPlaced ? "Stock Office broker order recorded" : "Stock Office dispatch stopped safely",
+        settled.liveOrderPlaced
+          ? `${draft.side} ${draft.symbol} reconciled to broker order ${settled.draft.brokerOrderId}; one-use approval consumed.`
+          : `${draft.side} ${draft.symbol} stopped after broker review or incomplete placement evidence; no live order recorded; one-use approval consumed.`,
+      );
+      writeState(state);
+      sendJson(res, 200, {
+        draft: settled.draft,
+        approval: settled.approval,
+        liveOrderPlaced: settled.liveOrderPlaced,
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

@@ -415,6 +415,12 @@ button {
   background: rgba(5, 46, 22, 0.3);
 }
 
+.order-draft-result[data-status="pending"] {
+  border-color: rgba(251, 191, 36, 0.26);
+  color: #fef3c7;
+  background: rgba(69, 26, 3, 0.26);
+}
+
 .order-draft-heading span,
 .order-draft-heading strong {
   display: block;

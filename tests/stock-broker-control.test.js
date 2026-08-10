@@ -4,8 +4,11 @@ const test = require("node:test");
 const {
   brokerControlOverview,
   buildTradeDraft,
+  claimApprovedDispatch,
   executionEnvelope,
   normalizeTradeDrafts,
+  settleApprovedDispatch,
+  tradeDraftWithApprovalState,
 } = require("../services/stock-broker-control");
 
 function snapshot(overrides = {}) {
@@ -51,6 +54,37 @@ function snapshot(overrides = {}) {
     positions: [],
     mirror: { stale: false, candidates: [] },
     ...overrides,
+  };
+}
+
+function approvedApproval(draft) {
+  const envelope = executionEnvelope(draft);
+  return {
+    id: "approval-exact-order",
+    actionType: "place_robinhood_equity_order",
+    status: "approved",
+    useCount: 0,
+    consumedAt: null,
+    expiresAt: "2026-08-10T17:05:00.000Z",
+    decidedAt: "2026-08-10T17:00:10.000Z",
+    originalDetails: {
+      draftId: draft.id,
+      fingerprint: draft.fingerprint,
+      executionEnvelope: envelope,
+      maxNotionalDollars: draft.cappedDollars,
+      accountScope: "dedicated_agentic_account_only",
+      moneyMovementAuthorized: false,
+      recurringAuthorization: false,
+    },
+    grantedDetails: {
+      draftId: draft.id,
+      fingerprint: draft.fingerprint,
+      executionEnvelope: envelope,
+      maxNotionalDollars: draft.cappedDollars,
+      accountScope: "dedicated_agentic_account_only",
+      moneyMovementAuthorized: false,
+      recurringAuthorization: false,
+    },
   };
 }
 
@@ -126,4 +160,68 @@ test("trade draft persistence remains bounded and never invents a live fill", ()
   assert.equal(normalized.length, 80);
   assert.equal(normalized[0].id, "draft-99");
   assert.equal(normalized.some((draft) => draft.liveOrderPlaced), false);
+});
+
+test("approved exact order becomes a two-minute one-use dispatch claim", () => {
+  const current = snapshot();
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = approvedApproval(draft);
+  const approved = tradeDraftWithApprovalState({ ...draft, approvalId: approval.id }, [approval], { now: "2026-08-10T17:00:20.000Z" });
+  assert.throws(
+    () => claimApprovedDispatch({ ...approved, clientRefId: "tampered-ref" }, approval, current, { now: "2026-08-10T17:00:20.000Z" }),
+    /reference ID does not match/i,
+  );
+  const claimed = claimApprovedDispatch(approved, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+
+  assert.equal(approved.status, "approved");
+  assert.equal(claimed.draft.status, "dispatch_claimed");
+  assert.equal(claimed.draft.liveOrderPlaced, false);
+  assert.equal(claimed.claim.token.length, 64);
+  assert.equal(claimed.claim.envelope.fingerprint, draft.fingerprint);
+  assert.match(claimed.claim.policy, /review_equity_order first/i);
+  assert.throws(
+    () => claimApprovedDispatch(claimed.draft, approval, current, { now: "2026-08-10T17:00:30.000Z" }),
+    /already has a dispatch claim|not approved for dispatch/i,
+  );
+});
+
+test("broker review warnings consume the one-use approval without recording an order", () => {
+  const current = snapshot();
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = approvedApproval(draft);
+  const claimed = claimApprovedDispatch({ ...draft, approvalId: approval.id, status: "approved" }, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+  const settled = settleApprovedDispatch(claimed.draft, approval, {
+    reviewPassed: false,
+    warnings: ["Robinhood review returned an account restriction."],
+    placementAttempted: false,
+  }, claimed.claim.token, { now: "2026-08-10T17:00:40.000Z" });
+
+  assert.equal(settled.liveOrderPlaced, false);
+  assert.equal(settled.draft.status, "review_rejected");
+  assert.equal(settled.draft.dispatchAttempts, 1);
+  assert.equal(settled.approval.useCount, 1);
+  assert.ok(settled.approval.consumedAt);
+});
+
+test("a passing review records one broker order ID and blocks replay", () => {
+  const current = snapshot();
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = approvedApproval(draft);
+  const claimed = claimApprovedDispatch({ ...draft, approvalId: approval.id, status: "approved" }, approval, current, { now: "2026-08-10T17:00:20.000Z" });
+  const settled = settleApprovedDispatch(claimed.draft, approval, {
+    reviewPassed: true,
+    warnings: [],
+    placementAttempted: true,
+    brokerOrderId: "rh-order-123",
+    brokerState: "queued",
+  }, claimed.claim.token, { now: "2026-08-10T17:00:40.000Z" });
+
+  assert.equal(settled.liveOrderPlaced, true);
+  assert.equal(settled.draft.status, "dispatched");
+  assert.equal(settled.draft.brokerOrderId, "rh-order-123");
+  assert.equal(settled.approval.executionOutcome, "broker_order_recorded");
+  assert.throws(
+    () => settleApprovedDispatch(settled.draft, settled.approval, { reviewPassed: true }, claimed.claim.token, { now: "2026-08-10T17:00:50.000Z" }),
+    /already been consumed|no active dispatch claim|already been recorded/i,
+  );
 });

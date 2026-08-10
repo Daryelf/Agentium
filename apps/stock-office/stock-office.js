@@ -108,11 +108,38 @@ function renderTradeDraft(draft) {
     return;
   }
   const ready = draft.status === "ready_for_broker_review" && !draft.blockers?.length;
-  target.dataset.status = ready ? "ready" : "blocked";
+  const completed = ["dispatched", "filled"].includes(draft.status);
+  const pending = ["awaiting_human_gate", "approved", "dispatch_claimed"].includes(draft.status);
+  const statusClassName = completed ? "ready" : pending ? "warn" : ready ? "ready" : "rejected";
+  const statusCopy = draft.blockers?.length
+    ? `<ul>${draft.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : draft.status === "ready_for_broker_review"
+      ? `<p class="order-ready-copy">Local gates passed. Robinhood must still review the order and return no warnings.</p>`
+      : draft.status === "awaiting_human_gate"
+        ? `<p class="order-ready-copy">Waiting for the exact one-use Human Gate decision. No broker call has occurred.</p>`
+        : draft.status === "approved"
+          ? `<p class="order-ready-copy">Human Gate approved this exact fingerprint. A one-use broker-review claim may now be issued; placement is still not automatic.</p>`
+          : draft.status === "dispatch_claimed"
+            ? `<p class="order-ready-copy">A two-minute one-use dispatch is active. Robinhood review must complete first; a second claim is blocked.</p>`
+            : completed
+              ? `<p class="order-ready-copy">Broker order recorded as ${escapeHtml(draft.brokerState || draft.status)}${draft.brokerOrderId ? ` · ${escapeHtml(draft.brokerOrderId)}` : ""}. The approval has been consumed.</p>`
+              : `<p>${escapeHtml(draft.lastDispatchError || "This order draft did not advance to broker placement.")}</p>`;
+  const gateLabel = ready
+    ? "Send exact order to Human Gate"
+    : draft.status === "awaiting_human_gate"
+      ? "Awaiting Human Gate"
+      : draft.status === "approved"
+        ? "Approved · broker review required"
+        : draft.status === "dispatch_claimed"
+          ? "One-use dispatch claimed"
+          : completed
+            ? "Approval consumed"
+            : "Order blocked";
+  target.dataset.status = completed || ready ? "ready" : pending ? "pending" : "blocked";
   target.innerHTML = `
     <div class="order-draft-heading">
       <div><span>${escapeHtml(draft.side)} ${escapeHtml(draft.symbol)}</span><strong>${escapeHtml(formatMoney(draft.requestedDollars))}</strong></div>
-      <em class="tag ${ready ? "ready" : "rejected"}">${escapeHtml(String(draft.status || "blocked").replaceAll("_", " "))}</em>
+      <em class="tag ${statusClassName}">${escapeHtml(String(draft.status || "blocked").replaceAll("_", " "))}</em>
     </div>
     <p>${escapeHtml(draft.thesis || "No thesis recorded.")}</p>
     <div class="order-draft-stats">
@@ -120,8 +147,8 @@ function renderTradeDraft(draft) {
       <span><small>Estimated shares</small><b>${escapeHtml(Number(draft.estimatedQuantity || 0).toFixed(6))}</b></span>
       <span><small>Expires</small><b>${escapeHtml(formatTime(draft.expiresAt))}</b></span>
     </div>
-    ${draft.blockers?.length ? `<ul>${draft.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p class="order-ready-copy">Local gates passed. Robinhood must still review the order and return no warnings.</p>`}
-    <button type="button" data-order-gate="${escapeHtml(draft.id)}" ${ready ? "" : "disabled"}>Send exact order to Human Gate</button>
+    ${statusCopy}
+    <button type="button" data-order-gate="${escapeHtml(draft.id)}" ${ready ? "" : "disabled"}>${gateLabel}</button>
     <small>Live order placed: ${draft.liveOrderPlaced ? "yes" : "no"}</small>
   `;
 }
@@ -489,7 +516,12 @@ async function sendOrderToHumanGate(draftId) {
   }
   try {
     const payload = await api(`/api/stock-office/orders/${encodeURIComponent(draftId)}/human-gate`, { method: "POST", body: "{}" });
-    if (button) button.textContent = payload.approval?.status === "pending" ? "Exact order is in Human Gate" : "Approval already exists";
+    if (payload.draft) {
+      state.tradeDrafts = [payload.draft, ...state.tradeDrafts.filter((item) => item.id !== payload.draft.id)];
+      renderTradeDraft(payload.draft);
+    } else if (button) {
+      button.textContent = payload.approval?.status === "pending" ? "Exact order is in Human Gate" : "Approval already exists";
+    }
   } catch (error) {
     if (button) button.textContent = error.message;
   }

@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const ROBINHOOD_MCP_URL = "https://agent.robinhood.com/mcp/trading";
 const BROKER_SNAPSHOT_FRESH_MINUTES = 5;
 const ORDER_DRAFT_TTL_MINUTES = 5;
+const DISPATCH_CLAIM_TTL_MINUTES = 2;
 const MAX_ORDER_DRAFTS = 80;
 const REQUIRED_EQUITY_TOOLS = [
   "get_accounts",
@@ -74,7 +75,7 @@ function normalizeGuardrails(value = {}) {
 
 function normalizeTradeDraft(draft = {}) {
   const side = String(draft.side || "").toUpperCase();
-  const status = ["blocked", "ready_for_broker_review", "awaiting_human_gate", "approved", "expired", "cancelled", "dispatched", "filled", "rejected"].includes(draft.status)
+  const status = ["blocked", "ready_for_broker_review", "awaiting_human_gate", "approved", "dispatch_claimed", "review_rejected", "expired", "cancelled", "dispatched", "filled", "rejected"].includes(draft.status)
     ? draft.status
     : "blocked";
   return {
@@ -102,7 +103,16 @@ function normalizeTradeDraft(draft = {}) {
     })).slice(0, 20),
     status,
     approvalId: String(draft.approvalId || "").slice(0, 120),
+    dispatchClaimId: String(draft.dispatchClaimId || "").slice(0, 120),
+    dispatchClaimHash: String(draft.dispatchClaimHash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+    dispatchClaimedAt: safeDate(draft.dispatchClaimedAt),
+    dispatchExpiresAt: safeDate(draft.dispatchExpiresAt),
+    dispatchAttempts: Math.round(clamp(draft.dispatchAttempts, 0, 1, 0)),
+    brokerReviewPassed: typeof draft.brokerReviewPassed === "boolean" ? draft.brokerReviewPassed : null,
+    brokerWarnings: (Array.isArray(draft.brokerWarnings) ? draft.brokerWarnings : []).map((item) => String(item).slice(0, 260)).slice(0, 12),
     brokerOrderId: String(draft.brokerOrderId || "").slice(0, 160),
+    brokerState: String(draft.brokerState || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60),
+    lastDispatchError: String(draft.lastDispatchError || "").slice(0, 500),
     liveOrderPlaced: Boolean(draft.liveOrderPlaced),
     createdAt: safeDate(draft.createdAt) || new Date().toISOString(),
     expiresAt: safeDate(draft.expiresAt) || new Date(Date.now() + ORDER_DRAFT_TTL_MINUTES * 60_000).toISOString(),
@@ -286,17 +296,168 @@ function executionEnvelope(draft) {
   };
 }
 
+function approvalDetails(approval = {}) {
+  if (approval.grantedDetails && typeof approval.grantedDetails === "object" && !Array.isArray(approval.grantedDetails)) return approval.grantedDetails;
+  if (approval.originalDetails && typeof approval.originalDetails === "object" && !Array.isArray(approval.originalDetails)) return approval.originalDetails;
+  return approval.details && typeof approval.details === "object" && !Array.isArray(approval.details) ? approval.details : {};
+}
+
+function approvalMatchesDraft(approval = {}, draft = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const normalized = normalizeTradeDraft(draft);
+  const details = approvalDetails(approval);
+  const approvedEnvelope = details.executionEnvelope && typeof details.executionEnvelope === "object" ? details.executionEnvelope : {};
+  const approvedArgs = approvedEnvelope.args && typeof approvedEnvelope.args === "object" ? approvedEnvelope.args : {};
+  const expiresAt = safeDate(approval.expiresAt);
+  const reasons = [];
+  if (approval.actionType !== "place_robinhood_equity_order") reasons.push("Human Gate action type does not authorize an equity order.");
+  if (approval.status !== "approved") reasons.push("The exact Human Gate order request is not approved.");
+  if (approval.consumedAt || finiteNumber(approval.useCount, 0) > 0) reasons.push("The one-use Human Gate approval has already been consumed.");
+  if (expiresAt && new Date(expiresAt).getTime() <= at.getTime()) reasons.push("The Human Gate order approval expired.");
+  if (String(details.draftId || "") !== normalized.id) reasons.push("Human Gate draft ID does not match.");
+  if (String(details.fingerprint || "") !== normalized.fingerprint) reasons.push("Human Gate order fingerprint does not match.");
+  if (String(approvedEnvelope.fingerprint || "") !== normalized.fingerprint) reasons.push("Approved broker envelope fingerprint does not match.");
+  if (String(approvedArgs.ref_id || "") !== normalized.clientRefId) reasons.push("Approved one-use broker reference ID does not match.");
+  if (normalizeSymbol(approvedArgs.symbol) !== normalized.symbol || String(approvedArgs.side || "").toUpperCase() !== normalized.side) reasons.push("Approved broker envelope symbol or side does not match.");
+  if (Math.abs(moneyNumber(approvedArgs.dollar_amount) - normalized.cappedDollars) > 0.001) reasons.push("Approved broker envelope notional does not match.");
+  if (Math.abs(finiteNumber(details.maxNotionalDollars, -1) - normalized.cappedDollars) > 0.001) reasons.push("Human Gate maximum notional does not match.");
+  if (String(details.accountScope || "") !== "dedicated_agentic_account_only") reasons.push("Human Gate account scope is not the dedicated Agentic account.");
+  if (details.recurringAuthorization !== false) reasons.push("Recurring order authority is forbidden.");
+  if (details.moneyMovementAuthorized !== false) reasons.push("The approval scope must not include money movement.");
+  return { passed: reasons.length === 0, reasons, approval, details };
+}
+
+function tradeDraftWithApprovalState(draft = {}, approvals = [], options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const normalized = normalizeTradeDraft(draft);
+  if (["dispatch_claimed", "review_rejected", "dispatched", "filled", "rejected", "cancelled"].includes(normalized.status)) return normalized;
+  if (new Date(normalized.expiresAt).getTime() <= at.getTime()) return normalizeTradeDraft({ ...normalized, status: "expired", updatedAt: at.toISOString() });
+  const approval = (Array.isArray(approvals) ? approvals : []).find((item) => item?.id === normalized.approvalId)
+    || (Array.isArray(approvals) ? approvals : []).find((item) => item?.linkedId === `stock-office:order:${normalized.fingerprint}`);
+  if (!approval) return normalized;
+  if (approval.status === "approved" && !approval.consumedAt) return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "approved", updatedAt: approval.decidedAt || at.toISOString() });
+  if (approval.status === "pending") return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "awaiting_human_gate", updatedAt: normalized.updatedAt });
+  if (["blocked", "rejected", "needs_revision"].includes(approval.status)) return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "cancelled", updatedAt: approval.decidedAt || approval.resolvedAt || at.toISOString() });
+  return normalized;
+}
+
+function claimApprovedDispatch(draft = {}, approval = {}, snapshot = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const normalized = tradeDraftWithApprovalState(draft, [approval], { now: at });
+  const match = approvalMatchesDraft(approval, normalized, { now: at });
+  const reasons = [...match.reasons];
+  if (normalized.status !== "approved") reasons.push(`Order draft is not approved for dispatch: ${normalized.status}.`);
+  if (normalized.dispatchClaimHash || normalized.dispatchAttempts > 0) reasons.push("This order draft already has a dispatch claim or attempt.");
+  if (new Date(normalized.expiresAt).getTime() <= at.getTime()) reasons.push("Order draft expired before dispatch.");
+
+  const mirrorCandidate = normalized.sourceType === "copy_signal"
+    ? (snapshot.mirror?.candidates || []).find((candidate) => candidate.fingerprint === normalized.sourceId)
+    : null;
+  const refreshed = buildTradeDraft({
+    symbol: normalized.symbol,
+    side: normalized.side,
+    requestedDollars: normalized.requestedDollars,
+    candidateId: mirrorCandidate?.id,
+  }, snapshot, { now: at, registrationStatus: options.registrationStatus });
+  if (refreshed.status !== "ready_for_broker_review" || refreshed.blockers.length) reasons.push(...refreshed.blockers);
+  if (refreshed.fingerprint !== normalized.fingerprint) reasons.push("Market, evaluator, or source evidence changed; rebuild and reapprove the order.");
+  if (reasons.length) {
+    const error = new Error([...new Set(reasons)].join(" "));
+    error.status = 409;
+    throw error;
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const claimId = `stock-dispatch-${crypto.randomUUID()}`;
+  const dispatchExpiresAt = new Date(Math.min(
+    new Date(normalized.expiresAt).getTime(),
+    at.getTime() + DISPATCH_CLAIM_TTL_MINUTES * 60_000,
+  )).toISOString();
+  const nextDraft = normalizeTradeDraft({
+    ...normalized,
+    status: "dispatch_claimed",
+    dispatchClaimId: claimId,
+    dispatchClaimHash: stableFingerprint(token),
+    dispatchClaimedAt: at.toISOString(),
+    dispatchExpiresAt,
+    updatedAt: at.toISOString(),
+  });
+  return {
+    draft: nextDraft,
+    claim: {
+      id: claimId,
+      token,
+      expiresAt: dispatchExpiresAt,
+      envelope: executionEnvelope(nextDraft),
+      policy: "Call review_equity_order first. Do not call place_equity_order on any warning, mismatch, or scope change.",
+    },
+  };
+}
+
+function settleApprovedDispatch(draft = {}, approval = {}, result = {}, claimToken = "", options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  const normalized = normalizeTradeDraft(draft);
+  const match = approvalMatchesDraft(approval, normalized, { now: at });
+  const reasons = [...match.reasons];
+  if (normalized.status !== "dispatch_claimed") reasons.push("Order draft has no active dispatch claim.");
+  if (!normalized.dispatchClaimHash || stableFingerprint(String(claimToken || "")) !== normalized.dispatchClaimHash) reasons.push("Dispatch claim token does not match.");
+  if (!normalized.dispatchExpiresAt || new Date(normalized.dispatchExpiresAt).getTime() <= at.getTime()) reasons.push("Dispatch claim expired.");
+  if (normalized.dispatchAttempts > 0) reasons.push("Dispatch result has already been recorded.");
+  if (reasons.length) {
+    const error = new Error(reasons.join(" "));
+    error.status = 409;
+    throw error;
+  }
+
+  const warnings = (Array.isArray(result.warnings) ? result.warnings : []).map((item) => String(item).slice(0, 260)).filter(Boolean).slice(0, 12);
+  const reviewPassed = result.reviewPassed === true && warnings.length === 0;
+  const placementAttempted = result.placementAttempted === true;
+  const brokerOrderId = String(result.brokerOrderId || "").trim().slice(0, 160);
+  const brokerState = String(result.brokerState || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60);
+  const placementRecorded = reviewPassed && placementAttempted && Boolean(brokerOrderId) && Boolean(brokerState);
+  const finalStatus = placementRecorded ? (brokerState === "filled" ? "filled" : "dispatched") : reviewPassed ? "rejected" : "review_rejected";
+  const lastDispatchError = placementRecorded
+    ? ""
+    : String(result.error || (reviewPassed ? "Broker placement result was incomplete; approval consumed without recording a live order." : "Broker review failed or returned warnings; no order was placed.")).slice(0, 500);
+  const nextDraft = normalizeTradeDraft({
+    ...normalized,
+    status: finalStatus,
+    dispatchAttempts: 1,
+    brokerReviewPassed: reviewPassed,
+    brokerWarnings: warnings,
+    brokerOrderId: placementRecorded ? brokerOrderId : "",
+    brokerState: placementRecorded ? brokerState : "",
+    lastDispatchError,
+    liveOrderPlaced: placementRecorded,
+    updatedAt: at.toISOString(),
+  });
+  const nextApproval = {
+    ...approval,
+    useCount: finiteNumber(approval.useCount, 0) + 1,
+    consumedAt: at.toISOString(),
+    executionOutcome: placementRecorded ? "broker_order_recorded" : reviewPassed ? "placement_not_recorded" : "broker_review_rejected",
+    executionDraftId: normalized.id,
+    executionBrokerOrderId: placementRecorded ? brokerOrderId : null,
+  };
+  return { draft: nextDraft, approval: nextApproval, liveOrderPlaced: placementRecorded };
+}
+
 module.exports = {
   BROKER_SNAPSHOT_FRESH_MINUTES,
+  DISPATCH_CLAIM_TTL_MINUTES,
   MAX_ORDER_DRAFTS,
   ORDER_DRAFT_TTL_MINUTES,
   REQUIRED_EQUITY_TOOLS,
   ROBINHOOD_MCP_URL,
   brokerControlOverview,
   buildTradeDraft,
+  claimApprovedDispatch,
   executionEnvelope,
   moneyNumber,
   normalizeGuardrails,
   normalizeTradeDraft,
   normalizeTradeDrafts,
+  approvalMatchesDraft,
+  settleApprovedDispatch,
+  tradeDraftWithApprovalState,
 };

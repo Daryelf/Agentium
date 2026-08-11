@@ -20,9 +20,41 @@ const state = {
   guardrailsSource: null,
   tradeDrafts: [],
   dispatchHandoff: null,
+  activeView: "overview",
 };
 
 const $ = (selector) => document.querySelector(selector);
+
+const STOCK_VIEWS = {
+  overview: ["Stock workspace", "Overview"],
+  portfolio: ["Paper engine", "Portfolio"],
+  mirror: ["Public signals", "Mirror Lab"],
+  markets: ["Evaluator", "Markets"],
+  trade: ["Supervised broker", "Trade desk"],
+  sources: ["Market inputs", "Sources"],
+  assistant: ["Research help", "Assistant"],
+};
+
+function setStockView(requestedView, options = {}) {
+  const view = STOCK_VIEWS[requestedView] ? requestedView : "overview";
+  state.activeView = view;
+  document.querySelectorAll("[data-stock-view]").forEach((section) => {
+    const active = section.dataset.stockView === view;
+    section.hidden = !active;
+    section.classList.toggle("active", active);
+  });
+  document.querySelectorAll("[data-stock-nav]").forEach((button) => {
+    const active = button.dataset.stockNav === view;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  const [kicker, title] = STOCK_VIEWS[view];
+  $("#viewKicker").textContent = kicker;
+  $("#viewTitle").textContent = title;
+  if (options.updateHash !== false) history.replaceState(null, "", `#${view}`);
+  if (options.scroll !== false) $(".stock-main").scrollTo({ top: 0, behavior: "smooth" });
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -106,17 +138,18 @@ function renderMetrics() {
   ];
   $("#metricGrid").innerHTML = cards.map(([label, value, hint]) => metricCard(label, value, hint)).join("");
   $("#stockStatusPill").textContent = sourceHealth.status ? `Sources: ${sourceHealth.status}` : "Read only";
-  $("#safetyCopy").textContent = state.overview?.workspace?.safetyRule || "Research and analytics only. No broker actions are available.";
+  $("#safetyCopy").textContent = "Every live order needs fresh broker checks and one-use Human Gate approval.";
 }
 
-function brokerStatusLabel(value) {
+function brokerStatusLabel(value, toolContract = {}) {
   const labels = {
     live_snapshot_verified: "Live account verified",
     stale_snapshot: "Reconnect required",
-    oauth_required: "OAuth required",
+    setup_required: "Connector not found",
+    stock_office_link_required: toolContract.codexRegistered ? "Connected in Codex" : "Stock Office link needed",
     tool_contract_pending: "Tool check required",
   };
-  return labels[value] || "Setup required";
+  return labels[value] || "Connection check needed";
 }
 
 function portfolioKindLabel(value) {
@@ -378,15 +411,15 @@ function renderBrokerControl() {
     ? guardrailApproval.guardrails
     : guardrails;
   const pill = $("#brokerStatusPill");
-  pill.textContent = brokerStatusLabel(control.connectorStatus);
-  pill.className = `status-pill ${control.authenticationVerified ? "ready" : control.connectorStatus === "stale_snapshot" ? "warning" : "muted"}`;
+  pill.textContent = brokerStatusLabel(control.connectorStatus, toolContract);
+  pill.className = `status-pill ${control.authenticationVerified ? "ready" : toolContract.registered ? "warning" : "muted"}`;
   $("#brokerAccountLabel").textContent = control.accountLabel || "Not verified";
   $("#orderKillSwitch").textContent = control.killSwitchActive ? "Kill switch ON" : "Kill switch cleared";
   $("#orderKillSwitch").className = control.killSwitchActive ? "danger-copy" : "ready-copy";
   $("#brokerMetrics").innerHTML = [
-    ["Connector", toolContract.registered ? "Registered" : "Setup required", "official Robinhood MCP"],
-    ["Tool contract", toolContract.verified ? "Verified" : `${toolContract.missingTools?.length || 0} missing`, toolContract.endpointMatches ? "official endpoint" : "endpoint unverified"],
-    ["Authentication", control.authenticationVerified ? "Verified" : "Not verified", control.snapshotAgeMinutes === null ? "no live snapshot" : `${control.snapshotAgeMinutes}m snapshot age`],
+    ["Connector", toolContract.codexRegistered ? "Connected in Codex" : toolContract.registered ? "Registered" : "Not found", "official Robinhood MCP"],
+    ["Tool contract", toolContract.verified ? "Verified" : toolContract.discoveryObserved ? `${toolContract.missingTools?.length || 0} missing` : "Pending app link", toolContract.discoveryObserved ? "live discovery" : "checked after app link"],
+    ["App session", control.authenticationVerified ? "Verified" : connection.oauthAuthenticated ? "Refresh needed" : "Not linked", control.snapshotAgeMinutes === null ? "no live snapshot" : `${control.snapshotAgeMinutes}m snapshot age`],
     ["Buying power", formatMoney(control.buyingPowerDollars), "live broker value required"],
     ["Positions", control.positions?.length || 0, `${control.openOrderCount || 0} open order(s)`],
     ["Per-order cap", formatMoney(guardrails.maxOrderDollars), `principal ${formatMoney(guardrails.principalDollars)}`],
@@ -395,13 +428,16 @@ function renderBrokerControl() {
 
   $("#brokerOnboarding").innerHTML = [
     [toolContract.registered, "Official Trading MCP registered"],
-    [toolContract.endpointMatches && !toolContract.missingTools?.length, "Official endpoint and required equity tools verified"],
-    [control.authenticationVerified, "Robinhood OAuth and Agentic account verified"],
+    [connection.oauthAuthenticated, "Stock Office app session linked"],
+    [toolContract.verified, "Endpoint and equity tools verified"],
+    [control.authenticationVerified, "Dedicated Agentic account verified"],
     [control.buyingPowerDollars > 0, "Dedicated account funded with settled buying power"],
     [control.buyReady, "Fresh portfolio, quotes, risk evidence, and kill switch ready"],
   ].map(([done, label]) => `<li class="${done ? "done" : "waiting"}"><i>${done ? "✓" : "•"}</i><span>${escapeHtml(label)}</span></li>`).join("");
-  $("#brokerBlockers").innerHTML = control.blockers?.length
-    ? `<strong>Before any new BUY:</strong><ul>${control.blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+  const primaryBlocker = control.blockers?.[0];
+  const remainingBlockers = (control.blockers || []).slice(1);
+  $("#brokerBlockers").innerHTML = primaryBlocker
+    ? `<strong>Live trading locked</strong><p>${escapeHtml(primaryBlocker)}</p>${remainingBlockers.length ? `<details><summary>${remainingBlockers.length} more check${remainingBlockers.length === 1 ? "" : "s"}</summary><ul>${remainingBlockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : ""}`
     : `<strong>New-entry preflight is clear.</strong><p>Every exact order still requires Robinhood review and Human Gate.</p>`;
 
   const connectionButton = $("#brokerConnectGate");
@@ -420,7 +456,7 @@ function renderBrokerControl() {
   } else {
     connectionButton.dataset.action = "approval";
     connectionButton.disabled = false;
-    connectionButton.textContent = "Authorize official connection setup";
+    connectionButton.textContent = connection.codexRegistered ? "Link Stock Office once" : "Authorize official connection";
   }
   $("#brokerConnectionFeedback").textContent = connection.lastError
     ? `Connection check stopped: ${connection.lastError}`
@@ -428,6 +464,8 @@ function renderBrokerControl() {
       ? `Official live snapshot verified ${formatTime(connection.snapshotUpdatedAt)}. Tokens remain in Mac Keychain.`
       : connection.oauthAuthenticated
         ? "OAuth is connected, but the dedicated Agentic account still needs a successful live refresh."
+        : connection.codexRegistered
+          ? "Robinhood is connected in Codex. Link this app once for live account reads; credentials are never copied out of Codex."
         : connection.keychainAvailable === false
           ? "Mac Keychain is unavailable, so Stock Office refuses to store Robinhood OAuth tokens."
           : "No Robinhood password or token is entered into Stock Office.";
@@ -1149,7 +1187,7 @@ async function pollRefreshStatus() {
     renderIntelligenceMonitor();
     renderRefreshFeedback(payload.refresh);
     const stage = String(payload.refresh?.stage || "refresh").replaceAll("_", " ");
-    $("#syncButton").textContent = payload.refresh?.status === "running" ? `Refreshing: ${stage}` : "Refresh Stock Office";
+    $("#syncButton").textContent = payload.refresh?.status === "running" ? `Refreshing: ${stage}` : "Refresh";
   } catch (_error) {}
 }
 
@@ -1170,7 +1208,7 @@ async function syncLocalFiles() {
   } finally {
     window.clearInterval(pollTimer);
     button.disabled = false;
-    button.textContent = "Refresh Stock Office";
+    button.textContent = "Refresh";
   }
 }
 
@@ -1214,6 +1252,10 @@ async function askStockGuru(event) {
 }
 
 document.addEventListener("click", (event) => {
+  const nav = event.target.closest("[data-stock-nav]");
+  if (nav) setStockView(nav.dataset.stockNav);
+  const viewLink = event.target.closest("[data-open-stock-view]");
+  if (viewLink) setStockView(viewLink.dataset.openStockView);
   const brokerConnect = event.target.closest("#brokerConnectGate");
   if (brokerConnect && brokerConnect.dataset.action === "oauth") startRobinhoodOAuth();
   else if (brokerConnect && brokerConnect.dataset.action === "refresh") refreshRobinhoodAccount();
@@ -1247,5 +1289,6 @@ $("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);
 $("#stockChatForm").addEventListener("submit", askStockGuru);
 
+setStockView(window.location.hash.slice(1), { updateHash: false, scroll: false });
 Promise.all([loadApp(), pollRefreshStatus()]);
 window.setInterval(pollBrokerControl, 3_000);

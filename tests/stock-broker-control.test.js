@@ -145,6 +145,36 @@ test("connector tool contract fails closed when an execution tool is missing", (
   assert.equal(draft.status, "blocked");
 });
 
+test("Codex registration is reported separately from the unlinked Stock Office session", () => {
+  const current = snapshot({
+    broker: {
+      ...snapshot().broker,
+      configured: false,
+      account: "",
+      accountIdentityHash: "",
+      buyingPower: null,
+      updatedAt: null,
+      connector: {
+        registered: true,
+        codexRegistered: true,
+        appRegistered: false,
+        registrationSource: "codex_config",
+        oauthAuthenticated: false,
+        endpoint: ROBINHOOD_MCP_URL,
+        observedAt: null,
+        tools: [],
+      },
+    },
+  });
+  const control = brokerControlOverview(current, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(control.registrationStatus, "registered_in_codex");
+  assert.equal(control.connectorStatus, "stock_office_link_required");
+  assert.equal(control.authenticationVerified, false);
+  assert.match(control.blockers[0], /registered.*Stock Office app session.*not linked/i);
+  assert.equal(control.blockers.some((item) => /tools are missing/i.test(item)), false);
+});
+
 test("paper-ready copy candidate becomes a source-bound guarded order draft", () => {
   const candidate = {
     id: "candidate-net",

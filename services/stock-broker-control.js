@@ -57,13 +57,18 @@ function verifyRobinhoodToolContract(connector = {}, options = {}) {
     .filter(Boolean))].sort();
   const missingTools = REQUIRED_EQUITY_TOOLS.filter((tool) => !availableTools.includes(tool));
   const observedAgeMinutes = ageMinutes(connector.observedAt, at);
+  const discoveryObserved = observedAgeMinutes !== null;
   const observedFresh = observedAgeMinutes !== null && observedAgeMinutes <= BROKER_SNAPSHOT_FRESH_MINUTES;
   const registered = connector.registered === true;
   const oauthAuthenticated = connector.oauthAuthenticated === true;
   const endpointMatches = String(connector.endpoint || "").replace(/\/$/, "") === ROBINHOOD_MCP_URL;
   return {
     registered,
+    registrationSource: String(connector.registrationSource || (registered ? "observed" : "none")),
+    codexRegistered: connector.codexRegistered === true,
+    appRegistered: connector.appRegistered === true,
     oauthAuthenticated,
+    discoveryObserved,
     endpointMatches,
     observedAt: safeDate(connector.observedAt),
     observedAgeMinutes: observedAgeMinutes === null ? null : Math.round(observedAgeMinutes * 10) / 10,
@@ -287,8 +292,10 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   const buyingPower = moneyNumber(broker.buyingPower);
   const capital = portfolioCapitalState(snapshot, { now: at });
   const killSwitchActive = snapshot.killSwitch?.active !== false;
-  const connectorStatus = !toolContract.registered || !toolContract.oauthAuthenticated
-    ? "oauth_required"
+  const connectorStatus = !toolContract.registered
+    ? "setup_required"
+    : !toolContract.oauthAuthenticated
+      ? "stock_office_link_required"
     : !toolContract.verified
       ? "tool_contract_pending"
       : snapshotFresh
@@ -296,10 +303,10 @@ function brokerControlOverview(snapshot = {}, options = {}) {
         : "stale_snapshot";
   const blockers = [];
   if (!toolContract.registered) blockers.push("The official Robinhood Trading MCP registration has not been observed.");
-  if (toolContract.registered && !toolContract.oauthAuthenticated) blockers.push("Robinhood OAuth and Agentic-account setup are not verified.");
-  if (!toolContract.endpointMatches) blockers.push("The observed connector endpoint does not match the official Robinhood Trading MCP endpoint.");
-  if (toolContract.missingTools.length) blockers.push(`Required Robinhood equity tools are missing: ${toolContract.missingTools.join(", ")}.`);
-  if (toolContract.observedAgeMinutes === null || toolContract.observedAgeMinutes > BROKER_SNAPSHOT_FRESH_MINUTES) blockers.push("Robinhood connector/tool discovery is missing or stale; re-verify the tool contract.");
+  if (toolContract.registered && !toolContract.oauthAuthenticated) blockers.push("Robinhood is registered, but this Stock Office app session is not linked to the dedicated Agentic account.");
+  if (toolContract.oauthAuthenticated && !toolContract.endpointMatches) blockers.push("The observed connector endpoint does not match the official Robinhood Trading MCP endpoint.");
+  if (toolContract.oauthAuthenticated && toolContract.discoveryObserved && toolContract.missingTools.length) blockers.push(`Required Robinhood equity tools are missing: ${toolContract.missingTools.join(", ")}.`);
+  if (toolContract.oauthAuthenticated && (!toolContract.discoveryObserved || toolContract.observedAgeMinutes > BROKER_SNAPSHOT_FRESH_MINUTES)) blockers.push("Robinhood connector/tool discovery is missing or stale; re-verify the tool contract.");
   if (!snapshotFresh) blockers.push(broker.configured ? "Broker snapshot is stale; reconnect Robinhood and refresh live account data." : "A live Robinhood account snapshot has not been verified.");
   if (!broker.account) blockers.push("A dedicated Robinhood Agentic account has not been verified.");
   if (!broker.accountIdentityHash) blockers.push("The live snapshot is not cryptographically bound to one dedicated Agentic account.");
@@ -318,7 +325,11 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     transport: "official_streamable_http_mcp",
     endpoint: ROBINHOOD_MCP_URL,
     connectorStatus,
-    registrationStatus: toolContract.registered ? "registered_in_codex" : "setup_required",
+    registrationStatus: toolContract.registrationSource === "codex_config"
+      ? "registered_in_codex"
+      : toolContract.registered
+        ? "registered_in_argentum"
+        : "setup_required",
     authenticationVerified,
     toolContract,
     accountScope: "dedicated_agentic_account_only",

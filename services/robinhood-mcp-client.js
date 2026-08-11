@@ -19,6 +19,44 @@ const REQUIRED_READ_TOOLS = [
 ];
 const REQUIRED_EXECUTION_TOOLS = ["review_equity_order", "place_equity_order", "cancel_equity_order"];
 
+function detectCodexRobinhoodRegistration(configFile = "") {
+  const result = { registered: false, connectorId: "", endpoint: "", configReadable: false };
+  if (!configFile) return result;
+  try {
+    const stat = fs.statSync(configFile);
+    if (!stat.isFile() || stat.size > 1_000_000) return result;
+    const lines = fs.readFileSync(configFile, "utf8").split(/\r?\n/);
+    let section = "";
+    let endpoint = "";
+    let enabled = true;
+    const commitSection = () => {
+      if (!section || !enabled || String(endpoint).replace(/\/$/, "") !== MCP_ENDPOINT) return;
+      result.registered = true;
+      result.connectorId = section;
+      result.endpoint = MCP_ENDPOINT;
+    };
+    for (const rawLine of [...lines, "[end]"]) {
+      const line = rawLine.trim();
+      const sectionMatch = line.match(/^\[mcp_servers\.([A-Za-z0-9_-]+)\]$/);
+      if (line.startsWith("[")) {
+        commitSection();
+        section = sectionMatch?.[1] || "";
+        endpoint = "";
+        enabled = true;
+        continue;
+      }
+      if (!section || !line || line.startsWith("#")) continue;
+      const urlMatch = line.match(/^url\s*=\s*["']([^"']+)["']/);
+      if (urlMatch) endpoint = urlMatch[1];
+      if (/^enabled\s*=\s*false\b/i.test(line)) enabled = false;
+    }
+    result.configReadable = true;
+    return result;
+  } catch {
+    return result;
+  }
+}
+
 function nowIso(now = () => new Date()) {
   return now().toISOString();
 }
@@ -243,6 +281,7 @@ function createRobinhoodMcpClient(options = {}) {
   const now = options.now || (() => new Date());
   const dataDir = path.resolve(options.dataDir || path.join(process.cwd(), "data"));
   const registrationFile = path.join(dataDir, "robinhood-mcp-registration.json");
+  const codexConfigFile = options.codexConfigFile ? path.resolve(options.codexConfigFile) : "";
   const tokenStore = options.tokenStore || defaultTokenStore(dataDir);
   const pending = new Map();
   let registration = null;
@@ -269,6 +308,18 @@ function createRobinhoodMcpClient(options = {}) {
       tokensLoaded = true;
     }
     return tokens;
+  }
+
+  function registrationStatus() {
+    const appRegistered = Boolean(loadRegistration()?.client_id);
+    const codex = detectCodexRobinhoodRegistration(codexConfigFile);
+    return {
+      registered: appRegistered || codex.registered,
+      appRegistered,
+      codexRegistered: codex.registered,
+      codexConnectorId: codex.connectorId,
+      registrationSource: appRegistered ? "argentum_app" : codex.registered ? "codex_config" : "none",
+    };
   }
 
   function saveTokens(next) {
@@ -523,7 +574,7 @@ function createRobinhoodMcpClient(options = {}) {
         openOrders: orders.filter((order) => !["filled", "cancelled", "canceled", "rejected", "failed", "expired"].includes(order.state)),
         orders,
         connector: {
-          registered: Boolean(loadRegistration()?.client_id),
+          ...registrationStatus(),
           oauthAuthenticated: true,
           endpoint: MCP_ENDPOINT,
           tools: tools.map((tool) => tool.name),
@@ -575,7 +626,7 @@ function createRobinhoodMcpClient(options = {}) {
       dayPnlDollars: null,
       dayPnlPct: null,
       connector: {
-        registered: Boolean(loadRegistration()?.client_id),
+        ...registrationStatus(),
         oauthAuthenticated: Boolean(current?.accessToken),
         endpoint: MCP_ENDPOINT,
         tools: tools.map((tool) => tool.name),
@@ -663,9 +714,14 @@ function createRobinhoodMcpClient(options = {}) {
 
   function publicStatus() {
     const current = loadTokens();
+    const connectorRegistration = registrationStatus();
     return {
       endpoint: MCP_ENDPOINT,
-      clientRegistered: Boolean(loadRegistration()?.client_id),
+      clientRegistered: connectorRegistration.registered,
+      appRegistered: connectorRegistration.appRegistered,
+      codexRegistered: connectorRegistration.codexRegistered,
+      codexConnectorId: connectorRegistration.codexConnectorId,
+      registrationSource: connectorRegistration.registrationSource,
       oauthAuthenticated: Boolean(current?.accessToken),
       keychainAvailable: Boolean(tokenStore.ready()),
       toolContractVerified: [...REQUIRED_READ_TOOLS, ...REQUIRED_EXECUTION_TOOLS].every((name) => tools.some((tool) => tool.name === name)),
@@ -712,6 +768,7 @@ module.exports = {
   REQUIRED_READ_TOOLS,
   TOKEN_ENDPOINT,
   createRobinhoodMcpClient,
+  detectCodexRobinhoodRegistration,
   identifyAgenticAccount,
   normalizeOrders,
   normalizePositions,

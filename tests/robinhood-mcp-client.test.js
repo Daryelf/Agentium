@@ -10,6 +10,7 @@ const {
   REGISTRATION_ENDPOINT,
   TOKEN_ENDPOINT,
   createRobinhoodMcpClient,
+  detectCodexRobinhoodRegistration,
   identifyAgenticAccount,
   parseMcpPayload,
 } = require("../services/robinhood-mcp-client");
@@ -20,6 +21,41 @@ function jsonResponse(value, options = {}) {
     headers: { "content-type": "application/json", ...(options.headers || {}) },
   });
 }
+
+test("Codex Robinhood registration is detected without reading or returning credentials", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-codex-mcp-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configFile = path.join(root, "config.toml");
+  fs.writeFileSync(configFile, [
+    "[mcp_servers.robintrade]",
+    `url = \"${MCP_ENDPOINT}\"`,
+    "default_tools_approval_mode = \"approve\"",
+    "",
+    "[mcp_servers.robintrade.tools.get_portfolio]",
+    "approval_mode = \"approve\"",
+  ].join("\n"));
+
+  const registration = detectCodexRobinhoodRegistration(configFile);
+  assert.deepEqual(registration, {
+    registered: true,
+    connectorId: "robintrade",
+    endpoint: MCP_ENDPOINT,
+    configReadable: true,
+  });
+
+  const client = createRobinhoodMcpClient({
+    dataDir: path.join(root, "app-data"),
+    codexConfigFile: configFile,
+    tokenStore: { ready: () => true, load: () => null, save: () => {}, clear: () => {} },
+  });
+  const status = client.publicStatus();
+  assert.equal(status.clientRegistered, true);
+  assert.equal(status.codexRegistered, true);
+  assert.equal(status.appRegistered, false);
+  assert.equal(status.oauthAuthenticated, false);
+  assert.equal(status.registrationSource, "codex_config");
+  assert.equal(JSON.stringify(status).includes("approval_mode"), false);
+});
 
 function mcpResult(id, result, headers = {}) {
   return jsonResponse({ jsonrpc: "2.0", id, result }, { headers });

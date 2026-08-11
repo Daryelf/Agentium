@@ -109,6 +109,7 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
 });
 const robinhoodMcpClient = createRobinhoodMcpClient({
   dataDir: path.join(STOCK_GURU_USER_DATA_DIR, "broker-auth"),
+  codexConfigFile: process.env.ARGENTUM_CODEX_CONFIG_PATH || path.join(os.homedir(), ".codex", "config.toml"),
 });
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);

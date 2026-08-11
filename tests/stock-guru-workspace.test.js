@@ -95,3 +95,31 @@ test("managed runtime copies reports while linking the existing Python environme
   materializeStockGuruRuntime({ sourcePath: sourceRoot, userDataPath });
   assert.match(fs.readFileSync(generatedReport, "utf8"), /NET/);
 });
+
+test("server startup reuses a verified managed runtime without rescanning the portable source tree", (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-reuse-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const sourceRoot = createWorkspace(path.join(tempRoot, "portable"));
+  fs.writeFileSync(path.join(sourceRoot, "config", "universe.txt"), "AAPL\n");
+  const userDataPath = path.join(tempRoot, "user-data");
+  const initial = materializeStockGuruRuntime({ sourcePath: sourceRoot, userDataPath });
+  assert.equal(initial.available, true);
+
+  const guardedFs = Object.create(fs);
+  guardedFs.readdirSync = (candidatePath, options) => {
+    if (path.resolve(candidatePath).startsWith(path.resolve(sourceRoot))) {
+      throw new Error("portable source tree was rescanned during startup");
+    }
+    return fs.readdirSync(candidatePath, options);
+  };
+  const reused = materializeStockGuruRuntime({
+    sourcePath: sourceRoot,
+    userDataPath,
+    reuseExisting: true,
+    fsImpl: guardedFs,
+  });
+
+  assert.equal(reused.available, true);
+  assert.equal(reused.reusedExisting, true);
+  assert.equal(reused.path, initial.path);
+});

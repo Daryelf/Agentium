@@ -54,6 +54,7 @@ if (stockGuruSourceWorkspace.available) {
   const stockGuruRuntime = materializeStockGuruRuntime({
     sourcePath: stockGuruSourceWorkspace.path,
     userDataPath: STOCK_GURU_USER_DATA_DIR,
+    reuseExisting: true,
   });
   if (stockGuruRuntime.available) {
     process.env.STOCK_GURU_SOURCE_PATH = stockGuruSourceWorkspace.path;
@@ -4508,6 +4509,61 @@ function sendHtml(req, res, status, html, extraHeaders = {}) {
   res.end(html);
 }
 
+function sendRobinhoodOauthResultPage(req, res, result) {
+  const views = {
+    connected: {
+      status: 200,
+      eyebrow: "CONNECTION COMPLETE",
+      title: "Robinhood is connected",
+      message: "Return to Argentum. Stock Office will load the connected account automatically.",
+      tone: "#43d99b",
+    },
+    needs_refresh: {
+      status: 200,
+      eyebrow: "CONNECTION SAVED",
+      title: "Robinhood is connected",
+      message: "Return to Argentum and use Refresh account if the broker snapshot does not appear automatically.",
+      tone: "#f5c451",
+    },
+    connection_error: {
+      status: 400,
+      eyebrow: "CONNECTION NOT FINISHED",
+      title: "Robinhood did not connect",
+      message: "Return to Argentum and try Connect Robinhood again. No trade or money movement occurred.",
+      tone: "#ff7f8b",
+    },
+  };
+  const view = views[result] || views.connection_error;
+  sendHtml(req, res, view.status, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${view.title} | Argentum</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #edf5ff; background: radial-gradient(circle at 15% 15%, #12334b, transparent 34%), radial-gradient(circle at 85% 10%, #22205a, transparent 38%), #07101f; }
+    main { width: min(560px, 100%); padding: 34px; border: 1px solid #284968; border-radius: 22px; background: rgba(8, 20, 38, .9); box-shadow: 0 24px 80px rgba(0, 0, 0, .42); }
+    .mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 24px; border-radius: 14px; color: #06131d; background: ${view.tone}; font-size: 24px; font-weight: 900; }
+    .eyebrow { margin: 0 0 8px; color: ${view.tone}; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
+    h1 { margin: 0; font-size: clamp(28px, 6vw, 42px); line-height: 1.05; }
+    p { margin: 16px 0 0; color: #b9cbe0; font-size: 17px; line-height: 1.55; }
+    .safe { margin-top: 26px; padding-top: 18px; border-top: 1px solid #243a55; color: #8198b3; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">A</div>
+    <p class="eyebrow">${view.eyebrow}</p>
+    <h1>${view.title}</h1>
+    <p>${view.message}</p>
+    <p class="safe">You can close this window. Argentum never receives your Robinhood password.</p>
+  </main>
+</body>
+</html>`);
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -5569,11 +5625,9 @@ async function handleApi(req, res, url) {
         ? `Official OAuth completed, but the dedicated Agentic-account snapshot did not verify: ${refreshError}`
         : "Official OAuth and the dedicated Agentic-account read-only snapshot verified; no order or money movement occurred.");
       writeState(state);
-      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=${refreshError ? "needs_refresh" : "connected"}#trade` });
-      res.end();
+      sendRobinhoodOauthResultPage(req, res, refreshError ? "needs_refresh" : "connected");
     } catch (error) {
-      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=connection_error#trade` });
-      res.end();
+      sendRobinhoodOauthResultPage(req, res, "connection_error");
     }
     return;
   }
@@ -6538,6 +6592,11 @@ readAuthStore();
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  const isLocalRobinhoodOauthCallback = req.method === "GET"
+    && loopbackHosts.has(String(HOST).toLowerCase())
+    && loopbackHosts.has(url.hostname.toLowerCase())
+    && url.pathname === "/api/stock-office/robinhood/oauth/callback";
   try {
     assertTrustedOrigin(req);
     if (handlePublicWebsite(req, res, url)) {
@@ -6551,6 +6610,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (await handleLogin(req, res)) {
+      return;
+    }
+    // Robinhood returns from another browser origin, so the Argentum session
+    // cookie may be absent. The one-use state, PKCE verifier, and Human Gate
+    // approval still protect this loopback-only callback.
+    if (isLocalRobinhoodOauthCallback) {
+      await handleApi(req, res, url);
       return;
     }
     if (!currentSession(req)) {

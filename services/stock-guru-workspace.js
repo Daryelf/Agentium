@@ -95,6 +95,25 @@ function linkPythonEnvironment(sourcePath, runtimePath, fsImpl = fs) {
   return true;
 }
 
+function reuseExistingRuntime(sourcePath, userDataPath, fsImpl = fs) {
+  const runtimePath = path.join(userDataPath, RUNTIME_FOLDER);
+  if (!isStockGuruWorkspace(runtimePath, fsImpl)) return null;
+  try {
+    const metadata = JSON.parse(fsImpl.readFileSync(path.join(runtimePath, ".argentum-runtime.json"), "utf8"));
+    if (path.resolve(String(metadata?.sourcePath || "")) !== sourcePath) return null;
+  } catch (_error) {
+    return null;
+  }
+  const pythonLinked = linkPythonEnvironment(sourcePath, runtimePath, fsImpl);
+  return {
+    path: runtimePath,
+    sourcePath,
+    available: true,
+    pythonLinked,
+    reusedExisting: true,
+  };
+}
+
 function materializeStockGuruRuntime(options = {}) {
   const fsImpl = options.fsImpl || fs;
   const sourcePath = path.resolve(String(options.sourcePath || ""));
@@ -103,6 +122,10 @@ function materializeStockGuruRuntime(options = {}) {
     return { path: sourcePath, sourcePath, available: false, pythonLinked: false };
   }
   const runtimePath = path.join(userDataPath, RUNTIME_FOLDER);
+  if (options.reuseExisting === true) {
+    const existingRuntime = reuseExistingRuntime(sourcePath, userDataPath, fsImpl);
+    if (existingRuntime) return existingRuntime;
+  }
   fsImpl.mkdirSync(runtimePath, { recursive: true });
   for (const entry of ["src", "config", "data", "reports", "bin", "pyproject.toml", "requirements.txt"]) {
     const sourceEntry = path.join(sourcePath, entry);
@@ -121,6 +144,7 @@ function materializeStockGuruRuntime(options = {}) {
     sourcePath,
     available: isStockGuruWorkspace(runtimePath, fsImpl),
     pythonLinked,
+    reusedExisting: false,
   };
 }
 

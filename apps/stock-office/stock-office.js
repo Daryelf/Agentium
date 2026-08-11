@@ -887,11 +887,21 @@ async function startRobinhoodOAuth() {
   button.textContent = "Opening Robinhood OAuth...";
   try {
     const payload = await api("/api/stock-office/robinhood/oauth/start", { method: "POST", body: "{}" });
-    window.location.href = payload.authorizationUrl;
+    const desktopBridge = window.argentumDesktop?.openRobinhoodOAuth;
+    if (typeof desktopBridge === "function") {
+      const result = await desktopBridge(payload.authorizationUrl);
+      if (!result?.opened) throw new Error("The default browser did not open.");
+    } else {
+      const popup = window.open(payload.authorizationUrl, "_blank", "noopener,noreferrer");
+      if (!popup) throw new Error("Allow pop-ups for Stock Office, then try the Robinhood connection again.");
+    }
+    $("#brokerConnectionFeedback").textContent = "Robinhood opened in your default browser. Sign in and approve there, then return here; Stock Office will refresh automatically.";
+    button.textContent = "OAuth browser opened";
   } catch (error) {
     $("#brokerConnectionFeedback").textContent = error.message;
-    button.disabled = false;
     button.textContent = "Complete Robinhood OAuth on desktop";
+  } finally {
+    window.setTimeout(() => { button.disabled = false; }, 800);
   }
 }
 
@@ -1289,6 +1299,18 @@ $("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);
 $("#stockChatForm").addEventListener("submit", askStockGuru);
 
-setStockView(window.location.hash.slice(1), { updateHash: false, scroll: false });
-Promise.all([loadApp(), pollRefreshStatus()]);
+const oauthReturnStatus = new URLSearchParams(window.location.search).get("robinhood") || "";
+setStockView(oauthReturnStatus ? "trade" : window.location.hash.slice(1), { updateHash: false, scroll: false });
+Promise.all([loadApp(), pollRefreshStatus()]).then(() => {
+  if (!oauthReturnStatus) return;
+  const messages = {
+    connected: "Robinhood approved the Stock Office link and the dedicated Agentic account read succeeded.",
+    needs_refresh: "Robinhood approved the Stock Office link. Use the account refresh button to finish the live read check.",
+    connection_error: "Robinhood did not finish the link. Sign in to Robinhood in your default browser, then start the connection again.",
+  };
+  $("#brokerConnectionFeedback").textContent = messages[oauthReturnStatus] || "Robinhood returned to Stock Office. Refresh the connection status before continuing.";
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete("robinhood");
+  history.replaceState(null, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash || "#trade"}`);
+});
 window.setInterval(pollBrokerControl, 3_000);

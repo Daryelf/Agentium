@@ -375,6 +375,7 @@ function createRobinhoodMcpClient(options = {}) {
     url.searchParams.set("client_id", client.client_id);
     url.searchParams.set("redirect_uri", verifiedRedirect);
     url.searchParams.set("scope", "internal");
+    url.searchParams.set("resource", MCP_ENDPOINT);
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
@@ -393,6 +394,7 @@ function createRobinhoodMcpClient(options = {}) {
       code: String(code),
       redirect_uri: request.redirectUri,
       code_verifier: request.verifier,
+      resource: MCP_ENDPOINT,
     });
     const result = await fetchJson(TOKEN_ENDPOINT, {
       method: "POST",
@@ -423,6 +425,7 @@ function createRobinhoodMcpClient(options = {}) {
       grant_type: "refresh_token",
       client_id: client.client_id,
       refresh_token: current.refreshToken,
+      resource: MCP_ENDPOINT,
     });
     const result = await fetchJson(TOKEN_ENDPOINT, {
       method: "POST",

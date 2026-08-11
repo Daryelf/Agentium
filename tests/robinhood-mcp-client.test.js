@@ -152,6 +152,7 @@ test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliatio
   assert.equal(authorization.origin + authorization.pathname, AUTHORIZATION_ENDPOINT);
   assert.equal(authorization.searchParams.get("code_challenge_method"), "S256");
   assert.equal(authorization.searchParams.get("client_id"), "argentum-client");
+  assert.equal(authorization.searchParams.get("resource"), MCP_ENDPOINT);
   assert.equal(started.approvalId, "approval-connect");
 
   const completed = await client.completeAuthorization({ state: authorization.searchParams.get("state"), code: "oauth-code" });
@@ -160,6 +161,8 @@ test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliatio
   assert.equal(completed.approvalId, "approval-connect");
   assert.equal(JSON.stringify(completed).includes("access-secret"), false);
   assert.equal(JSON.stringify(completed).includes("refresh-secret"), false);
+  const tokenExchange = fake.calls.find((call) => call.url === TOKEN_ENDPOINT);
+  assert.equal(new URLSearchParams(tokenExchange.init.body).get("resource"), MCP_ENDPOINT);
 
   const snapshot = await client.refreshBrokerSnapshot();
   assert.equal(snapshot.account, "Agentic ••••5678");

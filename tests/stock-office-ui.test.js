@@ -70,6 +70,11 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /Prepare 2-minute Robinhood handoff/);
   assert.match(script, /Complete Robinhood OAuth on desktop/);
   assert.match(script, /\/api\/stock-office\/robinhood\/oauth\/start/);
+  assert.match(script, /openRobinhoodOAuth/);
+  assert.match(script, /Robinhood opened in your default browser/);
+  assert.match(script, /Robinhood did not finish the link/);
+  assert.match(script, /oauthReturnStatus/);
+  assert.doesNotMatch(script, /window\.location\.href = payload\.authorizationUrl/);
   assert.match(script, /\/api\/stock-office\/robinhood\/refresh/);
   assert.match(script, /Review and execute once with Robinhood/);
   assert.match(script, /\/dispatch\/execute/);

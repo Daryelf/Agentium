@@ -5569,10 +5569,10 @@ async function handleApi(req, res, url) {
         ? `Official OAuth completed, but the dedicated Agentic-account snapshot did not verify: ${refreshError}`
         : "Official OAuth and the dedicated Agentic-account read-only snapshot verified; no order or money movement occurred.");
       writeState(state);
-      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=${refreshError ? "needs_refresh" : "connected"}` });
+      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=${refreshError ? "needs_refresh" : "connected"}#trade` });
       res.end();
     } catch (error) {
-      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=connection_error` });
+      res.writeHead(302, { location: `${STOCK_OFFICE_MOUNT}?robinhood=connection_error#trade` });
       res.end();
     }
     return;

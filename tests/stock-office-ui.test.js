@@ -35,18 +35,23 @@ test("Stock Office uses a compact left navigation shell instead of a repeated of
   assert.doesNotMatch(html, /class="hero-panel"/);
 });
 
-test("Stock Office UI exposes official Robinhood onboarding, capital policy, and guarded order drafting", () => {
+test("Stock Office UI keeps broker actions compact while preserving guarded order controls", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
-  assert.match(html, /Robinhood Agentic Trading/);
-  assert.match(html, /Build guarded draft/);
-  assert.match(html, /Allocated principal/);
+  assert.match(html, /class="trade-account-bar"/);
+  assert.match(html, /id="tradeAccountMetrics"/);
+  assert.match(html, /New order/);
+  assert.match(html, /Review order/);
+  assert.match(html, /Trading limits/);
+  assert.match(html, /Advanced limits/);
+  assert.match(html, /class="trade-workspace"/);
+  assert.match(html, /id="brokerOnboarding" hidden/);
   assert.match(html, /Capital and exits/);
-  assert.match(html, /Risk per trade/);
-  assert.match(html, /Maximum trades per day/);
+  assert.match(html, /Trade risk/);
+  assert.match(html, /Daily trades/);
   assert.match(html, /Apply approved limits/);
-  assert.match(html, /Kill switch/);
+  assert.doesNotMatch(html, /No password scraping|No API path|Human Gate stays on|Read first|App session/);
   assert.match(script, /\/api\/stock-office\/broker-control/);
   assert.match(script, /\/api\/stock-office\/orders\/draft/);
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
@@ -71,7 +76,7 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.match(script, /Complete Robinhood OAuth on desktop/);
   assert.match(script, /\/api\/stock-office\/robinhood\/oauth\/start/);
   assert.match(script, /openRobinhoodOAuth/);
-  assert.match(script, /Robinhood opened in your default browser/);
+  assert.match(script, /Robinhood opened\. Approve it there, then return here\./);
   assert.match(script, /Robinhood did not finish the link/);
   assert.match(script, /oauthReturnStatus/);
   assert.doesNotMatch(script, /window\.location\.href = payload\.authorizationUrl/);
@@ -87,8 +92,8 @@ test("Stock Office UI exposes official Robinhood onboarding, capital policy, and
   assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
   assert.match(script, /Tool contract/);
   assert.match(script, /toolContract\.registered/);
-  assert.match(html, /No password scraping or private API/);
-  assert.match(script, /Tokens remain in Mac Keychain|credentials are never copied out of Codex/);
+  assert.match(script, /No settled buying power\. Add funds in Robinhood, then refresh\./);
+  assert.match(script, /target\.hidden = true/);
   assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
 });
 

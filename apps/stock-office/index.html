@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260811-4" />
-    <script src="./stock-office.js?v=20260811-4" defer></script>
+    <link rel="stylesheet" href="./stock-office.css?v=20260811-5" />
+    <script src="./stock-office.js?v=20260811-5" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -20,10 +20,7 @@
           <button type="button" data-stock-nav="sources"><i>◎</i><span>Sources</span></button>
           <button type="button" data-stock-nav="assistant"><i>✦</i><span>Assistant</span></button>
         </nav>
-        <footer class="stock-rail-status">
-          <span id="stockStatusPill">Loading</span>
-          <small>Human Gate stays on</small>
-        </footer>
+        <span id="stockStatusPill" hidden>Loading</span>
       </aside>
 
       <main class="stock-main">
@@ -131,47 +128,55 @@
         </section>
 
         <section class="stock-view" data-stock-view="trade" hidden>
-          <section class="panel trade-intro">
-            <div class="panel-head compact"><div><p class="eyebrow">Official broker</p><h2>Robinhood Agentic Trading</h2></div><span id="brokerAccountLabel">Not verified</span></div>
-            <p>Official Trading MCP only. No password scraping or private API.</p>
+          <section id="tradeAccountBar" class="trade-account-bar">
+            <div class="trade-account-identity">
+              <span class="account-live-dot" aria-hidden="true"></span>
+              <div><strong id="brokerAccountLabel">Not verified</strong><small>Robinhood Agentic</small></div>
+            </div>
+            <div id="tradeAccountMetrics" class="trade-account-metrics"></div>
+            <button id="brokerConnectGate" type="button">Refresh account</button>
+            <ol id="brokerOnboarding" hidden></ol>
+            <p id="brokerConnectionFeedback" class="trade-connection-note" aria-live="polite" hidden></p>
           </section>
-          <div class="broker-grid trade-grid">
-            <article class="broker-card connector-card">
-              <div class="broker-card-head"><div><p class="eyebrow">Connection</p><h3>App session</h3></div><span>Read first</span></div>
-              <ol id="brokerOnboarding" class="broker-onboarding"></ol>
-              <div id="brokerBlockers" class="broker-blockers" aria-live="polite"></div>
-              <button id="brokerConnectGate" type="button">Check connection</button>
-              <p id="brokerConnectionFeedback" class="broker-feedback" aria-live="polite">Checking the existing Codex connector.</p>
-            </article>
+          <div id="brokerBlockers" class="trade-alert" aria-live="polite"></div>
+          <div class="trade-workspace">
             <article class="broker-card order-card">
-              <div class="broker-card-head"><div><p class="eyebrow">Order draft</p><h3>Buy or sell</h3></div><span id="orderKillSwitch">Kill switch checking</span></div>
+              <div class="broker-card-head"><div><p class="eyebrow">Order</p><h3>New order</h3></div><span id="orderKillSwitch">Checking</span></div>
               <form id="orderDraftForm" class="order-draft-form">
                 <label>Symbol <input id="orderSymbol" type="text" maxlength="12" placeholder="AAPL" autocomplete="off" required /></label>
                 <label>Side <select id="orderSide"><option value="BUY">Buy</option><option value="SELL">Sell owned shares</option></select></label>
                 <label>Dollars <input id="orderDollars" type="number" min="1" max="1000000" step="0.01" required /></label>
-                <button type="submit">Build guarded draft</button>
+                <button type="submit">Review order</button>
               </form>
-              <div id="orderDraftResult" class="order-draft-result" aria-live="polite"><p>No draft yet.</p></div>
+              <div id="orderDraftResult" class="order-draft-result" aria-live="polite" hidden></div>
             </article>
             <article class="broker-card capital-card">
-              <div class="broker-card-head"><div><p class="eyebrow">Limits</p><h3>Risk policy</h3></div><span>Human Gate</span></div>
+              <div class="broker-card-head"><div><p class="eyebrow">Risk</p><h3>Trading limits</h3></div><span>Protected</span></div>
               <form id="guardrailForm" class="guardrail-form">
-                <label>Allocated principal <input id="principalDollars" type="number" min="1" max="1000000" step="1" required /></label>
-                <label>Maximum deployed <input id="maxTotalDollars" type="number" min="1" max="1000000" step="1" required /></label>
-                <label>Maximum per order <input id="maxOrderDollars" type="number" min="1" max="1000000" step="1" required /></label>
-                <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
-                <label>Daily loss lock <span class="input-suffix"><input id="dailyLossLimitPct" type="number" min="0.1" max="25" step="0.1" required /><em>%</em></span></label>
-                <label>Risk per trade <span class="input-suffix"><input id="riskPerTradePct" type="number" min="0.1" max="10" step="0.1" required /><em>%</em></span></label>
-                <label>Maximum positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
-                <label>Maximum trades per day <input id="maxTradesPerDay" type="number" min="1" max="100" step="1" required /></label>
-                <label>Minimum entry score <input id="minEntryScore" type="number" min="1" max="100" step="1" required /></label>
-                <button type="submit">Request exact limits</button>
-                <button id="applyGuardrails" class="secondary" type="button" hidden>Apply approved limits</button>
+                <div class="limit-primary">
+                  <label>Capital <input id="principalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                  <label>Max order <input id="maxOrderDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                  <label>Daily stop <span class="input-suffix"><input id="dailyLossLimitPct" type="number" min="0.1" max="25" step="0.1" required /><em>%</em></span></label>
+                  <label>Trade risk <span class="input-suffix"><input id="riskPerTradePct" type="number" min="0.1" max="10" step="0.1" required /><em>%</em></span></label>
+                </div>
+                <details class="advanced-limits">
+                  <summary>Advanced limits</summary>
+                  <div class="limit-advanced">
+                    <label>Max deployed <input id="maxTotalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                    <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
+                    <label>Max positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
+                    <label>Daily trades <input id="maxTradesPerDay" type="number" min="1" max="100" step="1" required /></label>
+                    <label>Entry score <input id="minEntryScore" type="number" min="1" max="100" step="1" required /></label>
+                  </div>
+                </details>
+                <div class="limit-actions">
+                  <button type="submit">Review changes</button>
+                  <button id="applyGuardrails" class="secondary" type="button" hidden>Apply approved limits</button>
+                </div>
               </form>
-              <p id="guardrailFeedback" class="broker-feedback" aria-live="polite"></p>
+              <p id="guardrailFeedback" class="broker-feedback" aria-live="polite" hidden></p>
             </article>
           </div>
-          <div class="broker-asset-strip"><div><strong>Equities</strong><span>Official MCP</span></div><div><strong>Options</strong><span>Disabled</span></div><div><strong>Crypto</strong><span>Not linked</span></div><div><strong>Events</strong><span>No API path</span></div></div>
         </section>
 
         <section class="stock-view" data-stock-view="sources" hidden>

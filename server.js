@@ -19,8 +19,15 @@ const {
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
 const { createStockIntelligenceScheduler } = require("./services/stock-intelligence-scheduler");
+const { buildStockMarketWorkers } = require("./services/stock-market-workers");
+const {
+  ALLOWED_EVENT_TYPES: STOCK_TELEGRAM_EVENT_TYPES,
+  APPROVAL_ACTION: STOCK_TELEGRAM_APPROVAL_ACTION,
+  createStockTelegramNotifier,
+} = require("./services/stock-telegram-notifier");
 const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
 const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
+const secureSecrets = require("./services/secure-secrets");
 const {
   normalizeShadowPortfolio,
   resetShadowPortfolio,
@@ -68,6 +75,7 @@ const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
 const STOCK_INTELLIGENCE_STATUS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-intelligence-scheduler.json");
+const STOCK_TELEGRAM_SETTINGS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-telegram-notifications.json");
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -111,6 +119,27 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
 const robinhoodMcpClient = createRobinhoodMcpClient({
   dataDir: path.join(STOCK_GURU_USER_DATA_DIR, "broker-auth"),
   codexConfigFile: process.env.ARGENTUM_CODEX_CONFIG_PATH || path.join(os.homedir(), ".codex", "config.toml"),
+});
+const stockTelegramSecretCache = new Map();
+const stockTelegramNotifier = createStockTelegramNotifier({
+  getSetting: (key, fallback) => readStockTelegramSettings(key, fallback),
+  setSetting: (key, value) => writeStockTelegramSettings(key, value),
+  getSecret: (provider) => {
+    if (stockTelegramSecretCache.has(provider)) return stockTelegramSecretCache.get(provider);
+    const value = secureSecrets.getSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider });
+    stockTelegramSecretCache.set(provider, value);
+    return value;
+  },
+  setSecret: (provider, value) => {
+    const saved = secureSecrets.setSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider, value, preferKeychain: true });
+    stockTelegramSecretCache.set(provider, value);
+    return saved;
+  },
+  deleteSecret: (provider) => {
+    const removed = secureSecrets.deleteSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider });
+    stockTelegramSecretCache.delete(provider);
+    return removed;
+  },
 });
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
@@ -307,6 +336,29 @@ function boundedDurationMs(value, fallback, max) {
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readStockTelegramSettings(key, fallback = {}) {
+  try {
+    if (!fs.existsSync(STOCK_TELEGRAM_SETTINGS_FILE)) return fallback;
+    const store = JSON.parse(fs.readFileSync(STOCK_TELEGRAM_SETTINGS_FILE, "utf8"));
+    return Object.hasOwn(store, key) ? store[key] : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStockTelegramSettings(key, value) {
+  let store = {};
+  try {
+    if (fs.existsSync(STOCK_TELEGRAM_SETTINGS_FILE)) {
+      store = JSON.parse(fs.readFileSync(STOCK_TELEGRAM_SETTINGS_FILE, "utf8"));
+    }
+  } catch {
+    store = {};
+  }
+  fs.mkdirSync(path.dirname(STOCK_TELEGRAM_SETTINGS_FILE), { recursive: true });
+  fs.writeFileSync(STOCK_TELEGRAM_SETTINGS_FILE, `${JSON.stringify({ ...store, [key]: value }, null, 2)}\n`, { mode: 0o600 });
 }
 
 function readPersistentSessionSecret() {
@@ -5496,11 +5548,26 @@ async function handleApi(req, res, url) {
       const connectionApproval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
       const guardrailApproval = (state.approvals || []).find((item) => item.actionType === "change_stock_trading_guardrails" && !item.consumedAt) || null;
       const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
+      const brokerControl = brokerControlOverview(snapshot);
+      const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
+      const notificationScope = stockTelegramNotifier.approvalScope();
+      const notificationApproval = notificationScope.destinationHash
+        ? (state.approvals || []).find((item) => item.actionType === STOCK_TELEGRAM_APPROVAL_ACTION && item.linkedId === `stock-office:telegram:${notificationScope.destinationHash}`) || null
+        : null;
       sendJson(res, 200, {
-        brokerControl: brokerControlOverview(snapshot),
-        portfolioPlan: buildCopyPortfolioPlan(snapshot),
+        brokerControl,
+        portfolioPlan,
         shadowPortfolio: refreshStockShadowPortfolio({ state }),
-        intelligenceScheduler: stockIntelligenceScheduler.getStatus(),
+        intelligenceScheduler,
+        marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler }),
+        notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []),
+        notificationApproval: notificationApproval ? {
+          id: notificationApproval.id,
+          status: notificationApproval.status,
+          expiresAt: notificationApproval.expiresAt || null,
+          activatedAt: notificationApproval.activatedAt || null,
+        } : null,
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
         connectionApproval: connectionApproval ? {
           id: connectionApproval.id,
@@ -5519,6 +5586,132 @@ async function handleApi(req, res, url) {
         tradeDrafts,
         permissions: access.permissions,
       });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-configure", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.configure({ botToken: payload.botToken, chatId: payload.chatId }, state.approvals || []);
+      audit(state, "Stock Office Telegram configured", "Telegram destination and bot credentials were stored in local secure storage; values were not written to Argentum state or returned to the browser.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-remove", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.removeConfiguration(state.approvals || []);
+      audit(state, "Stock Office Telegram removed", "Telegram notifications were disabled and both local secure values were removed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-gate", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const scope = stockTelegramNotifier.approvalScope();
+      if (!scope.configured) throw guardedError("Configure the Telegram bot token and chat ID before requesting notification approval.", 409);
+      const approvalResult = createHumanGateRequest({
+        actionType: STOCK_TELEGRAM_APPROVAL_ACTION,
+        title: "Enable verified trade alerts to Telegram",
+        riskLevel: "medium",
+        linkedId: `stock-office:telegram:${scope.destinationHash}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${scope.destination} is configured in local secure storage. No credential value is available to the browser.`,
+        action: "Allow Stock Office to send a Telegram alert after an independently reconciled Robinhood buy or sell, plus an operator-requested connection test.",
+        exactScope: "Telegram only, one configured destination, broker-confirmed equity order alerts and operator-requested tests only. Drafts, paper trades, rejected orders, research signals, and unverified placements are excluded.",
+        details: {
+          officeId: "stock-office",
+          channel: scope.channel,
+          destinationHash: scope.destinationHash,
+          eventTypes: STOCK_TELEGRAM_EVENT_TYPES,
+          automaticBrokerNotifications: true,
+          draftsAuthorized: false,
+          paperTradesAuthorized: false,
+          customerContactAuthorized: false,
+        },
+        reversible: true,
+        expiresAt: new Date(Date.now() + 365 * DAY_MS).toISOString(),
+        expectedPostcondition: "The exact Telegram destination may receive only verified broker order alerts and requested connection tests.",
+        rollbackPlan: "Disable Telegram in Stock Office or remove its secure configuration immediately.",
+      });
+      sendJson(res, 200, { ...approvalResult, notificationStatus: stockTelegramNotifier.publicStatus(readState().approvals || []), liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/enable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-enable", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval) throw guardedError("Approved Telegram notification request not found.", 404);
+      const result = stockTelegramNotifier.enable(approval, state.approvals || []);
+      approval.activatedAt = now();
+      approval.activatedBy = "stock-office";
+      audit(state, "Stock Office Telegram enabled", "The approved server-side Telegram channel can now send only broker-confirmed trade alerts and operator-requested tests.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/disable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-disable", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const result = stockTelegramNotifier.disable(state.approvals || []);
+      audit(state, "Stock Office Telegram disabled", "Automatic Telegram notifications were stopped; no broker or account setting changed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/test") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-test", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const delivery = await stockTelegramNotifier.sendTest(state.approvals || []);
+      audit(state, delivery.sent ? "Stock Office Telegram test delivered" : "Stock Office Telegram test stopped", delivery.sent ? "One operator-requested Telegram test was delivered." : `No message sent: ${delivery.reason || delivery.state}.`);
+      writeState(state);
+      sendJson(res, delivery.sent ? 200 : 409, { delivery, notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []), liveOrderPlaced: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5952,11 +6145,24 @@ async function handleApi(req, res, url) {
           : `${draft.side} ${draft.symbol}: ${settled.draft.lastDispatchError || "no independently verified order"}; exact one-use approval consumed and placement will not be retried.`,
       );
       writeState(latestState);
+      const notificationDelivery = settled.liveOrderPlaced
+        ? await stockTelegramNotifier.notifyVerifiedTrade(settled.draft, latestState.approvals || []).catch((error) => ({ sent: false, state: "failed", reason: error.message }))
+        : { sent: false, state: "ineligible", reason: "No independently reconciled broker order was recorded." };
+      if (settled.liveOrderPlaced) {
+        audit(
+          latestState,
+          notificationDelivery.sent ? "Verified trade Telegram delivered" : "Verified trade Telegram not delivered",
+          notificationDelivery.sent ? `${draft.side} ${draft.symbol} alert delivered after broker reconciliation.` : `No Telegram alert sent: ${notificationDelivery.reason || notificationDelivery.state}.`,
+        );
+        writeState(latestState);
+      }
       sendJson(res, 200, {
         draft: settled.draft,
         approval: settled.approval,
         liveOrderPlaced: settled.liveOrderPlaced,
         reconciliationRequired: settled.reconciliationRequired,
+        notificationDelivery,
+        notificationStatus: stockTelegramNotifier.publicStatus(latestState.approvals || []),
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);

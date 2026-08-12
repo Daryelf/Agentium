@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const appRoot = path.join(__dirname, "..", "apps", "stock-office");
+const shellJs = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
 
 test("Stock Office UI exposes a real refresh outcome and useful filter feedback", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
@@ -47,7 +48,11 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(html, /Advanced limits/);
   assert.match(html, /class="trade-workspace"/);
   assert.match(html, /id="brokerOnboarding" hidden/);
-  assert.match(html, /Capital and exits/);
+  assert.match(html, /id="overviewEquity"/);
+  assert.match(html, /id="overviewPositions"/);
+  assert.match(html, /Market intelligence/);
+  assert.match(html, /Market workers/);
+  assert.match(html, /id="marketWorkers"/);
   assert.match(html, /Trade risk/);
   assert.match(html, /Daily trades/);
   assert.match(html, /Apply approved limits/);
@@ -57,9 +62,10 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
   assert.match(script, /\/api\/stock-office\/guardrails\/apply/);
   assert.match(script, /portfolioPlan/);
-  assert.match(script, /data-portfolio-draft/);
-  assert.match(script, /New-buy room/);
-  assert.match(script, /Today P&L/);
+  assert.match(script, /renderOverviewDashboard/);
+  assert.match(script, /renderMarketWorkers/);
+  assert.match(script, /marketWorkers/);
+  assert.match(script, /Day P&L/);
   assert.match(html, /Simulation and learning/);
   assert.match(html, /Paper ledger only/);
   assert.match(script, /shadowPortfolio/);
@@ -90,11 +96,34 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(script, /navigator\.clipboard\.writeText/);
   assert.match(script, /window\.setInterval\(pollBrokerControl, 3_000\)/);
   assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
-  assert.match(script, /Tool contract/);
   assert.match(script, /toolContract\.registered/);
   assert.match(script, /No settled buying power\. Add funds in Robinhood, then refresh\./);
   assert.match(script, /target\.hidden = true/);
-  assert.doesNotMatch(`${html}\n${script}`, /type="password"|enter your login/i);
+  assert.doesNotMatch(`${html}\n${script}`, /Robinhood password|enter your Robinhood login/i);
+});
+
+test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /id="telegramConfigForm"/);
+  assert.match(html, /Stored in Mac Keychain/);
+  assert.match(html, /Request approval/);
+  assert.match(html, /Enable approved alerts/);
+  assert.match(script, /notifications\/telegram\/configure/);
+  assert.match(script, /notifications\/telegram\/human-gate/);
+  assert.match(script, /notifications\/telegram\/enable/);
+  assert.match(script, /telegramAction\("test"\)/);
+  assert.doesNotMatch(script, /STOCK_GURU_TELEGRAM_BOT_TOKEN/);
+});
+
+test("Control Floor Stock Office card is data-first and loads the live broker snapshot", () => {
+  assert.match(shellJs, /api\("\/api\/stock-office\/broker-control"\)/);
+  assert.match(shellJs, /stock-office-account-summary/);
+  assert.match(shellJs, /Live portfolio/);
+  assert.match(shellJs, /Largest position/);
+  assert.match(shellJs, /New buys paused/);
+  assert.doesNotMatch(shellJs, /Security boundary<\/h4>/);
 });
 
 test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores", () => {
@@ -111,5 +140,5 @@ test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores",
   assert.match(script, /candidateId/);
   assert.match(script, /data-mirror-draft/);
   assert.match(script, /brokerPositionRequired/);
-  assert.match(html, /Supervised plan/);
+  assert.match(html, /Market workers/);
 });

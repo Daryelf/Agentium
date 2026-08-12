@@ -172,6 +172,14 @@ function createStockIntelligenceScheduler(options = {}) {
       running,
       currentStage: running ? shortText(managerStatus.stage || "refreshing", 80) : "idle",
       currentMessage: running ? shortText(managerStatus.message || "Refreshing market intelligence...", 500) : "",
+      currentCommands: running && Array.isArray(managerStatus.commands)
+        ? managerStatus.commands.map((command) => ({
+            name: shortText(command?.name, 80),
+            status: shortText(command?.status, 40),
+            startedAt: safeDate(command?.startedAt),
+            completedAt: safeDate(command?.completedAt),
+          })).slice(0, 8)
+        : [],
       liveOrdersPlaced: 0,
       brokerCalled: false,
     }));

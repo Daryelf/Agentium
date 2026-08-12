@@ -4,8 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260811-5" />
-    <script src="./stock-office.js?v=20260811-5" defer></script>
+    <link rel="stylesheet" href="./stock-office.css?v=20260812-7" />
+    <script src="./stock-office.js?v=20260812-7" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -41,24 +41,46 @@
         </section>
 
         <section class="stock-view active" data-stock-view="overview">
-          <div class="overview-strip" id="metricGrid"></div>
-          <section class="panel broker-summary-card">
-            <div class="panel-head compact">
-              <div><p class="eyebrow">Robinhood</p><h2>Connection and account</h2></div>
-              <button class="quiet-button" type="button" data-open-stock-view="trade">Open trade desk</button>
+          <section id="overviewAccountBand" class="overview-account-band">
+            <div class="overview-equity">
+              <span><i aria-hidden="true"></i> Live portfolio</span>
+              <strong id="overviewEquity">—</strong>
+              <small id="overviewAccountMeta">Loading Robinhood account</small>
             </div>
-            <div id="brokerMetrics" class="broker-metrics"></div>
+            <div id="overviewAccountTape" class="overview-account-tape"></div>
+            <button class="quiet-button" type="button" data-open-stock-view="trade">Trade desk</button>
           </section>
-          <section class="panel portfolio-planner">
-            <div class="broker-card-head">
-              <div><p class="eyebrow">Supervised plan</p><h2>Capital and exits</h2></div>
-              <span id="portfolioPlanStatus">Waiting for verified capital</span>
+          <section class="overview-operations-board">
+            <div class="overview-operations-head">
+              <div><span>Live operations</span><h2>Market workers</h2></div>
+              <div class="overview-operations-status">
+                <strong id="marketSessionPill">Checking market</strong>
+                <button id="notificationStatusPill" class="status-pill muted" type="button" data-open-stock-view="sources">Telegram off</button>
+              </div>
             </div>
-            <div id="portfolioCapitalMetrics" class="portfolio-capital-metrics"></div>
-            <div id="portfolioProposals" class="portfolio-proposals"></div>
-            <p id="portfolioPlanFeedback" class="broker-feedback" aria-live="polite"></p>
+            <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
+            <div id="marketWorkers" class="overview-worker-list"></div>
           </section>
-          <p class="safety-line"><strong>Guarded:</strong> <span id="safetyCopy">Drafts only until the broker checks and one-use Human Gate approval pass.</span></p>
+          <div class="overview-data-grid">
+            <section class="overview-position-board">
+              <div class="overview-board-head"><div><span>Robinhood</span><h2>Positions</h2></div><strong id="overviewPositionCount">0</strong></div>
+              <div id="overviewPositions" class="overview-position-list"></div>
+            </section>
+            <section class="overview-intel-board">
+              <div class="overview-board-head"><div><span>Evaluator</span><h2>Market intelligence</h2></div><strong id="overviewFreshness">Loading</strong></div>
+              <div id="overviewIntelSummary" class="overview-intel-summary"></div>
+              <div id="overviewTopSetups" class="overview-setup-list"></div>
+            </section>
+          </div>
+          <section class="overview-risk-rail">
+            <div class="overview-capital-use">
+              <div><span>Capital deployed</span><strong id="overviewCapitalUse">—</strong></div>
+              <div class="overview-capital-track"><i id="overviewCapitalFill"></i></div>
+            </div>
+            <div id="overviewRiskMetrics" class="overview-risk-metrics"></div>
+            <div id="overviewAction" class="overview-action" aria-live="polite"></div>
+            <span id="safetyCopy" hidden></span>
+          </section>
         </section>
 
         <section class="stock-view" data-stock-view="portfolio" hidden>
@@ -180,6 +202,32 @@
         </section>
 
         <section class="stock-view" data-stock-view="sources" hidden>
+          <article class="panel telegram-panel">
+            <div class="panel-head compact">
+              <div><p class="eyebrow">Trade alerts</p><h2>Telegram</h2></div>
+              <span id="telegramPanelStatus" class="status-pill muted">Not configured</span>
+            </div>
+            <div class="telegram-layout">
+              <div class="telegram-summary">
+                <strong id="telegramDestination">Telegram not configured</strong>
+                <span id="telegramSummary">Get a message only after Robinhood confirms an order.</span>
+                <div id="telegramRecent" class="telegram-recent"></div>
+              </div>
+              <form id="telegramConfigForm" class="telegram-config-form">
+                <label>Bot token<input id="telegramBotToken" type="password" autocomplete="new-password" placeholder="Stored in Mac Keychain" required /></label>
+                <label>Chat ID<input id="telegramChatId" type="text" inputmode="numeric" autocomplete="off" placeholder="Numeric chat ID" required /></label>
+                <button type="submit">Save securely</button>
+              </form>
+              <div class="telegram-actions">
+                <button id="telegramApprovalButton" type="button">Request approval</button>
+                <button id="telegramEnableButton" type="button" hidden>Enable approved alerts</button>
+                <button id="telegramTestButton" class="secondary" type="button" hidden>Send test</button>
+                <button id="telegramDisableButton" class="secondary" type="button" hidden>Turn off</button>
+                <button id="telegramRemoveButton" class="text-button" type="button" hidden>Remove connection</button>
+                <small id="telegramFeedback" aria-live="polite"></small>
+              </div>
+            </div>
+          </article>
           <article class="panel intelligence-monitor">
             <div class="panel-head compact"><div><p class="eyebrow">Research loop</p><h2>Market data freshness</h2></div><span id="intelligenceStatus">Starting scheduler</span></div>
             <div id="intelligenceMetrics" class="portfolio-capital-metrics"></div>

@@ -14,6 +14,9 @@ const state = {
   portfolioPlan: null,
   shadowPortfolio: null,
   intelligenceScheduler: null,
+  marketWorkers: null,
+  notificationStatus: null,
+  notificationApproval: null,
   robinhoodConnection: null,
   connectionApproval: null,
   guardrailApproval: null,
@@ -126,20 +129,175 @@ function metricCard(label, value, hint) {
   `;
 }
 
-function renderMetrics() {
+function numericMoney(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function livePositionValue(position = {}) {
+  const explicit = numericMoney(position.marketValueDollars ?? position.marketValue);
+  if (explicit !== null) return explicit;
+  const quantity = numericMoney(position.quantity ?? position.sharesAvailableForSells);
+  const price = numericMoney(position.currentPrice);
+  return quantity !== null && price !== null ? quantity * price : null;
+}
+
+function formatShares(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function relativeCycle(value) {
+  if (!value) return "—";
+  const delta = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(delta)) return "—";
+  const minutes = Math.round(Math.abs(delta) / 60_000);
+  if (Math.abs(delta) < 60_000) return delta >= 0 ? "<1m" : "now";
+  if (minutes < 60) return delta >= 0 ? `${minutes}m` : `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  return delta >= 0 ? `${hours}h` : `${hours}h ago`;
+}
+
+function renderMarketWorkers() {
+  const operations = state.marketWorkers || {};
+  const workers = Array.isArray(operations.workers) ? operations.workers : [];
+  const session = operations.market || {};
+  const marketPill = $("#marketSessionPill");
+  marketPill.textContent = session.label || "Market schedule unavailable";
+  marketPill.dataset.status = session.status || "closed";
+  $("#marketWorkers").innerHTML = workers.length
+    ? workers.map((worker) => {
+        const metrics = Array.isArray(worker.metrics) ? worker.metrics : [];
+        const cycle = worker.status === "working"
+          ? "Running now"
+          : worker.nextRunAt
+            ? `Next ${relativeCycle(worker.nextRunAt)}`
+            : worker.lastRunAt
+              ? `Read ${relativeCycle(worker.lastRunAt)}`
+              : "Waiting";
+        return `<article class="overview-worker-row" data-status="${escapeHtml(worker.status)}">
+          <div class="overview-worker-identity"><i>${escapeHtml(worker.initials)}</i><span><strong>${escapeHtml(worker.name)}</strong><small>${escapeHtml(worker.role)}</small></span></div>
+          <div class="overview-worker-state"><i></i><strong>${escapeHtml(worker.status)}</strong></div>
+          <div class="overview-worker-task"><strong>${escapeHtml(worker.task)}</strong><small>${escapeHtml(worker.finding)}</small></div>
+          <div class="overview-worker-metrics">${metrics.map((metric) => `<span><small>${escapeHtml(metric.label)}</small><strong>${escapeHtml(metric.value)}</strong></span>`).join("")}</div>
+          <div class="overview-worker-cycle"><strong>${escapeHtml(cycle)}</strong><small>${escapeHtml(worker.evidence)}</small></div>
+        </article>`;
+      }).join("")
+    : `<div class="overview-empty-row"><strong>Worker status unavailable</strong><span>Refresh Stock Office to read the live scheduler.</span></div>`;
+}
+
+function renderNotificationStatus() {
+  const status = state.notificationStatus || {};
+  const approval = state.notificationApproval || {};
+  const label = status.enabled ? "Telegram live" : status.configured ? "Telegram approval" : "Telegram off";
+  const overviewPill = $("#notificationStatusPill");
+  overviewPill.textContent = label;
+  overviewPill.className = `status-pill ${status.enabled ? "ready" : status.configured ? "warning" : "muted"}`;
+  const panelPill = $("#telegramPanelStatus");
+  panelPill.textContent = status.enabled ? "Alerts active" : status.configured ? "Approval required" : "Not configured";
+  panelPill.className = `status-pill ${status.enabled ? "ready" : status.configured ? "warning" : "muted"}`;
+  $("#telegramDestination").textContent = status.destination || "Telegram not configured";
+  $("#telegramSummary").textContent = status.enabled
+    ? "Broker-confirmed buys and sells will notify this destination."
+    : status.configured
+      ? approval.status === "approved" ? "Human Gate approved this destination. Enable it once." : "Credentials are secure. Human Gate must approve automatic alerts."
+      : "Get a message only after Robinhood independently confirms an order.";
+  const recent = Array.isArray(status.recent) ? status.recent : [];
+  $("#telegramRecent").innerHTML = recent.length
+    ? recent.map((item) => `<span data-status="${escapeHtml(item.status)}"><i></i><strong>${escapeHtml(String(item.kind || "notification").replaceAll("_", " "))}</strong><small>${escapeHtml(item.sentAt ? formatTime(item.sentAt) : item.status)}</small></span>`).join("")
+    : `<span><i></i><strong>No messages sent</strong><small>Verified events will appear here.</small></span>`;
+  $("#telegramConfigForm").hidden = status.configured;
+  $("#telegramApprovalButton").hidden = !status.configured || status.enabled || ["pending", "approved"].includes(approval.status);
+  $("#telegramEnableButton").hidden = approval.status !== "approved" || status.enabled;
+  $("#telegramTestButton").hidden = !status.enabled;
+  $("#telegramDisableButton").hidden = !status.enabled;
+  $("#telegramRemoveButton").hidden = !status.configured;
+  if (status.lastError) $("#telegramFeedback").textContent = status.lastError;
+}
+
+function renderOverviewDashboard() {
   const metrics = state.overview?.metrics || {};
   const sourceHealth = state.overview?.sourceHealth || {};
-  const cards = [
-    ["Records", metrics.trackedRecords ?? 0, `${metrics.validSetups ?? 0} valid setup(s)`],
-    ["Watchlist", metrics.watchlistCount ?? 0, "local universe"],
-    ["Rejected", metrics.rejectedRecords ?? 0, "risk filtered"],
-    ["Sources", sourceHealth.ready ?? 0, `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
-    ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
-    ["Mirror signals", metrics.mirrorSignals ?? 0, `${metrics.mirrorPaperReady ?? 0} paper-ready`],
-  ];
-  $("#metricGrid").innerHTML = cards.map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+  const broker = state.overview?.broker || {};
+  const control = state.brokerControl || {};
+  const guardrails = control.guardrails || {};
+  const capital = state.portfolioPlan?.capital || control.capital || {};
+  const positions = Array.isArray(control.positions) && control.positions.length ? control.positions : broker.positions || [];
+  const positionValue = positions.reduce((sum, position) => sum + (livePositionValue(position) || 0), 0);
+  const buyingPower = numericMoney(control.buyingPowerDollars ?? broker.buyingPower) ?? 0;
+  const equity = numericMoney(broker.accountValue) ?? positionValue + buyingPower;
+  const deployed = numericMoney(capital.deployedDollars) ?? positionValue;
+  const maxDeployed = numericMoney(capital.maxDeployedDollars ?? guardrails.maxTotalDollars) ?? 0;
+  const utilization = maxDeployed > 0 ? Math.max(0, Math.min(100, (deployed / maxDeployed) * 100)) : 0;
+  const dayPnl = numericMoney(capital.dayPnlDollars ?? broker.dayPnlDollars);
+  const accountBand = $("#overviewAccountBand");
+  accountBand.dataset.status = control.authenticationVerified ? "live" : "offline";
+  $("#overviewEquity").textContent = formatMoney(equity);
+  $("#overviewAccountMeta").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"} · ${control.snapshotUpdatedAt ? formatTime(control.snapshotUpdatedAt) : "awaiting snapshot"}`;
+  $("#overviewAccountTape").innerHTML = [
+    ["Buying power", formatMoney(buyingPower), ""],
+    ["Invested", formatMoney(deployed), ""],
+    ["Day P&L", dayPnl === null ? "—" : formatMoney(dayPnl), dayPnl === null ? "" : dayPnl < 0 ? "negative" : dayPnl > 0 ? "positive" : ""],
+    ["Open orders", String(control.openOrderCount || 0), ""],
+  ].map(([label, value, className]) => `<span><small>${escapeHtml(label)}</small><strong class="${className}">${escapeHtml(value)}</strong></span>`).join("");
+
+  $("#overviewPositionCount").textContent = String(positions.length);
+  $("#overviewPositions").innerHTML = positions.length
+    ? positions.map((position) => {
+        const quantity = numericMoney(position.quantity ?? position.sharesAvailableForSells);
+        const currentPrice = numericMoney(position.currentPrice);
+        const value = livePositionValue(position);
+        const pnl = numericMoney(position.unrealizedPnlDollars ?? position.unrealizedPnl);
+        const pnlPct = Number(position.unrealizedPnlPct);
+        const pnlClass = pnl === null ? "" : pnl < 0 ? "negative" : pnl > 0 ? "positive" : "";
+        return `<article class="overview-position-row">
+          <div><strong>${escapeHtml(position.symbol || "—")}</strong><small>${escapeHtml(formatShares(quantity))} shares</small></div>
+          <div><small>Last</small><strong>${escapeHtml(currentPrice === null ? "—" : formatMoney(currentPrice))}</strong></div>
+          <div><small>Value</small><strong>${escapeHtml(value === null ? "—" : formatMoney(value))}</strong></div>
+          <div class="${pnlClass}"><small>Return</small><strong>${escapeHtml(pnl === null ? "—" : formatMoney(pnl))}</strong><em>${Number.isFinite(pnlPct) ? `${pnlPct.toFixed(2)}%` : ""}</em></div>
+        </article>`;
+      }).join("")
+    : `<div class="overview-empty-row"><strong>No live positions</strong><span>Robinhood is connected, but no holding is available.</span></div>`;
+
+  const totalSources = Number(sourceHealth.total || 0);
+  $("#overviewFreshness").textContent = sourceHealth.stale ? `${sourceHealth.stale} stale` : sourceHealth.status || "Current";
+  $("#overviewIntelSummary").innerHTML = [
+    ["Tracked", metrics.trackedRecords ?? 0],
+    ["Setups", metrics.validSetups ?? 0],
+    ["Watch", metrics.watchlistCount ?? 0],
+    ["Sources", totalSources ? `${sourceHealth.ready || 0}/${totalSources}` : sourceHealth.ready ?? 0],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
+  const topSetups = state.records.filter((record) => record.status === "valid_setup").slice(0, 4);
+  $("#overviewTopSetups").innerHTML = topSetups.length
+    ? topSetups.map((record) => `<article><strong>${escapeHtml(record.ticker)}</strong><span>${escapeHtml(String(record.score ?? "—"))}</span><span>${escapeHtml(record.setupType || "Setup")}</span><em>${escapeHtml(record.currentPrice ? formatMoney(record.currentPrice) : "—")}</em></article>`).join("")
+    : `<div class="overview-empty-row"><strong>No current setup</strong><span>Evaluator has no fresh valid entry.</span></div>`;
+
+  $("#overviewCapitalUse").textContent = `${formatMoney(deployed)} / ${formatMoney(maxDeployed)}`;
+  $("#overviewCapitalFill").style.width = `${utilization.toFixed(1)}%`;
+  $("#overviewRiskMetrics").innerHTML = [
+    ["Max order", formatMoney(guardrails.maxOrderDollars)],
+    ["Trades", `${capital.tradesToday ?? "—"}/${capital.maxTradesPerDay ?? guardrails.maxTradesPerDay ?? "—"}`],
+    ["Daily stop", formatMoney(capital.dailyLossLimitDollars)],
+    ["Position cap", formatMoney(capital.maxPositionDollars)],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
+  const primaryBlocker = control.blockers?.[0];
+  const buyingPowerBlocked = /buying power|settled/i.test(primaryBlocker || "") || buyingPower <= 0;
+  const action = $("#overviewAction");
+  action.dataset.status = primaryBlocker ? "blocked" : "ready";
+  action.innerHTML = primaryBlocker
+    ? `<strong>${buyingPowerBlocked ? "New buys paused" : "Action needed"}</strong><span>${buyingPowerBlocked ? "Add settled cash, then refresh." : escapeHtml(primaryBlocker)}</span>`
+    : `<strong>Account ready</strong><span>Orders require final review.</span>`;
   $("#stockStatusPill").textContent = sourceHealth.status ? `Sources: ${sourceHealth.status}` : "Read only";
-  $("#safetyCopy").textContent = "Every live order needs fresh broker checks and one-use Human Gate approval.";
+  $("#safetyCopy").textContent = "Every order requires broker review and one-use Human Gate approval.";
+  renderMarketWorkers();
+  renderNotificationStatus();
+}
+
+function renderMetrics() {
+  renderOverviewDashboard();
 }
 
 function brokerStatusLabel(value, toolContract = {}) {
@@ -166,34 +324,7 @@ function portfolioKindLabel(value) {
 }
 
 function renderPortfolioPlan() {
-  const plan = state.portfolioPlan || {};
-  const capital = plan.capital || state.brokerControl?.capital || {};
-  const proposals = plan.proposals || [];
-  const ready = proposals.filter((item) => item.draftEligible).length;
-  const status = $("#portfolioPlanStatus");
-  status.textContent = capital.verified ? `${ready} exact draft${ready === 1 ? "" : "s"} ready` : "Capital evidence incomplete";
-  status.className = capital.verified ? "ready-copy" : "danger-copy";
-  $("#portfolioCapitalMetrics").innerHTML = [
-    ["Allocated", formatMoney(capital.principalDollars), `maximum deployed ${formatMoney(capital.maxDeployedDollars)}`],
-    ["Live deployed", formatMoney(capital.deployedDollars), `${formatMoney(capital.pendingBuyDollars)} pending buys`],
-    ["New-buy room", formatMoney(capital.availableForNewBuys), `reserve ${formatMoney(capital.cashReserveDollars)}`],
-    ["Today P&L", capital.dayPnlDollars === null || capital.dayPnlDollars === undefined ? "Unverified" : formatMoney(capital.dayPnlDollars), `loss lock ${formatMoney(capital.dailyLossLimitDollars)}`],
-    ["Trades today", capital.tradesToday === null || capital.tradesToday === undefined ? "Unverified" : `${capital.tradesToday}/${capital.maxTradesPerDay}`, capital.tradeLimitReached ? "daily limit reached" : "official order history"],
-    ["Per-symbol cap", formatMoney(capital.maxPositionDollars), "derived from max deployed ÷ positions"],
-  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
-  $("#portfolioProposals").innerHTML = proposals.length
-    ? proposals.map((proposal) => `
-        <article class="portfolio-proposal ${proposal.draftEligible ? "ready" : "blocked"}">
-          <div>
-            <span>${escapeHtml(portfolioKindLabel(proposal.kind))}</span>
-            <strong>${escapeHtml(proposal.side)} ${escapeHtml(proposal.symbol)} · ${escapeHtml(formatMoney(proposal.requestedDollars))}</strong>
-            <small>${escapeHtml(proposal.reasons?.join(" ") || "Current evidence review.")}</small>
-            ${proposal.blockers?.length ? `<em>${escapeHtml(proposal.blockers[0])}</em>` : `<em>Capital after proposal: ${escapeHtml(formatMoney(proposal.capitalAfterDollars))}</em>`}
-          </div>
-          <button type="button" data-portfolio-draft="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>Stage exact draft</button>
-        </article>
-      `).join("")
-    : `<div class="empty-state"><p>No buy or sell proposal passes the currently loaded copy, position, and evaluator evidence.</p></div>`;
+  renderOverviewDashboard();
 }
 
 function renderShadowPortfolio() {
@@ -425,16 +556,6 @@ function renderBrokerControl() {
     ["Positions", control.positions?.length || 0],
     ["Open orders", control.openOrderCount || 0],
   ].map(([label, value]) => `<span class="trade-account-stat"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
-  $("#brokerMetrics").innerHTML = [
-    ["Connector", toolContract.codexRegistered ? "Connected in Codex" : toolContract.registered ? "Registered" : "Not found", "official Robinhood MCP"],
-    ["Tool contract", toolContract.verified ? "Verified" : toolContract.discoveryObserved ? `${toolContract.missingTools?.length || 0} missing` : "Pending app link", toolContract.discoveryObserved ? "live discovery" : "checked after app link"],
-    ["App session", control.authenticationVerified ? "Verified" : connection.oauthAuthenticated ? "Refresh needed" : "Not linked", control.snapshotAgeMinutes === null ? "no live snapshot" : `${control.snapshotAgeMinutes}m snapshot age`],
-    ["Buying power", formatMoney(control.buyingPowerDollars), "live broker value required"],
-    ["Positions", control.positions?.length || 0, `${control.openOrderCount || 0} open order(s)`],
-    ["Per-order cap", formatMoney(guardrails.maxOrderDollars), `principal ${formatMoney(guardrails.principalDollars)}`],
-    ["Live entry", control.buyReady ? "Ready" : "Blocked", control.killSwitchActive ? "kill switch active" : "strict checks"],
-  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
-
   $("#brokerOnboarding").innerHTML = [
     [toolContract.registered, "Official Trading MCP registered"],
     [connection.oauthAuthenticated, "Stock Office app session linked"],
@@ -763,6 +884,9 @@ async function loadApp() {
     state.portfolioPlan = brokerPayload.portfolioPlan || null;
     state.shadowPortfolio = brokerPayload.shadowPortfolio || null;
     state.intelligenceScheduler = brokerPayload.intelligenceScheduler || null;
+    state.marketWorkers = brokerPayload.marketWorkers || null;
+    state.notificationStatus = brokerPayload.notificationStatus || null;
+    state.notificationApproval = brokerPayload.notificationApproval || null;
     state.robinhoodConnection = brokerPayload.robinhoodConnection || null;
     state.connectionApproval = brokerPayload.connectionApproval || null;
     state.guardrailApproval = brokerPayload.guardrailApproval || null;
@@ -1156,6 +1280,9 @@ async function pollBrokerControl() {
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
     state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
+    state.marketWorkers = payload.marketWorkers || state.marketWorkers;
+    state.notificationStatus = payload.notificationStatus || state.notificationStatus;
+    state.notificationApproval = payload.notificationApproval || null;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.connectionApproval = payload.connectionApproval || state.connectionApproval;
     state.guardrailApproval = payload.guardrailApproval || null;
@@ -1168,6 +1295,86 @@ async function pollBrokerControl() {
     if (state.dispatchHandoff) state.dispatchHandoff = null;
     renderBrokerControl();
   } catch (_error) {}
+}
+
+async function configureTelegram(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const feedback = $("#telegramFeedback");
+  button.disabled = true;
+  button.textContent = "Saving securely...";
+  feedback.textContent = "";
+  try {
+    const payload = await api("/api/stock-office/notifications/telegram/configure", {
+      method: "POST",
+      body: JSON.stringify({ botToken: $("#telegramBotToken").value, chatId: $("#telegramChatId").value }),
+    });
+    state.notificationStatus = payload.notificationStatus;
+    event.currentTarget.reset();
+    feedback.textContent = "Saved in local secure storage. Request Human Gate approval next.";
+    renderNotificationStatus();
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Save securely";
+  }
+}
+
+async function requestTelegramApproval() {
+  const button = $("#telegramApprovalButton");
+  const feedback = $("#telegramFeedback");
+  button.disabled = true;
+  button.textContent = "Creating approval...";
+  try {
+    const payload = await api("/api/stock-office/notifications/telegram/human-gate", { method: "POST", body: "{}" });
+    state.notificationApproval = { id: payload.approval?.id, status: payload.approval?.status, expiresAt: payload.approval?.expiresAt };
+    state.notificationStatus = payload.notificationStatus || state.notificationStatus;
+    feedback.textContent = "Open Human Gate and approve the exact Telegram destination and event scope.";
+    renderNotificationStatus();
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Request approval";
+  }
+}
+
+async function enableTelegram() {
+  const button = $("#telegramEnableButton");
+  const feedback = $("#telegramFeedback");
+  button.disabled = true;
+  try {
+    const payload = await api("/api/stock-office/notifications/telegram/enable", {
+      method: "POST",
+      body: JSON.stringify({ approvalId: state.notificationApproval?.id }),
+    });
+    state.notificationStatus = payload.notificationStatus;
+    feedback.textContent = "Verified Robinhood order alerts are now active.";
+    renderNotificationStatus();
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function telegramAction(action) {
+  const feedback = $("#telegramFeedback");
+  feedback.textContent = action === "test" ? "Sending one approved test..." : "Updating Telegram...";
+  try {
+    const endpoint = action === "remove" ? "/api/stock-office/notifications/telegram/configure" : `/api/stock-office/notifications/telegram/${action}`;
+    const payload = await api(endpoint, {
+      method: action === "remove" ? "DELETE" : "POST",
+      body: action === "remove" ? undefined : "{}",
+    });
+    state.notificationStatus = payload.notificationStatus;
+    if (action === "remove") state.notificationApproval = null;
+    feedback.textContent = action === "test" ? "Telegram test delivered." : action === "disable" ? "Automatic alerts are off." : "Telegram connection removed.";
+    renderNotificationStatus();
+  } catch (error) {
+    feedback.textContent = error.message;
+  }
 }
 
 async function resetShadowPortfolio(event) {
@@ -1309,12 +1516,18 @@ document.addEventListener("click", (event) => {
   if (mirrorDraft && !mirrorDraft.disabled) stageMirrorOrder(mirrorDraft.dataset.mirrorDraft);
   const portfolioDraft = event.target.closest("[data-portfolio-draft]");
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
+  if (event.target.closest("#telegramApprovalButton")) requestTelegramApproval();
+  if (event.target.closest("#telegramEnableButton")) enableTelegram();
+  if (event.target.closest("#telegramTestButton")) telegramAction("test");
+  if (event.target.closest("#telegramDisableButton")) telegramAction("disable");
+  if (event.target.closest("#telegramRemoveButton")) telegramAction("remove");
 });
 
 $("#guardrailForm").addEventListener("submit", requestGuardrails);
 $("#applyGuardrails").addEventListener("click", applyApprovedGuardrails);
 $("#orderDraftForm").addEventListener("submit", buildOrderDraft);
 $("#shadowResetForm").addEventListener("submit", resetShadowPortfolio);
+$("#telegramConfigForm").addEventListener("submit", configureTelegram);
 
 $("#applyFilters").addEventListener("click", applyFilters);
 $("#syncButton").addEventListener("click", syncLocalFiles);

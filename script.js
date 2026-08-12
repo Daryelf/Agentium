@@ -232,6 +232,7 @@ let apiAvailable = false;
 let automationTelemetryMessages = ["Agent 101 is waiting for bounded work."];
 let automationTelemetryIndex = 0;
 let stockOfficeOverview = null;
+let stockOfficeBroker = null;
 let stockOfficeRecords = { records: [], page: 1, pageSize: 12, total: 0, totalPages: 1 };
 let stockOfficeSelectedTicker = "";
 let stockOfficeLoading = false;
@@ -2213,12 +2214,14 @@ async function loadStockOfficeData(options = {}) {
   renderOpenStockOfficeModal();
   try {
     const query = stockOfficeQueryString(options);
-    const [overview, records] = await Promise.all([
+    const [overview, records, broker] = await Promise.all([
       api("/api/stock-office/overview"),
       api(`/api/stock-office/records?${query}`),
+      api("/api/stock-office/broker-control").catch(() => null),
     ]);
     stockOfficeOverview = overview;
     stockOfficeRecords = records;
+    stockOfficeBroker = broker || stockOfficeBroker;
     if (!stockOfficeSelectedTicker) {
       stockOfficeSelectedTicker = records.records?.[0]?.ticker || overview.topRecords?.[0]?.ticker || "";
     }
@@ -2253,9 +2256,13 @@ async function syncStockOffice() {
   stockOfficeError = "";
   renderOpenStockOfficeModal();
   try {
-    const payload = await postJson("/api/stock-office/sync", {});
+    const [payload, broker] = await Promise.all([
+      postJson("/api/stock-office/sync", {}),
+      api("/api/stock-office/broker-control").catch(() => null),
+    ]);
     stockOfficeOverview = payload.overview;
     stockOfficeRecords = payload.records;
+    stockOfficeBroker = broker || stockOfficeBroker;
     if (!stockOfficeSelectedTicker) stockOfficeSelectedTicker = payload.records?.records?.[0]?.ticker || "";
   } catch (error) {
     stockOfficeError = error.message || "Stock Office sync could not complete.";
@@ -4753,24 +4760,51 @@ function stockMetricMarkup(label, value, hint = "") {
   `;
 }
 
+function stockNumericValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stockCurrency(value, fallback = "—") {
+  const number = stockNumericValue(value);
+  return number === null
+    ? fallback
+    : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(number);
+}
+
+function stockPositionValue(position = {}) {
+  const explicit = stockNumericValue(position.marketValueDollars ?? position.marketValue);
+  if (explicit !== null) return explicit;
+  const quantity = stockNumericValue(position.quantity ?? position.sharesAvailableForSells);
+  const price = stockNumericValue(position.currentPrice);
+  return quantity !== null && price !== null ? quantity * price : null;
+}
+
+function stockLiveSnapshot() {
+  const control = stockOfficeBroker?.brokerControl || {};
+  const capital = stockOfficeBroker?.portfolioPlan?.capital || control.capital || {};
+  const broker = stockOfficeOverview?.broker || {};
+  const positions = Array.isArray(control.positions) && control.positions.length ? control.positions : broker.positions || [];
+  const positionValue = positions.reduce((sum, position) => sum + (stockPositionValue(position) || 0), 0);
+  const buyingPower = stockNumericValue(control.buyingPowerDollars ?? broker.buyingPower) ?? 0;
+  const accountValue = stockNumericValue(broker.accountValue) ?? positionValue + buyingPower;
+  return { control, capital, broker, positions, positionValue, buyingPower, accountValue };
+}
+
 function stockOfficeAlertMarkup() {
-  const alerts = stockOfficeOverview?.alerts || [];
+  const { control, positions, buyingPower } = stockLiveSnapshot();
   if (stockOfficeError) {
     return `<div class="stock-office-alert bad"><strong>Stock Office error</strong><span>${escapeHtml(stockOfficeError)}</span></div>`;
   }
-  if (!alerts.length) {
-    return `<div class="stock-office-alert good"><strong>Guarded broker controls available</strong><span>Open View app for Robinhood connection status, capital limits, and exact buy/sell drafts. Every live order still requires fresh checks and one-use Human Gate approval.</span></div>`;
+  if (!control.authenticationVerified) {
+    return `<div class="stock-office-alert warn"><strong>Robinhood needs attention</strong><span>${escapeHtml(stockStatusLabel(control.connectorStatus || "refresh"))}</span><em>Open Stock Office</em></div>`;
   }
-  return alerts
-    .map(
-      (alert) => `
-        <div class="stock-office-alert ${escapeHtml(alert.level === "error" ? "bad" : alert.level === "warning" ? "warn" : "good")}">
-          <strong>${escapeHtml(alert.title)}</strong>
-          <span>${escapeHtml(alert.body)}</span>
-        </div>
-      `,
-    )
-    .join("");
+  if (buyingPower <= 0) {
+    return `<div class="stock-office-alert warn"><strong>New buys paused</strong><span>${escapeHtml(stockCurrency(buyingPower))} settled buying power</span><em>Fund Robinhood, then refresh</em></div>`;
+  }
+  return `<div class="stock-office-alert good"><strong>Account ready</strong><span>${escapeHtml(pluralize(positions.length, "live position"))} · ${escapeHtml(String(control.openOrderCount || 0))} open orders</span><em>Human Gate on</em></div>`;
 }
 
 function selectedStockRecord() {
@@ -4968,40 +5002,55 @@ function stockActivityMarkup() {
     </section>
   `;
 }
-
 function stockOfficeMarkup(card) {
   const profile = businessOfficeProfile(card.id);
   const metrics = stockOfficeOverview?.metrics || {};
   const sourceHealth = stockOfficeOverview?.sourceHealth || {};
-  const workspace = stockOfficeOverview?.workspace || {
-    title: "Stock Office",
-    description: profile.goal,
-    mode: "broker_onboarding_guarded",
-    safetyRule: "Exact broker drafts are available; live placement requires current broker review and one-use Human Gate approval.",
-  };
-  const metricCards = [
-    ["Records", metrics.trackedRecords ?? "—", `${metrics.validSetups ?? 0} valid setup(s)`],
-    ["Watchlist", metrics.watchlistCount ?? "—", "local universe"],
-    ["Rejected", metrics.rejectedRecords ?? "—", "risk filtered"],
-    ["Sources", sourceHealth.ready ?? "—", `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
-    ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
-    ["Mirror signals", metrics.mirrorSignals ?? "—", `${metrics.mirrorPaperReady ?? 0} paper-ready`],
-  ];
+  const { control, capital, positions, positionValue, buyingPower, accountValue } = stockLiveSnapshot();
+  const primaryPosition = positions[0] || null;
+  const primaryPositionValue = primaryPosition ? stockPositionValue(primaryPosition) : null;
+  const totalSources = Number(sourceHealth.total || 0);
+  const sourceScore = totalSources ? `${sourceHealth.ready || 0}/${totalSources}` : String(sourceHealth.ready ?? "—");
+  const dayPnl = capital.dayPnlDollars;
+  const positionQuantity = primaryPosition ? stockNumericValue(primaryPosition.quantity ?? primaryPosition.sharesAvailableForSells) : null;
   return `
     <div class="office-detail-panel stock-office-panel">
       <div class="office-detail-header">
         <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
         <div class="office-header-copy">
-          <h3>${escapeHtml(profile.title)}</h3>
-          <p>${escapeHtml(workspace.description)}</p>
+          <h3>Stock Office</h3>
+          <p>${escapeHtml(String(metrics.trackedRecords ?? 0))} stocks monitored · ${escapeHtml(pluralize(positions.length, "live position"))} · ${escapeHtml(control.authenticationVerified ? "Robinhood live" : "Robinhood needs refresh")}</p>
         </div>
         <div class="office-header-actions">
-          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>
+          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">Open Stock Office</a>
           <button class="module-info-close" type="button" aria-label="Close office">×</button>
         </div>
       </div>
-      <div class="stock-office-status-row">
-        ${metricCards.map(([label, value, hint]) => stockMetricMarkup(label, value, hint)).join("")}
+      <section class="stock-office-account-summary">
+        <div class="stock-office-balance">
+          <span>Live portfolio</span>
+          <strong>${escapeHtml(stockCurrency(accountValue))}</strong>
+          <small>${escapeHtml(control.snapshotUpdatedAt ? `Updated ${clippingOfficeRelativeTime(control.snapshotUpdatedAt)}` : "Waiting for live account")}</small>
+        </div>
+        <div class="stock-office-account-tape">
+          <div><span>Buying power</span><strong>${escapeHtml(stockCurrency(buyingPower))}</strong></div>
+          <div><span>Invested</span><strong>${escapeHtml(stockCurrency(capital.deployedDollars ?? positionValue))}</strong></div>
+          <div><span>Day P&amp;L</span><strong class="${Number(dayPnl || 0) < 0 ? "bad" : Number(dayPnl || 0) > 0 ? "good" : ""}">${escapeHtml(dayPnl === null || dayPnl === undefined ? "—" : stockCurrency(dayPnl))}</strong></div>
+          <div><span>Open orders</span><strong>${escapeHtml(String(control.openOrderCount || 0))}</strong></div>
+        </div>
+        <div class="stock-office-live-holding">
+          <span>${primaryPosition ? "Largest position" : "Positions"}</span>
+          <strong>${escapeHtml(primaryPosition?.symbol || "None")}</strong>
+          <small>${primaryPosition ? `${positionQuantity === null ? "—" : positionQuantity.toFixed(4)} shares · ${stockCurrency(primaryPositionValue)}` : "No live holding"}</small>
+        </div>
+      </section>
+      <div class="stock-office-signal-strip">
+        <div><span>Setups</span><strong>${escapeHtml(String(metrics.validSetups ?? 0))}</strong></div>
+        <div><span>Watchlist</span><strong>${escapeHtml(String(metrics.watchlistCount ?? 0))}</strong></div>
+        <div><span>Rejected</span><strong>${escapeHtml(String(metrics.rejectedRecords ?? 0))}</strong></div>
+        <div><span>Sources</span><strong>${escapeHtml(sourceScore)}</strong></div>
+        <div><span>Stale</span><strong>${escapeHtml(String(sourceHealth.stale ?? 0))}</strong></div>
+        <div><span>Mirror</span><strong>${escapeHtml(String(metrics.mirrorSignals ?? 0))}</strong></div>
       </div>
       <div class="stock-office-alerts">${stockOfficeAlertMarkup()}</div>
       <div class="stock-office-toolbar">
@@ -5028,20 +5077,12 @@ function stockOfficeMarkup(card) {
               <span>Evaluator records</span>
               <h4>${escapeHtml(pluralize(stockOfficeRecords.total || stockOfficeRecords.records?.length || 0, "record"))}</h4>
             </div>
-            <em>${escapeHtml(workspace.mode || "read_only_guarded")}</em>
+            <em>${escapeHtml(`${metrics.validSetups || 0} setups`)}</em>
           </div>
           ${stockRecordsMarkup()}
         </section>
         ${stockRecordDetailMarkup()}
-        ${stockReadinessMarkup()}
-        ${stockSourcesMarkup()}
-        ${stockChatMarkup()}
-        ${stockActivityMarkup()}
       </div>
-      <section class="stock-threat-card">
-        <h4>Security boundary</h4>
-        <ul>${safeList(stockOfficeOverview?.threatModel || [workspace.safetyRule], [], 5).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-      </section>
     </div>
   `;
 }

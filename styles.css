@@ -11241,3 +11241,183 @@ label {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Stock Office command card: live numbers first, diagnostics elsewhere. */
+.stock-office-panel {
+  background:
+    radial-gradient(circle at 6% 0%, rgba(34, 211, 238, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(7, 15, 29, 0.98), rgba(3, 8, 20, 0.98));
+}
+
+.stock-office-panel .office-detail-header {
+  min-height: 76px;
+  padding: 12px 16px;
+  background: rgba(5, 12, 26, 0.72);
+}
+
+.stock-office-panel .office-detail-header p {
+  margin-top: 3px;
+  color: #7f8da3;
+  font-size: 0.68rem;
+}
+
+.stock-office-panel .office-header-app-link {
+  min-width: 126px;
+}
+
+.stock-office-account-summary {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(420px, 2fr) minmax(180px, 0.8fr);
+  align-items: center;
+  gap: 18px;
+  margin: 14px 16px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 15px;
+  background: linear-gradient(110deg, rgba(8, 47, 73, 0.32), rgba(9, 15, 33, 0.5));
+}
+
+.stock-office-balance > span,
+.stock-office-account-tape span,
+.stock-office-live-holding > span,
+.stock-office-signal-strip span {
+  display: block;
+  color: #74839a;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.stock-office-balance > strong {
+  display: block;
+  margin-top: 3px;
+  color: #f8fafc;
+  font-size: 1.82rem;
+  font-weight: 950;
+  letter-spacing: -0.04em;
+}
+
+.stock-office-balance > small,
+.stock-office-live-holding > small {
+  display: block;
+  margin-top: 2px;
+  color: #7f8da3;
+  font-size: 0.62rem;
+}
+
+.stock-office-account-tape {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stock-office-account-tape > div {
+  min-width: 0;
+  padding: 5px 14px;
+  border-left: 1px solid rgba(148, 163, 184, 0.13);
+}
+
+.stock-office-account-tape strong,
+.stock-office-live-holding > strong,
+.stock-office-signal-strip strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 930;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-office-account-tape strong.good { color: #34d399; }
+.stock-office-account-tape strong.bad { color: #fb7185; }
+
+.stock-office-live-holding {
+  min-width: 0;
+  padding-left: 16px;
+  border-left: 1px solid rgba(148, 163, 184, 0.13);
+}
+
+.stock-office-live-holding > strong {
+  color: #67e8f9;
+  font-size: 1.05rem;
+}
+
+.stock-office-signal-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 0 24px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.stock-office-signal-strip > div {
+  padding: 10px 14px;
+  border-right: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.stock-office-signal-strip > div:last-child { border-right: 0; }
+.stock-office-signal-strip strong { font-size: 0.82rem; }
+
+.stock-office-panel .stock-office-alerts {
+  padding: 8px 16px;
+}
+
+.stock-office-panel .stock-office-alert {
+  grid-template-columns: auto auto minmax(0, 1fr);
+  justify-content: start;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.stock-office-panel .stock-office-alert strong {
+  font-size: 0.69rem;
+}
+
+.stock-office-panel .stock-office-alert span {
+  color: #cbd5e1;
+  font-size: 0.66rem;
+}
+
+.stock-office-panel .stock-office-alert em {
+  color: #fbbf24;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.stock-office-panel .stock-office-alert.good em { color: #34d399; }
+
+.stock-office-panel .stock-office-toolbar {
+  margin-bottom: 10px;
+  padding: 7px;
+  border-radius: 10px;
+  background: rgba(5, 12, 26, 0.48);
+}
+
+.stock-office-panel .stock-office-grid {
+  grid-template-columns: minmax(620px, 1.45fr) minmax(300px, 0.65fr);
+  align-items: start;
+}
+
+.stock-office-panel .stock-records-card {
+  grid-row: auto;
+}
+
+@media (max-width: 900px) {
+  .stock-office-account-summary {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .stock-office-live-holding {
+    padding: 10px 0 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.13);
+    border-left: 0;
+  }
+
+  .stock-office-panel .stock-office-grid { grid-template-columns: 1fr; }
+  .stock-office-signal-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

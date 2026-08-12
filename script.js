@@ -8188,6 +8188,11 @@ function activateView(viewName) {
   }
 }
 
+window.openArgentumHumanGate = () => activateView("approval");
+window.addEventListener("argentum:approval-changed", () => {
+  loadState().catch((error) => addLocalAudit("Human Gate refresh unavailable", error.message));
+});
+
 async function createClipsBriefFromAgent() {
   const payload = {
     title: "Three short clips from raw footage",
@@ -9357,7 +9362,8 @@ functionList.addEventListener("click", (event) => {
 });
 
 loadState().then(() => {
-  activateView("floor");
+  const requestedView = new URLSearchParams(window.location.search).get("view");
+  activateView(document.querySelector(`#view-${CSS.escape(requestedView || "")}`) ? requestedView : "floor");
   loadProfileIdentity();
 });
 startCycle();

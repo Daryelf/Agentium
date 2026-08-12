@@ -6442,6 +6442,27 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/human-gate/pending") {
+    const state = readState();
+    const approvals = (state.approvals || [])
+      .filter((approval) => approval?.status === "pending")
+      .map((approval) => ({
+        id: String(approval.id || ""),
+        title: redactSensitiveText(approval.title || "Approval required"),
+        action: redactSensitiveText(approval.action || "Operator review required."),
+        exactScope: redactSensitiveText(approval.exactScope || "Only this recorded action is included."),
+        evidence: redactSensitiveText(approval.evidence || "No additional evidence was attached."),
+        risk: String(approval.risk || approval.riskLevel || "medium"),
+        riskLevel: String(approval.riskLevel || approval.risk || "medium"),
+        officeId: String(approval.officeId || ""),
+        workflowId: String(approval.workflowId || ""),
+        createdAt: approval.createdAt || null,
+      }))
+      .slice(0, 50);
+    sendJson(res, 200, { approvals, pending: approvals.length, generatedAt: now() });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/access") {
     const access = currentAccessUser(req);
     if (!access?.user) {

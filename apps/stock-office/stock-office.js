@@ -23,6 +23,7 @@ const state = {
   guardrailsSource: null,
   tradeDrafts: [],
   proposalDecisions: [],
+  expandedProposalResearch: new Set(),
   dispatchHandoff: null,
   brokerPolling: false,
   livePortfolioPolling: false,
@@ -311,6 +312,10 @@ function renderOverviewDashboard() {
 }
 
 function renderTradeProposals() {
+  document.querySelectorAll(".overview-proposal-evidence[data-proposal-research]").forEach((details) => {
+    if (details.open) state.expandedProposalResearch.add(details.dataset.proposalResearch);
+    else state.expandedProposalResearch.delete(details.dataset.proposalResearch);
+  });
   const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
   const decisions = new Set((state.proposalDecisions || state.portfolioPlan?.decisions || []).filter((item) => item.decision === "declined").map((item) => item.proposalId));
   const visible = proposals.filter((proposal) => !decisions.has(proposal.id)).slice(0, 4);
@@ -340,7 +345,7 @@ function renderTradeProposals() {
             <span><small>Target scenario</small><strong>${escapeHtml(targetText)}</strong></span>
             <span><small>Review horizon</small><strong>${escapeHtml(outlook.horizonLabel || "Re-evaluate each market cycle")}</strong></span>
           </div>
-          <details class="overview-proposal-evidence">
+          <details class="overview-proposal-evidence" data-proposal-research="${escapeHtml(proposal.id)}" ${state.expandedProposalResearch.has(proposal.id) ? "open" : ""}>
             <summary>Research &amp; risk</summary>
             <p><strong>Setup</strong>${escapeHtml(research.setupType || "Evaluator review")} · score ${escapeHtml(research.score ?? "—")} · ${escapeHtml(research.marketCondition || "market condition unavailable")}</p>
             <p><strong>Plan</strong>Entry ${escapeHtml(research.entryZone || "reprice before order")} · stop ${escapeHtml(outlookValue(outlook.stopPrice))}${Number.isFinite(Number(outlook.stopScenarioDollars)) ? ` · ${escapeHtml(formatMoney(outlook.stopScenarioDollars))} downside scenario` : ""} · ${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p>
@@ -1700,3 +1705,12 @@ function tickLivePortfolio() {
 window.setInterval(tickLivePortfolio, 1_000);
 window.setInterval(pollLivePortfolio, 1_000);
 window.setInterval(pollBrokerControl, 5_000);
+
+document.addEventListener("toggle", (event) => {
+  const details = event.target;
+  if (!details?.matches?.(".overview-proposal-evidence[data-proposal-research]")) return;
+  const proposalId = details.dataset.proposalResearch;
+  if (!proposalId) return;
+  if (details.open) state.expandedProposalResearch.add(proposalId);
+  else state.expandedProposalResearch.delete(proposalId);
+}, true);

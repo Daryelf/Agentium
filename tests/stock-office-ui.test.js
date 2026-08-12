@@ -117,6 +117,9 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
   assert.match(script, /data-proposal-decline/);
+  assert.match(script, /expandedProposalResearch: new Set\(\)/);
+  assert.match(script, /state\.expandedProposalResearch\.has\(proposal\.id\) \? "open" : ""/);
+  assert.match(script, /document\.addEventListener\("toggle"/);
   assert.match(script, /\/human-gate/);
   assert.match(script, /No broker review or order has occurred/);
   assert.match(script, /No profit date can be estimated reliably/);

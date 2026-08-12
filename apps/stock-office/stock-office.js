@@ -175,6 +175,13 @@ function relativeCycle(value) {
   return delta >= 0 ? `${hours}h` : `${hours}h ago`;
 }
 
+function formatCountdown(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(value / 60);
+  const remainder = value % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
 function renderMarketWorkers() {
   const operations = state.marketWorkers || {};
   const workers = Array.isArray(operations.workers) ? operations.workers : [];
@@ -215,10 +222,10 @@ function renderNotificationStatus() {
   panelPill.className = `status-pill ${status.enabled ? "ready" : status.configured ? "warning" : "muted"}`;
   $("#telegramDestination").textContent = status.destination || "Telegram not configured";
   $("#telegramSummary").textContent = status.enabled
-    ? "Broker-confirmed buys and sells will notify this destination."
+    ? "Qualified BUY/SELL reviews and broker-confirmed orders will notify this destination."
     : status.configured
       ? approval.status === "approved" ? "Human Gate approved this destination. Enable it once." : "Credentials are secure. Human Gate must approve automatic alerts."
-      : "Get a message only after Robinhood independently confirms an order.";
+      : "Get a message when a qualified proposal reaches Human Gate and after Robinhood confirms an order.";
   const recent = Array.isArray(status.recent) ? status.recent : [];
   $("#telegramRecent").innerHTML = recent.length
     ? recent.map((item) => `<span data-status="${escapeHtml(item.status)}"><i></i><strong>${escapeHtml(String(item.kind || "notification").replaceAll("_", " "))}</strong><small>${escapeHtml(item.sentAt ? formatTime(item.sentAt) : item.status)}</small></span>`).join("")
@@ -317,6 +324,27 @@ function renderTradeProposals() {
     else state.expandedProposalResearch.delete(details.dataset.proposalResearch);
   });
   const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
+  const cycle = state.portfolioPlan?.cycle || {};
+  const summary = state.portfolioPlan?.summary || {};
+  const nextAt = Date.parse(cycle.nextRunAt || "");
+  const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
+  const cycleStatus = cycle.running
+    ? "Research running now"
+    : cycle.session?.regular && remainingSeconds !== null
+      ? `Next full cycle ${formatCountdown(remainingSeconds)}`
+      : cycle.session?.label || "Market schedule unavailable";
+  const review = cycle.review || {};
+  $("#overviewCycleRail").innerHTML = `
+    <div class="overview-cycle-clock" data-status="${escapeHtml(cycle.running ? "working" : cycle.session?.regular ? "countdown" : "quiet")}">
+      <i aria-hidden="true"></i><span><small>15-minute loop</small><strong>${escapeHtml(cycleStatus)}</strong></span>
+    </div>
+    <div class="overview-cycle-decisions">
+      <span class="sell"><small>SELL</small><strong>${escapeHtml(summary.sells || 0)}</strong></span>
+      <span class="hold"><small>HOLD</small><strong>${escapeHtml(summary.holds || 0)}</strong></span>
+      <span class="buy"><small>BUY</small><strong>${escapeHtml(summary.buys || 0)}</strong></span>
+    </div>
+    <div class="overview-cycle-copy"><small>Copy watch</small><strong>${escapeHtml(summary.copyWatchers || 0)} people · ${escapeHtml(summary.copySignalsObserved || 0)} signals</strong></div>
+    <div class="overview-cycle-result"><small>Last cycle</small><strong>${escapeHtml(review.lastMessage || "Workers continue automatically while the market is open.")}</strong></div>`;
   const decisions = new Set((state.proposalDecisions || state.portfolioPlan?.decisions || []).filter((item) => item.decision === "declined").map((item) => item.proposalId));
   const visible = proposals.filter((proposal) => !decisions.has(proposal.id)).slice(0, 4);
   const ready = visible.filter((proposal) => proposal.draftEligible).length;
@@ -327,9 +355,13 @@ function renderTradeProposals() {
         const outlook = proposal.outlook || {};
         const targetText = proposal.side === "BUY" && outlook.targetPrice
           ? `${outlookValue(outlook.targetPrice)}${Number.isFinite(Number(outlook.targetReturnPct)) ? ` · ${(Number(outlook.targetReturnPct) * 100).toFixed(1)}% · ${formatMoney(outlook.targetScenarioDollars)} scenario` : ""}`
-          : proposal.side === "SELL" ? "Reduce verified holding" : "—";
+          : proposal.side === "SELL" ? "Reduce verified holding" : "Keep monitoring position";
         const blocker = proposal.blockers?.[0] || "";
-        return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
+        const isHold = proposal.side === "HOLD";
+        const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : isHold ? "monitoring" : "blocked");
+        const pendingGate = reviewState === "awaiting_human_gate";
+        const approved = reviewState === "approved";
+        return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : isHold ? "monitoring" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
@@ -353,9 +385,15 @@ function renderTradeProposals() {
             <p><strong>Source</strong>${escapeHtml(research.sourceLabel || "Stock Guru evaluator")}</p>
           </details>
           <div class="overview-proposal-actions">
-            <button type="button" data-proposal-approve="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>${proposal.draftEligible ? "Review & approve" : "Blocked"}</button>
-            <button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Decline</button>
-            ${blocker ? `<small>${escapeHtml(blocker)}</small>` : `<small>Approval creates a draft; a separate final confirmation is still required.</small>`}
+            ${isHold
+              ? `<button type="button" disabled>Monitoring</button><small>No order is needed. The next cycle checks exit conditions again.</small>`
+              : approved
+                ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review & execute once</button><small>Human Gate approved. Robinhood review and final confirmation still apply.</small>`
+                : pendingGate
+                  ? `<button type="button" disabled>Human Gate pending</button><small>Use the bubble at bottom left. No broker review or order has occurred.</small>`
+                  : `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>${proposal.draftEligible ? "Send to Human Gate" : "Blocked"}</button>
+                     <button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Decline</button>
+                     ${blocker ? `<small>${escapeHtml(blocker)}</small>` : `<small>One-use approval only; no automatic order.</small>`}`}
           </div>
         </article>`;
       }).join("")
@@ -384,6 +422,7 @@ function portfolioKindLabel(value) {
     risk_exit: "Stop exit",
     profit_exit: "Profit-lock exit",
     strategy_exit_review: "Strategy exit",
+    position_hold: "Position review",
     native_entry: "Evaluator entry",
   };
   return labels[value] || String(value || "review").replaceAll("_", " ");
@@ -1430,6 +1469,7 @@ async function pollLivePortfolio() {
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
+    state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.tradeDrafts = payload.tradeDrafts || state.tradeDrafts;
     if (state.activeView === "overview") renderOverviewDashboard();
@@ -1492,7 +1532,7 @@ async function enableTelegram() {
       body: JSON.stringify({ approvalId: state.notificationApproval?.id }),
     });
     state.notificationStatus = payload.notificationStatus;
-    feedback.textContent = "Verified Robinhood order alerts are now active.";
+    feedback.textContent = "Qualified proposal and verified Robinhood order alerts are now active.";
     renderNotificationStatus();
   } catch (error) {
     feedback.textContent = error.message;
@@ -1714,3 +1754,7 @@ document.addEventListener("toggle", (event) => {
   if (details.open) state.expandedProposalResearch.add(proposalId);
   else state.expandedProposalResearch.delete(proposalId);
 }, true);
+
+window.addEventListener("argentum:approval-changed", () => {
+  pollBrokerControl();
+});

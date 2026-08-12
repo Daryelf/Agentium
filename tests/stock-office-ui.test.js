@@ -113,6 +113,7 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(html, /id="tradeProposalsTitle">Trade proposals/);
   assert.match(html, /id="overviewProposalList"/);
   assert.match(html, /id="overviewLiveClock"/);
+  assert.match(html, /id="overviewCycleRail"/);
   assert.match(html, /Company logos provided by Parqet/);
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
@@ -123,6 +124,9 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /\/human-gate/);
   assert.match(script, /No broker review or order has occurred/);
   assert.match(script, /No profit date can be estimated reliably/);
+  assert.match(script, /Next full cycle/);
+  assert.match(script, /Copy watch/);
+  assert.match(script, /Human Gate pending/);
   assert.match(styles, /\.company-logo/);
   assert.match(styles, /\.overview-proposal-list/);
 });

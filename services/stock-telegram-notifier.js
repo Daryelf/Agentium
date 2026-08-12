@@ -4,7 +4,7 @@ const SETTINGS_KEY = "stock_telegram_notifications_v1";
 const TOKEN_PROVIDER = "stock_guru_telegram_bot_token";
 const CHAT_PROVIDER = "stock_guru_telegram_chat_id";
 const APPROVAL_ACTION = "enable_stock_trade_telegram_notifications";
-const ALLOWED_EVENT_TYPES = ["verified_broker_order", "operator_test"];
+const ALLOWED_EVENT_TYPES = ["qualified_trade_proposal", "verified_broker_order", "operator_test"];
 const MAX_RECENT = 12;
 
 function isoNow(nowFn) {
@@ -71,6 +71,20 @@ function formatVerifiedTradeMessage(draft = {}, at = new Date()) {
   ].join("\n");
 }
 
+function formatQualifiedProposalMessage(proposal = {}, draft = {}, approval = {}, at = new Date()) {
+  const side = String(proposal.side || draft.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY";
+  const dollars = Number(draft.cappedDollars || draft.requestedDollars || proposal.requestedDollars || 0);
+  const source = proposal.traderName || proposal.research?.sourceLabel || draft.sourceType || "Stock Guru research";
+  return [
+    `Argentum ${side} proposal ready`,
+    `${String(proposal.symbol || draft.symbol || "UNKNOWN").toUpperCase()} · up to $${dollars.toFixed(2)}`,
+    `Research: ${String(source).replaceAll("_", " ")}`,
+    "Human Gate is waiting. No broker review or order has occurred.",
+    `Request: ••••${String(approval.id || "").slice(-4)}`,
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(at),
+  ].join("\n");
+}
+
 function createStockTelegramNotifier(options = {}) {
   const environment = options.environment || process.env;
   const fetchImpl = options.fetchImpl || fetch;
@@ -112,7 +126,7 @@ function createStockTelegramNotifier(options = {}) {
       lastSentAt: settings.lastSentAt,
       lastError: settings.lastError,
       recent: settings.recent.slice(0, 6),
-      allowedEvents: ["Broker-confirmed buy or sell", "Operator-requested test"],
+      allowedEvents: ["Qualified BUY or SELL proposal", "Broker-confirmed buy or sell", "Operator-requested test"],
       security: "Credentials remain server-side in Mac Keychain or environment variables.",
     };
   }
@@ -222,12 +236,23 @@ function createStockTelegramNotifier(options = {}) {
     return deliver({ eventId, kind: "verified_broker_order", text: formatVerifiedTradeMessage(draft, nowFn()) }, approvals);
   }
 
+  async function notifyQualifiedProposal(proposal = {}, draft = {}, approval = {}, approvals = []) {
+    if (!proposal.draftEligible || !["BUY", "SELL"].includes(String(proposal.side || "").toUpperCase())) {
+      return { sent: false, state: "ineligible", reason: "Only a fully qualified BUY or SELL proposal can be notified." };
+    }
+    if (!draft.fingerprint || !["ready_for_broker_review", "awaiting_human_gate"].includes(draft.status) || !approval.id || approval.status !== "pending") {
+      return { sent: false, state: "ineligible", reason: "A fresh exact draft and pending Human Gate request are required before notification." };
+    }
+    const eventId = `qualified-proposal:${secretHash(`${proposal.fingerprint}:${approval.id}`).slice(0, 24)}`;
+    return deliver({ eventId, kind: "qualified_trade_proposal", text: formatQualifiedProposalMessage(proposal, draft, approval, nowFn()) }, approvals);
+  }
+
   async function sendTest(approvals = []) {
     const eventId = `operator-test:${nowFn().getTime()}`;
     return deliver({
       eventId,
       kind: "operator_test",
-      text: `Argentum Telegram check\nStock Office notifications are connected.\nOnly broker-confirmed orders can trigger automatic trade alerts.`,
+      text: `Argentum Telegram check\nStock Office notifications are connected.\nQualified proposals and broker-confirmed orders can trigger approved alerts.`,
     }, approvals);
   }
 
@@ -236,6 +261,7 @@ function createStockTelegramNotifier(options = {}) {
     configure,
     disable,
     enable,
+    notifyQualifiedProposal,
     notifyVerifiedTrade,
     publicStatus,
     removeConfiguration,
@@ -251,6 +277,7 @@ module.exports = {
   TOKEN_PROVIDER,
   approvalAuthorizes,
   createStockTelegramNotifier,
+  formatQualifiedProposalMessage,
   formatVerifiedTradeMessage,
   normalizeSettings,
   secretHash,

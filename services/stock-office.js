@@ -329,9 +329,30 @@ function normalizeStockOfficeState(input = {}) {
     assistantRuns: normalizeAssistantRuns(value.assistantRuns || []),
     tradeDrafts: normalizeTradeDrafts(value.tradeDrafts || []),
     proposalDecisions: normalizeProposalDecisions(value.proposalDecisions || []),
+    continuousReview: normalizeContinuousReview(value.continuousReview || {}),
     activeGuardrails,
     guardrailsAppliedAt: safeDate(value.guardrailsAppliedAt),
     guardrailsApprovalId: String(value.guardrailsApprovalId || "").slice(0, 120),
+  };
+}
+
+function normalizeContinuousReview(input = {}) {
+  const value = isPlainObject(input) ? input : {};
+  const outcomes = new Set(["idle", "market_closed", "research_running", "no_qualified_proposal", "waiting_for_human_gate", "proposal_staged", "notification_delivered", "notification_unavailable", "failed_safe"]);
+  return {
+    lastCycleCompletedAt: safeDate(value.lastCycleCompletedAt),
+    lastEvaluatedAt: safeDate(value.lastEvaluatedAt),
+    lastOutcome: outcomes.has(value.lastOutcome) ? value.lastOutcome : "idle",
+    lastMessage: String(value.lastMessage || "").slice(0, 500),
+    activeProposalFingerprint: String(value.activeProposalFingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+    activeDraftId: String(value.activeDraftId || "").slice(0, 100),
+    activeApprovalId: String(value.activeApprovalId || "").slice(0, 120),
+    notificationState: String(value.notificationState || "").replace(/[^a-z0-9_-]/gi, "").slice(0, 80),
+    notificationSentAt: safeDate(value.notificationSentAt),
+    stagedProposalFingerprints: (Array.isArray(value.stagedProposalFingerprints) ? value.stagedProposalFingerprints : [])
+      .map((item) => String(item || "").replace(/[^a-f0-9]/gi, "").slice(0, 64))
+      .filter((item) => item.length === 64)
+      .slice(-40),
   };
 }
 

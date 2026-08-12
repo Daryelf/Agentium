@@ -319,6 +319,24 @@ test("portfolio proposals expose research, target scenarios, and an explicitly u
   assert.match(proposal.outlook.horizonLabel, /15-minute market cycle/i);
 });
 
+test("owned positions without an exit trigger appear as HOLD while SELL remains prioritized", () => {
+  const position = { symbol: "MSFT", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
+  const current = snapshot({
+    broker: { ...snapshot().broker, positions: [position] },
+    positions: [position],
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const hold = plan.proposals.find((item) => item.symbol === "MSFT" && item.side === "HOLD");
+
+  assert.ok(hold);
+  assert.equal(hold.kind, "position_hold");
+  assert.equal(hold.monitoring, true);
+  assert.equal(hold.draftEligible, false);
+  assert.equal(hold.blockers.length, 0);
+  assert.equal(plan.summary.holds, 1);
+  assert.ok(plan.proposals.findIndex((item) => item.side === "HOLD") < plan.proposals.findIndex((item) => item.side === "BUY"));
+});
+
 test("risk-reducing SELL can be drafted with the entry kill switch on and no buying power", () => {
   const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
   const current = snapshot({

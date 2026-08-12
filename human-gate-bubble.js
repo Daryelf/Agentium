@@ -174,7 +174,10 @@
     const card = button.closest(".argentum-gate-request");
     const buttons = [...card.querySelectorAll("button")];
     buttons.forEach((item) => { item.disabled = true; });
-    feedback.textContent = action === "approve" ? "Recording approval…" : action === "revise" ? "Sending back…" : "Blocking request…";
+    const isStockOrder = /Approve exact Robinhood order:/i.test(card.querySelector("h3")?.textContent || "");
+    feedback.textContent = action === "approve" && isStockOrder
+      ? "Approved. Robinhood is rechecking and executing this one exact order…"
+      : action === "approve" ? "Recording approval…" : action === "revise" ? "Sending back…" : "Blocking request…";
     try {
       const response = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}/${action}`, {
         method: "POST",
@@ -185,7 +188,12 @@
       if (!response.ok) throw new Error(payload.error || "The decision could not be recorded.");
       requests = requests.filter((approval) => String(approval.id) !== String(approvalId));
       render();
-      feedback.textContent = action === "approve" ? "Approved and recorded." : action === "revise" ? "Returned for revision." : "Blocked and recorded.";
+      const changedApproval = Array.isArray(payload.approvals) ? payload.approvals.find((item) => String(item.id) === String(approvalId)) : null;
+      feedback.textContent = action === "approve" && isStockOrder
+        ? changedApproval?.executionOutcome === "broker_order_reconciled"
+          ? "Robinhood independently confirmed the one exact order."
+          : changedApproval?.executionError || "Approved, but the order stopped safely during final Robinhood checks."
+        : action === "approve" ? "Approved and recorded." : action === "revise" ? "Returned for revision." : "Blocked and recorded.";
       window.dispatchEvent(new CustomEvent("argentum:approval-changed", { detail: { approvalId, action } }));
       window.setTimeout(() => refresh({ revealNew: false }), 500);
     } catch (error) {

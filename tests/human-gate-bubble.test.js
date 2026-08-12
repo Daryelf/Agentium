@@ -56,3 +56,10 @@ test("new requests are visible without weakening Human Gate semantics", () => {
   assert.match(server, /exactScope: redactSensitiveText/);
   assert.doesNotMatch(bubbleScript, /approve_limited|dispatch\/execute|robinhood\/orders/);
 });
+
+test("stock-order approval reports the exact Robinhood execution outcome", () => {
+  assert.match(bubbleScript, /Approved\. Robinhood is rechecking and executing this one exact order/);
+  assert.match(bubbleScript, /executionOutcome === "broker_order_reconciled"/);
+  assert.match(server, /action === "approve" && approval\.actionType === "place_robinhood_equity_order"/);
+  assert.match(server, /executeApprovedStockDraft/);
+});

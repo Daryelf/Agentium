@@ -534,6 +534,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     proposals.push({
       id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
       fingerprint: stableFingerprint(proposalCore),
+      draftFingerprint: draft.fingerprint,
       kind,
       symbol,
       side,
@@ -573,6 +574,68 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       referencePrice: draft.referencePrice,
       riskSizedMaxDollars: draft.riskSizedMaxDollars,
       capitalAfterDollars: draft.capitalAfterDollars,
+    });
+  };
+  const pushHoldReview = ({ symbol, position, record = null }) => {
+    const key = `HOLD:${symbol}`;
+    const currentPrice = finiteNumber(position?.currentPrice, 0);
+    const quantity = finiteNumber(position?.sharesAvailableForSells ?? position?.quantity, 0);
+    if (!symbol || currentPrice <= 0 || quantity <= 0 || seen.has(key) || proposals.length >= 12) return;
+    seen.add(key);
+    const positionValue = roundedMoney(currentPrice * quantity);
+    const targetPrice = finiteNumber(position?.target1 ?? record?.target1, null);
+    const stopPrice = finiteNumber(position?.stopLoss ?? record?.stopLoss, null);
+    const proposalCore = {
+      accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
+      kind: "position_hold",
+      symbol,
+      side: "HOLD",
+      positionValue,
+    };
+    proposals.push({
+      id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
+      fingerprint: stableFingerprint(proposalCore),
+      kind: "position_hold",
+      symbol,
+      side: "HOLD",
+      requestedDollars: positionValue,
+      candidateId: "",
+      traderName: "",
+      rankingScore: finiteNumber(record?.score, 0) / 100,
+      draftEligible: false,
+      actionable: false,
+      monitoring: true,
+      blockers: [],
+      reasons: ["No current stop, target, copy-sale, or evaluator exit condition is triggered."],
+      research: {
+        setupType: String(record?.setupType || "Live position review").slice(0, 100),
+        score: finiteNumber(record?.score, null),
+        confidence: String(record?.confidence || "live position").slice(0, 60),
+        mainReason: "Hold and keep monitoring; no verified exit condition is active in this cycle.",
+        mainRisk: String(record?.mainRisk || "Price can cross a risk or exit threshold before the next cycle.").slice(0, 260),
+        marketCondition: String(record?.marketCondition || "").slice(0, 120),
+        entryZone: String(record?.entryZone || "").slice(0, 80),
+        invalidationRule: String(record?.invalidationRule || "Change to SELL review when a verified stop, target, copy-sale, or evaluator exit signal triggers.").slice(0, 260),
+        sourceLabel: String(record?.source || "Live Robinhood position + Stock Guru evaluator").slice(0, 140),
+        sourceUrl: "",
+        dataFresh: currentPrice > 0,
+        checksPassed: 4,
+        checksTotal: 4,
+      },
+      outlook: {
+        horizonLabel: "Re-evaluate on each 15-minute market cycle",
+        targetPrice,
+        targetReturnPct: null,
+        stopPrice,
+        downsidePct: null,
+        targetScenarioDollars: null,
+        stopScenarioDollars: null,
+        profitTimingKnown: false,
+        timingNote: "No profit date is claimed; the next cycle checks live price, exits, and new public signals again.",
+      },
+      referencePrice: currentPrice,
+      riskSizedMaxDollars: 0,
+      capitalAfterDollars: control.capital.committedDollars,
     });
   };
 
@@ -633,6 +696,12 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     pushProposal({ kind, symbol, side: "SELL", requestedDollars: Math.min(holdingValue, guardrails.maxOrderDollars), reasons });
   }
 
+  for (const position of control.positions || []) {
+    const symbol = normalizeSymbol(position.symbol);
+    if (!symbol || seen.has(`SELL:${symbol}`)) continue;
+    pushHoldReview({ symbol, position, record: recordBySymbol[symbol] || null });
+  }
+
   for (const record of snapshot.records || []) {
     if (proposals.length >= 12) break;
     if (record.status !== "valid_setup" || !record.dataFresh || seen.has(`BUY:${record.ticker}`)) continue;
@@ -654,7 +723,15 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     });
   }
 
-  const ready = proposals.filter((proposal) => proposal.draftEligible).length;
+  proposals.sort((a, b) => {
+    const priority = { SELL: 0, HOLD: 1, BUY: 2 };
+    return (priority[a.side] ?? 3) - (priority[b.side] ?? 3) || finiteNumber(b.rankingScore, 0) - finiteNumber(a.rankingScore, 0);
+  });
+  const actionable = proposals.filter((proposal) => proposal.side !== "HOLD");
+  const ready = actionable.filter((proposal) => proposal.draftEligible).length;
+  const mirrorSummary = snapshot.mirror?.summary || {};
+  const mirrorImporter = snapshot.mirror?.importer || {};
+  const mirrorImporter13f = snapshot.mirror?.importer13f || {};
   return {
     version: 1,
     generatedAt: at.toISOString(),
@@ -664,10 +741,15 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     summary: {
       proposals: proposals.length,
       readyForExactDraft: ready,
-      blocked: proposals.length - ready,
+      blocked: actionable.length - ready,
+      buys: proposals.filter((item) => item.side === "BUY").length,
+      holds: proposals.filter((item) => item.side === "HOLD").length,
+      sells: proposals.filter((item) => item.side === "SELL").length,
       copyEntries: proposals.filter((item) => item.kind === "copy_entry").length,
       copyExits: proposals.filter((item) => item.kind === "copy_exit").length,
       riskExits: proposals.filter((item) => ["risk_exit", "profit_exit", "strategy_exit_review"].includes(item.kind)).length,
+      copySignalsObserved: finiteNumber(mirrorSummary.signalsReceived, 0),
+      copyWatchers: finiteNumber(mirrorImporter.enabledEntries, 0) + finiteNumber(mirrorImporter13f.enabledEntries, 0),
     },
     proposals,
     warnings: [

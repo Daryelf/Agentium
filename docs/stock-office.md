@@ -97,6 +97,10 @@ Paper results are not live results and do not guarantee future performance. Rese
 
 SEC jobs remain blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real app or organization name plus monitored contact email. The scheduler never invents that identity. It runs the existing bounded evaluator/mirror refresh manager, records status and history, and then asks the separate paper-shadow engine to consume any refreshed local evidence. It has no Robinhood import, broker tool, order draft, approval, or money-movement authority.
 
+After a successful regular-market cycle, a separate supervised review coordinator may stage at most one fully checked BUY or SELL draft, create its exact one-use Human Gate request, and send an approved Telegram proposal alert. The intelligence scheduler itself still has no broker authority. The coordinator prioritizes verified risk-reducing SELL reviews, records HOLD reviews for positions without an active exit condition, and then considers BUY entries. Research continues on the next 15-minute cycle while one request is waiting.
+
+Approving an exact stock-order request from the Human Gate bubble runs Robinhood review, stops on warnings or changed evidence, places at most once, and independently reconciles the broker order. It is never recurring authority.
+
 Optional cadence environment variables are `STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES`, `STOCK_GURU_AUTO_REFRESH_QUIET_MINUTES`, `STOCK_GURU_AUTO_FORM4_MINUTES`, `STOCK_GURU_AUTO_13F_MINUTES`, and `STOCK_GURU_AUTO_REFRESH_STARTUP_DELAY_MS`. Set `STOCK_GURU_AUTO_REFRESH_DISABLED=1` to keep only manual refreshes.
 
 ## Workspace

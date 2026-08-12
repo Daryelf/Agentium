@@ -6,6 +6,7 @@ const {
   APPROVAL_ACTION,
   createStockTelegramNotifier,
   formatVerifiedTradeMessage,
+  formatQualifiedProposalMessage,
   secretHash,
 } = require("../services/stock-telegram-notifier");
 
@@ -112,4 +113,21 @@ test("verified trade message contains trade facts but masks the broker order ID"
   assert.match(message, /Argentum verified SELL/);
   assert.match(message, /order ••••9876/);
   assert.doesNotMatch(message, /private-order-9876/);
+});
+
+test("qualified proposal alert requires a pending exact Human Gate request and is idempotent", async () => {
+  const { notifier, requests } = fixture();
+  notifier.configure({ botToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", chatId: "-1001234567890" });
+  const approval = approvalFor(notifier.approvalScope());
+  notifier.enable(approval, [approval]);
+  const proposal = { fingerprint: "a".repeat(64), symbol: "NET", side: "SELL", requestedDollars: 5, draftEligible: true, research: { sourceLabel: "Official filing" } };
+  const draft = { fingerprint: "b".repeat(64), symbol: "NET", side: "SELL", requestedDollars: 5, cappedDollars: 5, status: "awaiting_human_gate" };
+  const gate = { id: "approval-order-1234", status: "pending" };
+
+  assert.equal((await notifier.notifyQualifiedProposal({ ...proposal, draftEligible: false }, draft, gate, [approval])).state, "ineligible");
+  assert.equal((await notifier.notifyQualifiedProposal(proposal, draft, gate, [approval])).sent, true);
+  assert.equal((await notifier.notifyQualifiedProposal(proposal, draft, gate, [approval])).state, "duplicate");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].options.body, /Argentum SELL proposal ready/);
+  assert.match(formatQualifiedProposalMessage(proposal, draft, gate), /No broker review or order has occurred/);
 });

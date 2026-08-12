@@ -76,6 +76,8 @@ const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
 const STOCK_INTELLIGENCE_STATUS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-intelligence-scheduler.json");
 const STOCK_TELEGRAM_SETTINGS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-telegram-notifications.json");
+const STOCK_LOGO_CACHE_DIR = path.join(STOCK_GURU_USER_DATA_DIR, "company-logos");
+const STOCK_LOGO_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -978,6 +980,7 @@ function defaultState() {
       syncRuns: [],
       assistantRuns: [],
       tradeDrafts: [],
+      proposalDecisions: [],
     },
     toolConnections: {
       openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
@@ -4889,6 +4892,53 @@ function requireStockOfficeAccess(req, capability = "view") {
   return { user: access.user, permissions };
 }
 
+function stockLogoSymbol(pathname = "") {
+  const match = String(pathname).match(/^\/api\/stock-office\/logos\/([A-Za-z0-9.-]{1,12})$/);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function stockLogoPlaceholder(symbol) {
+  const label = String(symbol || "?").slice(0, 2);
+  const hue = [...symbol].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="hsl(${hue} 70% 48%)"/><stop offset="1" stop-color="hsl(${(hue + 46) % 360} 70% 26%)"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="39" fill="white" font-family="Arial,sans-serif" font-size="22" font-weight="700" text-anchor="middle">${label}</text></svg>`);
+}
+
+async function sendStockLogo(req, res, symbol) {
+  requireStockOfficeAccess(req, "view");
+  fs.mkdirSync(STOCK_LOGO_CACHE_DIR, { recursive: true });
+  const cachePath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.img`);
+  const metaPath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.json`);
+  try {
+    const cached = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    const stat = fs.statSync(cachePath);
+    if (stat.isFile() && Date.now() - stat.mtimeMs <= STOCK_LOGO_MAX_AGE_MS && ["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(cached.contentType)) {
+      res.writeHead(200, { ...securityHeaders(req), "content-type": cached.contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "cache" });
+      res.end(fs.readFileSync(cachePath));
+      return;
+    }
+  } catch {}
+  try {
+    const response = await fetch(`https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png&size=96`, {
+      headers: { accept: "image/png,image/webp,image/svg+xml", "user-agent": "Argentum-Stock-Office/1.0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+    const body = Buffer.from(await response.arrayBuffer());
+    if (!response.ok || !["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(contentType) || body.length < 64 || body.length > 1_000_000) {
+      throw new Error("logo unavailable");
+    }
+    const temporary = `${cachePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, body, { mode: 0o600 });
+    fs.renameSync(temporary, cachePath);
+    fs.writeFileSync(metaPath, `${JSON.stringify({ contentType, source: "parqet_symbol_logo", observedAt: now() })}\n`, { mode: 0o600 });
+    res.writeHead(200, { ...securityHeaders(req), "content-type": contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "parqet" });
+    res.end(body);
+  } catch {
+    res.writeHead(200, { ...securityHeaders(req), "content-type": "image/svg+xml", "cache-control": "private, max-age=300", "x-argentum-logo-source": "generated-fallback" });
+    res.end(stockLogoPlaceholder(symbol));
+  }
+}
+
 function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 60_000) {
   const key = `${clientKey(req)}:${action}`;
   const nowMs = Date.now();
@@ -5533,12 +5583,41 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/stock-office/live") {
+    try {
+      enforceStockOfficeRateLimit(req, "live-portfolio", 150, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        // The browser can request a fresh display every second while the
+        // connector's own cache keeps external Robinhood reads at >= 5s.
+        await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      sendJson(res, 200, {
+        brokerControl: brokerControlOverview(snapshot),
+        portfolioPlan,
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        tradeDrafts: snapshot.tradeDrafts
+          .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
+          .slice(0, 20),
+        serverTime: now(),
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/stock-office/broker-control") {
     try {
       enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
       const access = requireStockOfficeAccess(req, "broker_view");
       if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
-        await robinhoodMcpClient.refreshIfStale(60_000).catch(() => null);
+        await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
       }
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
@@ -5550,6 +5629,7 @@ async function handleApi(req, res, url) {
       const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
       const brokerControl = brokerControlOverview(snapshot);
       const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
       const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
       const notificationScope = stockTelegramNotifier.approvalScope();
       const notificationApproval = notificationScope.destinationHash
@@ -5586,6 +5666,40 @@ async function handleApi(req, res, url) {
         tradeDrafts,
         permissions: access.permissions,
       });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockProposalDecisionMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/decline$/);
+  if (req.method === "POST" && stockProposalDecisionMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-decline", 30, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      const proposalId = decodeURIComponent(stockProposalDecisionMatch[1]);
+      const proposal = portfolioPlan.proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const decision = {
+        proposalId: proposal.id,
+        fingerprint: proposal.fingerprint,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        decision: "declined",
+        decidedAt: now(),
+      };
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        proposalDecisions: [decision, ...current.proposalDecisions.filter((item) => item.proposalId !== proposal.id)],
+      });
+      audit(state, "Stock Office proposal declined", `${proposal.side} ${proposal.symbol} research proposal was dismissed locally; no Human Gate request, broker review, order, or money movement occurred.`);
+      writeState(state);
+      sendJson(res, 200, { decision, liveOrderPlaced: false, humanGateCreated: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -6852,6 +6966,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       redirect(res, "/login", req);
+      return;
+    }
+    const logoSymbol = stockLogoSymbol(url.pathname);
+    if (req.method === "GET" && logoSymbol) {
+      await sendStockLogo(req, res, logoSymbol);
       return;
     }
     if (url.pathname === "/app/") {

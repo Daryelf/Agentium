@@ -65,7 +65,9 @@ function snapshot(overrides = {}) {
       stopLoss: 95,
       dataFresh: true,
       lastUpdated: "2026-08-10T16:59:00.000Z",
+      mainReason: "Trend and risk structure aligned.",
       mainRisk: "Use a hard stop.",
+      target1: 110,
     }],
     positions: [],
     mirror: { stale: false, candidates: [] },
@@ -298,6 +300,23 @@ test("copy portfolio planner prioritizes owned-position exits and only marks ful
   assert.equal(plan.proposals[0].draftEligible, true);
   assert.equal(plan.summary.copyExits, 1);
   assert.equal(plan.warnings.some((item) => /Human Gate/.test(item)), true);
+});
+
+test("portfolio proposals expose research, target scenarios, and an explicitly unknown profit date", () => {
+  const plan = buildCopyPortfolioPlan(snapshot(), { now: "2026-08-10T17:00:00.000Z" });
+  const proposal = plan.proposals.find((item) => item.symbol === "NET" && item.side === "BUY");
+
+  assert.ok(proposal);
+  assert.equal(proposal.requestedDollars, 20);
+  assert.equal(proposal.research.score, 90);
+  assert.match(proposal.research.mainReason, /Trend and risk structure aligned/i);
+  assert.equal(proposal.outlook.targetPrice, 110);
+  assert.equal(proposal.outlook.targetReturnPct, 0.1);
+  assert.equal(proposal.outlook.targetScenarioDollars, 2);
+  assert.ok(proposal.research.checksPassed <= proposal.research.checksTotal);
+  assert.equal(proposal.outlook.profitTimingKnown, false);
+  assert.match(proposal.outlook.timingNote, /No profit date can be estimated reliably/i);
+  assert.match(proposal.outlook.horizonLabel, /15-minute market cycle/i);
 });
 
 test("risk-reducing SELL can be drafted with the entry kill switch on and no buying power", () => {

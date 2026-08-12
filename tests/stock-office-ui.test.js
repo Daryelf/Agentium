@@ -94,12 +94,34 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(script, /\/dispatch\/claim/);
   assert.match(script, /\/dispatch\/result/);
   assert.match(script, /navigator\.clipboard\.writeText/);
-  assert.match(script, /window\.setInterval\(pollBrokerControl, 3_000\)/);
+  assert.match(script, /window\.setInterval\(tickLivePortfolio, 1_000\)/);
+  assert.match(script, /api\("\/api\/stock-office\/live"\)/);
+  assert.match(script, /window\.setInterval\(pollLivePortfolio, 1_000\)/);
+  assert.match(script, /window\.setInterval\(pollBrokerControl, 5_000\)/);
   assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
   assert.match(script, /toolContract\.registered/);
   assert.match(script, /No settled buying power\. Add funds in Robinhood, then refresh\./);
   assert.match(script, /target\.hidden = true/);
   assert.doesNotMatch(`${html}\n${script}`, /Robinhood password|enter your Robinhood login/i);
+});
+
+test("Overview shows branded, evidence-backed trade proposals without promising profit timing", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+
+  assert.match(html, /id="tradeProposalsTitle">Trade proposals/);
+  assert.match(html, /id="overviewProposalList"/);
+  assert.match(html, /id="overviewLiveClock"/);
+  assert.match(html, /Company logos provided by Parqet/);
+  assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
+  assert.match(script, /data-proposal-approve/);
+  assert.match(script, /data-proposal-decline/);
+  assert.match(script, /\/human-gate/);
+  assert.match(script, /No broker review or order has occurred/);
+  assert.match(script, /No profit date can be estimated reliably/);
+  assert.match(styles, /\.company-logo/);
+  assert.match(styles, /\.overview-proposal-list/);
 });
 
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {

@@ -496,6 +496,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   const guardrails = control.guardrails;
   const proposals = [];
   const seen = new Set();
+  const recordBySymbol = Object.fromEntries((snapshot.records || []).map((record) => [normalizeSymbol(record.ticker), record]));
   const positionBySymbol = Object.fromEntries((control.positions || []).map((position) => [normalizeSymbol(position.symbol), position]));
   const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, reasons = [] }) => {
     const key = `${side}:${symbol}`;
@@ -507,6 +508,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       requestedDollars,
       candidateId: candidate?.id,
     }, snapshot, { now: at });
+    const record = recordBySymbol[symbol] || null;
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
       kind,
@@ -514,8 +516,21 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       side,
       requestedDollars: roundedMoney(requestedDollars),
       sourceId: candidate?.fingerprint || draft.sourceId,
-      generatedAt: snapshot.mirror?.generatedAt || snapshot.generatedAt || null,
+      draftFingerprint: draft.fingerprint,
     };
+    const targetPrice = finiteNumber(record?.target1, null);
+    const stopPrice = finiteNumber(record?.stopLoss, null);
+    const targetReturnPct = side === "BUY" && targetPrice !== null && draft.referencePrice > 0
+      ? (targetPrice - draft.referencePrice) / draft.referencePrice
+      : null;
+    const downsidePct = side === "BUY" && stopPrice !== null && draft.referencePrice > 0
+      ? (draft.referencePrice - stopPrice) / draft.referencePrice
+      : null;
+    const horizonLabel = kind === "copy_entry"
+      ? "Monitor over the source's measured post-disclosure windows"
+      : kind.endsWith("exit") || kind === "strategy_exit_review"
+        ? "Review now while the exit condition remains valid"
+        : "Re-evaluate on each 15-minute market cycle";
     proposals.push({
       id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
       fingerprint: stableFingerprint(proposalCore),
@@ -529,6 +544,32 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       draftEligible: draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
       blockers: draft.blockers,
       reasons: [...new Set(reasons)].slice(0, 6),
+      research: {
+        setupType: String(record?.setupType || (candidate ? "Attributable public signal" : "Evaluator review")).slice(0, 100),
+        score: finiteNumber(record?.score, null),
+        confidence: String(record?.confidence || (candidate?.rankingScore ? "evidence weighted" : "unknown")).slice(0, 60),
+        mainReason: String(record?.mainReason || reasons[0] || "Proposal passed the currently available evidence checks.").slice(0, 260),
+        mainRisk: String(record?.mainRisk || candidate?.delayReason || "Market price and thesis can change before execution.").slice(0, 260),
+        marketCondition: String(record?.marketCondition || "").slice(0, 120),
+        entryZone: String(record?.entryZone || "").slice(0, 80),
+        invalidationRule: String(record?.invalidationRule || "Rebuild the proposal if price, source, account, or risk evidence changes.").slice(0, 260),
+        sourceLabel: String(candidate?.sourceName || record?.source || "Stock Guru evaluator").slice(0, 140),
+        sourceUrl: String(candidate?.sourceUrl || "").slice(0, 500),
+        dataFresh: record ? record.dataFresh === true : snapshot.mirror?.stale === false,
+        checksPassed: draft.checks.filter((check) => check.passed).length,
+        checksTotal: draft.checks.length,
+      },
+      outlook: {
+        horizonLabel,
+        targetPrice,
+        targetReturnPct: targetReturnPct === null ? null : Math.round(targetReturnPct * 10_000) / 10_000,
+        stopPrice,
+        downsidePct: downsidePct === null ? null : Math.round(downsidePct * 10_000) / 10_000,
+        targetScenarioDollars: targetReturnPct === null ? null : roundedMoney(requestedDollars * targetReturnPct),
+        stopScenarioDollars: downsidePct === null ? null : roundedMoney(requestedDollars * downsidePct),
+        profitTimingKnown: false,
+        timingNote: "No profit date can be estimated reliably; monitor the target, stop, and invalidation evidence instead.",
+      },
       referencePrice: draft.referencePrice,
       riskSizedMaxDollars: draft.riskSizedMaxDollars,
       capitalAfterDollars: draft.capitalAfterDollars,
@@ -595,7 +636,15 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   for (const record of snapshot.records || []) {
     if (proposals.length >= 12) break;
     if (record.status !== "valid_setup" || !record.dataFresh || seen.has(`BUY:${record.ticker}`)) continue;
-    const requested = Math.min(guardrails.maxOrderDollars, control.capital.availableForNewBuys);
+    // Keep a risk-sized research proposal visible even when the account has no
+    // deployable cash. buildTradeDraft() will then surface the buying-power
+    // blocker instead of making the idea disappear from Overview.
+    const requested = Math.min(
+      guardrails.maxOrderDollars,
+      finiteNumber(control.capital.maxPositionDollars, 0) > 0
+        ? finiteNumber(control.capital.maxPositionDollars, guardrails.maxOrderDollars)
+        : guardrails.maxOrderDollars,
+    );
     pushProposal({
       kind: "native_entry",
       symbol: record.ticker,

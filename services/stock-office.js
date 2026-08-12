@@ -328,10 +328,31 @@ function normalizeStockOfficeState(input = {}) {
     syncRuns: normalizeSyncRuns(value.syncRuns || []),
     assistantRuns: normalizeAssistantRuns(value.assistantRuns || []),
     tradeDrafts: normalizeTradeDrafts(value.tradeDrafts || []),
+    proposalDecisions: normalizeProposalDecisions(value.proposalDecisions || []),
     activeGuardrails,
     guardrailsAppliedAt: safeDate(value.guardrailsAppliedAt),
     guardrailsApprovalId: String(value.guardrailsApprovalId || "").slice(0, 120),
   };
+}
+
+function normalizeProposalDecisions(decisions = []) {
+  return (Array.isArray(decisions) ? decisions : [])
+    .map((decision) => {
+      const proposalId = String(decision?.proposalId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 100);
+      const symbol = String(decision?.symbol || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+      if (!proposalId || !symbol) return null;
+      return {
+        proposalId,
+        fingerprint: String(decision?.fingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+        symbol,
+        side: String(decision?.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY",
+        decision: decision?.decision === "declined" ? "declined" : "reviewed",
+        decidedAt: safeDate(decision?.decidedAt) || nowIso(),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.decidedAt).getTime() - new Date(a.decidedAt).getTime())
+    .slice(0, 200);
 }
 
 function normalizeStockChatMessages(messages = []) {
@@ -421,7 +442,9 @@ function normalizeEvaluationRecord(record, source) {
     target1: Number.isFinite(Number(record.target_1)) ? Number(record.target_1) : null,
     target2: Number.isFinite(Number(record.target_2)) ? Number(record.target_2) : null,
     riskReward: String(record.risk_reward || "").slice(0, 60),
+    mainReason: String(record.main_reason_valid || "").slice(0, 260),
     mainRisk: String(record.main_risk || record.rejection_reason || "No risk note recorded.").slice(0, 260),
+    invalidationRule: String(record.invalidation_rule || "").slice(0, 260),
     rejectionReason: String(record.rejection_reason || "").slice(0, 180),
     liquidityPassed: Boolean(record.liquidity_passed),
     spreadPassed: Boolean(record.spread_passed),

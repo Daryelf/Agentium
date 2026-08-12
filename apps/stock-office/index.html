@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260812-7" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260812-8" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-1" />
-    <script src="./stock-office.js?v=20260812-7" defer></script>
+    <script src="./stock-office.js?v=20260812-8" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -47,6 +47,7 @@
               <span><i aria-hidden="true"></i> Live portfolio</span>
               <strong id="overviewEquity">—</strong>
               <small id="overviewAccountMeta">Loading Robinhood account</small>
+              <small class="overview-live-clock"><i aria-hidden="true"></i><span id="overviewLiveClock">Updating every second</span></small>
             </div>
             <div id="overviewAccountTape" class="overview-account-tape"></div>
             <button class="quiet-button" type="button" data-open-stock-view="trade">Trade desk</button>
@@ -61,6 +62,14 @@
             </div>
             <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
             <div id="marketWorkers" class="overview-worker-list"></div>
+          </section>
+          <section class="overview-proposals-board" aria-labelledby="tradeProposalsTitle">
+            <div class="overview-board-head overview-proposals-head">
+              <div><span>Evidence-backed review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
+              <div><strong id="overviewProposalCount">0 ready</strong><small>Approval builds an exact guarded order—never an automatic trade.</small></div>
+            </div>
+            <div id="overviewProposalList" class="overview-proposal-list" aria-live="polite"></div>
+            <p id="overviewProposalFeedback" class="overview-proposal-feedback" aria-live="polite"></p>
           </section>
           <div class="overview-data-grid">
             <section class="overview-position-board">
@@ -82,6 +91,7 @@
             <div id="overviewAction" class="overview-action" aria-live="polite"></div>
             <span id="safetyCopy" hidden></span>
           </section>
+          <a class="overview-logo-credit" href="https://parqet.com/api" target="_blank" rel="noopener noreferrer">Company logos provided by Parqet</a>
         </section>
 
         <section class="stock-view" data-stock-view="portfolio" hidden>

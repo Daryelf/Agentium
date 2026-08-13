@@ -5867,6 +5867,7 @@ async function handleApi(req, res, url) {
       portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
       sendJson(res, 200, {
         brokerControl: brokerControlOverview(snapshot),
+        mirror: snapshot.mirror,
         portfolioPlan,
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
         tradeDrafts,
@@ -5916,6 +5917,7 @@ async function handleApi(req, res, url) {
         : null;
       sendJson(res, 200, {
         brokerControl,
+        mirror: snapshot.mirror,
         portfolioPlan,
         shadowPortfolio: refreshStockShadowPortfolio({ state }),
         intelligenceScheduler,

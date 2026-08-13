@@ -62,6 +62,7 @@ function makeWorkspace() {
   writeJson(path.join(stockRoot, "config/copy_trader_watchlist.json"), {
     version: 1,
     sec_form4: [{ cik: "0000000123", label: "Example insider", enabled: true }],
+    sec_13f: [{ cik: "0001067983", label: "Berkshire Hathaway / Warren Buffett", enabled: true, identity_url: "https://www.sec.gov/edgar/browse/?CIK=0001067983" }],
   });
   writeJson(path.join(stockRoot, "data/copy_import_status.json"), {
     version: 1,
@@ -262,6 +263,10 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.importer13f.enabledEntries, 4);
   assert.equal(snapshot.mirror.importer13f.signalsImported, 12);
   assert.equal(snapshot.mirror.importer13f.liveOrdersPlaced, 0);
+  assert.equal(snapshot.mirror.watchers.length, 2);
+  assert.deepEqual(snapshot.mirror.watchers.map((watcher) => watcher.filingType), ["Form 4", "13F"]);
+  assert.equal(snapshot.mirror.watchers[0].copyEligible, true);
+  assert.equal(snapshot.mirror.watchers[1].researchOnly, true);
   assert.equal(snapshot.mirror.knowledge.summary.measuredOutcomes, 3);
   assert.equal(snapshot.mirror.knowledge.methodology.lookAheadAllowed, false);
   assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");

@@ -35,7 +35,7 @@ const $ = (selector) => document.querySelector(selector);
 const STOCK_VIEWS = {
   overview: ["Stock workspace", "Overview"],
   portfolio: ["Paper engine", "Portfolio"],
-  mirror: ["Public signals", "Mirror Lab"],
+  mirror: ["Copy trading", "Mirror"],
   markets: ["Evaluator", "Markets"],
   trade: ["Supervised broker", "Trade desk"],
   sources: ["Market inputs", "Sources"],
@@ -748,94 +748,157 @@ function renderMirror() {
   const summary = mirror.summary || {};
   const candidates = mirror.candidates || [];
   const sources = mirror.sources || [];
+  const watchers = Array.isArray(mirror.watchers) ? mirror.watchers : [];
   const warnings = mirror.warnings || [];
   const importer = mirror.importer || {};
   const importer13f = mirror.importer13f || {};
   const knowledge = mirror.knowledge || {};
   const knowledgeSummary = knowledge.summary || {};
+  const plan = state.portfolioPlan || {};
+  const cycle = plan.cycle || {};
+  const planSummary = plan.summary || {};
+  const paper = state.shadowPortfolio || {};
+  const guardrails = state.brokerControl?.guardrails || {};
+  const scheduler = state.intelligenceScheduler || {};
+  const nextAt = Date.parse(cycle.nextRunAt || scheduler.nextRunAt || "");
+  const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
+  const marketOpen = cycle.session?.regular === true;
+  const cycleRunning = cycle.running === true || scheduler.running === true;
+  const activeWatchers = watchers.filter((watcher) => watcher.enabled);
+  const fastWatchers = activeWatchers.filter((watcher) => watcher.copyEligible);
+  const delayedWatchers = activeWatchers.filter((watcher) => watcher.researchOnly);
+  const proposalByCandidate = new Map((plan.proposals || []).filter((proposal) => proposal.candidateId).map((proposal) => [proposal.candidateId, proposal]));
+  const liveGateCount = (plan.proposals || []).filter((proposal) => ["awaiting_human_gate", "approved"].includes(proposal.reviewState)).length;
   const pill = $("#mirrorStatusPill");
-  pill.textContent = !mirror.available ? "Waiting for plan" : mirror.stale ? "Plan stale" : "Paper + Human Gate";
-  pill.className = `status-pill ${mirror.stale ? "warning" : "muted"}`;
+  pill.textContent = cycleRunning ? "Scanning now" : !mirror.available ? "Waiting for first scan" : mirror.stale ? "Signals stale" : "Engine active";
+  pill.className = `status-pill ${cycleRunning || (!mirror.stale && mirror.available) ? "ready" : mirror.stale ? "warning" : "muted"}`;
+
+  const cycleLabel = cycleRunning
+    ? String(scheduler.currentMessage || "Refreshing copy signals and market evidence")
+    : marketOpen && remainingSeconds !== null
+      ? `Next scan ${formatCountdown(remainingSeconds)}`
+      : cycle.session?.label || "Market schedule unavailable";
+  $("#mirrorCycleRail").innerHTML = `
+    <div class="mirror-cycle-primary" data-status="${escapeHtml(cycleRunning ? "working" : marketOpen ? "countdown" : "quiet")}">
+      <i aria-hidden="true"></i><span><small>15-MINUTE ENGINE</small><strong>${escapeHtml(cycleLabel)}</strong></span>
+    </div>
+    <div class="mirror-flow-step ${activeWatchers.length ? "done" : "blocked"}"><small>01</small><span><strong>Watch</strong><em>${escapeHtml(`${activeWatchers.length} people & funds`)}</em></span></div>
+    <div class="mirror-flow-step ${cycleRunning ? "working" : mirror.available ? "done" : "waiting"}"><small>02</small><span><strong>Score</strong><em>${escapeHtml(`${summary.signalsReceived || 0} signals ranked`)}</em></span></div>
+    <div class="mirror-flow-step ${paper.mode === "paper_shadow_only" ? "done" : "waiting"}"><small>03</small><span><strong>Paper copy</strong><em>${escapeHtml(paper.mode === "paper_shadow_only" ? "Runs automatically" : "Not started")}</em></span></div>
+    <div class="mirror-flow-step gate"><small>04</small><span><strong>Live order</strong><em>${escapeHtml(liveGateCount ? `${liveGateCount} in Human Gate` : "Approval required")}</em></span></div>`;
+
   $("#mirrorMetrics").innerHTML = [
-    ["Signals", summary.signalsReceived ?? 0, "attributable inputs"],
-    ["Paper-ready", summary.paperReady ?? 0, "passed all checks"],
-    ["Research-only", summary.researchOnly ?? 0, "too delayed or unsupported"],
-    ["Planned paper", summary.plannedPaperNotional || "$0.00", "bounded notional"],
-    ["Form 4 intake", importer.available ? `${importer.enabledEntries || 0} enabled` : "Not run", importer.available ? `${importer.signalsImported || 0} latest signal(s)` : "named reporting owners"],
-    ["13F research", importer13f.available ? `${importer13f.enabledEntries || 0} managers` : "Not run", importer13f.available ? `${importer13f.signalsImported || 0} holding change(s)` : "delayed, never executable"],
-    ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} outcomes pending`],
-    ["Live orders", summary.liveOrdersPlaced ?? 0, "must remain zero in this plan"],
-  ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+    ["Watching", activeWatchers.length || Number(importer.enabledEntries || 0) + Number(importer13f.enabledEntries || 0), `${fastWatchers.length} fast · ${delayedWatchers.length} delayed`],
+    ["Signals", summary.signalsReceived ?? 0, `${summary.paperReady ?? 0} copy-ready`],
+    ["Paper positions", (paper.positions || []).length, `${formatMoney(paper.deployedDollars || 0)} deployed`],
+    ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} pending`],
+  ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
+  $("#mirrorAllocation").innerHTML = `
+    <div><small>PAPER EQUITY</small><strong>${escapeHtml(formatMoney(paper.equityDollars || paper.initialCashDollars || 0))}</strong><span class="${Number(paper.totalPnlDollars || 0) >= 0 ? "positive" : "negative"}">${escapeHtml(`${formatMoney(paper.totalPnlDollars || 0)} P&L`)}</span></div>
+    <div><small>MAX COPY</small><strong>${escapeHtml(formatMoney(guardrails.maxOrderDollars || mirror.policy?.maxTradeDollars || 0))}</strong><span>per live review</span></div>`;
+
+  $("#mirrorDecisionCounts").innerHTML = [
+    ["sell", "SELL", planSummary.sells || candidates.filter((candidate) => candidate.side === "SELL").length],
+    ["hold", "HOLD", planSummary.holds || candidates.filter((candidate) => candidate.status !== "paper_ready").length],
+    ["buy", "BUY", planSummary.buys || candidates.filter((candidate) => candidate.side === "BUY" && candidate.status === "paper_ready").length],
+  ].map(([className, label, value]) => `<span class="${className}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
 
   $("#mirrorCandidates").innerHTML = candidates.length
       ? candidates.map((candidate) => {
-        const gateSent = state.mirrorApprovalIds.has(candidate.id);
-        const gateEnabled = candidate.humanGateEligible && !mirror.stale && !gateSent;
-        const ownedPositionExit = candidate.side === "SELL" && candidate.brokerPositionRequired === true
-          && (state.brokerControl?.positions || []).some((position) => position.symbol === candidate.symbol && Number(position.sharesAvailableForSells ?? position.quantity) > 0);
-        const draftEnabled = !mirror.stale && (candidate.humanGateEligible || ownedPositionExit);
+        const proposal = proposalByCandidate.get(candidate.id) || null;
+        const reviewState = proposal?.reviewState || "";
+        const pendingGate = reviewState === "awaiting_human_gate";
+        const approved = reviewState === "approved";
+        const actionable = proposal?.draftEligible === true && !mirror.stale;
         const mainReason = candidate.reasons?.[0] || "No evaluation reason recorded.";
+        const signalAge = Number(candidate.signalAgeHours ?? candidate.disclosureLagHours ?? 0);
+        const statusLabel = candidate.status === "paper_ready" ? "COPY READY" : candidate.status === "research_only" ? "WATCH" : mirrorStatusLabel(candidate.status).toUpperCase();
+        const sourceMode = candidate.sourceId === "sec_form4" || /form 4/i.test(candidate.sourceName) ? "FAST DISCLOSURE" : "DELAYED FILING";
         return `
-          <article class="mirror-candidate ${escapeHtml(statusClass(candidate.status))}">
-            <div class="mirror-candidate-head">
-              <div>
-                <span class="mirror-signal">${escapeHtml(candidate.side)} ${escapeHtml(candidate.symbol)}</span>
-                <strong>${escapeHtml(candidate.traderName)}</strong>
-              </div>
-              <em class="tag ${escapeHtml(statusClass(candidate.status))}">${escapeHtml(mirrorStatusLabel(candidate.status))}</em>
+          <article class="mirror-candidate ${escapeHtml(statusClass(candidate.status))}" data-side="${escapeHtml(candidate.side.toLowerCase())}">
+            <div class="mirror-candidate-company">
+              ${logoMarkup(candidate.symbol)}
+              <span class="proposal-side ${escapeHtml(candidate.side.toLowerCase())}">${escapeHtml(candidate.side)}</span>
             </div>
-            <div class="mirror-candidate-metrics">
-              <span><small>Source</small><b>${escapeHtml(candidate.sourceName)}</b></span>
-              <span><small>Lag / quote age</small><b>${escapeHtml(`${Number(candidate.disclosureLagHours || 0).toFixed(1)}h · ${Number(candidate.currentPriceAgeHours || 0).toFixed(1)}h`)}</b></span>
-              <span><small>Price drift</small><b>${escapeHtml(candidate.priceDriftPct === null ? "Unknown" : formatPercent(candidate.priceDriftPct, 2))}</b></span>
-              <span><small>Evidence</small><b>${escapeHtml(`${Number(candidate.evidenceScore ?? 0.5).toFixed(3)} · ${mirrorStatusLabel(candidate.evidenceStatus)}`)}</b></span>
-              <span><small>Paper cap</small><b>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</b></span>
+            <div class="mirror-candidate-source">
+              <small>${escapeHtml(sourceMode)}</small>
+              <strong>${escapeHtml(candidate.traderName)}</strong>
+              <span>${escapeHtml(candidate.sourceName)}</span>
             </div>
-            <p>${escapeHtml(mainReason)}</p>
+            <div class="mirror-candidate-market">
+              <span><small>Signal → now</small><strong>${escapeHtml(`${outlookValue(candidate.signalPrice)} → ${outlookValue(candidate.currentPrice)}`)}</strong></span>
+              <span><small>Drift</small><strong>${escapeHtml(candidate.priceDriftPct === null ? "—" : formatPercent(candidate.priceDriftPct, 2))}</strong></span>
+              <span><small>Age</small><strong>${escapeHtml(signalAge < 1 ? `${Math.round(signalAge * 60)}m` : `${signalAge.toFixed(1)}h`)}</strong></span>
+              <span><small>Copy size</small><strong>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</strong></span>
+            </div>
+            <div class="mirror-candidate-verdict">
+              <em class="tag ${escapeHtml(statusClass(candidate.status))}">${escapeHtml(statusLabel)}</em>
+              <strong>${escapeHtml(`${Math.round(Number(candidate.rankingScore || candidate.evidenceScore || 0) * 100)} score`)}</strong>
+              <span>${escapeHtml(mainReason)}</span>
+            </div>
             <div class="mirror-candidate-actions">
-              ${candidate.sourceUrl ? `<a href="${escapeHtml(candidate.sourceUrl)}" target="_blank" rel="noreferrer">Open provenance</a>` : `<span>Provenance unavailable</span>`}
-              <button type="button" data-mirror-draft="${escapeHtml(candidate.id)}" ${draftEnabled ? "" : "disabled"}>
-                ${ownedPositionExit ? "Stage owned-position exit" : candidate.humanGateEligible ? mirror.stale ? "Refresh before drafting" : "Stage guarded order" : "No verified position"}
-              </button>
-              <button type="button" data-mirror-gate="${escapeHtml(candidate.id)}" ${gateEnabled ? "" : "disabled"}>
-                ${gateSent ? "Plan review sent" : candidate.humanGateEligible ? mirror.stale ? "Refresh before review" : "Review plan only" : "Research only"}
-              </button>
+              ${candidate.sourceUrl ? `<a href="${escapeHtml(candidate.sourceUrl)}" target="_blank" rel="noreferrer">Filing ↗</a>` : `<span></span>`}
+              ${approved && proposal?.reviewDraftId
+                ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review once</button>`
+                : pendingGate
+                  ? `<button type="button" disabled>Human Gate pending</button>`
+                  : proposal
+                    ? `<button type="button" data-mirror-approve="${escapeHtml(proposal.id)}" ${actionable ? "" : "disabled"}>${actionable ? "Send to Human Gate" : "Monitor only"}</button>`
+                    : `<button type="button" disabled>Monitor only</button>`}
             </div>
           </article>
         `;
       }).join("")
-    : `<div class="empty-state mirror-empty"><div><h3>No eligible public signals yet</h3><p>The evaluator is working. Mirror candidates appear only after an approved, attributable source intake is configured with named SEC Form 4 CIKs and a compliant contact identity. Missing provenance, timing, or current prices fails closed.</p></div></div>`;
+    : `<div class="mirror-empty">
+        <span class="mirror-radar" aria-hidden="true"><i></i></span>
+        <div><h3>No current copy signal</h3><p>${escapeHtml(cycleRunning ? "The scanner is checking filings and prices now." : remainingSeconds !== null ? `The engine checks again in ${formatCountdown(remainingSeconds)}.` : "The engine is waiting for its next scheduled scan.")}</p></div>
+        <strong>${escapeHtml(`${activeWatchers.length} watchers active`)}</strong>
+      </div>`;
+
+  $("#mirrorWatcherCount").textContent = `${activeWatchers.length} active`;
+  $("#mirrorWatchers").innerHTML = watchers.length
+    ? watchers.map((watcher) => {
+        const initials = watcher.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+        const feed = watcher.copyEligible ? importer : importer13f;
+        const status = watcher.enabled ? watcher.copyEligible ? "copy" : "research" : "off";
+        return `<article class="mirror-watcher" data-status="${escapeHtml(status)}">
+          <i>${escapeHtml(initials || "W")}</i>
+          <div><strong>${escapeHtml(watcher.name)}</strong><span>${escapeHtml(watcher.filingType)} · ${escapeHtml(watcher.copyEligible ? "fast signal" : "delayed holdings")}</span></div>
+          <em>${escapeHtml(watcher.enabled ? watcher.copyEligible ? "COPY" : "WATCH" : "OFF")}</em>
+          <small>${escapeHtml(feed.generatedAt ? `Read ${relativeCycle(feed.generatedAt)}` : "First read pending")}</small>
+        </article>`;
+      }).join("")
+    : `<div class="mirror-watch-empty"><strong>No named watchers</strong><span>Add verified CIKs in Sources to start the public filing watch.</span></div>`;
 
   $("#mirrorSources").innerHTML = sources.length
-    ? sources.map((source) => `
-        <article class="mirror-source">
-          <div><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(source.sourceType)}</small></div>
-          <em class="tag ${source.mirrorEligible && source.enabled ? "ready" : "review"}">${source.mirrorEligible && source.enabled ? "mirror eligible" : "research only"}</em>
-          <p>${escapeHtml(source.notes || "No source note recorded.")}</p>
-        </article>
-      `).join("")
-    : `<p class="muted-copy">No source registry was loaded.</p>`;
+    ? sources.slice(0, 4).map((source) => `<span><i class="${source.mirrorEligible && source.enabled ? "ready" : "delay"}"></i><strong>${escapeHtml(source.name)}</strong><em>${escapeHtml(source.mirrorEligible && source.enabled ? "copy feed" : "research")}</em></span>`).join("")
+    : `<span><i class="delay"></i><strong>Source registry</strong><em>pending</em></span>`;
   const profiles = knowledge.sourceProfiles || [];
   $("#knowledgeStatus").textContent = !knowledge.available
-    ? "Neutral · no ledger"
+    ? "No measured outcomes"
     : knowledge.stale
       ? "Ledger stale"
       : `${knowledgeSummary.measuredOutcomes || 0} measured`;
-  $("#knowledgeStatus").className = `status-pill ${knowledge.stale ? "warning" : "muted"}`;
   $("#knowledgeMetrics").innerHTML = [
     ["Observations", knowledgeSummary.observationsSeen ?? 0],
     ["Measured", knowledgeSummary.measuredOutcomes ?? 0],
-    ["Missing baseline", knowledgeSummary.missingBaselines ?? 0],
+    ["Pending", knowledgeSummary.pendingOutcomes ?? 0],
+    ["Form 4 signals", importer.signalsImported ?? 0],
+    ["13F changes", importer13f.signalsImported ?? 0],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join("");
   $("#knowledgeProfiles").innerHTML = profiles.length
     ? profiles.map((profile) => `
         <article class="knowledge-profile">
-          <div><strong>${escapeHtml(profile.sourceId)}</strong><small>${escapeHtml(profile.sampleSize ? `${profile.sampleSize} sample(s) · ${formatPercent(profile.hitRate)} hit` : "No matured outcomes")}</small></div>
+          <div><strong>${escapeHtml(profile.sourceId)}</strong><small>${escapeHtml(profile.sampleSize ? `${profile.sampleSize} samples · ${formatPercent(profile.hitRate)} hit` : "No matured outcomes")}</small></div>
           <div><b>${escapeHtml(Number(profile.evidenceScore ?? 0.5).toFixed(3))}</b><em class="tag ${profile.evidenceStatus === "measured" ? "ready" : "review"}">${escapeHtml(mirrorStatusLabel(profile.evidenceStatus))}</em></div>
         </article>
       `).join("")
-    : `<p class="muted-copy">No profiles yet. Scores stay neutral until real outcomes mature.</p>`;
-  const combinedWarnings = [...warnings, ...(knowledge.warnings || [])];
+    : `<p class="muted-copy">Scores remain neutral until post-disclosure outcomes mature.</p>`;
+  const combinedWarnings = [
+    delayedWatchers.length ? `${delayedWatchers.length} 13F watcher${delayedWatchers.length === 1 ? " is" : "s are"} delayed research, not automatic copy orders.` : "",
+    ...warnings,
+    ...(knowledge.warnings || []),
+  ].filter(Boolean);
   $("#mirrorWarnings").innerHTML = [...new Set(combinedWarnings)].slice(0, 8).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || `<li>No warning record was loaded.</li>`;
 }
 
@@ -1438,6 +1501,7 @@ async function pollBrokerControl() {
     const payload = await api("/api/stock-office/broker-control");
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
     state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
@@ -1455,6 +1519,7 @@ async function pollBrokerControl() {
     if (state.dispatchHandoff && activeDraft?.status === "dispatch_claimed") return;
     if (state.dispatchHandoff) state.dispatchHandoff = null;
     renderBrokerControl();
+    if (state.activeView === "mirror") renderMirror();
   } catch (_error) {
   } finally {
     state.brokerPolling = false;
@@ -1468,11 +1533,13 @@ async function pollLivePortfolio() {
     const payload = await api("/api/stock-office/live");
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.tradeDrafts = payload.tradeDrafts || state.tradeDrafts;
     if (state.activeView === "overview") renderOverviewDashboard();
+    if (state.activeView === "mirror") renderMirror();
   } catch (_error) {
   } finally {
     state.livePortfolioPolling = false;
@@ -1613,8 +1680,13 @@ async function pollRefreshStatus() {
 
 async function syncLocalFiles() {
   const button = $("#syncButton");
+  const mirrorButton = $("#mirrorRefreshButton");
   button.disabled = true;
   button.textContent = "Starting refresh...";
+  if (mirrorButton) {
+    mirrorButton.disabled = true;
+    mirrorButton.textContent = "Scanning…";
+  }
   renderRefreshFeedback({ status: "running", stage: "preflight", message: "Connecting to the local evaluator...", startedAt: new Date().toISOString() });
   const pollTimer = window.setInterval(pollRefreshStatus, 800);
   try {
@@ -1629,6 +1701,10 @@ async function syncLocalFiles() {
     window.clearInterval(pollTimer);
     button.disabled = false;
     button.textContent = "Refresh";
+    if (mirrorButton) {
+      mirrorButton.disabled = false;
+      mirrorButton.textContent = "Run scan";
+    }
   }
 }
 
@@ -1700,6 +1776,8 @@ document.addEventListener("click", (event) => {
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
   if (proposalApprove && !proposalApprove.disabled) approveOverviewProposal(proposalApprove.dataset.proposalApprove);
+  const mirrorApprove = event.target.closest("[data-mirror-approve]");
+  if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");
   if (proposalDecline && !proposalDecline.disabled) declineOverviewProposal(proposalDecline.dataset.proposalDecline);
   if (event.target.closest("#telegramApprovalButton")) requestTelegramApproval();
@@ -1707,6 +1785,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#telegramTestButton")) telegramAction("test");
   if (event.target.closest("#telegramDisableButton")) telegramAction("disable");
   if (event.target.closest("#telegramRemoveButton")) telegramAction("remove");
+  if (event.target.closest("#mirrorRefreshButton")) syncLocalFiles();
 });
 
 $("#guardrailForm").addEventListener("submit", requestGuardrails);
@@ -1740,6 +1819,7 @@ function tickLivePortfolio() {
   const ageSeconds = Number.isFinite(snapshotAt) ? Math.max(0, Math.floor((Date.now() - snapshotAt) / 1_000)) : null;
   clock.textContent = ageSeconds === null ? "Waiting for live account" : `Display live · broker read ${ageSeconds}s ago`;
   if (state.activeView === "overview") renderOverviewDashboard();
+  if (state.activeView === "mirror") renderMirror();
 }
 
 window.setInterval(tickLivePortfolio, 1_000);

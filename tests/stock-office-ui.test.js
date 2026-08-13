@@ -131,6 +131,27 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(styles, /\.overview-proposal-list/);
 });
 
+test("Mirror is a compact copy-trading control room driven by live watcher and cycle data", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+
+  assert.match(html, /COPY TRADING/);
+  assert.match(html, /Mirror control/);
+  assert.match(html, /id="mirrorCycleRail"/);
+  assert.match(html, /id="mirrorWatchers"/);
+  assert.match(html, /People &amp; funds/);
+  assert.match(html, /Copy decisions/);
+  assert.match(script, /mirror\.watchers/);
+  assert.match(script, /15-MINUTE ENGINE/);
+  assert.match(script, /Runs automatically/);
+  assert.match(script, /Send to Human Gate/);
+  assert.match(script, /13F watcher/);
+  assert.match(styles, /compact copy-trading operations console/);
+  assert.doesNotMatch(html, /<h2>Mirror Lab<\/h2>/);
+  assert.doesNotMatch(html, /Delayed signals<\/strong>/);
+});
+
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
@@ -155,17 +176,17 @@ test("Control Floor Stock Office card is data-first and loads the live broker sn
   assert.doesNotMatch(shellJs, /Security boundary<\/h4>/);
 });
 
-test("Stock Office UI exposes no-look-ahead copy knowledge and evidence scores", () => {
+test("Stock Office UI keeps no-look-ahead copy evidence available without crowding the main console", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
-  assert.match(html, /Copy knowledge/);
-  assert.match(html, /Scores start at 0\.500/);
-  assert.match(html, /prices observed after disclosure/);
+  assert.match(html, /Evidence &amp; safety/);
+  assert.match(script, /post-disclosure outcomes mature/);
+  assert.match(script, /13F watcher/);
   assert.match(script, /knowledgeSummary\.measuredOutcomes/);
   assert.match(script, /candidate\.evidenceScore/);
   assert.match(script, /No matured outcomes/);
-  assert.match(script, /Stage guarded order/);
+  assert.match(script, /Send to Human Gate/);
   assert.match(script, /candidateId/);
   assert.match(script, /data-mirror-draft/);
   assert.match(script, /brokerPositionRequired/);

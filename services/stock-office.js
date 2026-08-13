@@ -838,6 +838,33 @@ function normalizeCopyImportStatus(data, source) {
   };
 }
 
+function normalizeCopyTraderWatchers(data) {
+  if (!isPlainObject(data)) return [];
+  const normalizeEntries = (entries, filingType) => (Array.isArray(entries) ? entries : [])
+    .slice(0, 100)
+    .map((entry, index) => {
+      if (!isPlainObject(entry)) return null;
+      const cik = String(entry.cik || "").replace(/[^0-9]/g, "").slice(0, 10);
+      const name = redactSensitiveText(String(entry.label || entry.name || `${filingType} watcher ${index + 1}`)).slice(0, 180);
+      if (!name || !cik) return null;
+      return {
+        id: `${filingType.toLowerCase().replaceAll(" ", "-")}:${cik}`,
+        name,
+        cik: cik.padStart(10, "0"),
+        filingType,
+        enabled: entry.enabled !== false,
+        copyEligible: filingType === "Form 4",
+        researchOnly: filingType === "13F",
+        identityUrl: safePublicUrl(entry.identity_url),
+      };
+    })
+    .filter(Boolean);
+  return [
+    ...normalizeEntries(data.sec_form4, "Form 4"),
+    ...normalizeEntries(data.sec_13f, "13F"),
+  ];
+}
+
 function summarizeSourceHealth(sources) {
   const counts = sources.reduce(
     (acc, source) => {
@@ -1119,6 +1146,7 @@ function loadStockOfficeSnapshot(options = {}) {
     importer: normalizeCopyImportStatus(byId.copy_import_status?.data, byId.copy_import_status?.source),
     importer13f: normalizeCopyImportStatus(byId.sec_13f_import_status?.data, byId.sec_13f_import_status?.source),
     knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
+    watchers: normalizeCopyTraderWatchers(byId.copy_trader_watchlist?.data),
   };
   const guardrails = workspaceState.activeGuardrails || normalizeGuardrails(byId.settings?.data || {});
   const guardrailsSource = workspaceState.activeGuardrails ? {

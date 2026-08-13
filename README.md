@@ -81,7 +81,7 @@ Stock Office combines the local Stock Guru research workspace with a guarded ser
 
 An independent always-on paper-shadow engine records simulated copy/evaluator entries, risk exits, portfolio marks, drawdown, and closed-trade outcome learning once per minute while Argentum is running. Its state survives restarts, but it has no Robinhood client and cannot create or place live orders.
 
-A separate restart-safe intelligence scheduler keeps evaluator and copy-plan evidence current while the desktop is open: every 15 minutes during weekday market-day hours and every four hours otherwise. SEC Form 4 is bounded to hourly attempts and Form 13F to daily attempts, and both stay blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real monitored contact identity. The scheduler exposes freshness, history, warnings, and its next run in Stock Office; it has no broker client or order authority.
+A separate restart-safe intelligence scheduler keeps evaluator and copy-plan evidence current while the desktop is open: every 5 minutes during weekday market-day hours and every four hours otherwise. Live Robinhood account and position reads remain independently cached at five seconds. SEC Form 4 is bounded to hourly attempts and Form 13F to daily attempts, and both stay blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real monitored contact identity. The scheduler exposes freshness, history, warnings, and its next run in Stock Office; it has no broker client or order authority.
 
 Capital settings are not active merely because a proposal was created. The operator requests exact limits, approves them in Human Gate, then explicitly applies that unused approval. The active policy is stored in ignored local Argentum state and is rechecked at dispatch time.
 

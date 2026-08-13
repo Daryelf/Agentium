@@ -328,7 +328,7 @@ test("portfolio proposals expose research, target scenarios, and an explicitly u
   assert.ok(proposal.research.checksPassed <= proposal.research.checksTotal);
   assert.equal(proposal.outlook.profitTimingKnown, false);
   assert.match(proposal.outlook.timingNote, /No profit date can be estimated reliably/i);
-  assert.match(proposal.outlook.horizonLabel, /15-minute market cycle/i);
+  assert.match(proposal.outlook.horizonLabel, /5-minute market cycle/i);
 });
 
 test("owned positions without an exit trigger appear as HOLD while SELL remains prioritized", () => {

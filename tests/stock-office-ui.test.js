@@ -149,7 +149,8 @@ test("Mirror is a compact copy-trading control room driven by live watcher and c
   assert.match(html, /People &amp; funds/);
   assert.match(html, /Copy decisions/);
   assert.match(script, /mirror\.watchers/);
-  assert.match(script, /15-MINUTE ENGINE/);
+  assert.match(script, /cadenceMinutes.*MINUTE ENGINE/);
+  assert.match(script, /blocking.*blockers\.slice\(0, 3\)/s);
   assert.match(script, /Runs automatically/);
   assert.match(script, /Send to Human Gate/);
   assert.match(script, /13F watcher/);

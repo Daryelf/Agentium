@@ -542,7 +542,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       ? "Monitor over the source's measured post-disclosure windows"
       : kind.endsWith("exit") || kind === "strategy_exit_review"
         ? "Review now while the exit condition remains valid"
-        : "Re-evaluate on each 15-minute market cycle";
+        : "Re-evaluate on each 5-minute market cycle";
     proposals.push({
       id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
       fingerprint: stableFingerprint(proposalCore),
@@ -635,7 +635,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         checksTotal: 4,
       },
       outlook: {
-        horizonLabel: "Re-evaluate on each 15-minute market cycle",
+        horizonLabel: "Re-evaluate on each 5-minute market cycle",
         targetPrice,
         targetReturnPct: null,
         stopPrice,

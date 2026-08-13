@@ -76,7 +76,7 @@ function buildStockMarketWorkers(input = {}, options = {}) {
       task: scannerRunning
         ? scheduler.currentMessage || "Evaluating the bounded symbol universe."
         : enabled
-          ? `Watching ${records.length} evaluated symbols on the ${scheduler.activeCadenceMinutes || 15}-minute market cadence.`
+          ? `Watching ${records.length} evaluated symbols on the ${scheduler.activeCadenceMinutes || 5}-minute market cadence.`
           : "Automatic evaluator cycles are paused by configuration.",
       metrics: [
         { label: "Scanned", value: records.length },
@@ -163,7 +163,7 @@ function buildStockMarketWorkers(input = {}, options = {}) {
       running: schedulerRunning,
       lastCompletedAt: safeDate(scheduler.lastCompletedAt),
       nextRunAt: safeDate(scheduler.nextRunAt),
-      cadenceMinutes: session.regular ? scheduler.activeCadenceMinutes || 15 : scheduler.quietCadenceMinutes || 240,
+      cadenceMinutes: session.regular ? scheduler.activeCadenceMinutes || 5 : scheduler.quietCadenceMinutes || 240,
     },
     workingCount: workers.filter((worker) => worker.status === "working").length,
     watchingCount: workers.filter((worker) => ["working", "watching"].includes(worker.status)).length,

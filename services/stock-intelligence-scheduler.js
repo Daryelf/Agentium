@@ -3,7 +3,7 @@ const path = require("node:path");
 
 const VERSION = 1;
 const MAX_HISTORY = 40;
-const DEFAULT_ACTIVE_MINUTES = 15;
+const DEFAULT_ACTIVE_MINUTES = 5;
 const DEFAULT_QUIET_MINUTES = 240;
 const DEFAULT_FORM4_MINUTES = 60;
 const DEFAULT_13F_MINUTES = 24 * 60;

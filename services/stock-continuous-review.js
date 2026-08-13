@@ -17,11 +17,23 @@ function selectNextQualifiedProposal(plan = {}, review = {}, options = {}) {
 
 function buildContinuousReviewView(input = {}, options = {}) {
   const at = options.now ? new Date(options.now) : new Date();
-  const session = input.session || marketSession(at);
-  const scheduler = input.scheduler || {};
-  const review = input.review || {};
-  const plan = input.plan || {};
-  const drafts = Array.isArray(input.tradeDrafts) ? input.tradeDrafts : [];
+  // Packaged desktop builds originally passed the plan directly and supplied
+  // state/scheduler through options. Keep both contracts valid so a populated
+  // planner can never be rendered as an empty proposal queue during upgrades.
+  const directPlan = Array.isArray(input.proposals) && !input.plan;
+  const plan = directPlan ? input : input.plan || {};
+  const scheduler = directPlan ? options.scheduler || {} : input.scheduler || options.scheduler || {};
+  const review = directPlan
+    ? options.review || options.state?.stockOffice?.continuousReview || {}
+    : input.review || options.review || {};
+  const drafts = Array.isArray(input.tradeDrafts)
+    ? input.tradeDrafts
+    : Array.isArray(options.tradeDrafts)
+      ? options.tradeDrafts
+      : Array.isArray(options.snapshot?.tradeDrafts)
+        ? options.snapshot.tradeDrafts
+        : [];
+  const session = input.session || options.session || marketSession(at);
   const nextRunAt = safeDate(scheduler.nextRunAt);
   const remainingSeconds = nextRunAt ? Math.max(0, Math.ceil((new Date(nextRunAt).getTime() - at.getTime()) / 1_000)) : null;
   const proposals = (Array.isArray(plan.proposals) ? plan.proposals : []).map((proposal) => {
@@ -41,7 +53,7 @@ function buildContinuousReviewView(input = {}, options = {}) {
       session,
       running: scheduler.running === true,
       status: scheduler.running === true ? "research_running" : session.regular ? "counting_down" : "market_monitoring",
-      cadenceMinutes: Number(scheduler.activeCadenceMinutes || 15),
+      cadenceMinutes: Number(scheduler.activeCadenceMinutes || 5),
       lastStartedAt: safeDate(scheduler.lastStartedAt),
       lastCompletedAt: safeDate(scheduler.lastCompletedAt),
       nextRunAt,

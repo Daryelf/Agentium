@@ -119,6 +119,9 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
         console.warn("Stock paper-shadow follow-up cycle failed safely:", error.message);
       }
     }
+    if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+      await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+    }
     await processStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
   },
 });
@@ -3807,7 +3810,7 @@ async function processStockContinuousReview(result = {}) {
     tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
     continuousReview: review,
   });
-  audit(state, "Stock Office cycle awaiting Human Gate", `${proposal.side} ${proposal.symbol} is the one exact proposal staged from this 15-minute cycle; no live order placed.`);
+  audit(state, "Stock Office cycle awaiting Human Gate", `${proposal.side} ${proposal.symbol} is the one exact proposal staged from this market cycle; no live order placed.`);
   writeState(state);
 
   const notificationState = readState();

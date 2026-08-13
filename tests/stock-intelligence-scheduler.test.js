@@ -55,6 +55,18 @@ test("market cadence distinguishes active weekday hours from quiet hours in New 
   assert.equal(marketWindow(new Date("2026-08-09T14:00:00.000Z")).active, false);
 });
 
+test("market-hours research defaults to a five-minute cadence", () => {
+  const scheduler = createStockIntelligenceScheduler({
+    refreshManager: { refresh: async () => successResult(), getStatus: () => ({}) },
+    environment: {},
+    now: createClock().now,
+    setTimeoutImpl: createTimers().setTimeoutImpl,
+    clearTimeoutImpl: () => {},
+    allowInTests: true,
+  });
+  assert.equal(scheduler.start().activeCadenceMinutes, 5);
+});
+
 test("automatic refresh persists restart-safe status and has no broker authority", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-intelligence-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

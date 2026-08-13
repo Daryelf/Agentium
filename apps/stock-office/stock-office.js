@@ -330,6 +330,7 @@ function renderTradeProposals() {
   });
   const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
   const cycle = state.portfolioPlan?.cycle || {};
+  const cadenceMinutes = Number(cycle.cadenceMinutes || state.intelligenceScheduler?.activeCadenceMinutes || 5);
   const summary = state.portfolioPlan?.summary || {};
   const nextAt = Date.parse(cycle.nextRunAt || "");
   const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
@@ -341,7 +342,7 @@ function renderTradeProposals() {
   const review = cycle.review || {};
   $("#overviewCycleRail").innerHTML = `
     <div class="overview-cycle-clock" data-status="${escapeHtml(cycle.running ? "working" : cycle.session?.regular ? "countdown" : "quiet")}">
-      <i aria-hidden="true"></i><span><small>15-minute loop</small><strong>${escapeHtml(cycleStatus)}</strong></span>
+      <i aria-hidden="true"></i><span><small>${escapeHtml(`${cadenceMinutes}-minute scan`)}</small><strong>${escapeHtml(cycleStatus)}</strong></span>
     </div>
     <div class="overview-cycle-decisions">
       <span class="sell"><small>SELL</small><strong>${escapeHtml(summary.sells || 0)}</strong></span>
@@ -361,7 +362,8 @@ function renderTradeProposals() {
         const targetText = proposal.side === "BUY" && outlook.targetPrice
           ? `${outlookValue(outlook.targetPrice)}${Number.isFinite(Number(outlook.targetReturnPct)) ? ` · ${(Number(outlook.targetReturnPct) * 100).toFixed(1)}% · ${formatMoney(outlook.targetScenarioDollars)} scenario` : ""}`
           : proposal.side === "SELL" ? "Reduce verified holding" : "Keep monitoring position";
-        const blocker = proposal.blockers?.[0] || "";
+        const blockers = Array.isArray(proposal.blockers) ? proposal.blockers : [];
+        const blocker = blockers[0] || "";
         const isHold = proposal.side === "HOLD";
         const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : isHold ? "monitoring" : "blocked");
         const pendingGate = reviewState === "awaiting_human_gate";
@@ -398,7 +400,7 @@ function renderTradeProposals() {
                   ? `<button type="button" disabled>Human Gate pending</button><small>Use the bubble at bottom left. No broker review or order has occurred.</small>`
                   : `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>${proposal.draftEligible ? "Send to Human Gate" : "Blocked"}</button>
                      <button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Decline</button>
-                     ${blocker ? `<small>${escapeHtml(blocker)}</small>` : `<small>One-use approval only; no automatic order.</small>`}`}
+                     ${blocker ? `<small><strong>${escapeHtml(`${blockers.length} check${blockers.length === 1 ? "" : "s"} blocking`)}</strong> · ${escapeHtml(blockers.slice(0, 3).join(" · "))}</small>` : `<small>One-use approval only; no automatic order.</small>`}`}
           </div>
         </article>`;
       }).join("")
@@ -428,7 +430,7 @@ function portfolioKindLabel(value) {
     profit_exit: "Profit-lock exit",
     strategy_exit_review: "Strategy exit",
     position_hold: "Position review",
-    native_entry: "Evaluator entry",
+    native_entry: "Independent scan",
   };
   return labels[value] || String(value || "review").replaceAll("_", " ");
 }
@@ -767,6 +769,7 @@ function renderMirror() {
   const paper = state.shadowPortfolio || {};
   const guardrails = state.brokerControl?.guardrails || {};
   const scheduler = state.intelligenceScheduler || {};
+  const cadenceMinutes = Number(cycle.cadenceMinutes || scheduler.activeCadenceMinutes || 5);
   const nextAt = Date.parse(cycle.nextRunAt || scheduler.nextRunAt || "");
   const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
   const marketOpen = cycle.session?.regular === true;
@@ -787,7 +790,7 @@ function renderMirror() {
       : cycle.session?.label || "Market schedule unavailable";
   $("#mirrorCycleRail").innerHTML = `
     <div class="mirror-cycle-primary" data-status="${escapeHtml(cycleRunning ? "working" : marketOpen ? "countdown" : "quiet")}">
-      <i aria-hidden="true"></i><span><small>15-MINUTE ENGINE</small><strong>${escapeHtml(cycleLabel)}</strong></span>
+      <i aria-hidden="true"></i><span><small>${escapeHtml(`${cadenceMinutes}-MINUTE ENGINE`)}</small><strong>${escapeHtml(cycleLabel)}</strong></span>
     </div>
     <div class="mirror-flow-step ${activeWatchers.length ? "done" : "blocked"}"><small>01</small><span><strong>Watch</strong><em>${escapeHtml(`${activeWatchers.length} people & funds`)}</em></span></div>
     <div class="mirror-flow-step ${cycleRunning ? "working" : mirror.available ? "done" : "waiting"}"><small>02</small><span><strong>Score</strong><em>${escapeHtml(`${summary.signalsReceived || 0} signals ranked`)}</em></span></div>

@@ -289,7 +289,12 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   const snapshotFresh = Boolean(broker.configured) && snapshotAgeMinutes !== null && snapshotAgeMinutes <= BROKER_SNAPSHOT_FRESH_MINUTES;
   const toolContract = verifyRobinhoodToolContract(broker.connector || {}, { now: at });
   const authenticationVerified = snapshotFresh && toolContract.verified;
-  const buyingPower = moneyNumber(broker.buyingPower);
+  const buyingPowerAvailable = broker.buyingPower !== null && broker.buyingPower !== undefined && broker.buyingPower !== "";
+  const cashAvailable = broker.cash !== null && broker.cash !== undefined && broker.cash !== "";
+  const accountValueAvailable = broker.accountValue !== null && broker.accountValue !== undefined && broker.accountValue !== "";
+  const buyingPower = buyingPowerAvailable ? moneyNumber(broker.buyingPower) : 0;
+  const cash = cashAvailable ? moneyNumber(broker.cash) : 0;
+  const accountValue = accountValueAvailable ? moneyNumber(broker.accountValue) : 0;
   const capital = portfolioCapitalState(snapshot, { now: at });
   const killSwitchActive = snapshot.killSwitch?.active !== false;
   const connectorStatus = !toolContract.registered
@@ -337,7 +342,14 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     accountIdentityHash: broker.accountIdentityHash || "",
     snapshotUpdatedAt: broker.updatedAt || null,
     snapshotAgeMinutes: snapshotAgeMinutes === null ? null : Math.round(snapshotAgeMinutes * 10) / 10,
-    buyingPowerDollars: buyingPower,
+    accountValueDollars: accountValueAvailable ? accountValue : null,
+    cashDollars: cashAvailable ? cash : null,
+    buyingPowerDollars: buyingPowerAvailable ? buyingPower : null,
+    equityValueDollars: broker.equityValue === null || broker.equityValue === undefined ? null : moneyNumber(broker.equityValue),
+    optionsValueDollars: broker.optionsValue === null || broker.optionsValue === undefined ? null : moneyNumber(broker.optionsValue),
+    cryptoValueDollars: broker.cryptoValue === null || broker.cryptoValue === undefined ? null : moneyNumber(broker.cryptoValue),
+    unsettledFundsDollars: broker.unsettledFunds === null || broker.unsettledFunds === undefined ? null : moneyNumber(broker.unsettledFunds),
+    pendingDepositsDollars: broker.pendingDeposits === null || broker.pendingDeposits === undefined ? null : moneyNumber(broker.pendingDeposits),
     positions: Array.isArray(broker.positions) ? broker.positions : [],
     openOrderCount: Array.isArray(broker.openOrders) ? broker.openOrders.length : 0,
     killSwitchActive,

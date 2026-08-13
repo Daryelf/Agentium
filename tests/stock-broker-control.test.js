@@ -114,6 +114,9 @@ test("fresh official connector and strict checks produce an exact BUY review env
 
   assert.equal(control.authenticationVerified, true);
   assert.equal(control.toolContract.verified, true);
+  assert.equal(control.accountValueDollars, 100);
+  assert.equal(control.cashDollars, 100);
+  assert.equal(control.buyingPowerDollars, 100);
   assert.equal(control.buyReady, true);
   assert.equal(draft.status, "ready_for_broker_review");
   assert.equal(draft.blockers.length, 0);
@@ -127,6 +130,15 @@ test("fresh official connector and strict checks produce an exact BUY review env
   assert.equal(envelope.args.dollar_amount, "10.00");
   assert.equal(envelope.accountScope, "dedicated_agentic_account_only");
   assert.equal(envelope.accountIdentityHash, "b".repeat(64));
+});
+
+test("missing broker balances remain unknown instead of being presented as zero", () => {
+  const current = snapshot({ broker: { ...snapshot().broker, accountValue: null, cash: null, buyingPower: null } });
+  const control = brokerControlOverview(current, { now: "2026-08-10T17:00:00.000Z" });
+  assert.equal(control.accountValueDollars, null);
+  assert.equal(control.cashDollars, null);
+  assert.equal(control.buyingPowerDollars, null);
+  assert.match(control.blockers.join(" "), /buying power is unavailable or zero/i);
 });
 
 test("connector tool contract fails closed when an execution tool is missing", () => {

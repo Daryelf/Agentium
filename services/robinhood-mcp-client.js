@@ -163,6 +163,65 @@ function explicitBoolean(objects, keys) {
   return null;
 }
 
+function directRecordValue(object, keys) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return null;
+  const record = lowerKeyRecord(object);
+  for (const key of keys.map((item) => String(item).toLowerCase())) {
+    if (record[key] !== undefined && record[key] !== null && record[key] !== "") return record[key];
+  }
+  return null;
+}
+
+function portfolioMoney(payload, keys) {
+  const wanted = keys.map((key) => String(key).toLowerCase());
+  for (const object of walkObjects(payload)) {
+    const direct = finiteNumber(directRecordValue(object, wanted), null);
+    if (direct !== null) return direct;
+    const buyingPowerContainer = directRecordValue(object, ["buying_power"]);
+    if (!buyingPowerContainer || typeof buyingPowerContainer !== "object" || Array.isArray(buyingPowerContainer)) continue;
+    const nested = finiteNumber(directRecordValue(buyingPowerContainer, wanted), null);
+    if (nested !== null) return nested;
+  }
+  return null;
+}
+
+function normalizePortfolio(payload, account = {}) {
+  const accountObjects = walkObjects(account);
+  return {
+    accountValue: portfolioMoney(payload, ["portfolio_value", "account_value", "total_value"]),
+    equityValue: portfolioMoney(payload, ["equity_value", "equities_value"]),
+    optionsValue: portfolioMoney(payload, ["options_value"]),
+    cryptoValue: portfolioMoney(payload, ["crypto_value"]),
+    cash: portfolioMoney(payload, ["cash", "cash_available", "withdrawable_cash"]),
+    buyingPower: portfolioMoney(payload, ["buying_power", "real_time_buying_power", "available_buying_power", "unleveraged_buying_power"]),
+    pendingDeposits: portfolioMoney(payload, ["pending_deposits"]),
+    unsettledFunds: moneyValue(accountObjects, ["unsettled_funds"]),
+    dayPnlDollars: portfolioMoney(payload, ["day_pnl", "today_pnl", "day_gain_loss", "today_gain_loss", "todays_profit_loss", "today_profit_loss", "todays_return"]),
+    dayPnlPct: finiteNumber(firstValue(walkObjects(payload), ["day_pnl_pct", "today_pnl_pct", "day_gain_loss_percent", "today_gain_loss_percent", "todays_return_percent"]), null),
+  };
+}
+
+function normalizeQuotes(payload) {
+  const ranked = {};
+  const quoteFields = [
+    ["mark_price", 4],
+    ["last_trade_price", 3],
+    ["last_price", 2],
+    ["price", 1],
+  ];
+  for (const object of walkObjects(payload)) {
+    const symbol = String(directRecordValue(object, ["symbol", "ticker"]) || "").trim().toUpperCase();
+    if (!symbol) continue;
+    for (const [field, rank] of quoteFields) {
+      const price = finiteNumber(directRecordValue(object, [field]), null);
+      if (price === null || (ranked[symbol] && ranked[symbol].rank >= rank)) continue;
+      ranked[symbol] = { price, rank };
+      break;
+    }
+  }
+  return Object.fromEntries(Object.entries(ranked).map(([symbol, value]) => [symbol, value.price]));
+}
+
 function maskAccount(value) {
   const raw = String(value || "").replace(/\s+/g, "");
   if (!raw) return "";
@@ -549,30 +608,25 @@ function createRobinhoodMcpClient(options = {}) {
           throw new Error("Robinhood get_equity_quotes does not expose a supported symbol or symbols argument.");
         }
       }
-      const quotesBySymbol = {};
-      for (const object of walkObjects(quotesPayload)) {
-        const symbol = stringValue([object], ["symbol", "ticker"]).toUpperCase();
-        const price = finiteNumber(firstValue([object], ["price", "mark_price", "last_trade_price", "last_price"]), null);
-        if (symbol && price !== null) quotesBySymbol[symbol] = price;
-      }
+      const quotesBySymbol = normalizeQuotes(quotesPayload);
       const positions = normalizePositions(positionsPayload, quotesBySymbol);
       const orders = normalizeOrders(ordersPayload);
-      const portfolioObjects = walkObjects(portfolioPayload);
       const accountObjects = walkObjects(account.raw);
-      const accountValue = moneyValue(portfolioObjects, ["portfolio_value", "account_value", "equity", "total_value"]);
-      const buyingPower = moneyValue(portfolioObjects, ["buying_power", "real_time_buying_power", "available_buying_power"]);
-      const cash = moneyValue(portfolioObjects, ["cash", "cash_available", "withdrawable_cash"]);
-      const dayPnlDollars = moneyValue(portfolioObjects, ["day_pnl", "today_pnl", "day_gain_loss", "today_gain_loss", "todays_profit_loss", "today_profit_loss", "todays_return"]);
-      const dayPnlPct = finiteNumber(firstValue(portfolioObjects, ["day_pnl_pct", "today_pnl_pct", "day_gain_loss_percent", "today_gain_loss_percent", "todays_return_percent"]), null);
+      const portfolio = normalizePortfolio(portfolioPayload, account.raw);
       brokerSnapshot = {
         configured: true,
         account: maskAccount(account.accountNumber || account.accountId),
         accountIdentityHash: account.identityHash,
-        accountValue: accountValue === null ? null : `$${accountValue.toFixed(2)}`,
-        cash: cash === null ? null : `$${cash.toFixed(2)}`,
-        buyingPower: buyingPower === null ? null : `$${buyingPower.toFixed(2)}`,
-        dayPnlDollars,
-        dayPnlPct,
+        accountValue: portfolio.accountValue === null ? null : `$${portfolio.accountValue.toFixed(2)}`,
+        equityValue: portfolio.equityValue,
+        optionsValue: portfolio.optionsValue,
+        cryptoValue: portfolio.cryptoValue,
+        cash: portfolio.cash === null ? null : `$${portfolio.cash.toFixed(2)}`,
+        buyingPower: portfolio.buyingPower === null ? null : `$${portfolio.buyingPower.toFixed(2)}`,
+        pendingDeposits: portfolio.pendingDeposits,
+        unsettledFunds: portfolio.unsettledFunds,
+        dayPnlDollars: portfolio.dayPnlDollars,
+        dayPnlPct: portfolio.dayPnlPct,
         positions,
         openOrders: orders.filter((order) => !["filled", "cancelled", "canceled", "rejected", "failed", "expired"].includes(order.state)),
         orders,
@@ -621,8 +675,13 @@ function createRobinhoodMcpClient(options = {}) {
       configured: false,
       account: "",
       accountValue: null,
+      equityValue: null,
+      optionsValue: null,
+      cryptoValue: null,
       cash: null,
       buyingPower: null,
+      pendingDeposits: null,
+      unsettledFunds: null,
       positions: [],
       openOrders: [],
       orders: [],
@@ -774,7 +833,9 @@ module.exports = {
   detectCodexRobinhoodRegistration,
   identifyAgenticAccount,
   normalizeOrders,
+  normalizePortfolio,
   normalizePositions,
+  normalizeQuotes,
   parseMcpPayload,
   toolResultValue,
 };

@@ -248,20 +248,25 @@ function renderOverviewDashboard() {
   const capital = state.portfolioPlan?.capital || control.capital || {};
   const positions = Array.isArray(control.positions) && control.positions.length ? control.positions : broker.positions || [];
   const positionValue = positions.reduce((sum, position) => sum + (livePositionValue(position) || 0), 0);
-  const buyingPower = numericMoney(control.buyingPowerDollars ?? broker.buyingPower) ?? 0;
-  const equity = numericMoney(broker.accountValue) ?? positionValue + buyingPower;
+  const buyingPower = numericMoney(control.buyingPowerDollars ?? broker.buyingPower);
+  const cash = numericMoney(control.cashDollars ?? broker.cash);
+  const stocksValue = numericMoney(control.equityValueDollars) ?? positionValue;
+  const pendingDeposits = numericMoney(control.pendingDepositsDollars);
+  const unsettledFunds = numericMoney(control.unsettledFundsDollars);
+  const equity = numericMoney(control.accountValueDollars ?? broker.accountValue) ?? positionValue + (cash ?? buyingPower ?? 0);
   const deployed = numericMoney(capital.deployedDollars) ?? positionValue;
   const maxDeployed = numericMoney(capital.maxDeployedDollars ?? guardrails.maxTotalDollars) ?? 0;
   const utilization = maxDeployed > 0 ? Math.max(0, Math.min(100, (deployed / maxDeployed) * 100)) : 0;
-  const dayPnl = numericMoney(capital.dayPnlDollars ?? broker.dayPnlDollars);
   const accountBand = $("#overviewAccountBand");
   accountBand.dataset.status = control.authenticationVerified ? "live" : "offline";
   $("#overviewEquity").textContent = formatMoney(equity);
-  $("#overviewAccountMeta").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"} · ${control.snapshotUpdatedAt ? formatTime(control.snapshotUpdatedAt) : "awaiting snapshot"}`;
+  $("#overviewAccountMeta").textContent = `Official Robinhood total · ${positions.length} position${positions.length === 1 ? "" : "s"} · ${control.snapshotUpdatedAt ? formatTime(control.snapshotUpdatedAt) : "awaiting snapshot"}`;
   $("#overviewAccountTape").innerHTML = [
-    ["Buying power", formatMoney(buyingPower), ""],
-    ["Invested", formatMoney(deployed), ""],
-    ["Day P&L", dayPnl === null ? "—" : formatMoney(dayPnl), dayPnl === null ? "" : dayPnl < 0 ? "negative" : dayPnl > 0 ? "positive" : ""],
+    ["Buying power", buyingPower === null ? "—" : formatMoney(buyingPower), ""],
+    ["Cash", cash === null ? "—" : formatMoney(cash), ""],
+    ["Stocks", formatMoney(stocksValue), ""],
+    ["Pending", pendingDeposits === null ? "—" : formatMoney(pendingDeposits), ""],
+    ["Unsettled", unsettledFunds === null ? "—" : formatMoney(unsettledFunds), ""],
     ["Open orders", String(control.openOrderCount || 0), ""],
   ].map(([label, value, className]) => `<span><small>${escapeHtml(label)}</small><strong class="${className}">${escapeHtml(value)}</strong></span>`).join("");
 
@@ -305,7 +310,7 @@ function renderOverviewDashboard() {
     ["Position cap", formatMoney(capital.maxPositionDollars)],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
   const primaryBlocker = control.blockers?.[0];
-  const buyingPowerBlocked = /buying power|settled/i.test(primaryBlocker || "") || buyingPower <= 0;
+  const buyingPowerBlocked = /buying power|settled/i.test(primaryBlocker || "") || buyingPower === null || buyingPower <= 0;
   const action = $("#overviewAction");
   action.dataset.status = primaryBlocker ? "blocked" : "ready";
   action.innerHTML = primaryBlocker
@@ -657,7 +662,9 @@ function renderBrokerControl() {
   $("#orderKillSwitch").textContent = control.buyReady ? "Ready" : control.authenticationVerified ? "Buys paused" : "Offline";
   $("#orderKillSwitch").className = control.killSwitchActive ? "danger-copy" : "ready-copy";
   $("#tradeAccountMetrics").innerHTML = [
-    ["Buying power", formatMoney(control.buyingPowerDollars)],
+    ["Buying power", control.buyingPowerDollars === null || control.buyingPowerDollars === undefined ? "—" : formatMoney(control.buyingPowerDollars)],
+    ["Cash", control.cashDollars === null || control.cashDollars === undefined ? "—" : formatMoney(control.cashDollars)],
+    ["Account value", control.accountValueDollars === null || control.accountValueDollars === undefined ? "—" : formatMoney(control.accountValueDollars)],
     ["Positions", control.positions?.length || 0],
     ["Open orders", control.openOrderCount || 0],
   ].map(([label, value]) => `<span class="trade-account-stat"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");

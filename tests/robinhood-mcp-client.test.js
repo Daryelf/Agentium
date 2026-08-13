@@ -12,6 +12,8 @@ const {
   createRobinhoodMcpClient,
   detectCodexRobinhoodRegistration,
   identifyAgenticAccount,
+  normalizePortfolio,
+  normalizeQuotes,
   parseMcpPayload,
 } = require("../services/robinhood-mcp-client");
 
@@ -104,11 +106,28 @@ function fakeRobinhood(options = {}) {
     if (name === "get_accounts") return mcpResult(body.id, toolResult({ accounts: [{ account_number: "12345678", account_type: "Agentic Trading" }, { account_number: "87654321", account_type: "Individual" }] }));
     if (name === "get_portfolio") {
       assert.equal(args.account_number, "12345678");
+      if (options.officialPortfolioShape) return mcpResult(body.id, toolResult({
+        data: {
+          total_value: "67.82407991",
+          equity_value: "17.82407991",
+          cash: "50",
+          pending_deposits: "0",
+          buying_power: { buying_power: "50.0000", unleveraged_buying_power: "50.0000" },
+        },
+      }));
       return mcpResult(body.id, toolResult({ portfolio_value: "100.00", buying_power: "50.00", cash: "50.00", day_pnl: "1.25", day_pnl_pct: "0.0125" }));
     }
     if (name === "get_equity_positions") return mcpResult(body.id, toolResult({ positions: options.positions || [{ symbol: "AAPL", quantity: "1", shares_available_for_sells: "1", current_price: "100" }] }));
     if (name === "get_equity_orders") return mcpResult(body.id, toolResult({ orders: placed ? [{ order_id: "rh-order-1", ref_id: "one-use-ref", symbol: "AAPL", side: "buy", state: "queued", dollar_amount: "5.00" }] : [] }));
     if (name === "get_equity_quotes") {
+      if (options.officialQuoteShape) return mcpResult(body.id, toolResult({
+        data: {
+          results: args.symbols.map((symbol) => ({
+            quote: { symbol, last_trade_price: "142.22", bid_price: "142.20", ask_price: "142.24" },
+            close: { symbol, price: "146.15" },
+          })),
+        },
+      }));
       if (options.scalarQuotes) {
         assert.ok(args.symbol);
         return mcpResult(body.id, toolResult({ symbol: args.symbol, price: String(options.quotePrices?.[args.symbol] ?? options.quotePrice ?? 100.5) }));
@@ -131,6 +150,36 @@ function fakeRobinhood(options = {}) {
 
   return { fetchImpl, calls };
 }
+
+test("official nested portfolio dollars and live quotes normalize without falling back to zero or prior close", () => {
+  const portfolio = normalizePortfolio({
+    data: {
+      total_value: "67.82407991",
+      equity_value: "17.82407991",
+      options_value: "0",
+      crypto_value: "0",
+      cash: "50",
+      pending_deposits: "0",
+      buying_power: { buying_power: "50.0000", unleveraged_buying_power: "50.0000" },
+    },
+  }, { unsettled_funds: "0.0000" });
+  assert.deepEqual(portfolio, {
+    accountValue: 67.82407991,
+    equityValue: 17.82407991,
+    optionsValue: 0,
+    cryptoValue: 0,
+    cash: 50,
+    buyingPower: 50,
+    pendingDeposits: 0,
+    unsettledFunds: 0,
+    dayPnlDollars: null,
+    dayPnlPct: null,
+  });
+  assert.deepEqual(normalizeQuotes({ data: { results: [{
+    quote: { symbol: "SPCX", last_trade_price: "142.22" },
+    close: { symbol: "SPCX", price: "146.15" },
+  }] } }), { SPCX: 142.22 });
+});
 
 test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliation work without exposing tokens", async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-test-"));
@@ -231,6 +280,29 @@ test("scalar quote schemas refresh every owned position instead of silently pric
     return JSON.parse(call.init.body || "{}").params?.name === "get_equity_quotes";
   });
   assert.equal(quoteCalls.length, 2);
+});
+
+test("live broker snapshot exposes every official account balance and prefers the live trade price", async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-official-shape-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let stored = null;
+  const tokenStore = { ready: () => true, load: () => stored, save: (value) => { stored = structuredClone(value); }, clear: () => { stored = null; } };
+  const fake = fakeRobinhood({
+    officialPortfolioShape: true,
+    officialQuoteShape: true,
+    positions: [{ symbol: "SPCX", quantity: "0.125619", shares_available_for_sells: "0.125619" }],
+  });
+  const client = createRobinhoodMcpClient({ dataDir, tokenStore, fetchImpl: fake.fetchImpl, now: () => new Date("2026-08-10T17:00:00.000Z") });
+  const started = await client.beginAuthorization({ redirectUri: "http://127.0.0.1:5173/api/stock-office/robinhood/oauth/callback", approvalId: "approval-connect" });
+  await client.completeAuthorization({ state: new URL(started.authorizationUrl).searchParams.get("state"), code: "oauth-code" });
+  const snapshot = await client.refreshBrokerSnapshot();
+
+  assert.equal(snapshot.accountValue, "$67.82");
+  assert.equal(snapshot.buyingPower, "$50.00");
+  assert.equal(snapshot.cash, "$50.00");
+  assert.equal(snapshot.equityValue, 17.82407991);
+  assert.equal(snapshot.pendingDeposits, 0);
+  assert.equal(snapshot.positions[0].currentPrice, 142.22);
 });
 
 test("live quote drift stops before Robinhood review or placement", async (t) => {

@@ -66,7 +66,12 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(script, /renderOverviewDashboard/);
   assert.match(script, /renderMarketWorkers/);
   assert.match(script, /marketWorkers/);
-  assert.match(script, /Day P&L/);
+  assert.match(script, /Official Robinhood total/);
+  assert.match(script, /\["Buying power"/);
+  assert.match(script, /\["Cash"/);
+  assert.match(script, /\["Stocks"/);
+  assert.match(script, /\["Pending"/);
+  assert.match(script, /\["Unsettled"/);
   assert.match(html, /Simulation and learning/);
   assert.match(html, /Paper ledger only/);
   assert.match(script, /shadowPortfolio/);

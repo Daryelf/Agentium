@@ -1662,8 +1662,12 @@ function renderRefreshFeedback(refresh) {
         : refresh.status === "failed"
           ? "Market data update could not start"
           : "Local reports rescanned";
-  const issue = refresh.errors?.[0] || refresh.warnings?.[0];
-  $("#refreshFeedbackMessage").textContent = issue || refresh.message || "Refresh status updated.";
+  const issue = ["failed", "partial"].includes(refresh.status)
+    ? refresh.errors?.[0] || refresh.warnings?.[0]
+    : "";
+  $("#refreshFeedbackMessage").textContent = refresh.status === "success"
+    ? "Latest available prices, rankings, and Mirror decisions loaded. Automatic monitoring continues."
+    : issue || refresh.message || "Market data status updated.";
   $("#refreshFeedbackTime").textContent = refresh.completedAt ? formatTime(refresh.completedAt) : "Working now";
 }
 

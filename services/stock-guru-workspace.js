@@ -3,7 +3,7 @@ const path = require("node:path");
 
 const SETTINGS_FILE = "stock-guru-workspace.json";
 const RUNTIME_FOLDER = "stock-guru-runtime";
-const COPY_EXCLUDES = new Set([".DS_Store", ".git", ".pytest_cache", "__pycache__"]);
+const COPY_EXCLUDES = new Set([".DS_Store", ".git", ".pytest_cache", "__pycache__", ".venv"]);
 
 function isStockGuruWorkspace(candidatePath, fsImpl = fs) {
   if (!candidatePath) return false;
@@ -85,6 +85,9 @@ function linkPythonEnvironment(sourcePath, runtimePath, fsImpl = fs) {
   const sourceEnvironment = path.join(sourcePath, ".venv");
   const runtimeEnvironment = path.join(runtimePath, ".venv");
   if (!fsImpl.existsSync(path.join(sourceEnvironment, "bin", "python"))) return false;
+  if (path.resolve(sourceEnvironment) === path.resolve(runtimeEnvironment)) {
+    return true;
+  }
   try {
     const current = fsImpl.lstatSync(runtimeEnvironment);
     if (current.isSymbolicLink() && path.resolve(path.dirname(runtimeEnvironment), fsImpl.readlinkSync(runtimeEnvironment)) === sourceEnvironment) return true;
@@ -104,7 +107,9 @@ function reuseExistingRuntime(sourcePath, userDataPath, fsImpl = fs) {
   } catch (_error) {
     return null;
   }
-  const pythonLinked = linkPythonEnvironment(sourcePath, runtimePath, fsImpl);
+  const pythonLinked = sourcePath === runtimePath
+    ? fsImpl.existsSync(path.join(sourcePath, ".venv", "bin", "python"))
+    : linkPythonEnvironment(sourcePath, runtimePath, fsImpl);
   return {
     path: runtimePath,
     sourcePath,

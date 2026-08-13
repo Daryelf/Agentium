@@ -120,3 +120,19 @@ test("missing workspace fails closed and preserves zero live orders", async () =
   assert.match(result.errors[0], /not connected/i);
   assert.throws(() => validateWorkspace("/missing/stock-guru-workspace"), /not connected/i);
 });
+
+test("managed runtime falls back to the connected source Python environment", (t) => {
+  const stockRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-"));
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-source-"));
+  t.after(() => fs.rmSync(stockRoot, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(sourceRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(stockRoot, "src", "stock_guru"), { recursive: true });
+  fs.mkdirSync(path.join(sourceRoot, ".venv", "bin"), { recursive: true });
+  const sourcePython = path.join(sourceRoot, ".venv", "bin", "python");
+  fs.writeFileSync(sourcePython, "python placeholder");
+
+  const workspace = validateWorkspace(stockRoot, fs, sourceRoot);
+
+  assert.equal(workspace.stockRoot, stockRoot);
+  assert.equal(workspace.executable, sourcePython);
+});

@@ -96,6 +96,21 @@ test("managed runtime copies reports while linking the existing Python environme
   assert.match(fs.readFileSync(generatedReport, "utf8"), /NET/);
 });
 
+test("managed runtime never copies the portable virtual environment into local data", (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-exclude-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const sourceRoot = createWorkspace(path.join(tempRoot, "portable"));
+  fs.mkdirSync(path.join(sourceRoot, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, ".venv", "bin", "python"), "python placeholder");
+  fs.writeFileSync(path.join(sourceRoot, ".venv", "large-private-build-artifact"), "must not be copied");
+  const runtime = materializeStockGuruRuntime({ sourcePath: sourceRoot, userDataPath: path.join(tempRoot, "user-data") });
+
+  assert.equal(runtime.pythonLinked, true);
+  assert.equal(fs.lstatSync(path.join(runtime.path, ".venv")).isSymbolicLink(), true);
+  assert.equal(fs.existsSync(path.join(runtime.path, ".venv", "large-private-build-artifact")), true);
+  assert.equal(fs.readlinkSync(path.join(runtime.path, ".venv")), path.join(sourceRoot, ".venv"));
+});
+
 test("server startup reuses a verified managed runtime without rescanning the portable source tree", (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-reuse-"));
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));

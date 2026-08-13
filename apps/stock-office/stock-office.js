@@ -1656,11 +1656,11 @@ function renderRefreshFeedback(refresh) {
   $("#refreshFeedbackTitle").textContent = refresh.status === "running"
     ? `Refreshing: ${String(refresh.stage || "starting").replaceAll("_", " ")}`
     : refresh.status === "success"
-      ? "Stock Office refreshed"
+      ? "Market data updated"
       : refresh.status === "partial"
-        ? "Refresh completed with warnings"
+        ? "Market data updated with warnings"
         : refresh.status === "failed"
-          ? "Refresh could not start"
+          ? "Market data update could not start"
           : "Local reports rescanned";
   const issue = refresh.errors?.[0] || refresh.warnings?.[0];
   $("#refreshFeedbackMessage").textContent = issue || refresh.message || "Refresh status updated.";
@@ -1674,7 +1674,7 @@ async function pollRefreshStatus() {
     renderIntelligenceMonitor();
     renderRefreshFeedback(payload.refresh);
     const stage = String(payload.refresh?.stage || "refresh").replaceAll("_", " ");
-    $("#syncButton").textContent = payload.refresh?.status === "running" ? `Refreshing: ${stage}` : "Refresh";
+    $("#syncButton").textContent = payload.refresh?.status === "running" ? `Updating: ${stage}` : "Update market data";
   } catch (_error) {}
 }
 
@@ -1682,12 +1682,12 @@ async function syncLocalFiles() {
   const button = $("#syncButton");
   const mirrorButton = $("#mirrorRefreshButton");
   button.disabled = true;
-  button.textContent = "Starting refresh...";
+  button.textContent = "Starting market update...";
   if (mirrorButton) {
     mirrorButton.disabled = true;
     mirrorButton.textContent = "Scanning…";
   }
-  renderRefreshFeedback({ status: "running", stage: "preflight", message: "Connecting to the local evaluator...", startedAt: new Date().toISOString() });
+  renderRefreshFeedback({ status: "running", stage: "preflight", message: "Checking the local market scanner...", startedAt: new Date().toISOString() });
   const pollTimer = window.setInterval(pollRefreshStatus, 800);
   try {
     const payload = await api("/api/stock-office/sync", { method: "POST", body: "{}" });
@@ -1700,7 +1700,7 @@ async function syncLocalFiles() {
   } finally {
     window.clearInterval(pollTimer);
     button.disabled = false;
-    button.textContent = "Refresh";
+    button.textContent = "Update market data";
     if (mirrorButton) {
       mirrorButton.disabled = false;
       mirrorButton.textContent = "Run scan";

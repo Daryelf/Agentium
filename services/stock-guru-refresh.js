@@ -33,16 +33,17 @@ function enabledSecWatchlistEntries(stockRoot, fsImpl = fs, section = "sec_form4
   }
 }
 
-function validateWorkspace(stockRoot, fsImpl = fs) {
+function validateWorkspace(stockRoot, fsImpl = fs, sourcePath = "") {
   const resolved = path.resolve(String(stockRoot || ""));
-  const executable = path.join(resolved, ".venv", "bin", "python");
   const packageRoot = path.join(resolved, "src", "stock_guru");
   if (!fsImpl.existsSync(resolved) || !fsImpl.existsSync(packageRoot)) {
     throw new Error("Stock Guru workspace is not connected.");
   }
-  if (!fsImpl.existsSync(executable)) {
-    throw new Error("Stock Guru Python environment is missing. Rebuild the local .venv before refreshing.");
-  }
+  const executable = [resolved, sourcePath]
+    .filter(Boolean)
+    .map((candidate) => path.join(path.resolve(String(candidate)), ".venv", "bin", "python"))
+    .find((candidate) => fsImpl.existsSync(candidate));
+  if (!executable) throw new Error("The market scanner runtime is not ready. Reconnect the Stock Guru workspace, then try again.");
   return { stockRoot: resolved, executable };
 }
 
@@ -155,7 +156,7 @@ function createStockGuruRefreshManager(options = {}) {
     };
 
     try {
-      const workspace = validateWorkspace(stockRoot, fsImpl);
+      const workspace = validateWorkspace(stockRoot, fsImpl, environment.STOCK_GURU_SOURCE_PATH);
       if (environment.STOCK_GURU_REFRESH_DISABLED === "1") {
         return update({
           status: "skipped",

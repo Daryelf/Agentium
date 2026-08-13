@@ -10,7 +10,7 @@ test("Stock Office UI exposes a real refresh outcome and useful filter feedback"
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
-  assert.match(html, /id="syncButton"[^>]*>Refresh<\/button>/);
+  assert.match(html, /id="syncButton"[^>]*>Update market data<\/button>/);
   assert.match(html, /Filter records/);
   assert.match(html, /refreshFeedback[^]*aria-live="polite"/);
   assert.match(html, /filterFeedback[^]*aria-live="polite"/);

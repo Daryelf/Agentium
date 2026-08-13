@@ -131,6 +131,15 @@ function materializeStockGuruRuntime(options = {}) {
     const existingRuntime = reuseExistingRuntime(sourcePath, userDataPath, fsImpl);
     if (existingRuntime) return existingRuntime;
   }
+  if (sourcePath === runtimePath) {
+    return {
+      path: sourcePath,
+      sourcePath,
+      available: true,
+      pythonLinked: fsImpl.existsSync(path.join(sourcePath, ".venv", "bin", "python")),
+      reusedExisting: true,
+    };
+  }
   fsImpl.mkdirSync(runtimePath, { recursive: true });
   for (const entry of ["src", "config", "data", "reports", "bin", "pyproject.toml", "requirements.txt"]) {
     const sourceEntry = path.join(sourcePath, entry);

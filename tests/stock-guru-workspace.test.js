@@ -5,6 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  RUNTIME_FOLDER,
   SETTINGS_FILE,
   isStockGuruWorkspace,
   materializeStockGuruRuntime,
@@ -109,6 +110,26 @@ test("managed runtime never copies the portable virtual environment into local d
   assert.equal(fs.lstatSync(path.join(runtime.path, ".venv")).isSymbolicLink(), true);
   assert.equal(fs.existsSync(path.join(runtime.path, ".venv", "large-private-build-artifact")), true);
   assert.equal(fs.readlinkSync(path.join(runtime.path, ".venv")), path.join(sourceRoot, ".venv"));
+});
+
+test("managed runtime handles an already-selected runtime path without self-copying", (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-self-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const userDataPath = path.join(tempRoot, "user-data");
+  const runtimeRoot = path.join(userDataPath, RUNTIME_FOLDER);
+  fs.mkdirSync(path.join(runtimeRoot, "config"), { recursive: true });
+  fs.mkdirSync(path.join(runtimeRoot, "reports"), { recursive: true });
+  fs.mkdirSync(path.join(runtimeRoot, "src", "stock_guru"), { recursive: true });
+  fs.mkdirSync(path.join(runtimeRoot, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(runtimeRoot, "bin", "stock-guru"), "#!/bin/sh\n");
+  fs.mkdirSync(path.join(runtimeRoot, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(runtimeRoot, ".venv", "bin", "python"), "python placeholder");
+
+  const runtime = materializeStockGuruRuntime({ sourcePath: runtimeRoot, userDataPath });
+
+  assert.equal(runtime.path, runtimeRoot);
+  assert.equal(runtime.reusedExisting, true);
+  assert.equal(runtime.pythonLinked, true);
 });
 
 test("server startup reuses a verified managed runtime without rescanning the portable source tree", (t) => {

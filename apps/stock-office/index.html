@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260814-4" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260814-5" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260814-4" defer></script>
+    <script src="./stock-office.js?v=20260814-5" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -53,16 +53,20 @@
             <div id="overviewAccountTape" class="overview-account-tape"></div>
             <button class="quiet-button" type="button" data-quick-order>New order</button>
           </section>
-          <section class="overview-operations-board">
+          <section id="overviewOperationsBoard" class="overview-operations-board">
             <div class="overview-operations-head">
               <div><span>Live operations</span><h2>Market workers</h2></div>
               <div class="overview-operations-status">
                 <strong id="marketSessionPill">Checking market</strong>
                 <button id="notificationStatusPill" class="status-pill muted" type="button" data-open-stock-view="sources">Telegram off</button>
+                <button id="operationsToggle" class="operations-toggle" type="button" aria-expanded="true" aria-controls="overviewOperationsBody">Minimize</button>
               </div>
             </div>
-            <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
-            <div id="marketWorkers" class="overview-worker-list"></div>
+            <div id="overviewOperationsSummary" class="overview-operations-summary" hidden></div>
+            <div id="overviewOperationsBody">
+              <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
+              <div id="marketWorkers" class="overview-worker-list"></div>
+            </div>
           </section>
           <section class="overview-intelligence-rail" aria-label="Research memory and system health">
             <div class="overview-intelligence-state">

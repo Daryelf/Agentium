@@ -32,10 +32,17 @@ const state = {
   dispatchHandoff: null,
   brokerPolling: false,
   livePortfolioPolling: false,
+  operationsCollapsed: false,
   activeView: "overview",
 };
 
 const $ = (selector) => document.querySelector(selector);
+
+try {
+  state.operationsCollapsed = window.localStorage.getItem("stock-office:operations-collapsed") === "1";
+} catch {
+  state.operationsCollapsed = false;
+}
 
 const STOCK_VIEWS = {
   overview: ["Stock workspace", "Overview"],
@@ -223,6 +230,31 @@ function renderMarketWorkers() {
   const marketPill = $("#marketSessionPill");
   marketPill.textContent = session.label || "Market schedule unavailable";
   marketPill.dataset.status = session.status || "closed";
+  const board = $("#overviewOperationsBoard");
+  const body = $("#overviewOperationsBody");
+  const summary = $("#overviewOperationsSummary");
+  const toggle = $("#operationsToggle");
+  const counts = workers.reduce((output, worker) => {
+    const key = ["working", "watching", "blocked"].includes(worker.status) ? worker.status : "waiting";
+    output[key] = (output[key] || 0) + 1;
+    return output;
+  }, { working: 0, watching: 0, blocked: 0, waiting: 0 });
+  board?.classList.toggle("is-collapsed", state.operationsCollapsed);
+  if (body) body.hidden = state.operationsCollapsed;
+  if (summary) {
+    summary.hidden = !state.operationsCollapsed;
+    summary.innerHTML = [
+      ["Working", counts.working],
+      ["Watching", counts.watching],
+      ["Blocked", counts.blocked],
+      ["Waiting", counts.waiting],
+    ].filter(([, value]) => value > 0).map(([label, value]) => `<span data-status="${escapeHtml(label.toLowerCase())}"><i></i><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></span>`).join("")
+      || `<span data-status="waiting"><i></i><strong>0</strong><small>Workers loaded</small></span>`;
+  }
+  if (toggle) {
+    toggle.textContent = state.operationsCollapsed ? "Expand" : "Minimize";
+    toggle.setAttribute("aria-expanded", String(!state.operationsCollapsed));
+  }
   $("#marketWorkers").innerHTML = workers.length
     ? workers.map((worker) => {
         const metrics = Array.isArray(worker.metrics) ? worker.metrics : [];
@@ -242,6 +274,16 @@ function renderMarketWorkers() {
         </article>`;
       }).join("")
     : `<div class="overview-empty-row"><strong>Worker status unavailable</strong><span>Refresh Stock Office to read the live scheduler.</span></div>`;
+}
+
+function toggleMarketWorkers() {
+  state.operationsCollapsed = !state.operationsCollapsed;
+  try {
+    window.localStorage.setItem("stock-office:operations-collapsed", state.operationsCollapsed ? "1" : "0");
+  } catch {
+    // The preference is optional; the current session still updates immediately.
+  }
+  renderMarketWorkers();
 }
 
 function renderNotificationStatus() {
@@ -389,6 +431,7 @@ function renderTradeProposals() {
   const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
   const cycle = state.portfolioPlan?.cycle || {};
   const cadenceMinutes = Number(cycle.cadenceMinutes || state.intelligenceScheduler?.activeCadenceMinutes || 5);
+  const decisionCadenceSeconds = Number(cycle.decisionCadenceSeconds || 15);
   const summary = state.portfolioPlan?.summary || {};
   const nextAt = Date.parse(cycle.nextRunAt || "");
   const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
@@ -400,7 +443,7 @@ function renderTradeProposals() {
   const review = cycle.review || {};
   $("#overviewCycleRail").innerHTML = `
     <div class="overview-cycle-clock" data-status="${escapeHtml(cycle.running ? "working" : cycle.session?.regular ? "countdown" : "quiet")}">
-      <i aria-hidden="true"></i><span><small>${escapeHtml(`${cadenceMinutes}-minute scan`)}</small><strong>${escapeHtml(cycleStatus)}</strong></span>
+      <i aria-hidden="true"></i><span><small>${escapeHtml(`${decisionCadenceSeconds}s live checks · ${cadenceMinutes}m data`)}</small><strong>${escapeHtml(cycleStatus)}</strong></span>
     </div>
     <div class="overview-cycle-decisions">
       <span class="sell"><small>SELL</small><strong>${escapeHtml(summary.sells || 0)}</strong></span>
@@ -408,17 +451,24 @@ function renderTradeProposals() {
       <span class="buy"><small>BUY</small><strong>${escapeHtml(summary.buys || 0)}</strong></span>
     </div>
     <div class="overview-cycle-copy"><small>Copy watch</small><strong>${escapeHtml(summary.copyWatchers || 0)} people · ${escapeHtml(summary.copySignalsObserved || 0)} signals</strong></div>
-    <div class="overview-cycle-result"><small>Last cycle</small><strong>${escapeHtml(review.lastMessage || "Workers continue automatically while the market is open.")}</strong></div>`;
+    <div class="overview-cycle-result"><small>Last decision check</small><strong>${escapeHtml(review.lastMessage || "Live readiness checks run automatically while the market is open.")}</strong></div>`;
   const decisions = new Set((state.proposalDecisions || state.portfolioPlan?.decisions || []).filter((item) => item.decision === "declined").map((item) => item.proposalId));
   const current = proposals.filter((proposal) => !decisions.has(proposal.id));
   const realOrderStates = new Set(["awaiting_human_gate", "approved", "dispatch_claimed", "dispatched", "filled"]);
-  const visible = current.filter((proposal) => (
-    ["BUY", "SELL"].includes(proposal.side)
-    && (proposal.draftEligible || realOrderStates.has(proposal.reviewState))
-  )).slice(0, 4);
-  const liveReady = visible.filter((proposal) => proposal.draftEligible).length;
-  const pendingGate = visible.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
-  const researchCandidates = current.filter((proposal) => ["BUY", "SELL"].includes(proposal.side) && !proposal.draftEligible && !realOrderStates.has(proposal.reviewState));
+  const actionCandidates = current.filter((proposal) => ["BUY", "SELL"].includes(proposal.side));
+  const proposalPriority = (proposal) => {
+    if (proposal.reviewState === "approved") return 0;
+    if (proposal.reviewState === "awaiting_human_gate") return 1;
+    if (proposal.draftEligible) return 2;
+    if (proposal.side === "SELL") return 3;
+    return 4;
+  };
+  const visible = [...actionCandidates]
+    .sort((a, b) => proposalPriority(a) - proposalPriority(b) || Number(b.rankingScore || b.research?.score || 0) - Number(a.rankingScore || a.research?.score || 0))
+    .slice(0, 12);
+  const liveReady = actionCandidates.filter((proposal) => proposal.draftEligible).length;
+  const pendingGate = actionCandidates.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
+  const researchCandidates = actionCandidates.filter((proposal) => !proposal.draftEligible && !realOrderStates.has(proposal.reviewState));
   const executionLive = String(state.brokerControl?.executionMode || "PAPER").toUpperCase() === "LIVE";
   const accountVerified = state.brokerControl?.authenticationVerified === true;
   const buyingPower = Number(state.brokerControl?.buyingPowerDollars);
@@ -426,7 +476,7 @@ function renderTradeProposals() {
     ? `${pendingGate} in Human Gate`
     : liveReady
       ? `${liveReady} ready for Human Gate`
-      : "0 real orders ready";
+      : `${researchCandidates.length} under review`;
   $("#overviewTradeReadiness").innerHTML = `
     <div class="overview-readiness-state ${executionLive ? "ready" : "waiting"}">
       <i aria-hidden="true"></i><span><small>REAL ORDERS</small><strong>${escapeHtml(executionLive ? "Enabled with Human Gate" : "Live setup required")}</strong></span>
@@ -436,7 +486,7 @@ function renderTradeProposals() {
     </div>
     <div class="overview-readiness-metric"><small>BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
     <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
-      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : `${researchCandidates.length} still in research`)}</strong></span>
+      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : `${researchCandidates.length} visible for review`)}</strong></span>
     </div>
     <button class="secondary" type="button" data-quick-order>${escapeHtml(executionLive && accountVerified ? "New real order" : "Check new order")}</button>`;
   $("#overviewProposalList").innerHTML = visible.length
@@ -450,9 +500,13 @@ function renderTradeProposals() {
         const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : "blocked");
         const waitingGate = reviewState === "awaiting_human_gate";
         const approved = reviewState === "approved";
+        const liveStateClass = approved || waitingGate || proposal.draftEligible ? "ready" : proposal.monitoring ? "monitoring" : "blocked";
+        const blocker = Array.isArray(proposal.blockers) && proposal.blockers.length
+          ? proposal.blockers[0]
+          : "Current live-order checks have not all passed.";
         const reviewExpiresAt = Date.parse(proposal.reviewExpiresAt || "");
         const approvalRemaining = Number.isFinite(reviewExpiresAt) ? Math.max(0, Math.ceil((reviewExpiresAt - Date.now()) / 1_000)) : null;
-        return `<article class="overview-proposal ready" data-proposal-id="${escapeHtml(proposal.id)}">
+        return `<article class="overview-proposal ${escapeHtml(liveStateClass)}" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
@@ -489,11 +543,13 @@ function renderTradeProposals() {
                   ? `<span class="proposal-action-status pending">Gate pending${approvalRemaining === null ? "" : ` · ${escapeHtml(formatCountdown(approvalRemaining))}`}</span>`
                   : proposal.draftEligible
                     ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send ${escapeHtml(proposal.side)} ${escapeHtml(formatMoney(proposal.requestedDollars))} to Human Gate</button>`
-                    : `<span class="proposal-action-status waiting">Live checks changed</span>`}
+                    : `<button type="button" data-proposal-review="${escapeHtml(proposal.id)}">Review &amp; recheck</button>`}
+            ${approved || waitingGate ? "" : `<button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Dismiss</button>`}
+            ${proposal.draftEligible || approved || waitingGate ? "" : `<small>${escapeHtml(blocker)}</small>`}
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row overview-live-empty"><strong>No real order passes every check yet</strong><span>${escapeHtml(researchCandidates.length ? `${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still being evaluated. Open Simulation to test them without a broker call.` : "Research is continuing until a BUY or SELL passes every live check.")}</span><button type="button" data-quick-order>Enter a real order</button><button class="secondary" type="button" data-open-stock-view="portfolio">Open Simulation</button></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No BUY or SELL candidate is loaded yet</strong><span>Research continues automatically. Any candidate appears here immediately with its exact live-order status.</span><button type="button" data-quick-order>Enter a real order</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {
@@ -1520,6 +1576,16 @@ function openQuickOrder(symbol = "", side = "BUY", dollars = null) {
   else dialog.setAttribute("open", "");
 }
 
+function reviewOverviewProposal(proposalId) {
+  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
+  if (!proposal) return;
+  openQuickOrder(proposal.symbol, proposal.side, proposal.requestedDollars);
+  const blocker = Array.isArray(proposal.blockers) ? proposal.blockers[0] : "";
+  $("#quickOrderFeedback").textContent = blocker
+    ? `Current blocker: ${blocker} Run live checks again to verify whether it changed.`
+    : "Run live checks to confirm this candidate before it can enter Human Gate.";
+}
+
 async function submitQuickOrder(event) {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button[type=submit]");
@@ -2184,6 +2250,8 @@ document.addEventListener("click", (event) => {
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
   if (proposalApprove && !proposalApprove.disabled) approveOverviewProposal(proposalApprove.dataset.proposalApprove);
+  const proposalReview = event.target.closest("[data-proposal-review]");
+  if (proposalReview && !proposalReview.disabled) reviewOverviewProposal(proposalReview.dataset.proposalReview);
   const mirrorApprove = event.target.closest("[data-mirror-approve]");
   if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");
@@ -2197,6 +2265,7 @@ document.addEventListener("click", (event) => {
   if (opportunityDetails) opportunityDrawer(opportunityDetails.dataset.opportunityDrawer);
   const workerDetails = event.target.closest("[data-worker-drawer]");
   if (workerDetails) workerDrawer(workerDetails.dataset.workerDrawer);
+  if (event.target.closest("#operationsToggle")) toggleMarketWorkers();
   const reportDetails = event.target.closest("[data-report-drawer]");
   if (reportDetails) reportDrawer(reportDetails.dataset.reportDrawer);
   if (event.target.closest("#telegramApprovalButton")) requestTelegramApproval();

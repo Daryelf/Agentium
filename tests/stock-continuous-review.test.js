@@ -25,7 +25,7 @@ test("continuous review view exposes scheduler countdown and exact staged state"
       proposals: [{ id: "proposal-1", side: "SELL", symbol: "NET", draftFingerprint, draftEligible: true }],
     },
     scheduler: { enabled: true, activeCadenceMinutes: 15, nextRunAt: "2026-08-12T14:15:00.000Z" },
-    review: { lastOutcome: "waiting_for_human_gate" },
+    review: { lastOutcome: "waiting_for_human_gate", decisionCadenceSeconds: 15, reviewTrigger: "live_readiness" },
     tradeDrafts: [{ id: "draft-1", fingerprint: draftFingerprint, approvalId: "approval-1", status: "awaiting_human_gate" }],
   }, { now: "2026-08-12T14:05:00.000Z" });
 
@@ -33,6 +33,7 @@ test("continuous review view exposes scheduler countdown and exact staged state"
   assert.equal(output.cycle.buyCount, 2);
   assert.equal(output.cycle.holdCount, 1);
   assert.equal(output.cycle.sellCount, 1);
+  assert.equal(output.cycle.decisionCadenceSeconds, 15);
   assert.equal(output.proposals[0].reviewState, "awaiting_human_gate");
   assert.equal(output.proposals[0].reviewDraftId, "draft-1");
 });

@@ -2631,6 +2631,31 @@ select {
 .overview-operations-status > strong[data-status="premarket"],
 .overview-operations-status > strong[data-status="afterhours"] { color: #67e8f9; }
 .overview-operations-status .status-pill { min-height: 28px; padding: 0 10px; font-size: 0.58rem; }
+.overview-operations-status .operations-toggle {
+  min-height: 28px;
+  padding: 0 10px;
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #b8c7da;
+  background: rgba(30, 41, 59, 0.48);
+  font-size: 0.58rem;
+}
+
+.overview-operations-board.is-collapsed .overview-operations-head { border-bottom: 0; }
+.overview-operations-summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px 10px;
+}
+.overview-operations-summary[hidden] { display: none; }
+.overview-operations-summary > span { display: grid; grid-template-columns: 7px auto auto; align-items: center; gap: 6px; }
+.overview-operations-summary i { width: 6px; height: 6px; border-radius: 99px; background: #64748b; }
+.overview-operations-summary [data-status="working"] i { background: #22d3ee; }
+.overview-operations-summary [data-status="watching"] i { background: #34d399; }
+.overview-operations-summary [data-status="blocked"] i { background: #fbbf24; }
+.overview-operations-summary strong { color: #f8fafc; font-size: 0.7rem; }
+.overview-operations-summary small { color: #7f8da3; font-size: 0.58rem; }
 
 .overview-worker-columns,
 .overview-worker-row {
@@ -2951,6 +2976,13 @@ select {
 .overview-proposal-actions { grid-column: 4; grid-row: 1 / span 2; width: 154px; display: grid; grid-template-columns: 1fr; gap: 6px; }
 .overview-proposal-actions button { min-height: 32px; padding: 0 8px; border-radius: 8px; font-size: 0.57rem; font-weight: 850; }
 .overview-proposal-actions .secondary { border-color: rgba(148, 163, 184, 0.16); color: #aab7c8; background: rgba(30, 41, 59, 0.55); }
+.overview-proposal-actions small {
+  max-height: 2.7em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 .proposal-action-status {
   min-height: 32px;
   display: grid;

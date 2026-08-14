@@ -54,6 +54,8 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(html, /Best opportunities/);
   assert.match(html, /Market workers/);
   assert.match(html, /id="marketWorkers"/);
+  assert.match(html, /id="operationsToggle"[^>]*>Minimize<\/button>/);
+  assert.match(html, /id="overviewOperationsSummary"/);
   assert.match(html, /Trade risk/);
   assert.match(html, /Daily trades/);
   assert.match(html, /Apply approved limits/);
@@ -127,13 +129,17 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(html, /Company logos provided by Parqet/);
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
+  assert.match(script, /data-proposal-review/);
   assert.doesNotMatch(script, /data-proposal-paper/);
   const overviewRenderer = script.match(/function renderTradeProposals\(\)[\s\S]*?\n\}/)?.[0] || "";
   assert.doesNotMatch(overviewRenderer, /paper-test|data-simulation-test/);
   assert.match(script, /New real order/);
   assert.match(script, /REAL ORDERS/);
   assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
-  assert.match(script, /No real order passes every check yet/);
+  assert.match(script, /visible for review/);
+  assert.match(script, /Review &amp; recheck/);
+  assert.match(script, /Current blocker:/);
+  assert.match(script, /stock-office:operations-collapsed/);
   assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
   assert.match(script, /data-proposal-decline/);
   assert.match(script, /expandedProposalResearch: new Set\(\)/);
@@ -148,6 +154,18 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /Run checks & send to Human Gate/);
   assert.match(html, /id="secIdentityForm"/);
   assert.match(script, /sources\/sec-identity/);
+});
+
+test("Stock Office runs fast local readiness checks between full market-data scans", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(server, /STOCK_GURU_READINESS_INTERVAL_MS/);
+  assert.match(server, /15_000/);
+  assert.match(server, /function runStockReadinessCycle/);
+  assert.match(server, /trigger: "live_readiness"/);
+  assert.match(script, /decisionCadenceSeconds/);
+  assert.match(script, /live checks ·/);
 });
 
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {

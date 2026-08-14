@@ -209,7 +209,7 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
       });
       await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Stock order lifecycle reconciliation failed safely:", error.message));
     }
-    await processStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
+    await runStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
   },
 });
 const robinhoodMcpClient = createRobinhoodMcpClient({
@@ -4015,6 +4015,8 @@ async function processStockContinuousReview(result = {}) {
         ...current.continuousReview,
         lastCycleCompletedAt: completedAt,
         lastEvaluatedAt: now(),
+        reviewTrigger: result.trigger || "market_research",
+        decisionCadenceSeconds: Math.round(stockReadinessIntervalMs() / 1_000),
         ...updates,
       },
     });
@@ -5663,11 +5665,37 @@ function writeStockShadowPortfolio(portfolio) {
 }
 
 let stockSimulationLabState = null;
+let stockContinuousReviewPromise = null;
 
 function simulationInteger(value, fallback, min, max) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function stockReadinessIntervalMs() {
+  return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 15_000, 5_000, 60_000);
+}
+
+async function runStockContinuousReview(result = {}) {
+  if (stockContinuousReviewPromise) return stockContinuousReviewPromise;
+  stockContinuousReviewPromise = processStockContinuousReview(result);
+  try {
+    return await stockContinuousReviewPromise;
+  } finally {
+    stockContinuousReviewPromise = null;
+  }
+}
+
+async function runStockReadinessCycle() {
+  if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+    await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+      stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Fast live-readiness refresh failed; execution remains closed." });
+      return null;
+    });
+    await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Fast Stock order reconciliation failed safely:", error.message));
+  }
+  return runStockContinuousReview({ status: "success", completedAt: now(), trigger: "live_readiness" });
 }
 
 function stockSimulationOptions() {
@@ -7946,5 +7974,10 @@ server.listen(PORT, HOST, () => {
       }
     }, simulationSettings.intervalMs);
     simulationTimer.unref();
+    const readinessTimer = setInterval(() => {
+      runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness cycle failed safely:", error.message));
+    }, stockReadinessIntervalMs());
+    readinessTimer.unref();
+    runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness startup failed safely:", error.message));
   }
 });

@@ -18,6 +18,11 @@ function cleanOutput(value) {
     .slice(-MAX_OUTPUT_CHARS);
 }
 
+function boundedInteger(value, fallback, min, max) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.floor(parsed))) : fallback;
+}
+
 function publicStatus(status) {
   return JSON.parse(JSON.stringify(status));
 }
@@ -68,6 +73,8 @@ function createStockGuruRefreshManager(options = {}) {
   const environment = options.env || process.env;
   const configuredRuntimeRoot = options.runtimeRoot ? path.resolve(String(options.runtimeRoot)) : "";
   const timeoutMs = Math.max(1_000, Number(options.timeoutMs || environment.STOCK_GURU_REFRESH_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+  const scanMaxSymbols = boundedInteger(environment.STOCK_GURU_SCAN_MAX_SYMBOLS, 120, 60, 240);
+  const scanRotateCount = boundedInteger(environment.STOCK_GURU_SCAN_ROTATE_COUNT, 60, 0, scanMaxSymbols);
   let activePromise = null;
   let status = {
     id: null,
@@ -210,8 +217,8 @@ function createStockGuruRefreshManager(options = {}) {
         "evaluate",
         "--cache-first-history",
         "--history-cache-hours", "36",
-        "--max-symbols", "80",
-        "--rotate-count", "40",
+        "--max-symbols", String(scanMaxSymbols),
+        "--rotate-count", String(scanRotateCount),
       ], "evaluate", workspace.stockRoot, runtimeRoot));
 
       const researchSymbols = includeResearch ? researchTickers(runtimeRoot, fsImpl) : [];

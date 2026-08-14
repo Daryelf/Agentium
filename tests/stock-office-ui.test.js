@@ -138,8 +138,9 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
   assert.match(script, /const qualifiedCandidates = actionCandidates\.filter\(\(proposal\) => proposal\.draftEligible \|\| realOrderStates\.has\(proposal\.reviewState\)\)/);
   assert.match(script, /const visible = \[\.\.\.qualifiedCandidates\]/);
-  assert.match(script, /No qualified trade yet/);
-  assert.match(script, /Lower-quality ideas stay in Research/);
+  assert.match(script, /No trade meets \$\{escapeHtml\(requiredScore\)\}\/100 yet/);
+  assert.match(script, /Closest now:/);
+  assert.match(script, /Fresh market scans run about every/);
   assert.doesNotMatch(script, /const visible = \[\.\.\.actionCandidates\]/);
   assert.match(script, /Current blocker:/);
   assert.match(script, /stock-office:operations-collapsed/);

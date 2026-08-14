@@ -52,6 +52,8 @@ test("refresh runs evaluator and guarded mirror plan without shell or broker com
   assert.equal(result.status, "success");
   assert.equal(result.liveOrdersPlaced, 0);
   assert.deepEqual(calls.map((call) => call.args[2]), ["evaluate", "copy-plan"]);
+  const evaluateCall = calls.find((call) => call.args[2] === "evaluate");
+  assert.deepEqual(evaluateCall.args.slice(evaluateCall.args.indexOf("--max-symbols"), evaluateCall.args.indexOf("--max-symbols") + 4), ["--max-symbols", "120", "--rotate-count", "60"]);
   assert.equal(calls.every((call) => call.options.shell === false), true);
   assert.equal(calls.every((call) => call.options.cwd === stockRoot), true);
   assert.equal(JSON.stringify(calls).match(/order|broker|transfer|robinhood/gi), null);

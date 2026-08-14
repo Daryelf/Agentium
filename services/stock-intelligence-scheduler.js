@@ -3,7 +3,7 @@ const path = require("node:path");
 
 const VERSION = 1;
 const MAX_HISTORY = 40;
-const DEFAULT_ACTIVE_MINUTES = 5;
+const DEFAULT_ACTIVE_MINUTES = 1;
 const DEFAULT_QUIET_MINUTES = 240;
 const DEFAULT_FORM4_MINUTES = 60;
 const DEFAULT_13F_MINUTES = 24 * 60;
@@ -79,7 +79,7 @@ function marketWindow(at = new Date(), timeZone = "America/New_York") {
 
 function cadenceConfig(environment = {}) {
   return {
-    activeMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES, 5, 120, DEFAULT_ACTIVE_MINUTES),
+    activeMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES, 1, 120, DEFAULT_ACTIVE_MINUTES),
     quietMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_QUIET_MINUTES, 30, 24 * 60, DEFAULT_QUIET_MINUTES),
     premarketMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_PREMARKET_MINUTES, 5, 120, DEFAULT_PREMARKET_MINUTES),
     afterHoursMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_AFTER_HOURS_MINUTES, 5, 240, DEFAULT_AFTER_HOURS_MINUTES),
@@ -244,8 +244,9 @@ function createStockIntelligenceScheduler(options = {}) {
     if (activePromise) return activePromise;
     if (!status.enabled) return Promise.resolve(publicStatus());
     const trigger = ["startup", "scheduled", "manual", "test"].includes(runOptions.trigger) ? runOptions.trigger : "scheduled";
+    const cadenceStartedAt = nowFn();
     activePromise = (async () => {
-      const started = nowFn();
+      const started = cadenceStartedAt;
       const identityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
       const includeSecForm4 = identityConfigured && due(status.lastForm4AttemptAt, config.form4Minutes, started);
       const includeSec13f = identityConfigured && due(status.last13fAttemptAt, config.form13Minutes, started);
@@ -287,7 +288,9 @@ function createStockIntelligenceScheduler(options = {}) {
       return publicStatus(false);
     })().finally(() => {
       activePromise = null;
-      schedule();
+      const at = nowFn();
+      const elapsedMs = Math.max(0, at.getTime() - cadenceStartedAt.getTime());
+      schedule(Math.max(1_000, cadenceMs(at) - elapsedMs));
     });
     return activePromise;
   }

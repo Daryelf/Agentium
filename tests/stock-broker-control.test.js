@@ -378,7 +378,19 @@ test("portfolio proposals expose research, target scenarios, and an explicitly u
   assert.ok(proposal.research.checksPassed <= proposal.research.checksTotal);
   assert.equal(proposal.outlook.profitTimingKnown, false);
   assert.match(proposal.outlook.timingNote, /No profit date can be estimated reliably/i);
-  assert.match(proposal.outlook.horizonLabel, /5-minute market cycle/i);
+  assert.match(proposal.outlook.horizonLabel, /fresh market-data cycle/i);
+});
+
+test("portfolio planner sizes BUY proposals to the stop-distance risk budget before review", () => {
+  const current = snapshot({ records: [{ ...snapshot().records[0], stopLoss: 90 }] });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const proposal = plan.proposals.find((item) => item.symbol === "NET" && item.side === "BUY");
+
+  assert.ok(proposal);
+  assert.equal(proposal.requestedDollars, 10);
+  assert.equal(proposal.riskSizedMaxDollars, 10);
+  assert.equal(proposal.draftEligible, true);
+  assert.equal(proposal.blockers.some((item) => /risk-per-trade/i.test(item)), false);
 });
 
 test("owned positions without an exit trigger appear as HOLD while SELL remains prioritized", () => {

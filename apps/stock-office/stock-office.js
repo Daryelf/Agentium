@@ -470,6 +470,13 @@ function renderTradeProposals() {
   const liveReady = actionCandidates.filter((proposal) => proposal.draftEligible).length;
   const pendingGate = actionCandidates.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
   const researchCandidates = actionCandidates.filter((proposal) => !proposal.draftEligible && !realOrderStates.has(proposal.reviewState));
+  const closestCandidate = [...researchCandidates]
+    .sort((a, b) => Number(b.research?.score || b.rankingScore || 0) - Number(a.research?.score || a.rankingScore || 0))[0] || null;
+  const requiredScore = Number(state.brokerControl?.guardrails?.minEntryScore || 85);
+  const closestScore = Number(closestCandidate?.research?.score ?? (Number(closestCandidate?.rankingScore || 0) * 100));
+  const closestStatus = closestCandidate
+    ? `Closest now: ${closestCandidate.symbol} ${Math.round(closestScore)}/${requiredScore}. ${closestCandidate.research?.mainRisk || closestCandidate.blockers?.[0] || "Waiting for stronger evidence."}`
+    : "No current candidate has enough fresh evidence.";
   const executionLive = String(state.brokerControl?.executionMode || "PAPER").toUpperCase() === "LIVE";
   const accountVerified = state.brokerControl?.authenticationVerified === true;
   const buyingPower = Number(state.brokerControl?.buyingPowerDollars);
@@ -550,7 +557,7 @@ function renderTradeProposals() {
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row overview-live-empty"><strong>No qualified trade yet</strong><span>${escapeHtml(`${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still below the required score or live checks. Lower-quality ideas stay in Research.`)}</span><button class="secondary" type="button" data-open-stock-view="mirror">Open Research</button></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No trade meets ${escapeHtml(requiredScore)}/100 yet</strong><span>${escapeHtml(`Fresh market scans run about every ${cadenceMinutes} minute${cadenceMinutes === 1 ? "" : "s"}. ${closestStatus}`)}</span><button class="secondary" type="button" data-open-stock-view="mirror">Open Research</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {

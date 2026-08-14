@@ -55,7 +55,7 @@ test("market cadence distinguishes active weekday hours from quiet hours in New 
   assert.equal(marketWindow(new Date("2026-08-09T14:00:00.000Z")).active, false);
 });
 
-test("market-hours research defaults to a five-minute cadence", () => {
+test("market-hours research defaults to a one-minute cadence", () => {
   const scheduler = createStockIntelligenceScheduler({
     refreshManager: { refresh: async () => successResult(), getStatus: () => ({}) },
     environment: {},
@@ -64,7 +64,29 @@ test("market-hours research defaults to a five-minute cadence", () => {
     clearTimeoutImpl: () => {},
     allowInTests: true,
   });
-  assert.equal(scheduler.start().activeCadenceMinutes, 5);
+  assert.equal(scheduler.start().activeCadenceMinutes, 1);
+});
+
+test("market cadence is measured from cycle start instead of adding runtime after every scan", async () => {
+  const clock = createClock();
+  const timers = createTimers();
+  const scheduler = createStockIntelligenceScheduler({
+    refreshManager: {
+      getStatus: () => ({ stage: "evaluate" }),
+      refresh: async () => {
+        clock.advance(40_000);
+        return successResult();
+      },
+    },
+    environment: { STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES: "1" },
+    now: clock.now,
+    setTimeoutImpl: timers.setTimeoutImpl,
+    clearTimeoutImpl: timers.clearTimeoutImpl,
+    allowInTests: true,
+  });
+
+  await scheduler.runNow({ trigger: "test" });
+  assert.equal(timers.scheduled.at(-1).delay, 20_000);
 });
 
 test("SEC identity can be enabled at runtime without restarting the scheduler", () => {

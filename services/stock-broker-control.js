@@ -509,6 +509,27 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   });
 }
 
+function riskSizedBuyRequest(requestedDollars, record, control, guardrails) {
+  let capped = Math.min(
+    finiteNumber(requestedDollars, 0),
+    guardrails.maxOrderDollars,
+    finiteNumber(control.capital.maxPositionDollars, guardrails.maxOrderDollars),
+  );
+  if (control.capital.availableForNewBuys > 0) capped = Math.min(capped, control.capital.availableForNewBuys);
+  if (control.buyingPowerDollars > guardrails.cashReserveDollars) {
+    capped = Math.min(capped, control.buyingPowerDollars - guardrails.cashReserveDollars);
+  }
+  const referencePrice = finiteNumber(record?.currentPrice, 0);
+  const stopLoss = finiteNumber(record?.stopLoss, 0);
+  if (referencePrice > 0 && stopLoss > 0 && stopLoss < referencePrice) {
+    const stopDistancePct = (referencePrice - stopLoss) / referencePrice;
+    const riskSizedMaximum = (guardrails.principalDollars * guardrails.riskPerTradePct) / stopDistancePct;
+    capped = Math.min(capped, riskSizedMaximum);
+  }
+  if (capped <= 0) return 0;
+  return Math.max(guardrails.minOrderDollars, Math.floor((capped + Number.EPSILON) * 100) / 100);
+}
+
 function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   const at = options.now ? new Date(options.now) : new Date();
   const control = brokerControlOverview(snapshot, { now: at });
@@ -523,20 +544,24 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     const key = `${side}:${symbol}`;
     if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= 12) return;
     seen.add(key);
+    const record = recordBySymbol[symbol] || null;
+    const orderDollars = side === "BUY"
+      ? riskSizedBuyRequest(requestedDollars, record, control, guardrails)
+      : requestedDollars;
+    if (orderDollars <= 0) return;
     const draft = buildTradeDraft({
       symbol,
       side,
-      requestedDollars,
+      requestedDollars: orderDollars,
       candidateId: candidate?.id,
     }, snapshot, { now: at });
-    const record = recordBySymbol[symbol] || null;
     const opportunity = opportunityBySymbol[symbol] || null;
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
       kind,
       symbol,
       side,
-      requestedDollars: roundedMoney(requestedDollars),
+      requestedDollars: roundedMoney(orderDollars),
       sourceId: candidate?.fingerprint || draft.sourceId,
       draftFingerprint: draft.fingerprint,
     };
@@ -552,7 +577,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       ? "Monitor over the source's measured post-disclosure windows"
       : kind.endsWith("exit") || kind === "strategy_exit_review"
         ? "Review now while the exit condition remains valid"
-        : "Re-evaluate on each 5-minute market cycle";
+        : "Re-evaluate on each fresh market-data cycle";
     proposals.push({
       id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
       fingerprint: stableFingerprint(proposalCore),
@@ -560,7 +585,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       kind,
       symbol,
       side,
-      requestedDollars: roundedMoney(requestedDollars),
+      requestedDollars: roundedMoney(orderDollars),
       candidateId: candidate?.id || "",
       traderName: candidate?.traderName || "",
       rankingScore: finiteNumber(candidate?.rankingScore, finiteNumber((snapshot.records || []).find((item) => item.ticker === symbol)?.score, 0) / 100),
@@ -604,8 +629,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         targetReturnPct: targetReturnPct === null ? null : Math.round(targetReturnPct * 10_000) / 10_000,
         stopPrice,
         downsidePct: downsidePct === null ? null : Math.round(downsidePct * 10_000) / 10_000,
-        targetScenarioDollars: targetReturnPct === null ? null : roundedMoney(requestedDollars * targetReturnPct),
-        stopScenarioDollars: downsidePct === null ? null : roundedMoney(requestedDollars * downsidePct),
+        targetScenarioDollars: targetReturnPct === null ? null : roundedMoney(orderDollars * targetReturnPct),
+        stopScenarioDollars: downsidePct === null ? null : roundedMoney(orderDollars * downsidePct),
         profitTimingKnown: false,
         timingNote: "No profit date can be estimated reliably; monitor the target, stop, and invalidation evidence instead.",
       },
@@ -661,7 +686,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         checksTotal: 4,
       },
       outlook: {
-        horizonLabel: "Re-evaluate on each 5-minute market cycle",
+        horizonLabel: "Re-evaluate on each fresh market-data cycle",
         targetPrice,
         targetReturnPct: null,
         stopPrice,

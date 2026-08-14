@@ -365,8 +365,8 @@ function normalizeContinuousReview(input = {}) {
     lastEvaluatedAt: safeDate(value.lastEvaluatedAt),
     reviewTrigger: ["market_research", "live_readiness"].includes(value.reviewTrigger) ? value.reviewTrigger : "market_research",
     decisionCadenceSeconds: Number.isFinite(Number(value.decisionCadenceSeconds))
-      ? Math.max(5, Math.min(60, Math.round(Number(value.decisionCadenceSeconds))))
-      : 15,
+      ? Math.max(1, Math.min(60, Math.round(Number(value.decisionCadenceSeconds))))
+      : 1,
     lastOutcome: outcomes.has(value.lastOutcome) ? value.lastOutcome : "idle",
     lastMessage: String(value.lastMessage || "").slice(0, 500),
     activeProposalFingerprint: String(value.activeProposalFingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),

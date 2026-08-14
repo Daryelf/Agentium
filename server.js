@@ -4009,16 +4009,28 @@ async function processStockContinuousReview(result = {}) {
   const recordReview = (updates) => {
     const state = readState();
     const current = normalizeStockOfficeState(state.stockOffice);
+    const evaluatedAt = now();
+    const nextReview = {
+      ...current.continuousReview,
+      lastCycleCompletedAt: completedAt,
+      lastEvaluatedAt: evaluatedAt,
+      reviewTrigger: result.trigger || "market_research",
+      decisionCadenceSeconds: Math.round(stockReadinessIntervalMs() / 1_000),
+      ...updates,
+    };
+    const materialKeys = ["lastOutcome", "lastMessage", "activeProposalFingerprint", "activeDraftId", "activeApprovalId", "notificationState", "notificationSentAt"];
+    const materialStateUnchanged = materialKeys.every((key) => JSON.stringify(current.continuousReview[key] ?? null) === JSON.stringify(nextReview[key] ?? null));
+    const lastPersistedAt = Date.parse(current.continuousReview.lastEvaluatedAt || "");
+    const throttleUnchangedFastTick = result.trigger === "live_readiness"
+      && materialStateUnchanged
+      && current.continuousReview.reviewTrigger === "live_readiness"
+      && current.continuousReview.decisionCadenceSeconds === nextReview.decisionCadenceSeconds
+      && Number.isFinite(lastPersistedAt)
+      && Date.now() - lastPersistedAt < 15_000;
+    if (throttleUnchangedFastTick) return nextReview;
     state.stockOffice = normalizeStockOfficeState({
       ...current,
-      continuousReview: {
-        ...current.continuousReview,
-        lastCycleCompletedAt: completedAt,
-        lastEvaluatedAt: now(),
-        reviewTrigger: result.trigger || "market_research",
-        decisionCadenceSeconds: Math.round(stockReadinessIntervalMs() / 1_000),
-        ...updates,
-      },
+      continuousReview: nextReview,
     });
     writeState(state);
     return state.stockOffice.continuousReview;
@@ -5666,6 +5678,7 @@ function writeStockShadowPortfolio(portfolio) {
 
 let stockSimulationLabState = null;
 let stockContinuousReviewPromise = null;
+let stockReadinessBrokerSnapshotAt = "";
 
 function simulationInteger(value, fallback, min, max) {
   const parsed = Number(value);
@@ -5674,7 +5687,7 @@ function simulationInteger(value, fallback, min, max) {
 }
 
 function stockReadinessIntervalMs() {
-  return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 15_000, 5_000, 60_000);
+  return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000);
 }
 
 async function runStockContinuousReview(result = {}) {
@@ -5689,11 +5702,15 @@ async function runStockContinuousReview(result = {}) {
 
 async function runStockReadinessCycle() {
   if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
-    await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+    const brokerSnapshot = await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
       stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Fast live-readiness refresh failed; execution remains closed." });
       return null;
     });
-    await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Fast Stock order reconciliation failed safely:", error.message));
+    const snapshotAt = brokerSnapshot?.updatedAt || "";
+    if (snapshotAt && snapshotAt !== stockReadinessBrokerSnapshotAt) {
+      await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Fast Stock order reconciliation failed safely:", error.message));
+      stockReadinessBrokerSnapshotAt = snapshotAt;
+    }
   }
   return runStockContinuousReview({ status: "success", completedAt: now(), trigger: "live_readiness" });
 }

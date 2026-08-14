@@ -136,8 +136,11 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /New real order/);
   assert.match(script, /REAL ORDERS/);
   assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
-  assert.match(script, /visible for review/);
-  assert.match(script, /Review &amp; recheck/);
+  assert.match(script, /const qualifiedCandidates = actionCandidates\.filter\(\(proposal\) => proposal\.draftEligible \|\| realOrderStates\.has\(proposal\.reviewState\)\)/);
+  assert.match(script, /const visible = \[\.\.\.qualifiedCandidates\]/);
+  assert.match(script, /No qualified trade yet/);
+  assert.match(script, /Lower-quality ideas stay in Research/);
+  assert.doesNotMatch(script, /const visible = \[\.\.\.actionCandidates\]/);
   assert.match(script, /Current blocker:/);
   assert.match(script, /stock-office:operations-collapsed/);
   assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
@@ -161,7 +164,8 @@ test("Stock Office runs fast local readiness checks between full market-data sca
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
   assert.match(server, /STOCK_GURU_READINESS_INTERVAL_MS/);
-  assert.match(server, /15_000/);
+  assert.match(server, /STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000/);
+  assert.match(server, /stockReadinessBrokerSnapshotAt/);
   assert.match(server, /function runStockReadinessCycle/);
   assert.match(server, /trigger: "live_readiness"/);
   assert.match(script, /decisionCadenceSeconds/);

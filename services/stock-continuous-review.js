@@ -55,7 +55,7 @@ function buildContinuousReviewView(input = {}, options = {}) {
       running: scheduler.running === true,
       status: scheduler.running === true ? "research_running" : session.regular ? "counting_down" : "market_monitoring",
       cadenceMinutes: Number(scheduler.activeCadenceMinutes || 5),
-      decisionCadenceSeconds: Number(review.decisionCadenceSeconds || 15),
+      decisionCadenceSeconds: Number(review.decisionCadenceSeconds || 1),
       lastStartedAt: safeDate(scheduler.lastStartedAt),
       lastCompletedAt: safeDate(scheduler.lastCompletedAt),
       nextRunAt,

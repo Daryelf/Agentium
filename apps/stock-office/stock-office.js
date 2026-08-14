@@ -431,7 +431,7 @@ function renderTradeProposals() {
   const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
   const cycle = state.portfolioPlan?.cycle || {};
   const cadenceMinutes = Number(cycle.cadenceMinutes || state.intelligenceScheduler?.activeCadenceMinutes || 5);
-  const decisionCadenceSeconds = Number(cycle.decisionCadenceSeconds || 15);
+  const decisionCadenceSeconds = Number(cycle.decisionCadenceSeconds || 1);
   const summary = state.portfolioPlan?.summary || {};
   const nextAt = Date.parse(cycle.nextRunAt || "");
   const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
@@ -463,7 +463,8 @@ function renderTradeProposals() {
     if (proposal.side === "SELL") return 3;
     return 4;
   };
-  const visible = [...actionCandidates]
+  const qualifiedCandidates = actionCandidates.filter((proposal) => proposal.draftEligible || realOrderStates.has(proposal.reviewState));
+  const visible = [...qualifiedCandidates]
     .sort((a, b) => proposalPriority(a) - proposalPriority(b) || Number(b.rankingScore || b.research?.score || 0) - Number(a.rankingScore || a.research?.score || 0))
     .slice(0, 12);
   const liveReady = actionCandidates.filter((proposal) => proposal.draftEligible).length;
@@ -476,7 +477,7 @@ function renderTradeProposals() {
     ? `${pendingGate} in Human Gate`
     : liveReady
       ? `${liveReady} ready for Human Gate`
-      : `${researchCandidates.length} under review`;
+      : "0 qualified";
   $("#overviewTradeReadiness").innerHTML = `
     <div class="overview-readiness-state ${executionLive ? "ready" : "waiting"}">
       <i aria-hidden="true"></i><span><small>REAL ORDERS</small><strong>${escapeHtml(executionLive ? "Enabled with Human Gate" : "Live setup required")}</strong></span>
@@ -486,7 +487,7 @@ function renderTradeProposals() {
     </div>
     <div class="overview-readiness-metric"><small>BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
     <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
-      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : `${researchCandidates.length} visible for review`)}</strong></span>
+      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : "Waiting for a qualified trade")}</strong></span>
     </div>
     <button class="secondary" type="button" data-quick-order>${escapeHtml(executionLive && accountVerified ? "New real order" : "Check new order")}</button>`;
   $("#overviewProposalList").innerHTML = visible.length
@@ -549,7 +550,7 @@ function renderTradeProposals() {
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row overview-live-empty"><strong>No BUY or SELL candidate is loaded yet</strong><span>Research continues automatically. Any candidate appears here immediately with its exact live-order status.</span><button type="button" data-quick-order>Enter a real order</button></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No qualified trade yet</strong><span>${escapeHtml(`${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still below the required score or live checks. Lower-quality ideas stay in Research.`)}</span><button class="secondary" type="button" data-open-stock-view="mirror">Open Research</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {

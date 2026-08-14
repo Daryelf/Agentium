@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { normalizeGuardrails, normalizeTradeDrafts } = require("./stock-broker-control");
 
 const STOCK_WORKSPACE_ID = "stock-guru-local";
 const STOCK_OFFICE_ID = "stock-office";
@@ -10,6 +11,7 @@ const MAX_CHAT_MESSAGES = 160;
 const MAX_SYNC_RUNS = 80;
 const MAX_ASSISTANT_RUNS = 80;
 const MARKET_STALE_HOURS = 18;
+const COPY_PLAN_STALE_HOURS = 96;
 
 const SOURCE_DEFINITIONS = [
   {
@@ -19,6 +21,14 @@ const SOURCE_DEFINITIONS = [
     type: "json",
     category: "records",
     staleAfterHours: MARKET_STALE_HOURS,
+  },
+  {
+    id: "research_context",
+    label: "Structured company and news research",
+    relPath: "reports/research.json",
+    type: "json",
+    category: "research_news",
+    staleAfterHours: 6,
   },
   {
     id: "universe",
@@ -33,6 +43,52 @@ const SOURCE_DEFINITIONS = [
     relPath: "config/settings.json",
     type: "json",
     category: "configuration",
+  },
+  {
+    id: "copy_trader_config",
+    label: "Copy Trader policy",
+    relPath: "config/copy_trader.json",
+    type: "json",
+    category: "configuration",
+  },
+  {
+    id: "copy_trader_watchlist",
+    label: "Copy Trader SEC watchlist",
+    relPath: "config/copy_trader_watchlist.json",
+    type: "json",
+    category: "configuration",
+  },
+  {
+    id: "copy_import_status",
+    label: "Official SEC Form 4 import status",
+    relPath: "data/copy_import_status.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: 24,
+  },
+  {
+    id: "sec_13f_import_status",
+    label: "Official SEC Form 13F research status",
+    relPath: "data/sec_13f_import_status.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: 24 * 120,
+  },
+  {
+    id: "copy_trader_plan",
+    label: "Copy Trader mirror plan",
+    relPath: "reports/copy_trader_plan.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: COPY_PLAN_STALE_HOURS,
+  },
+  {
+    id: "copy_knowledge",
+    label: "Copy Trader knowledge ledger",
+    relPath: "data/copy_knowledge.json",
+    type: "json",
+    category: "copy_signals",
+    staleAfterHours: 72,
   },
   {
     id: "broker_status",
@@ -57,6 +113,13 @@ const SOURCE_DEFINITIONS = [
     type: "json",
     category: "readiness",
     staleAfterHours: 72,
+  },
+  {
+    id: "live_auto_kill_switch",
+    label: "Live-order kill switch",
+    relPath: "data/live_auto_kill_switch.json",
+    type: "json",
+    category: "readiness",
   },
   {
     id: "performance_audit",
@@ -173,7 +236,7 @@ function sourceAgeHours(source, at = new Date()) {
   return Math.max(0, (at.getTime() - date.getTime()) / 3_600_000);
 }
 
-function readSource(stockRoot, definition, at = new Date()) {
+function readSource(stockRoot, definition, at = new Date(), runtimeRoot = "") {
   const source = {
     id: definition.id,
     label: definition.label,
@@ -192,7 +255,20 @@ function readSource(stockRoot, definition, at = new Date()) {
 
   let absolutePath;
   try {
-    absolutePath = safeJoin(stockRoot, definition.relPath);
+    const sourcePath = safeJoin(stockRoot, definition.relPath);
+    const canUseRuntime = Boolean(runtimeRoot)
+      && definition.type !== "secret"
+      && /^(?:data|reports)\//.test(definition.relPath);
+    const runtimePath = canUseRuntime ? safeJoin(runtimeRoot, definition.relPath) : "";
+    if (runtimePath && fs.existsSync(runtimePath)) {
+      const runtimeStat = fs.statSync(runtimePath);
+      const sourceStat = fs.existsSync(sourcePath) ? fs.statSync(sourcePath) : null;
+      absolutePath = runtimeStat.isFile() && (!sourceStat?.isFile() || runtimeStat.mtimeMs >= sourceStat.mtimeMs)
+        ? runtimePath
+        : sourcePath;
+    } else {
+      absolutePath = sourcePath;
+    }
   } catch (error) {
     source.status = "error";
     source.safeError = "Unsafe source path blocked.";
@@ -252,6 +328,9 @@ function readSource(stockRoot, definition, at = new Date()) {
       : "Loaded from local Stock Guru workspace.";
     return { source, data };
   } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { source, data: null };
+    }
     source.status = "error";
     source.safeError = definition.type === "json" ? "Source could not be parsed safely." : "Source could not be read safely.";
     source.summary = source.safeError;
@@ -261,6 +340,7 @@ function readSource(stockRoot, definition, at = new Date()) {
 
 function normalizeStockOfficeState(input = {}) {
   const value = isPlainObject(input) ? input : {};
+  const activeGuardrails = isPlainObject(value.activeGuardrails) ? normalizeGuardrails(value.activeGuardrails) : null;
   return {
     workspaceId: STOCK_WORKSPACE_ID,
     lastLocalSyncAt: safeDate(value.lastLocalSyncAt),
@@ -268,7 +348,57 @@ function normalizeStockOfficeState(input = {}) {
     chatMessages: normalizeStockChatMessages(value.chatMessages || []),
     syncRuns: normalizeSyncRuns(value.syncRuns || []),
     assistantRuns: normalizeAssistantRuns(value.assistantRuns || []),
+    tradeDrafts: normalizeTradeDrafts(value.tradeDrafts || []),
+    proposalDecisions: normalizeProposalDecisions(value.proposalDecisions || []),
+    continuousReview: normalizeContinuousReview(value.continuousReview || {}),
+    activeGuardrails,
+    guardrailsAppliedAt: safeDate(value.guardrailsAppliedAt),
+    guardrailsApprovalId: String(value.guardrailsApprovalId || "").slice(0, 120),
   };
+}
+
+function normalizeContinuousReview(input = {}) {
+  const value = isPlainObject(input) ? input : {};
+  const outcomes = new Set(["idle", "market_closed", "research_running", "no_qualified_proposal", "waiting_for_human_gate", "proposal_staged", "notification_delivered", "notification_unavailable", "failed_safe"]);
+  return {
+    lastCycleCompletedAt: safeDate(value.lastCycleCompletedAt),
+    lastEvaluatedAt: safeDate(value.lastEvaluatedAt),
+    reviewTrigger: ["market_research", "live_readiness"].includes(value.reviewTrigger) ? value.reviewTrigger : "market_research",
+    decisionCadenceSeconds: Number.isFinite(Number(value.decisionCadenceSeconds))
+      ? Math.max(1, Math.min(60, Math.round(Number(value.decisionCadenceSeconds))))
+      : 1,
+    lastOutcome: outcomes.has(value.lastOutcome) ? value.lastOutcome : "idle",
+    lastMessage: String(value.lastMessage || "").slice(0, 500),
+    activeProposalFingerprint: String(value.activeProposalFingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+    activeDraftId: String(value.activeDraftId || "").slice(0, 100),
+    activeApprovalId: String(value.activeApprovalId || "").slice(0, 120),
+    notificationState: String(value.notificationState || "").replace(/[^a-z0-9_-]/gi, "").slice(0, 80),
+    notificationSentAt: safeDate(value.notificationSentAt),
+    stagedProposalFingerprints: (Array.isArray(value.stagedProposalFingerprints) ? value.stagedProposalFingerprints : [])
+      .map((item) => String(item || "").replace(/[^a-f0-9]/gi, "").slice(0, 64))
+      .filter((item) => item.length === 64)
+      .slice(-40),
+  };
+}
+
+function normalizeProposalDecisions(decisions = []) {
+  return (Array.isArray(decisions) ? decisions : [])
+    .map((decision) => {
+      const proposalId = String(decision?.proposalId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 100);
+      const symbol = String(decision?.symbol || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+      if (!proposalId || !symbol) return null;
+      return {
+        proposalId,
+        fingerprint: String(decision?.fingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+        symbol,
+        side: String(decision?.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY",
+        decision: decision?.decision === "declined" ? "declined" : "reviewed",
+        decidedAt: safeDate(decision?.decidedAt) || nowIso(),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.decidedAt).getTime() - new Date(a.decidedAt).getTime())
+    .slice(0, 200);
 }
 
 function normalizeStockChatMessages(messages = []) {
@@ -358,7 +488,9 @@ function normalizeEvaluationRecord(record, source) {
     target1: Number.isFinite(Number(record.target_1)) ? Number(record.target_1) : null,
     target2: Number.isFinite(Number(record.target_2)) ? Number(record.target_2) : null,
     riskReward: String(record.risk_reward || "").slice(0, 60),
+    mainReason: String(record.main_reason_valid || "").slice(0, 260),
     mainRisk: String(record.main_risk || record.rejection_reason || "No risk note recorded.").slice(0, 260),
+    invalidationRule: String(record.invalidation_rule || "").slice(0, 260),
     rejectionReason: String(record.rejection_reason || "").slice(0, 180),
     liquidityPassed: Boolean(record.liquidity_passed),
     spreadPassed: Boolean(record.spread_passed),
@@ -369,6 +501,50 @@ function normalizeEvaluationRecord(record, source) {
     sourceId: source.id,
     provenance: definitionProvenance(source),
     lastUpdated: source.generatedAt || source.lastModified || null,
+  };
+}
+
+function normalizeResearchContext(data, source) {
+  const empty = {
+    available: false,
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: "No structured company/news feed",
+    directionalNewsScoring: false,
+    tickers: [],
+    newsCount: 0,
+  };
+  if (!isPlainObject(data)) return empty;
+  const tickers = (Array.isArray(data.tickers) ? data.tickers : []).slice(0, 50).map((item) => {
+    if (!isPlainObject(item)) return null;
+    const ticker = String(item.ticker || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    if (!ticker) return null;
+    return {
+      ticker,
+      companyName: redactSensitiveText(String(item.company_name || "")).slice(0, 180),
+      sector: redactSensitiveText(String(item.sector || "")).slice(0, 100),
+      marketCap: Number.isFinite(Number(item.market_cap)) ? Number(item.market_cap) : null,
+      trailingPe: Number.isFinite(Number(item.trailing_pe)) ? Number(item.trailing_pe) : null,
+      forwardPe: Number.isFinite(Number(item.forward_pe)) ? Number(item.forward_pe) : null,
+      revenueGrowth: Number.isFinite(Number(item.revenue_growth)) ? Number(item.revenue_growth) : null,
+      recommendation: String(item.recommendation || "").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 60),
+      sourceNote: redactSensitiveText(String(item.source_note || "")).slice(0, 240),
+      news: (Array.isArray(item.news) ? item.news : []).slice(0, 8).map((news) => ({
+        title: redactSensitiveText(String(news?.title || "")).slice(0, 300),
+        publisher: redactSensitiveText(String(news?.publisher || "")).slice(0, 120),
+        publishedAt: safeDate(news?.published_at),
+        url: safePublicUrl(news?.url),
+      })).filter((news) => news.title),
+    };
+  }).filter(Boolean);
+  return {
+    available: true,
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: redactSensitiveText(String(data.source || "Structured company/news research")).slice(0, 180),
+    directionalNewsScoring: data.directional_news_scoring === true,
+    tickers,
+    newsCount: tickers.reduce((sum, item) => sum + item.news.length, 0),
   };
 }
 
@@ -388,23 +564,68 @@ function normalizeBrokerStatus(data, source) {
     return {
       configured: false,
       account: "",
+      accountIdentityHash: "",
       accountValue: null,
       cash: null,
       buyingPower: null,
+      dayPnlDollars: null,
+      dayPnlPct: null,
       positions: [],
       openOrders: [],
+      orders: [],
+      connector: {
+        registered: false,
+        oauthAuthenticated: false,
+        endpoint: "",
+        tools: [],
+        observedAt: null,
+      },
       updatedAt: source?.lastModified || null,
     };
   }
+  const normalizeOrder = (order) => {
+    if (!isPlainObject(order)) return null;
+    const symbol = String(order.symbol || order.ticker || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    const state = String(order.state || order.status || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 60);
+    if (!symbol || !state) return null;
+    return {
+      orderId: String(order.order_id || order.orderId || order.id || "").slice(0, 160),
+      clientRefId: String(order.ref_id || order.client_ref_id || order.clientRefId || "").slice(0, 160),
+      symbol,
+      side: String(order.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY",
+      state,
+      dollarAmount: Number.isFinite(Number(order.dollar_amount ?? order.dollarAmount ?? order.notional)) ? Number(order.dollar_amount ?? order.dollarAmount ?? order.notional) : null,
+      quantity: Number.isFinite(Number(order.quantity ?? order.shares)) ? Number(order.quantity ?? order.shares) : null,
+      createdAt: safeDate(order.created_at || order.createdAt || order.submitted_at),
+    };
+  };
+  const orders = (Array.isArray(data.orders) ? data.orders : []).map(normalizeOrder).filter(Boolean).slice(0, 200);
+  const openOrders = (Array.isArray(data.open_orders) ? data.open_orders : [])
+    .map(normalizeOrder)
+    .filter(Boolean)
+    .slice(0, 100);
   return {
     configured: true,
     account: maskAccountNumber(data.account_number),
+    accountIdentityHash: String(data.account_identity_hash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
     accountValue: formatUsd(data.account_value),
     cash: formatUsd(data.cash),
     buyingPower: formatUsd(data.buying_power),
+    dayPnlDollars: Number.isFinite(Number(data.day_pnl_dollars ?? data.day_pnl)) ? Number(data.day_pnl_dollars ?? data.day_pnl) : null,
+    dayPnlPct: Number.isFinite(Number(data.day_pnl_pct)) ? Number(data.day_pnl_pct) : null,
     deployedPrincipal: formatUsd(data.deployed_principal),
     lockedProfit: formatUsd(data.locked_profit),
     updatedAt: safeDate(data.updated_at) || source?.generatedAt || source?.lastModified || null,
+    connector: {
+      registered: data.connector?.registered === true,
+      oauthAuthenticated: data.connector?.oauth_authenticated === true,
+      endpoint: safePublicUrl(data.connector?.endpoint),
+      tools: (Array.isArray(data.connector?.tools) ? data.connector.tools : [])
+        .map((item) => String(item || "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 80),
+      observedAt: safeDate(data.connector?.observed_at),
+    },
     positions: (Array.isArray(data.positions) ? data.positions : []).slice(0, 20).map((position) => ({
       symbol: String(position.symbol || "").toUpperCase().slice(0, 12),
       quantity: Number.isFinite(Number(position.quantity)) ? Number(position.quantity) : null,
@@ -417,8 +638,334 @@ function normalizeBrokerStatus(data, source) {
       target1: Number.isFinite(Number(position.target_1)) ? Number(position.target_1) : null,
       target2: Number.isFinite(Number(position.target_2)) ? Number(position.target_2) : null,
     })),
-    openOrders: (Array.isArray(data.open_orders) ? data.open_orders : []).slice(0, 20).map((order) => redactSensitiveText(JSON.stringify(order)).slice(0, 280)),
+    openOrders,
+    orders,
   };
+}
+
+function normalizeKillSwitch(data, source) {
+  if (!isPlainObject(data)) {
+    return {
+      active: true,
+      reason: "No explicit kill-switch state is available; live orders fail closed.",
+      updatedAt: source?.lastModified || null,
+    };
+  }
+  return {
+    active: data.enabled !== false,
+    reason: redactSensitiveText(String(data.reason || (data.enabled === false ? "Operator explicitly cleared the switch." : "Live-order kill switch is active."))).slice(0, 260),
+    updatedAt: safeDate(data.updated_at || data.updatedAt) || source?.generatedAt || source?.lastModified || null,
+  };
+}
+
+function safePublicUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || url.username || url.password) return "";
+    return url.toString().slice(0, 1000);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeMirrorPlan(data, source) {
+  const empty = {
+    available: false,
+    mode: "paper_and_human_gate_only",
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsReceived: 0,
+      actionableSignals: 0,
+      referenceOnlySignals: 0,
+      unresolvedSymbols: 0,
+      paperReady: 0,
+      researchOnly: 0,
+      rejected: 0,
+      duplicate: 0,
+      plannedPaperNotional: "$0.00",
+      liveOrdersPlaced: 0,
+      humanGateRequiredForLive: true,
+    },
+    policy: {},
+    sources: [],
+    candidates: [],
+    warnings: ["No Copy Trader plan is loaded. Run the local copy-plan command after importing attributable public signals."],
+  };
+  if (!isPlainObject(data)) return empty;
+  const allowedStatuses = new Set(["paper_ready", "research_only", "rejected", "duplicate"]);
+  const rawCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+  const candidates = rawCandidates
+    .slice(0, 250)
+    .map((candidate, index) => {
+      if (!isPlainObject(candidate)) return null;
+      const assetType = String(candidate.asset_type || "equity").toLowerCase().slice(0, 40);
+      const side = String(candidate.side || "").toUpperCase().slice(0, 12);
+      const symbol = String(candidate.symbol || "").toUpperCase().replace(/[^A-Z0-9.\-_:\s]/g, "").slice(0, 80);
+      if (!symbol || !side) return null;
+      const status = allowedStatuses.has(candidate.status) ? candidate.status : "rejected";
+      const notional = Number(candidate.mirror_notional_dollars);
+      const shares = Number(candidate.mirror_shares);
+      const drift = Number(candidate.price_drift_pct);
+      const tickerResolved = candidate.ticker_resolved === true
+        || (/^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol) && !symbol.startsWith("CUSIP"));
+      const referenceOnly = String(candidate.source_id || "").toLowerCase() === "sec_13f"
+        || String(candidate.transaction_code || "").toUpperCase() === "13F_CHANGE"
+        || !tickerResolved;
+      return {
+        id: String(candidate.id || `mirror-${index + 1}`).slice(0, 160),
+        fingerprint: String(candidate.fingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+        sourceId: String(candidate.source_id || "").slice(0, 80),
+        sourceName: redactSensitiveText(String(candidate.source_name || "Unknown public source")).slice(0, 160),
+        traderName: redactSensitiveText(String(candidate.trader_name || "Unknown public source")).slice(0, 160),
+        assetType,
+        symbol,
+        tickerResolved,
+        referenceOnly,
+        side,
+        transactionCode: String(candidate.transaction_code || "").slice(0, 12),
+        transactionAt: safeDate(candidate.transaction_at),
+        disclosedAt: safeDate(candidate.disclosed_at),
+        observedAt: safeDate(candidate.observed_at),
+        sourceUrl: safePublicUrl(candidate.source_url),
+        disclosureLagHours: clampNumber(candidate.disclosure_lag_hours, 0, 24 * 365, 0),
+        signalAgeHours: clampNumber(candidate.signal_age_hours, 0, 24 * 365, 0),
+        signalPrice: Number.isFinite(Number(candidate.signal_price)) ? Number(candidate.signal_price) : null,
+        currentPrice: Number.isFinite(Number(candidate.current_price)) ? Number(candidate.current_price) : null,
+        currentPriceObservedAt: safeDate(candidate.current_price_observed_at),
+        currentPriceAgeHours: clampNumber(candidate.current_price_age_hours, 0, 24 * 30, 0),
+        priceDriftPct: Number.isFinite(drift) ? drift : null,
+        confidence: clampNumber(candidate.confidence, 0, 1, 0),
+        evidenceScore: clampNumber(candidate.evidence_score, 0, 1, 0.5),
+        evidenceStatus: ["unproven", "small_sample", "measured"].includes(candidate.evidence_status) ? candidate.evidence_status : "unproven",
+        sourceEvidenceSamples: clampNumber(candidate.source_evidence_samples, 0, 1_000_000, 0),
+        traderEvidenceSamples: clampNumber(candidate.trader_evidence_samples, 0, 1_000_000, 0),
+        rankingScore: clampNumber(candidate.ranking_score, 0, 1, 0),
+        status,
+        mirrorNotionalDollars: Number.isFinite(notional) ? Math.max(0, notional) : 0,
+        mirrorShares: Number.isFinite(shares) ? Math.max(0, shares) : 0,
+        humanGateEligible: status === "paper_ready" && Boolean(candidate.human_gate_eligible),
+        brokerPositionRequired: candidate.broker_position_required === true,
+        reasons: (Array.isArray(candidate.reasons) ? candidate.reasons : []).map((item) => redactSensitiveText(item).slice(0, 300)).filter(Boolean).slice(0, 8),
+        notes: redactSensitiveText(String(candidate.notes || "")).slice(0, 500),
+      };
+    })
+    .filter(Boolean);
+  const inputSummary = isPlainObject(data.summary) ? data.summary : {};
+  const count = (key, status) => clampNumber(inputSummary[key], 0, 1_000_000, candidates.filter((candidate) => candidate.status === status).length);
+  const liveOrdersPlaced = clampNumber(inputSummary.live_orders_placed, 0, 1_000_000, 0);
+  const rawReferenceOnly = rawCandidates.filter((candidate) => {
+    const symbol = String(candidate?.symbol || "").toUpperCase();
+    return String(candidate?.source_id || "").toLowerCase() === "sec_13f"
+      || String(candidate?.transaction_code || "").toUpperCase() === "13F_CHANGE"
+      || symbol.startsWith("CUSIP:");
+  });
+  const unresolvedSymbols = rawCandidates.filter((candidate) => String(candidate?.symbol || "").toUpperCase().startsWith("CUSIP:")).length;
+  const actionableSignals = rawCandidates.filter((candidate) => {
+    const symbol = String(candidate?.symbol || "").toUpperCase();
+    return candidate?.status === "paper_ready"
+      && candidate?.human_gate_eligible === true
+      && /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol)
+      && Number(candidate?.current_price) > 0;
+  }).length;
+  return {
+    available: true,
+    mode: String(data.mode || "paper_and_human_gate_only").slice(0, 80),
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsReceived: clampNumber(inputSummary.signals_received, 0, 1_000_000, candidates.length),
+      actionableSignals,
+      referenceOnlySignals: rawReferenceOnly.length,
+      unresolvedSymbols,
+      paperReady: count("paper_ready", "paper_ready"),
+      researchOnly: count("research_only", "research_only"),
+      rejected: count("rejected", "rejected"),
+      duplicate: count("duplicate", "duplicate"),
+      plannedPaperNotional: formatUsd(inputSummary.planned_paper_notional_dollars) || "$0.00",
+      liveOrdersPlaced,
+      humanGateRequiredForLive: inputSummary.human_gate_required_for_live !== false,
+    },
+    policy: {
+      totalBudgetDollars: clampNumber(data.policy?.total_budget_dollars, 0, 1_000_000, 0),
+      maxTradeDollars: clampNumber(data.policy?.max_trade_dollars, 0, 1_000_000, 0),
+      maxDailyNotionalDollars: clampNumber(data.policy?.max_daily_notional_dollars, 0, 1_000_000, 0),
+      maxSourceAllocationPct: clampNumber(data.policy?.max_source_allocation_pct, 0, 1, 0),
+      minimumConfidence: clampNumber(data.policy?.minimum_confidence, 0, 1, 0),
+      maxPriceDriftPct: clampNumber(data.policy?.max_price_drift_pct, 0, 1, 0),
+      maxSignalAgeHours: clampNumber(data.policy?.max_signal_age_hours, 0, 24 * 365, 0),
+      maxCurrentPriceAgeHours: clampNumber(data.policy?.max_current_price_age_hours, 0, 24 * 30, 24),
+      allowedAssetTypes: (Array.isArray(data.policy?.allowed_asset_types) ? data.policy.allowed_asset_types : []).map((item) => String(item).slice(0, 40)).slice(0, 12),
+      researchOnlyAssetTypes: (Array.isArray(data.policy?.research_only_asset_types) ? data.policy.research_only_asset_types : []).map((item) => String(item).slice(0, 40)).slice(0, 12),
+      knowledge: {
+        priorStrength: clampNumber(data.policy?.knowledge?.prior_strength, 1, 10_000, 20),
+        minimumSamplesForGate: clampNumber(data.policy?.knowledge?.minimum_samples_for_gate, 1, 10_000, 8),
+        minimumEvidenceScore: clampNumber(data.policy?.knowledge?.minimum_evidence_score, 0, 1, 0.4),
+      },
+    },
+    sources: (Array.isArray(data.sources) ? data.sources : []).slice(0, 30).map((item) => ({
+      id: String(item?.id || "").slice(0, 80),
+      name: redactSensitiveText(String(item?.name || item?.id || "Public source")).slice(0, 160),
+      sourceType: String(item?.source_type || "public_signal").slice(0, 80),
+      enabled: Boolean(item?.enabled),
+      mirrorEligible: Boolean(item?.mirror_eligible),
+      maxDisclosureLagHours: clampNumber(item?.max_disclosure_lag_hours, 0, 24 * 365, 0),
+      notes: redactSensitiveText(String(item?.notes || "")).slice(0, 600),
+    })),
+    candidates,
+    warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
+  };
+}
+
+function normalizeCopyKnowledge(data, source) {
+  const empty = {
+    available: false,
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsSeen: 0,
+      observationsSeen: 0,
+      measuredOutcomes: 0,
+      pendingOutcomes: 0,
+      missingBaselines: 0,
+      liveOrdersPlaced: 0,
+    },
+    methodology: {
+      lookAheadAllowed: false,
+      profitGuarantee: false,
+      scoreNeutral: 0.5,
+    },
+    sourceProfiles: [],
+    traderProfiles: [],
+    warnings: ["No post-disclosure knowledge ledger is loaded yet. Evidence scores remain neutral."],
+  };
+  if (!isPlainObject(data)) return empty;
+  const normalizeRegimeBreakdown = (value) => isPlainObject(value)
+    ? Object.fromEntries(Object.entries(value).slice(0, 8).map(([key, item]) => {
+      const metrics = isPlainObject(item) ? item : {};
+      return [String(key).slice(0, 40), {
+        sampleSize: clampNumber(metrics.sample_size, 0, 1_000_000, 0),
+        hitRate: clampNumber(metrics.hit_rate, 0, 1, 0.5),
+        meanDirectionalReturn: clampNumber(metrics.mean_directional_return, -10, 10, 0),
+      }];
+    }))
+    : {};
+  const profile = (item) => {
+    if (!isPlainObject(item)) return null;
+    return {
+      id: String(item.profile_id || "").slice(0, 240),
+      sourceId: String(item.source_id || "").slice(0, 80),
+      traderName: item.trader_name ? redactSensitiveText(String(item.trader_name)).slice(0, 160) : null,
+      sourceType: String(item.source_type || "unknown").slice(0, 80),
+      mirrorEligible: Boolean(item.mirror_eligible),
+      sampleSize: clampNumber(item.sample_size, 0, 1_000_000, 0),
+      wins: clampNumber(item.wins, 0, 1_000_000, 0),
+      losses: clampNumber(item.losses, 0, 1_000_000, 0),
+      hitRate: clampNumber(item.hit_rate, 0, 1, 0.5),
+      meanDirectionalReturn: clampNumber(item.mean_directional_return, -10, 10, 0),
+      returnVolatility: clampNumber(item.return_volatility, 0, 10, 0),
+      averageMaximumAdverseExcursion: clampNumber(item.average_maximum_adverse_excursion, -10, 0, 0),
+      riskAdjustedReturn: clampNumber(item.risk_adjusted_return, -100, 100, 0),
+      posteriorQualityScore: clampNumber(item.posterior_quality_score, 0, 1, 0.5),
+      delayReliability: clampNumber(item.delay_reliability, 0, 1, 1),
+      executionScoreCap: clampNumber(item.execution_score_cap, 0, 1, 0.45),
+      evidenceScore: clampNumber(item.evidence_score, 0, 1, 0.5),
+      evidenceStatus: ["unproven", "small_sample", "measured"].includes(item.evidence_status) ? item.evidence_status : "unproven",
+      provenanceCounts: isPlainObject(item.provenance_counts)
+        ? Object.fromEntries(Object.entries(item.provenance_counts).slice(0, 8).map(([key, value]) => [String(key).slice(0, 40), clampNumber(value, 0, 1_000_000, 0)]))
+        : {},
+      regimeBreakdown: normalizeRegimeBreakdown(item.regime_breakdown),
+    };
+  };
+  const summary = isPlainObject(data.summary) ? data.summary : {};
+  const methodology = isPlainObject(data.methodology) ? data.methodology : {};
+  return {
+    available: true,
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    summary: {
+      signalsSeen: clampNumber(summary.signals_seen, 0, 1_000_000, 0),
+      observationsSeen: clampNumber(summary.observations_seen, 0, 10_000_000, 0),
+      measuredOutcomes: clampNumber(summary.measured_outcomes, 0, 1_000_000, 0),
+      pendingOutcomes: clampNumber(summary.pending_outcomes, 0, 1_000_000, 0),
+      missingBaselines: clampNumber(summary.missing_baselines, 0, 1_000_000, 0),
+      liveOrdersPlaced: clampNumber(summary.live_orders_placed, 0, 1_000_000, 0),
+    },
+    methodology: {
+      lookAheadAllowed: methodology.look_ahead_allowed === true,
+      profitGuarantee: methodology.profit_guarantee === true,
+      scoreNeutral: clampNumber(methodology.score_neutral, 0, 1, 0.5),
+      priorStrength: clampNumber(methodology.sample_prior_strength, 1, 10_000, 20),
+      minimumSamplesForGate: clampNumber(methodology.minimum_samples_for_gate, 1, 10_000, 8),
+      outcomeClock: redactSensitiveText(String(methodology.outcome_clock || "post-disclosure observations only")).slice(0, 220),
+    },
+    sourceProfiles: (Array.isArray(data.source_profiles) ? data.source_profiles : []).map(profile).filter(Boolean).slice(0, 50),
+    traderProfiles: (Array.isArray(data.trader_profiles) ? data.trader_profiles : []).map(profile).filter(Boolean).slice(0, 250),
+    warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
+  };
+}
+
+function normalizeCopyImportStatus(data, source) {
+  const empty = {
+    available: false,
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: "Official SEC EDGAR",
+    watchlistEntries: 0,
+    enabledEntries: 0,
+    filingsScanned: 0,
+    signalsImported: 0,
+    signalsRetained: 0,
+    holdingChangesFound: 0,
+    unmappedChanges: 0,
+    resolvedSignalsImported: 0,
+    liveOrdersPlaced: 0,
+    warnings: [],
+  };
+  if (!isPlainObject(data)) return empty;
+  return {
+    available: true,
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: redactSensitiveText(String(data.source || "Official SEC EDGAR")).slice(0, 160),
+    watchlistEntries: clampNumber(data.watchlist_entries, 0, 10_000, 0),
+    enabledEntries: clampNumber(data.enabled_entries, 0, 10_000, 0),
+    filingsScanned: clampNumber(data.filings_scanned, 0, 100_000, 0),
+    signalsImported: clampNumber(data.signals_imported, 0, 100_000, 0),
+    signalsRetained: clampNumber(data.signals_retained, 0, 100_000, 0),
+    holdingChangesFound: clampNumber(data.holding_changes_found, 0, 1_000_000, 0),
+    unmappedChanges: clampNumber(data.unmapped_changes, 0, 1_000_000, 0),
+    resolvedSignalsImported: clampNumber(data.resolved_signals_imported, 0, 100_000, data.signals_imported || 0),
+    liveOrdersPlaced: clampNumber(data.live_orders_placed, 0, 1_000_000, 0),
+    warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
+  };
+}
+
+function normalizeCopyTraderWatchers(data) {
+  if (!isPlainObject(data)) return [];
+  const normalizeEntries = (entries, filingType) => (Array.isArray(entries) ? entries : [])
+    .slice(0, 100)
+    .map((entry, index) => {
+      if (!isPlainObject(entry)) return null;
+      const cik = String(entry.cik || "").replace(/[^0-9]/g, "").slice(0, 10);
+      const name = redactSensitiveText(String(entry.label || entry.name || `${filingType} watcher ${index + 1}`)).slice(0, 180);
+      if (!name || !cik) return null;
+      return {
+        id: `${filingType.toLowerCase().replaceAll(" ", "-")}:${cik}`,
+        name,
+        cik: cik.padStart(10, "0"),
+        filingType,
+        enabled: entry.enabled !== false,
+        copyEligible: filingType === "Form 4",
+        researchOnly: filingType === "13F",
+        identityUrl: safePublicUrl(entry.identity_url),
+      };
+    })
+    .filter(Boolean);
+  return [
+    ...normalizeEntries(data.sec_form4, "Form 4"),
+    ...normalizeEntries(data.sec_13f, "13F"),
+  ];
 }
 
 function summarizeSourceHealth(sources) {
@@ -426,9 +973,6 @@ function summarizeSourceHealth(sources) {
     (acc, source) => {
       acc.total += 1;
       acc[source.status] = (acc[source.status] || 0) + 1;
-      if (source.status === "error") acc.errors += 1;
-      if (source.status === "stale") acc.stale += 1;
-      if (source.status === "ready" || source.status === "configured") acc.ready += 1;
       return acc;
     },
     { total: 0, ready: 0, stale: 0, error: 0, missing: 0, configured: 0 },
@@ -440,7 +984,7 @@ function summarizeSourceHealth(sources) {
   return { ...counts, status };
 }
 
-function metricCounts(records, watchlist, broker, readiness, sourceHealth) {
+function metricCounts(records, watchlist, broker, readiness, sourceHealth, mirror) {
   const validSetups = records.filter((record) => record.status === "valid_setup").length;
   const rejected = records.filter((record) => record.status === "rejected").length;
   const staleRecords = records.filter((record) => !record.dataFresh).length;
@@ -460,6 +1004,10 @@ function metricCounts(records, watchlist, broker, readiness, sourceHealth) {
     sourceStatus: sourceHealth.status,
     sourceErrors: sourceHealth.error,
     staleSources: sourceHealth.stale,
+    mirrorSignals: mirror?.summary?.signalsReceived || 0,
+    mirrorPaperReady: mirror?.summary?.paperReady || 0,
+    mirrorResearchOnly: mirror?.summary?.researchOnly || 0,
+    mirrorLiveOrdersPlaced: mirror?.summary?.liveOrdersPlaced || 0,
   };
 }
 
@@ -511,7 +1059,7 @@ function parseTicketReport(text) {
   };
 }
 
-function buildAlerts({ available, sources, records, readiness, broker, sourceHealth }) {
+function buildAlerts({ available, sources, records, readiness, broker, sourceHealth, mirror }) {
   const alerts = [];
   if (!available) {
     alerts.push({ level: "error", title: "Stock workspace unavailable", body: "Set STOCK_GURU_PATH or keep the local stocks folder mounted." });
@@ -524,10 +1072,10 @@ function buildAlerts({ available, sources, records, readiness, broker, sourceHea
     alerts.push({ level: "warning", title: "Market data may be stale", body: `${sourceHealth.stale} source(s) are older than their freshness window.` });
   }
   if (!readiness.readyForLiveAuto) {
-    alerts.push({ level: "warning", title: "Live auto is not armable", body: "Readiness checks block autonomous live-broker behavior. Argentum is read-only here." });
+    alerts.push({ level: "warning", title: "Autonomous planning is not armed", body: "Legacy automatic-planning checks remain separate. Real orders still require every current per-order check and exact Human Gate approval." });
   }
   if (broker.configured && broker.buyingPower === "$0.00") {
-    alerts.push({ level: "info", title: "No buying power", body: "The latest broker snapshot shows zero buying power. This office will not place orders." });
+    alerts.push({ level: "info", title: "No buying power", body: "The latest broker snapshot blocks BUY orders. A risk-reducing SELL would still require fresh verified holdings, exact Human Gate approval, and Robinhood review." });
   }
   if (sources.some((source) => source.id === "provider_keys" && source.status === "configured")) {
     alerts.push({ level: "info", title: "Provider keys detected locally", body: "Credential values are not read by Argentum and are never returned to the browser." });
@@ -535,10 +1083,22 @@ function buildAlerts({ available, sources, records, readiness, broker, sourceHea
   if (records.some((record) => record.status === "valid_setup")) {
     alerts.push({ level: "info", title: "Valid setups need review", body: "Evaluator records can be summarized for research, not treated as automatic trade instructions." });
   }
+  if (!mirror?.available) {
+    alerts.push({ level: "info", title: "Mirror Lab is waiting for signals", body: "Import attributable public disclosures, then run copy-plan to build paper/Human Gate candidates." });
+  } else if (mirror.summary.liveOrdersPlaced > 0) {
+    alerts.push({ level: "error", title: "Copy plan safety mismatch", body: "The mirror report claims a live order. Treat the plan as blocked and inspect its provenance." });
+  } else if (mirror.summary.paperReady > 0) {
+    alerts.push({ level: "info", title: "Paper mirror candidates ready", body: `${mirror.summary.paperReady} public signal(s) passed delay, drift, provenance, and bankroll checks. Live execution still requires a separate fresh broker draft and exact Human Gate approval.` });
+  }
+  if (mirror?.knowledge?.summary?.liveOrdersPlaced > 0) {
+    alerts.push({ level: "error", title: "Knowledge ledger safety mismatch", body: "The evidence report claims a live order. Ignore its scores and inspect the generating process." });
+  } else if (mirror?.knowledge?.available && mirror.knowledge.summary.measuredOutcomes > 0) {
+    alerts.push({ level: "info", title: "Copy evidence matured", body: `${mirror.knowledge.summary.measuredOutcomes} post-disclosure outcome(s) now inform source/trader rankings with small-sample shrinkage.` });
+  }
   return alerts.slice(0, 8);
 }
 
-function buildActivity({ state, records, readiness, broker, ticket, sources }) {
+function buildActivity({ state, records, readiness, broker, ticket, sources, mirror }) {
   const syncRuns = normalizeSyncRuns(state?.stockOffice?.syncRuns || []);
   const entries = syncRuns.slice(0, 8).map((run) => ({
     id: run.id,
@@ -548,7 +1108,7 @@ function buildActivity({ state, records, readiness, broker, ticket, sources }) {
     createdAt: run.completedAt,
   }));
 
-  if (ticket?.ticker || ticket?.action) {
+  if (ticket?.ticker || (ticket?.action && ticket.action !== "Unknown")) {
     entries.push({
       id: "latest-ticket-activity",
       type: "paper_ticket",
@@ -573,6 +1133,24 @@ function buildActivity({ state, records, readiness, broker, ticket, sources }) {
       title: `${readiness.blockers.length} readiness blocker(s)`,
       body: readiness.blockers[0],
       createdAt: readiness.generatedAt,
+    });
+  }
+  if (mirror?.available) {
+    entries.push({
+      id: "copy-trader-plan-activity",
+      type: "copy_trader_plan",
+      title: `${mirror.summary.signalsReceived} public copy signal(s) evaluated`,
+      body: `${mirror.summary.paperReady} paper-ready; ${mirror.summary.researchOnly} research-only; 0 live orders placed.`,
+      createdAt: mirror.generatedAt,
+    });
+  }
+  if (mirror?.knowledge?.available) {
+    entries.push({
+      id: "copy-knowledge-activity",
+      type: "copy_knowledge",
+      title: `${mirror.knowledge.summary.measuredOutcomes} measured copy outcome(s)`,
+      body: `${mirror.knowledge.summary.observationsSeen} real observation(s); ${mirror.knowledge.summary.pendingOutcomes} outcome(s) pending; no look-ahead allowed.`,
+      createdAt: mirror.knowledge.generatedAt,
     });
   }
   const best = records[0];
@@ -606,6 +1184,7 @@ function loadStockOfficeSnapshot(options = {}) {
   const state = options.state || {};
   const at = options.now ? new Date(options.now) : new Date();
   const stockRoot = resolveStockRoot(rootDir, options.stockRoot);
+  const runtimeRoot = options.runtimeRoot ? path.resolve(String(options.runtimeRoot)) : "";
   const workspaceState = normalizeStockOfficeState(state.stockOffice || {});
 
   if (!fs.existsSync(stockRoot)) {
@@ -620,9 +1199,24 @@ function loadStockOfficeSnapshot(options = {}) {
       positions: [],
       broker: normalizeBrokerStatus(null, null),
       readiness: normalizeReadiness(null, null, {}),
+      mirror: {
+        ...normalizeMirrorPlan(null, null),
+        importer: normalizeCopyImportStatus(null, null),
+        importer13f: normalizeCopyImportStatus(null, null),
+        knowledge: normalizeCopyKnowledge(null, null),
+      },
+      research: normalizeResearchContext(null, null),
+      guardrails: workspaceState.activeGuardrails || normalizeGuardrails({}),
+      guardrailsSource: workspaceState.activeGuardrails ? {
+        type: "human_gate_override",
+        appliedAt: workspaceState.guardrailsAppliedAt,
+        approvalId: workspaceState.guardrailsApprovalId,
+      } : { type: "default", appliedAt: null, approvalId: "" },
+      killSwitch: normalizeKillSwitch(null, null),
+      tradeDrafts: workspaceState.tradeDrafts,
       watchlist: [],
       ticket: parseTicketReport(""),
-      metrics: metricCounts([], [], normalizeBrokerStatus(null, null), normalizeReadiness(null, null, {}), sourceHealth),
+      metrics: metricCounts([], [], normalizeBrokerStatus(null, null), normalizeReadiness(null, null, {}), sourceHealth, normalizeMirrorPlan(null, null)),
       alerts: [],
       activity: [],
       chatMessages: workspaceState.chatMessages,
@@ -631,11 +1225,11 @@ function loadStockOfficeSnapshot(options = {}) {
       permissions: stockPermissions(),
       threatModel: stockThreatModel(),
     };
-    snapshot.alerts = buildAlerts({ available: false, sources: [], records: [], readiness: snapshot.readiness, broker: snapshot.broker, sourceHealth });
+    snapshot.alerts = buildAlerts({ available: false, sources: [], records: [], readiness: snapshot.readiness, broker: snapshot.broker, sourceHealth, mirror: snapshot.mirror });
     return snapshot;
   }
 
-  const readResults = SOURCE_DEFINITIONS.map((definition) => readSource(stockRoot, definition, at));
+  const readResults = SOURCE_DEFINITIONS.map((definition) => readSource(stockRoot, definition, at, runtimeRoot));
   const sources = readResults.map((result) => result.source);
   const byId = Object.fromEntries(readResults.map((result) => [result.source.id, result]));
   const sourceHealth = summarizeSourceHealth(sources);
@@ -652,8 +1246,27 @@ function loadStockOfficeSnapshot(options = {}) {
   const watchlist = Array.isArray(byId.universe?.data) ? byId.universe.data.slice(0, 500) : [];
   const broker = normalizeBrokerStatus(byId.broker_status?.data, byId.broker_status?.source);
   const readiness = normalizeReadiness(byId.live_auto_arm_plan?.data, byId.live_auto_launch_checklist?.data, Object.fromEntries(sources.map((source) => [source.id, source])));
+  const mirror = {
+    ...normalizeMirrorPlan(byId.copy_trader_plan?.data, byId.copy_trader_plan?.source),
+    importer: normalizeCopyImportStatus(byId.copy_import_status?.data, byId.copy_import_status?.source),
+    importer13f: normalizeCopyImportStatus(byId.sec_13f_import_status?.data, byId.sec_13f_import_status?.source),
+    knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
+    watchers: normalizeCopyTraderWatchers(byId.copy_trader_watchlist?.data),
+  };
+  const research = normalizeResearchContext(byId.research_context?.data, byId.research_context?.source);
+  const guardrails = workspaceState.activeGuardrails || normalizeGuardrails(byId.settings?.data || {});
+  const guardrailsSource = workspaceState.activeGuardrails ? {
+    type: "human_gate_override",
+    appliedAt: workspaceState.guardrailsAppliedAt,
+    approvalId: workspaceState.guardrailsApprovalId,
+  } : {
+    type: "stock_guru_settings",
+    appliedAt: byId.settings?.source?.generatedAt || byId.settings?.source?.lastModified || null,
+    approvalId: "",
+  };
+  const killSwitch = normalizeKillSwitch(byId.live_auto_kill_switch?.data, byId.live_auto_kill_switch?.source);
   const ticket = parseTicketReport(byId.latest_ticket?.data || "");
-  const metrics = metricCounts(records, watchlist, broker, readiness, sourceHealth);
+  const metrics = metricCounts(records, watchlist, broker, readiness, sourceHealth, mirror);
   const snapshot = {
     workspace: baseWorkspace(stockRoot, true),
     available: true,
@@ -664,6 +1277,12 @@ function loadStockOfficeSnapshot(options = {}) {
     positions: broker.positions,
     broker,
     readiness,
+    mirror,
+    research,
+    guardrails,
+    guardrailsSource,
+    killSwitch,
+    tradeDrafts: workspaceState.tradeDrafts,
     watchlist,
     ticket,
     metrics,
@@ -677,10 +1296,11 @@ function loadStockOfficeSnapshot(options = {}) {
     reports: {
       latestTicket: byId.latest_ticket?.data ? redactSensitiveText(byId.latest_ticket.data).slice(0, 4000) : "",
       mission: byId.mission?.data ? redactSensitiveText(byId.mission.data).slice(0, 4000) : "",
+      researchGeneratedAt: research.generatedAt,
     },
   };
-  snapshot.alerts = buildAlerts({ available: true, sources, records, readiness, broker, sourceHealth });
-  snapshot.activity = buildActivity({ state, records, readiness, broker, ticket, sources });
+  snapshot.alerts = buildAlerts({ available: true, sources, records, readiness, broker, sourceHealth, mirror });
+  snapshot.activity = buildActivity({ state, records, readiness, broker, ticket, sources, mirror });
   return snapshot;
 }
 
@@ -691,13 +1311,13 @@ function baseWorkspace(stockRoot, available) {
     name: "Stock Guru",
     title: "Stock Office",
     domain: "financial_market_decision_support",
-    mode: "read_only_guarded",
-    description: "Financial-market scanner, ranking engine, paper-trading journal, and guarded broker decision-support workspace.",
+    mode: "broker_onboarding_guarded",
+    description: "Financial-market scanner, guarded public-signal Mirror Lab, paper journal, and official Robinhood Agentic Trading onboarding workspace.",
     rootConfigured: Boolean(process.env.STOCK_GURU_PATH),
     rootAvailable: Boolean(available),
     rootLabel: redactSensitiveText(stockRoot),
-    externalActions: "Blocked by design",
-    safetyRule: "Research and analytics only. Argentum never places trades, moves money, changes broker settings, or promises returns.",
+    externalActions: "Exact broker actions require a fresh official connector review and one-use Human Gate approval",
+    safetyRule: "Argentum can prepare exact buy/sell drafts and Robinhood MCP execution envelopes. Live placement remains blocked until the official connector, strict risk checks, broker review, and one-use Human Gate approval all pass.",
   };
 }
 
@@ -712,6 +1332,11 @@ function stockPermissions(role = "admin") {
     canPostChat: admin,
     canUseAssistant: admin,
     canTriggerSync: admin,
+    canRequestMirrorApproval: admin,
+    canDraftBrokerOrder: admin,
+    canRequestBrokerConnection: admin,
+    canRequestGuardrailChange: admin,
+    canRequestOrderApproval: admin,
     canExport: false,
     canTrade: false,
     canMoveMoney: false,
@@ -723,9 +1348,11 @@ function stockThreatModel() {
   return [
     "Broker and provider credentials stay server-side and are not read by this connector.",
     "All Stock Office APIs require the existing Argentum session before data is returned.",
-    "The connector is read-only; no live broker, order, transfer, or account-changing calls are available.",
+    "The paper-plan connector cannot trade. Live equity orders require the separate guarded Robinhood dispatch flow; transfers and account-changing calls are not available.",
     "Imported report text is treated as untrusted content and redacted before display or assistant use.",
-    "Manual sync only rescans local files and is idempotent for the current JSON-state prototype.",
+    "Refresh runs only the evaluator, optional official SEC intake, and guarded mirror-plan builder. It never invokes broker, order, transfer, or account commands.",
+    "Robinhood credentials and account authentication remain in Robinhood OAuth/Codex MCP; Stock Office never asks for or stores the Robinhood login password.",
+    "Every live equity order requires fresh broker data, deterministic order scope, broker preflight review, and a one-use Human Gate decision.",
   ];
 }
 
@@ -764,6 +1391,11 @@ function getStockRecord(snapshot, ticker) {
   return (snapshot.records || []).find((record) => record.ticker === normalizedTicker) || null;
 }
 
+function getMirrorCandidate(snapshot, candidateId) {
+  const id = String(candidateId || "").trim();
+  return (snapshot.mirror?.candidates || []).find((candidate) => candidate.id === id) || null;
+}
+
 function stockOverview(snapshot) {
   return {
     workspace: snapshot.workspace,
@@ -781,6 +1413,11 @@ function stockOverview(snapshot) {
       warnings: snapshot.readiness.warnings.slice(0, 5),
       generatedAt: snapshot.readiness.generatedAt,
     },
+    mirror: snapshot.mirror,
+    guardrails: snapshot.guardrails,
+    guardrailsSource: snapshot.guardrailsSource,
+    killSwitch: snapshot.killSwitch,
+    tradeDrafts: snapshot.tradeDrafts.slice(0, 12),
     broker: {
       account: snapshot.broker.account,
       accountValue: snapshot.broker.accountValue,
@@ -813,28 +1450,40 @@ function answerStockQuestion(snapshot, rawQuestion) {
   const cite = (type, id, label) => citations.push(normalizeCitation({ type, id, label }));
   let answer;
 
-  if (/(top|best|setup|ticker|watch|valid)/.test(lower)) {
+  if (/(copy|mirror|famous|infamous|trader|disclosure|13f|form 4|congress|event contract|prediction)/.test(lower)) {
+    cite("source", "copy_trader_plan", "Copy Trader mirror plan");
+    cite("source", "copy_knowledge", "Copy Trader knowledge ledger");
+    cite("source", "copy_import_status", "Official SEC Form 4 import status");
+    cite("source", "sec_13f_import_status", "Official SEC Form 13F research status");
+    const mirror = snapshot.mirror;
+    const knowledge = mirror.knowledge;
+    const thirteenF = mirror.importer13f;
+    const ready = mirror.candidates.filter((candidate) => candidate.status === "paper_ready").slice(0, 5);
+    answer = mirror.available
+      ? `Mirror Lab evaluated ${mirror.summary.signalsReceived} attributable public signal(s): ${mirror.summary.paperReady} paper-ready, ${mirror.summary.researchOnly} research-only, and ${mirror.summary.rejected} rejected. ${ready.length ? `Paper-ready examples: ${ready.map((candidate) => `${candidate.side} ${candidate.symbol} from ${candidate.traderName}, evidence ${candidate.evidenceScore.toFixed(3)}, capped at ${formatUsd(candidate.mirrorNotionalDollars)}`).join("; ")}.` : "No signal currently passes every delay, provenance, price-drift, and bankroll check."} ${knowledge?.available ? `The knowledge ledger has ${knowledge.summary.measuredOutcomes} measured post-disclosure outcome(s), ${knowledge.summary.pendingOutcomes} pending, and ${knowledge.summary.observationsSeen} real price/fill observation(s); small samples are shrunk toward neutral and look-ahead is disabled. ` : "No outcome ledger is loaded, so evidence scores remain neutral. "}${mirror.importer?.available ? `The official Form 4 importer has ${mirror.importer.enabledEntries} enabled watchlist entr${mirror.importer.enabledEntries === 1 ? "y" : "ies"} and imported ${mirror.importer.signalsImported} signal(s) on its latest run. ` : "The official Form 4 importer has not run yet. "}${thirteenF?.available ? `The official Form 13F research intake tracks ${thirteenF.enabledEntries} manager(s) and produced ${thirteenF.signalsImported} delayed holding-change reference(s). ` : "The official Form 13F research intake has not run yet. "}The plan itself placed 0 live orders; event contracts and delayed 13F/congressional disclosures stay research-only regardless of score.`
+      : "Mirror Lab is configured but has no generated plan. Add named CIKs to the SEC watchlist and run the Stock Office refresh, copy-refresh-sec, or copy-refresh-13f. Anonymous posts, delayed 13F/congressional disclosures, and event contracts cannot become automatic Robinhood orders.";
+  } else if (/(top|best|setup|ticker|watch|valid)/.test(lower)) {
     const top = snapshot.records.slice(0, 5);
     top.forEach((record) => cite("record", record.ticker, `${record.ticker} evaluator record`));
     answer = top.length
       ? `Top Stock Guru records right now are ${top
           .map((record) => `${record.ticker} (${record.decision}, score ${record.score ?? "n/a"})`)
           .join(", ")}. This is research support only; it is not a trade instruction. Main repeated risk: ${top[0]?.mainRisk || "not recorded"}.`
-      : "No evaluator records are loaded yet. Run the Stock Guru scanner/evaluator outside Argentum, then rescan this read-only office.";
+      : "No evaluator records are loaded yet. Use Refresh Stock Office to run the local evaluator and rescan its guarded reports.";
   } else if (/(block|ready|arm|live|trade|broker)/.test(lower)) {
     cite("source", "live_auto_arm_plan", "Live auto arm plan");
     cite("source", "live_auto_launch_checklist", "Live launch checklist");
     const blockers = snapshot.readiness.blockers.slice(0, 4);
     answer = snapshot.readiness.readyForLiveAuto
-      ? "The latest readiness data says live auto is ready, but Argentum still keeps Stock Office read-only. Any broker action must remain outside this office and explicitly approved."
-      : `Live auto is not armable. Blockers: ${blockers.length ? blockers.join("; ") : "readiness data does not mark it ready"}. Argentum will not place trades, move money, or change broker settings.`;
+      ? "The latest readiness data says strategy checks are ready. Stock Office can build an exact order and route it through Human Gate, one-use dispatch, Robinhood review, and result reconciliation; it cannot bypass any of those controls."
+      : `Live entry is not armable. Blockers: ${blockers.length ? blockers.join("; ") : "readiness data does not mark it ready"}. Risk-reducing sells may still be drafted, but no trade can bypass Human Gate and Robinhood review.`;
   } else if (/(position|cash|buying|account|pnl|broker)/.test(lower)) {
     cite("source", "broker_status", "Masked broker status snapshot");
     const positions = snapshot.broker.positions || [];
-    answer = `Latest masked broker snapshot: account ${snapshot.broker.account || "not available"}, account value ${snapshot.broker.accountValue || "unknown"}, cash ${snapshot.broker.cash || "unknown"}, buying power ${snapshot.broker.buyingPower || "unknown"}, positions ${positions.length}. Argentum shows this for review only and does not submit broker orders.`;
+    answer = `Latest masked broker snapshot: account ${snapshot.broker.account || "not available"}, account value ${snapshot.broker.accountValue || "unknown"}, cash ${snapshot.broker.cash || "unknown"}, buying power ${snapshot.broker.buyingPower || "unknown"}, positions ${positions.length}. Argentum uses this snapshot for review and deterministic checks; any submitted order still requires fresh Robinhood evidence, exact Human Gate approval, a one-use dispatch claim, and Robinhood preflight review.`;
   } else if (/(source|sync|fresh|stale|error|data)/.test(lower)) {
     snapshot.sources.slice(0, 5).forEach((source) => cite("source", source.id, source.label));
-    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Manual Stock Office sync only rescans local files; it does not call market or broker APIs.`;
+    answer = `Source health is ${snapshot.sourceHealth.status}: ${snapshot.sourceHealth.ready} ready/configured, ${snapshot.sourceHealth.stale} stale, ${snapshot.sourceHealth.error} error, ${snapshot.sourceHealth.missing || 0} missing. Refresh Stock Office runs the evaluator and guarded public-signal/knowledge builders. Broker orders require a separate exact Human Gate approval and one-use Robinhood dispatch; deposits and money movement are not implemented.`;
   } else if (/(risk|reject|avoid|liquidity|volume)/.test(lower)) {
     const rejected = snapshot.records.filter((record) => record.status === "rejected").slice(0, 5);
     rejected.forEach((record) => cite("record", record.ticker, `${record.ticker} rejected evaluator record`));
@@ -845,7 +1494,7 @@ function answerStockQuestion(snapshot, rawQuestion) {
     const metrics = snapshot.metrics;
     cite("source", "evaluations", "Evaluator report");
     cite("source", "broker_status", "Masked broker status snapshot");
-    answer = `Stock Office is in read-only guarded mode with ${metrics.trackedRecords} evaluator records, ${metrics.validSetups} valid setups, ${metrics.rejectedRecords} rejected records, ${metrics.watchlistCount} watchlist tickers, and source health ${metrics.sourceStatus}. Ask for top setups, blockers, source freshness, or the masked broker snapshot for more detail.`;
+    answer = `Stock Office is in guarded broker-onboarding mode with ${metrics.trackedRecords} evaluator records, ${metrics.validSetups} valid setups, ${metrics.rejectedRecords} rejected records, ${metrics.watchlistCount} watchlist tickers, and source health ${metrics.sourceStatus}. Research and drafts are local; every live order still requires fresh broker evidence, Human Gate, and Robinhood review.`;
   }
 
   return {
@@ -865,6 +1514,7 @@ module.exports = {
   stockOverview,
   listStockRecords,
   getStockRecord,
+  getMirrorCandidate,
   answerStockQuestion,
   redactSensitiveText,
   maskAccountNumber,

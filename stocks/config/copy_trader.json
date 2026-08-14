@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "execution_mode": "paper_and_human_gate_only",
+  "total_budget_dollars": 25,
+  "max_trade_dollars": 5,
+  "max_daily_notional_dollars": 10,
+  "max_source_allocation_pct": 0.4,
+  "min_trade_dollars": 1,
+  "minimum_confidence": 0.7,
+  "max_price_drift_pct": 0.03,
+  "max_signal_age_hours": 96,
+  "max_current_price_age_hours": 24,
+  "allowed_asset_types": [
+    "equity"
+  ],
+  "research_only_asset_types": [
+    "event_contract"
+  ],
+  "knowledge": {
+    "prior_strength": 20,
+    "minimum_samples_for_gate": 8,
+    "minimum_evidence_score": 0.4
+  },
+  "sources": [
+    {
+      "id": "sec_form4",
+      "name": "SEC Form 4 insider transactions",
+      "source_type": "official_disclosure",
+      "enabled": true,
+      "mirror_eligible": true,
+      "max_disclosure_lag_hours": 96,
+      "notes": "Open-market insider purchases can become mirror candidates after provenance, price-drift, and risk checks. Grants, gifts, exercises, and tax-withholding transactions stay research-only."
+    },
+    {
+      "id": "sec_13f",
+      "name": "SEC Form 13F manager holdings",
+      "source_type": "delayed_holdings",
+      "enabled": true,
+      "mirror_eligible": false,
+      "max_disclosure_lag_hours": 1080,
+      "notes": "Quarter-end holdings can be filed up to 45 days later and do not reveal an exact trade time, so they are context rather than copy orders."
+    },
+    {
+      "id": "congress_ptr",
+      "name": "Congressional periodic transaction reports",
+      "source_type": "delayed_transaction_range",
+      "enabled": true,
+      "mirror_eligible": false,
+      "max_disclosure_lag_hours": 1080,
+      "notes": "Public transaction reports can arrive up to 45 days after a trade and often show value ranges, so they are research-only."
+    },
+    {
+      "id": "verified_public_signal",
+      "name": "Verified public trader signal",
+      "source_type": "public_signal",
+      "enabled": false,
+      "mirror_eligible": false,
+      "max_disclosure_lag_hours": 24,
+      "notes": "Disabled until the operator names a person and a stable, attributable public source. Screenshots, anonymous posts, and edited messages are not sufficient provenance."
+    }
+  ]
+}

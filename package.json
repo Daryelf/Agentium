@@ -6,12 +6,13 @@
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0",
-    "playwright": "1.61.0"
+    "playwright": "1.61.0",
+    "ws": "^8.21.0"
   },
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "start": "node server.js",
-    "check": "node --check server.js && node --check script.js && node --check services/stock-office.js",
+    "check": "node --check server.js && node --check script.js && node --check human-gate-bubble.js && node --check services/stock-office.js && node --check services/stock-guru-refresh.js && node --check services/stock-intelligence-scheduler.js && node --check services/stock-intelligence-store.js && node --check services/stock-event-bus.js && node --check services/stock-order-lifecycle.js && node --check services/stock-market-workers.js && node --check services/stock-continuous-review.js && node --check services/stock-telegram-notifier.js && node --check services/stock-guru-workspace.js && node --check services/stock-broker-control.js && node --check services/stock-shadow-portfolio.js && node --check services/robinhood-mcp-client.js && node --check services/local-database.js && node --check services/secure-secrets.js && node --check apps/stock-office/stock-office.js",
     "test": "node --test tests/*.test.js"
   },
   "engines": {

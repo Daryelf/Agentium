@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "sec_form4": [],
+  "sec_13f": [
+    {
+      "cik": "0001067983",
+      "label": "Berkshire Hathaway Inc. - associated with Warren Buffett",
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001067983",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001350694",
+      "label": "Bridgewater Associates, LP",
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001350694",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001336528",
+      "label": "Pershing Square Capital Management, L.P.",
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001336528",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001649339",
+      "label": "Scion Asset Management, LLC",
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001649339",
+      "cusip_ticker_map": {}
+    }
+  ]
+}

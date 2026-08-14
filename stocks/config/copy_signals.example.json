@@ -1,0 +1,41 @@
+{
+  "signals": [
+    {
+      "id": "example-form4-open-market-buy",
+      "source_id": "sec_form4",
+      "trader_name": "Example reporting person",
+      "asset_type": "equity",
+      "symbol": "EXAMPLE",
+      "side": "BUY",
+      "transaction_code": "P",
+      "transaction_at": "2026-01-05T15:30:00Z",
+      "disclosed_at": "2026-01-06T20:00:00Z",
+      "observed_at": "2026-01-06T20:05:00Z",
+      "initial_observed_price": 10.15,
+      "current_price_observed_at": "2026-01-06T20:05:00Z",
+      "source_url": "https://www.sec.gov/Archives/edgar/data/example",
+      "signal_price": 10,
+      "current_price": 10.15,
+      "confidence": 0.95,
+      "notes": "Schema example only. EXAMPLE is not a real trade recommendation."
+    },
+    {
+      "id": "example-event-contract-signal",
+      "source_id": "verified_public_signal",
+      "trader_name": "Example public forecaster",
+      "asset_type": "event_contract",
+      "symbol": "EVENT-EXAMPLE-YES",
+      "side": "YES",
+      "transaction_at": "2026-01-05T16:00:00Z",
+      "disclosed_at": "2026-01-05T16:02:00Z",
+      "observed_at": "2026-01-05T16:03:00Z",
+      "initial_observed_price": 0.44,
+      "current_price_observed_at": "2026-01-05T16:03:00Z",
+      "source_url": "https://example.com/public-signal",
+      "signal_price": 0.42,
+      "current_price": 0.44,
+      "confidence": 0.75,
+      "notes": "Schema example only. Event contracts remain research-only because the current broker adapter has no authorized event-contract execution path."
+    }
+  ]
+}

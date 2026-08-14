@@ -77,7 +77,13 @@ Frontend JavaScript never receives API keys. Use Settings -> AI Providers to che
 
 ## Stock Office
 
-Stock Office can read a local Stock Guru workspace in read-only mode for evaluator records, source freshness, readiness blockers, masked broker snapshots, and operator review notes. It never places trades, moves money, changes broker settings, or exposes provider credentials.
+Stock Office combines the local Stock Guru research workspace with a guarded server-side connection to Robinhood's official Agentic Trading MCP. It can continuously refresh the dedicated Agentic account, calculate deployed capital, pending commitments, daily-loss/trade locks, risk-sized copy/evaluator proposals, and owned-position exits. It can place one exact equity order only after a fingerprint-bound Human Gate decision, an action-time confirmation, fresh account/quote/tradability checks, Robinhood review, one placement attempt, and independent order-history reconciliation. It never deposits or transfers money, changes broker settings, exposes credentials, trades a primary account, or grants recurring order authority.
+
+An independent always-on paper-shadow engine records simulated copy/evaluator entries, risk exits, portfolio marks, drawdown, and closed-trade outcome learning once per minute while Argentum is running. Its state survives restarts, but it has no Robinhood client and cannot create or place live orders.
+
+A separate restart-safe intelligence scheduler keeps evaluator and copy-plan evidence current while the desktop is open: every 5 minutes during weekday market-day hours and every four hours otherwise. Live Robinhood account and position reads remain independently cached at five seconds. SEC Form 4 is bounded to hourly attempts and Form 13F to daily attempts, and both stay blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real monitored contact identity. The scheduler exposes freshness, history, warnings, and its next run in Stock Office; it has no broker client or order authority.
+
+Capital settings are not active merely because a proposal was created. The operator requests exact limits, approves them in Human Gate, then explicitly applies that unused approval. The active policy is stored in ignored local Argentum state and is rechecked at dispatch time.
 
 Set `STOCK_GURU_PATH` only if the Stock Guru folder is not at `./stocks`. See [`docs/stock-office.md`](docs/stock-office.md) for routes, safety boundaries, and validation steps.
 

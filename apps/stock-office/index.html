@@ -3,109 +3,346 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Stock Guru Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css" />
-    <script src="./stock-office.js" defer></script>
+    <title>Stock Office | Argentum</title>
+    <link rel="stylesheet" href="./stock-office.css?v=20260814-9" />
+    <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
+    <script src="./stock-office.js?v=20260814-9" defer></script>
   </head>
   <body>
-    <main class="stock-app">
-      <header class="topbar">
-        <a class="back-link" href="/" aria-label="Back to Argentum">Argentum</a>
-        <div>
-          <p class="eyebrow">Read-only business office</p>
-          <h1>Stock Guru Office</h1>
-          <p>Market scanner, ranking engine, paper-trading journal, and guarded decision-support workspace.</p>
+    <div class="stock-shell">
+      <aside class="stock-sidebar" aria-label="Stock Office navigation">
+        <a class="stock-mark" href="/" aria-label="Back to Argentum">A</a>
+        <nav class="stock-nav">
+          <button class="active" type="button" data-stock-nav="overview" aria-current="page"><i>⌂</i><span>Overview</span></button>
+          <button type="button" data-stock-nav="mirror"><i>⌁</i><span>Research</span></button>
+          <button class="nav-child" type="button" data-stock-nav="portfolio"><i>◫</i><span>Simulation</span></button>
+          <button type="button" data-stock-nav="markets"><i>⌁</i><span>Markets</span></button>
+          <button type="button" data-stock-nav="trade"><i>↗</i><span>Trade desk</span></button>
+          <button type="button" data-stock-nav="sources"><i>◎</i><span>Sources</span></button>
+          <button type="button" data-stock-nav="assistant"><i>✦</i><span>Assistant</span></button>
+        </nav>
+        <span id="stockStatusPill" hidden>Loading</span>
+      </aside>
+
+      <main class="stock-main">
+        <header class="stock-command-bar">
+          <div>
+            <p class="eyebrow" id="viewKicker">Stock workspace</p>
+            <h1 id="viewTitle">Overview</h1>
+          </div>
+          <div class="command-actions">
+            <span id="executionModePill" class="status-pill warning">Checking live orders</span>
+            <span id="brokerStatusPill" class="status-pill muted">Checking Robinhood</span>
+            <button id="syncButton" type="button">Update market data</button>
+          </div>
+        </header>
+
+        <section id="refreshFeedback" class="refresh-feedback" aria-live="polite" hidden>
+          <div><strong id="refreshFeedbackTitle">Preparing refresh</strong><span id="refreshFeedbackMessage">Checking market data...</span></div>
+          <span id="refreshFeedbackTime"></span>
+        </section>
+
+        <section class="stock-view active" data-stock-view="overview">
+          <section id="overviewAccountBand" class="overview-account-band">
+            <div class="overview-equity">
+              <span><i aria-hidden="true"></i> Live portfolio</span>
+              <strong id="overviewEquity">—</strong>
+              <small id="overviewAccountMeta">Loading Robinhood account</small>
+              <small class="overview-live-clock"><i aria-hidden="true"></i><span id="overviewLiveClock">Updating every second</span></small>
+            </div>
+            <div id="overviewAccountTape" class="overview-account-tape"></div>
+            <button class="quiet-button" type="button" data-quick-order>New order</button>
+          </section>
+          <section id="overviewOperationsBoard" class="overview-operations-board">
+            <div class="overview-operations-head">
+              <div><span>Live operations</span><h2>Market workers</h2></div>
+              <div class="overview-operations-status">
+                <strong id="marketSessionPill">Checking market</strong>
+                <button id="notificationStatusPill" class="status-pill muted" type="button" data-open-stock-view="sources">Telegram off</button>
+                <button id="operationsToggle" class="operations-toggle" type="button" aria-expanded="true" aria-controls="overviewOperationsBody">Minimize</button>
+              </div>
+            </div>
+            <div id="overviewOperationsSummary" class="overview-operations-summary" hidden></div>
+            <div id="overviewOperationsBody">
+              <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
+              <div id="marketWorkers" class="overview-worker-list"></div>
+            </div>
+          </section>
+          <section class="overview-intelligence-rail" aria-label="Research memory and system health">
+            <div class="overview-intelligence-state">
+              <span>Research memory</span>
+              <strong id="overviewResearchState">Waiting</strong>
+              <small id="overviewResearchTimestamp">No persisted cycle</small>
+            </div>
+            <div id="overviewSystemHealth" class="overview-system-health"></div>
+            <div class="overview-report-actions">
+              <button type="button" data-report-drawer="overnight">Night report</button>
+              <button type="button" data-report-drawer="morning">Morning report</button>
+            </div>
+          </section>
+          <section class="overview-proposals-board" aria-labelledby="tradeProposalsTitle">
+            <div class="overview-board-head overview-proposals-head">
+              <div><span>Live Robinhood review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
+              <div><strong id="overviewProposalCount">0 ready</strong><small>Real orders only. Human Gate approval required.</small></div>
+            </div>
+            <div id="overviewCycleRail" class="overview-cycle-rail" aria-live="polite"></div>
+            <div id="overviewTradeReadiness" class="overview-trade-readiness" aria-live="polite"></div>
+            <div id="overviewProposalList" class="overview-proposal-list" aria-live="polite"></div>
+            <p id="overviewProposalFeedback" class="overview-proposal-feedback" aria-live="polite"></p>
+          </section>
+          <div class="overview-data-grid">
+            <section class="overview-position-board">
+              <div class="overview-board-head"><div><span>Robinhood</span><h2>Positions</h2></div><strong id="overviewPositionCount">0</strong></div>
+              <div id="overviewPositions" class="overview-position-list"></div>
+            </section>
+            <section class="overview-intel-board">
+              <div class="overview-board-head"><div><span>Persistent intelligence</span><h2>Best opportunities</h2></div><strong id="overviewFreshness">Loading</strong></div>
+              <div id="overviewIntelSummary" class="overview-intel-summary"></div>
+              <div id="overviewTopSetups" class="overview-setup-list"></div>
+            </section>
+          </div>
+          <section class="overview-risk-rail">
+            <div class="overview-capital-use">
+              <div><span>Capital deployed</span><strong id="overviewCapitalUse">—</strong></div>
+              <div class="overview-capital-track"><i id="overviewCapitalFill"></i></div>
+            </div>
+            <div id="overviewRiskMetrics" class="overview-risk-metrics"></div>
+            <div id="overviewAction" class="overview-action" aria-live="polite"></div>
+            <span id="safetyCopy" hidden></span>
+          </section>
+          <a class="overview-logo-credit" href="https://parqet.com/api" target="_blank" rel="noopener noreferrer">Company logos provided by Parqet</a>
+        </section>
+
+        <section class="stock-view" data-stock-view="portfolio" hidden>
+          <section class="simulation-console">
+            <header class="simulation-head">
+              <div><span>AUTONOMOUS RESEARCH / SIMULATION</span><h2>Strategy stress lab</h2><p>Every priced BUY candidate is continuously tested. No manual start buttons.</p></div>
+              <div><strong id="shadowPortfolioStatus">Starting simulation</strong><small id="simulationCycle">Waiting for first cycle</small></div>
+            </header>
+            <div id="shadowPortfolioMetrics" class="simulation-metrics"></div>
+            <div class="simulation-workspace">
+              <section class="simulation-candidate-board">
+                <div class="simulation-section-head"><div><span>AUTO-TEST QUEUE</span><h3>Current candidates</h3></div><strong id="simulationCandidateCount">0 starting</strong></div>
+                <div id="simulationCandidates" class="simulation-candidates"></div>
+                <p id="shadowPortfolioFeedback" class="broker-feedback" aria-live="polite"></p>
+              </section>
+              <aside class="simulation-scoreboard">
+                <div class="simulation-section-head"><div><span>CLOSED PAPER TRADES ONLY</span><h3>Measured outcomes</h3></div></div>
+                <div id="shadowLearning" class="shadow-list"></div>
+                <form id="shadowResetForm" class="shadow-reset-form">
+                  <label>Starting cash <input id="shadowStartingCash" type="number" min="1" max="1000000" step="1" required /></label>
+                  <button type="submit">Reset simulation</button>
+                  <small>Simulation only. No Robinhood call.</small>
+                </form>
+              </aside>
+            </div>
+            <div class="simulation-ledger-grid">
+              <section><div class="simulation-section-head"><div><span>OPEN TESTS</span><h3 id="shadowPositionTitle">0 positions</h3></div></div><div id="shadowPositions" class="shadow-list"></div></section>
+              <section><div class="simulation-section-head"><div><span>AUDIT LEDGER</span><h3>Latest decisions</h3></div></div><div id="shadowDecisions" class="shadow-list"></div></section>
+            </div>
+          </section>
+        </section>
+
+        <section class="stock-view" data-stock-view="mirror" hidden>
+          <section class="mirror-console">
+            <header class="mirror-console-head">
+              <div>
+                <span class="mirror-kicker">RESEARCH + COPY TRADING</span>
+                <h2>Research center</h2>
+                <p>Market ideas, public-trader signals, and measured outcomes.</p>
+              </div>
+              <div class="mirror-head-actions">
+                <span id="mirrorStatusPill" class="status-pill muted">Loading engine</span>
+                <button id="mirrorRefreshButton" class="quiet-button" type="button">Run scan</button>
+              </div>
+            </header>
+            <div id="mirrorCycleRail" class="mirror-cycle-rail" aria-live="polite"></div>
+            <div class="mirror-kpi-strip">
+              <div id="mirrorMetrics" class="mirror-metrics"></div>
+              <div id="mirrorAllocation" class="mirror-allocation"></div>
+            </div>
+            <div class="mirror-workspace">
+              <section class="mirror-signal-board">
+                <div class="mirror-section-head">
+                  <div><span>MARKET + COPY SIGNALS</span><h3>Research candidates</h3></div>
+                  <div class="mirror-decision-counts" id="mirrorDecisionCounts"></div>
+                </div>
+                <div id="mirrorCandidates" class="mirror-candidates"></div>
+                <p id="mirrorGateFeedback" class="mirror-feedback" aria-live="polite"></p>
+              </section>
+              <aside class="mirror-watch-board">
+                <div class="mirror-section-head">
+                  <div><span>COPY SOURCES</span><h3>Traders &amp; funds</h3></div>
+                  <strong id="mirrorWatcherCount">0 active</strong>
+                </div>
+                <div id="mirrorWatchers" class="mirror-watchers"></div>
+                <div class="mirror-section-head compact"><div><span>AGREEMENT</span><h3>Multi-source matches</h3></div></div>
+                <div id="mirrorConsensus" class="mirror-consensus"></div>
+                <div class="mirror-section-head compact"><div><span>LATEST</span><h3>Source events</h3></div></div>
+                <div id="mirrorEventFeed" class="mirror-event-feed"></div>
+                <div id="mirrorSources" class="mirror-source-rail"></div>
+              </aside>
+            </div>
+            <details class="mirror-proof">
+              <summary><span>Methods &amp; evidence</span><strong id="knowledgeStatus">Neutral</strong></summary>
+              <div class="mirror-proof-grid">
+                <div id="knowledgeMetrics" class="knowledge-metrics"></div>
+                <div id="knowledgeProfiles" class="knowledge-profiles"></div>
+                <ul id="mirrorWarnings" class="mirror-warnings"></ul>
+              </div>
+            </details>
+          </section>
+        </section>
+
+        <section class="stock-view" data-stock-view="markets" hidden>
+          <div class="market-grid">
+            <section class="panel records-panel">
+              <div class="panel-head compact">
+                <div><p class="eyebrow">Evaluator</p><h2 id="recordsTitle">Records</h2></div>
+                <div class="record-filters">
+                  <input id="searchInput" type="search" placeholder="Ticker, setup, risk..." />
+                  <select id="statusFilter"><option value="all">All statuses</option><option value="valid_setup">Valid setup</option><option value="watch">Watch</option><option value="review">Review</option><option value="rejected">Rejected</option></select>
+                  <button id="applyFilters" type="button">Filter records</button>
+                  <span id="filterFeedback" class="filter-feedback" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="record-table"><div class="record-table-head"><span>Ticker</span><span>Status</span><span>Score</span><span>Setup</span><span>Risk</span></div><div id="recordsList" class="records-list"></div></div>
+            </section>
+            <aside class="panel detail-panel"><p class="eyebrow">Selected record</p><div id="recordDetail" class="record-detail"><h2>No record selected</h2><p>Refresh to load evaluator reports.</p></div></aside>
+          </div>
+        </section>
+
+        <section class="stock-view" data-stock-view="trade" hidden>
+          <section id="tradeAccountBar" class="trade-account-bar">
+            <div class="trade-account-identity">
+              <span class="account-live-dot" aria-hidden="true"></span>
+              <div><strong id="brokerAccountLabel">Not verified</strong><small>Robinhood Agentic</small></div>
+            </div>
+            <div id="tradeAccountMetrics" class="trade-account-metrics"></div>
+            <button id="brokerConnectGate" type="button">Refresh account</button>
+            <ol id="brokerOnboarding" hidden></ol>
+            <p id="brokerConnectionFeedback" class="trade-connection-note" aria-live="polite" hidden></p>
+          </section>
+          <div id="brokerBlockers" class="trade-alert" aria-live="polite"></div>
+          <div class="trade-workspace">
+            <article class="broker-card order-card">
+              <div class="broker-card-head"><div><p class="eyebrow">Order</p><h3>New order</h3></div><span id="orderKillSwitch">Checking</span></div>
+              <form id="orderDraftForm" class="order-draft-form">
+                <label>Symbol <input id="orderSymbol" type="text" maxlength="12" placeholder="AAPL" autocomplete="off" required /></label>
+                <label>Side <select id="orderSide"><option value="BUY">Buy</option><option value="SELL">Sell owned shares</option></select></label>
+                <label>Dollars <input id="orderDollars" type="number" min="1" max="1000000" step="0.01" required /></label>
+                <button type="submit">Review order</button>
+              </form>
+              <div id="orderDraftResult" class="order-draft-result" aria-live="polite" hidden></div>
+            </article>
+            <article class="broker-card capital-card">
+              <div class="broker-card-head"><div><p class="eyebrow">Risk</p><h3>Trading limits</h3></div><span>Protected</span></div>
+              <form id="guardrailForm" class="guardrail-form">
+                <div class="limit-primary">
+                  <label>Capital <input id="principalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                  <label>Max order <input id="maxOrderDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                  <label>Daily stop <span class="input-suffix"><input id="dailyLossLimitPct" type="number" min="0.1" max="25" step="0.1" required /><em>%</em></span></label>
+                  <label>Trade risk <span class="input-suffix"><input id="riskPerTradePct" type="number" min="0.1" max="10" step="0.1" required /><em>%</em></span></label>
+                </div>
+                <details class="advanced-limits">
+                  <summary>Advanced limits</summary>
+                  <div class="limit-advanced">
+                    <label>Max deployed <input id="maxTotalDollars" type="number" min="1" max="1000000" step="1" required /></label>
+                    <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
+                    <label>Max positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
+                    <label>Daily trades <input id="maxTradesPerDay" type="number" min="1" max="100" step="1" required /></label>
+                    <label>Entry score <input id="minEntryScore" type="number" min="1" max="100" step="1" required /></label>
+                  </div>
+                </details>
+                <div class="limit-actions">
+                  <button type="submit">Review changes</button>
+                  <button id="applyGuardrails" class="secondary" type="button" hidden>Apply approved limits</button>
+                </div>
+              </form>
+              <p id="guardrailFeedback" class="broker-feedback" aria-live="polite" hidden></p>
+            </article>
+          </div>
+        </section>
+
+        <section class="stock-view" data-stock-view="sources" hidden>
+          <article class="panel telegram-panel">
+            <div class="panel-head compact">
+              <div><p class="eyebrow">Trade alerts</p><h2>Telegram</h2></div>
+              <span id="telegramPanelStatus" class="status-pill muted">Not configured</span>
+            </div>
+            <div class="telegram-layout">
+              <div class="telegram-summary">
+                <strong id="telegramDestination">Telegram not configured</strong>
+                <span id="telegramSummary">Get a message only after Robinhood confirms an order.</span>
+                <div id="telegramRecent" class="telegram-recent"></div>
+              </div>
+              <form id="telegramConfigForm" class="telegram-config-form">
+                <label>Bot token<input id="telegramBotToken" type="password" autocomplete="new-password" placeholder="Stored in Mac Keychain" required /></label>
+                <label>Chat ID<input id="telegramChatId" type="text" inputmode="numeric" autocomplete="off" placeholder="Numeric chat ID" required /></label>
+                <button type="submit">Save securely</button>
+              </form>
+              <div class="telegram-actions">
+                <button id="telegramApprovalButton" type="button">Request approval</button>
+                <button id="telegramEnableButton" type="button" hidden>Enable approved alerts</button>
+                <button id="telegramTestButton" class="secondary" type="button" hidden>Send test</button>
+                <button id="telegramDisableButton" class="secondary" type="button" hidden>Turn off</button>
+                <button id="telegramRemoveButton" class="text-button" type="button" hidden>Remove connection</button>
+                <small id="telegramFeedback" aria-live="polite"></small>
+              </div>
+            </div>
+          </article>
+          <article class="panel intelligence-monitor">
+            <div class="panel-head compact"><div><p class="eyebrow">Research loop</p><h2>Market data freshness</h2></div><span id="intelligenceStatus">Starting scheduler</span></div>
+            <div id="intelligenceMetrics" class="portfolio-capital-metrics"></div>
+            <div class="intelligence-detail"><div id="intelligenceMessage" class="intelligence-message" aria-live="polite"></div><div id="intelligenceHistory" class="intelligence-history"></div></div>
+            <small class="intelligence-boundary">Research and paper simulation only. This loop cannot place orders.</small>
+          </article>
+          <article class="panel sec-setup-panel">
+            <div class="panel-head compact"><div><p class="eyebrow">Official filings</p><h2>SEC request identity</h2></div><span id="secSetupStatus" class="status-pill muted">Checking</span></div>
+            <div class="sec-setup-layout">
+              <div><strong id="secSetupTitle">SEC intake needs setup</strong><span id="secSetupSummary">Add a monitored contact identity for official Form 4 and 13F requests.</span></div>
+              <form id="secIdentityForm">
+                <label>Organization/name + monitored email<input id="secIdentity" type="text" maxlength="240" autocomplete="off" placeholder="Argentum Stock Office you@example.com" required /></label>
+                <button type="submit">Save SEC contact</button>
+              </form>
+              <small id="secSetupFeedback" aria-live="polite">Saved server-side; never returned to the browser. SEC.gov receives it only on bounded filing requests.</small>
+            </div>
+          </article>
+          <section class="panel source-panel"><div class="panel-head compact"><div><p class="eyebrow">Data sources</p><h2 id="sourceTitle">Checking sources</h2></div><span id="sourceBadge" class="status-pill muted">Read only</span></div><div id="sourceList" class="source-list"></div></section>
+        </section>
+
+        <section class="stock-view" data-stock-view="assistant" hidden>
+          <div class="assistant-grid">
+            <section class="panel assistant-panel">
+              <div class="panel-head compact"><div><p class="eyebrow">Assistant</p><h2>Ask about the data</h2></div><span class="status-pill muted">Research only</span></div>
+              <div id="stockChat" class="stock-chat"></div>
+              <form id="stockChatForm" class="chat-form"><input id="stockChatInput" type="text" placeholder="Ask about readiness, risk, or sources..." /><button type="submit">Ask</button></form>
+            </section>
+            <section class="panel activity-panel"><div class="panel-head compact"><div><p class="eyebrow">Audit</p><h2>Recent activity</h2></div></div><div id="activityList" class="activity-list"></div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="intelligenceDrawer" class="intelligence-drawer">
+      <form method="dialog" class="intelligence-drawer-shell">
+        <header><div><span id="drawerKicker">INTELLIGENCE</span><h2 id="drawerTitle">Details</h2></div><button value="close" aria-label="Close details">×</button></header>
+        <div id="drawerTabs" class="intelligence-drawer-tabs"></div>
+        <div id="drawerContent" class="intelligence-drawer-content"></div>
+      </form>
+    </dialog>
+    <dialog id="quickOrderDialog" class="quick-order-dialog">
+      <form id="quickOrderForm" class="quick-order-shell">
+        <header><div><span>ONE-STEP HUMAN GATE</span><h2>New real order</h2></div><button type="button" data-close-quick-order aria-label="Close order">×</button></header>
+        <p>Enter the order once. Argentum runs live checks and, only if they pass, sends the exact order to Human Gate.</p>
+        <div class="quick-order-fields">
+          <label>Symbol<input id="quickOrderSymbol" type="text" maxlength="12" placeholder="AAPL" autocomplete="off" required /></label>
+          <label>Side<select id="quickOrderSide"><option value="BUY">Buy</option><option value="SELL">Sell owned shares</option></select></label>
+          <label>Dollars<input id="quickOrderDollars" type="number" min="1" max="1000000" step="0.01" required /></label>
         </div>
-        <div class="top-actions">
-          <span class="status-pill" id="stockStatusPill">Loading</span>
-          <button id="syncButton" type="button">Sync local files</button>
-        </div>
-      </header>
-
-      <section class="hero-panel">
-        <div>
-          <p class="eyebrow">Safety boundary</p>
-          <h2>Research only. No orders. No broker actions.</h2>
-          <p id="safetyCopy">Stock Guru data is visible for review only while Argentum keeps all trading execution blocked.</p>
-        </div>
-        <div class="hero-metrics" id="metricGrid"></div>
-      </section>
-
-      <section class="workspace-grid">
-        <section class="panel records-panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Evaluator records</p>
-              <h2 id="recordsTitle">Records</h2>
-            </div>
-            <div class="record-filters">
-              <input id="searchInput" type="search" placeholder="Search ticker, setup, risk..." />
-              <select id="statusFilter">
-                <option value="all">All statuses</option>
-                <option value="valid_setup">Valid setup</option>
-                <option value="watch">Watch</option>
-                <option value="review">Review</option>
-                <option value="rejected">Rejected</option>
-              </select>
-              <button id="applyFilters" type="button">Apply</button>
-            </div>
-          </div>
-          <div class="record-table">
-            <div class="record-table-head">
-              <span>Ticker</span>
-              <span>Status</span>
-              <span>Score</span>
-              <span>Setup</span>
-              <span>Risk</span>
-            </div>
-            <div id="recordsList" class="records-list"></div>
-          </div>
-        </section>
-
-        <aside class="panel detail-panel">
-          <p class="eyebrow">Selected record</p>
-          <div id="recordDetail" class="record-detail">
-            <h2>No record selected</h2>
-            <p>Run the Stock Guru scanner outside Argentum, then sync local files here.</p>
-          </div>
-        </aside>
-
-        <section class="panel source-panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="eyebrow">Source health</p>
-              <h2 id="sourceTitle">Checking sources</h2>
-            </div>
-            <span id="sourceBadge" class="status-pill muted">Read only</span>
-          </div>
-          <div id="sourceList" class="source-list"></div>
-        </section>
-
-        <section class="panel assistant-panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="eyebrow">Read-only assistant</p>
-              <h2>Ask Stock Guru data</h2>
-            </div>
-            <span class="status-pill muted">Research only</span>
-          </div>
-          <div id="stockChat" class="stock-chat"></div>
-          <form id="stockChatForm" class="chat-form">
-            <input id="stockChatInput" type="text" placeholder="Ask about readiness, risk, source freshness..." />
-            <button type="submit">Ask</button>
-          </form>
-        </section>
-
-        <section class="panel activity-panel">
-          <div class="panel-head compact">
-            <div>
-              <p class="eyebrow">Audit trail</p>
-              <h2>Recent Stock Office activity</h2>
-            </div>
-          </div>
-          <div id="activityList" class="activity-list"></div>
-        </section>
-      </section>
-    </main>
+        <button type="submit">Run checks &amp; send to Human Gate</button>
+        <small id="quickOrderFeedback" aria-live="polite">No broker order occurs from this window.</small>
+      </form>
+    </dialog>
+    <script src="/human-gate-bubble.js?v=20260812-2"></script>
   </body>
 </html>

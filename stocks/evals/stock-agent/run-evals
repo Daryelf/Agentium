@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import random
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+SCRIPT_PATH = Path(__file__).resolve()
+EVAL_ROOT = SCRIPT_PATH.parent
+STOCK_ROOT = EVAL_ROOT.parents[1]
+REPO_ROOT = STOCK_ROOT
+sys.path.insert(0, str(EVAL_ROOT))
+
+from graders.deterministic import grade_case_spec
+from graders.security import classify_security_prompt
+from graders.static_repo import run_static_checks, summarize_static_checks
+
+
+BENCHMARK_VERSION = "stock-agent-eval-v1-2026-06-21"
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                cases.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"{path}:{line_number}: invalid JSONL: {exc}") from exc
+    return cases
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def case_filter(cases: list[dict[str, Any]], categories: set[str] | None) -> list[dict[str, Any]]:
+    if not categories:
+        return cases
+    return [case for case in cases if str(case.get("category")) in categories]
+
+
+def agent_behavior_status(case: dict[str, Any], *, dry_run: bool, agent_command: str | None) -> dict[str, Any]:
+    if dry_run:
+        return {
+            "status": "BLOCKED",
+            "reason": "dry_run",
+            "message": "Dry run requested; agent behavior was not executed.",
+        }
+    if not agent_command:
+        return {
+            "status": "BLOCKED",
+            "reason": "no_agent_endpoint",
+            "message": "No callable Stock-agent chat/API endpoint is defined for this harness. Current Stock Guru surface is CLI plus Argentum read-only bridge.",
+        }
+    return {
+        "status": "BLOCKED",
+        "reason": "agent_command_not_implemented",
+        "message": "Agent-command execution is intentionally not wired until an authenticated, read-only test endpoint exists.",
+    }
+
+
+def grade_case(case: dict[str, Any], *, dry_run: bool, agent_command: str | None) -> dict[str, Any]:
+    deterministic = grade_case_spec(case)
+    security = classify_security_prompt(case)
+    behavior = agent_behavior_status(case, dry_run=dry_run, agent_command=agent_command)
+    return {
+        "id": case.get("id"),
+        "split": case.get("split"),
+        "category": case.get("category"),
+        "severity": case.get("severity"),
+        "status": behavior["status"],
+        "blocker": behavior.get("reason"),
+        "message": behavior["message"],
+        "harnessChecks": {
+            "deterministicFixture": deterministic,
+            "securityClassifier": security,
+        },
+    }
+
+
+def release_gates(static_summary: dict[str, Any], agent_counts: dict[str, int]) -> dict[str, Any]:
+    critical_static = static_summary.get("criticalFailuresOrWarnings") or []
+    has_fail = any(item.get("status") == "FAIL" for item in critical_static)
+    blocked = agent_counts.get("BLOCKED", 0)
+    return {
+        "beginnerResearch": {
+            "status": "BLOCKED" if blocked else ("FAIL" if has_fail else "PASS"),
+            "reason": "Behavioral agent endpoint tests are blocked; read-only code paths need an executable agent wrapper before release scoring.",
+        },
+        "portfolioAnalysis": {
+            "status": "BLOCKED",
+            "reason": "No authenticated portfolio-test fixture or redacted user-portfolio contract is available.",
+        },
+        "paperTrading": {
+            "status": "BLOCKED",
+            "reason": "Paper modules and tests exist, but this audit did not execute a full paper workflow against the benchmark agent interface.",
+        },
+        "realBrokerage": {
+            "status": "FAIL" if critical_static else "BLOCKED",
+            "reason": "Real brokerage release requires live broker-tool contract tests, tenant isolation, fresh-data proof, duplicate-order protection, and kill-switch drills. Local config contains live-auto settings that must remain gated.",
+            "autoFailConditionsChecked": [
+                "credential leak static scan",
+                "ref_id/idempotency static path",
+                "account mismatch static path",
+                "kill switch static path",
+            ],
+        },
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the Stock agent audit benchmark.")
+    parser.add_argument("--dataset", default=str(EVAL_ROOT / "dataset.jsonl"))
+    parser.add_argument("--holdout", default=str(EVAL_ROOT / "holdout.jsonl"))
+    parser.add_argument("--include-holdout", action="store_true")
+    parser.add_argument("--categories", default="", help="Comma-separated categories to run.")
+    parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=101)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--agent-command", default="", help="Reserved for a future authenticated agent execution wrapper.")
+    parser.add_argument("--output-dir", default=str(STOCK_ROOT / "reports" / "stock-agent"))
+    args = parser.parse_args()
+
+    random.seed(args.seed)
+    dataset = load_jsonl(Path(args.dataset))
+    cases = list(dataset)
+    holdout_cases: list[dict[str, Any]] = []
+    if args.include_holdout:
+        holdout_cases = load_jsonl(Path(args.holdout))
+        cases.extend(holdout_cases)
+    category_set = {item.strip() for item in args.categories.split(",") if item.strip()} or None
+    cases = case_filter(cases, category_set)
+
+    static_checks = run_static_checks(STOCK_ROOT)
+    static_summary = summarize_static_checks(static_checks)
+
+    details: list[dict[str, Any]] = []
+    for repeat in range(max(1, args.repeats)):
+        shuffled = list(cases)
+        random.shuffle(shuffled)
+        for case in shuffled:
+            result = grade_case(case, dry_run=args.dry_run, agent_command=args.agent_command or None)
+            result["repeat"] = repeat + 1
+            details.append(result)
+
+    agent_counts: dict[str, int] = {}
+    for result in details:
+        status = str(result["status"])
+        agent_counts[status] = agent_counts.get(status, 0) + 1
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    summary = {
+        "benchmarkVersion": BENCHMARK_VERSION,
+        "generatedAt": generated_at,
+        "machine": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
+        "config": {
+            "dataset": str(Path(args.dataset)),
+            "holdout": str(Path(args.holdout)) if args.include_holdout else None,
+            "includeHoldout": args.include_holdout,
+            "categories": sorted(category_set) if category_set else "all",
+            "repeats": max(1, args.repeats),
+            "seed": args.seed,
+            "dryRun": bool(args.dry_run),
+            "agentCommandConfigured": bool(args.agent_command),
+        },
+        "cases": {
+            "dataset": len(dataset),
+            "holdoutIncluded": len(holdout_cases),
+            "selectedCaseRuns": len(details),
+            "agentBehaviorCounts": agent_counts,
+        },
+        "repositoryStaticChecks": static_summary,
+        "releaseGates": release_gates(static_summary, agent_counts),
+        "topFindings": [
+            "Stock Guru has substantial scanner/evaluator/paper/intraday/live-auto code and pytest coverage.",
+            "No benchmarkable Stock-chat endpoint exists in this workspace, so conversational agent behavior is BLOCKED, not passed.",
+            "Argentum Stock Office bridge is read-only and redacts/detects provider credentials, but deeper Stock Guru live-auto settings require a separate real-broker gate.",
+            "Live market, brokerage, provider, and tenant-isolation tests require controlled fixtures or approved read-only live credentials before release scoring.",
+        ],
+    }
+
+    detailed = {
+        "summary": summary,
+        "staticChecks": static_checks,
+        "caseResults": details,
+        "redaction": {
+            "secretsRead": False,
+            "realOrdersPlaced": False,
+            "providerCredentialValuesReturned": False,
+            "accountIdentifiersRedacted": True,
+        },
+    }
+
+    output_dir = Path(args.output_dir)
+    write_json(output_dir / "latest-summary.json", summary)
+    write_json(output_dir / "latest-detailed-results.json", detailed)
+
+    print(json.dumps({
+        "benchmarkVersion": BENCHMARK_VERSION,
+        "datasetCases": len(dataset),
+        "holdoutIncluded": len(holdout_cases),
+        "selectedCaseRuns": len(details),
+        "agentBehaviorCounts": agent_counts,
+        "staticScore": static_summary["score"],
+        "reports": {
+            "summary": str(output_dir / "latest-summary.json"),
+            "detailed": str(output_dir / "latest-detailed-results.json"),
+        },
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,6 +1,7 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { URL, pathToFileURL } = require("node:url");
 const {
@@ -10,20 +11,82 @@ const {
   stockOverview,
   listStockRecords,
   getStockRecord,
+  getMirrorCandidate,
   answerStockQuestion,
   redactSensitiveText,
   stockPermissions,
+  resolveStockRoot,
 } = require("./services/stock-office");
+const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
+const { createStockIntelligenceScheduler } = require("./services/stock-intelligence-scheduler");
+const { createStockIntelligenceStore } = require("./services/stock-intelligence-store");
+const { createStockEventBus } = require("./services/stock-event-bus");
+const { reconcileOrderDrafts } = require("./services/stock-order-lifecycle");
+const { buildStockMarketWorkers, marketSession } = require("./services/stock-market-workers");
+const { buildContinuousReviewView, selectNextQualifiedProposal } = require("./services/stock-continuous-review");
+const {
+  ALLOWED_EVENT_TYPES: STOCK_TELEGRAM_EVENT_TYPES,
+  APPROVAL_ACTION: STOCK_TELEGRAM_APPROVAL_ACTION,
+  createStockTelegramNotifier,
+} = require("./services/stock-telegram-notifier");
+const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./services/stock-guru-workspace");
+const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
+const secureSecrets = require("./services/secure-secrets");
+const {
+  applyPaperProposal,
+  normalizeShadowPortfolio,
+  paperProposalEligibility,
+  resetShadowPortfolio,
+  runShadowPortfolioCycle,
+} = require("./services/stock-shadow-portfolio");
+const { runAutonomousSimulationCycle } = require("./services/stock-simulation-engine");
+const {
+  brokerControlOverview,
+  buildCopyPortfolioPlan,
+  buildTradeDraft,
+  claimApprovedDispatch,
+  executionEnvelope,
+  normalizeGuardrails,
+  settleApprovedDispatch,
+  tradeDraftWithApprovalState,
+} = require("./services/stock-broker-control");
 
 const PORT = Number(process.env.PORT || 5173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
+const STOCK_GURU_USER_DATA_DIR = path.resolve(process.env.ARGENTUM_STOCK_GURU_DATA_DIR || (
+  process.platform === "darwin"
+    ? path.join(os.homedir(), "Library", "Application Support", "Argentum OS")
+    : path.join(os.homedir(), ".argentum-os")
+));
+const STOCK_GURU_RUNTIME_ROOT = path.resolve(process.env.STOCK_GURU_RUNTIME_DIR || path.join(STOCK_GURU_USER_DATA_DIR, "stock-guru-runtime"));
+const stockGuruSourceWorkspace = resolveStockGuruWorkspace({
+  workspaceRoot: ROOT,
+  userDataPath: STOCK_GURU_USER_DATA_DIR,
+});
+if (stockGuruSourceWorkspace.available) {
+  const stockGuruRuntime = materializeStockGuruRuntime({
+    sourcePath: stockGuruSourceWorkspace.path,
+    userDataPath: STOCK_GURU_USER_DATA_DIR,
+    reuseExisting: true,
+  });
+  if (stockGuruRuntime.available) {
+    process.env.STOCK_GURU_SOURCE_PATH = stockGuruSourceWorkspace.path;
+    process.env.STOCK_GURU_PATH = stockGuruRuntime.path;
+  }
+}
 const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
 const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
 const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
+const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
+const STOCK_SIMULATION_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-simulation-lab.json");
+const STOCK_INTELLIGENCE_STATUS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-intelligence-scheduler.json");
+const STOCK_TELEGRAM_SETTINGS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-telegram-notifications.json");
+const STOCK_LOGO_CACHE_DIR = path.join(STOCK_GURU_USER_DATA_DIR, "company-logos");
+const STOCK_LOGO_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
@@ -40,6 +103,7 @@ const ENV_AI_MODE = process.env.AI_MODE || "";
 const ENV_AI_MONTHLY_LIMIT_USD = process.env.AI_MONTHLY_LIMIT_USD || "";
 const ENV_OPENAI_TEST_BUDGET_USD = process.env.OPENAI_TEST_BUDGET_USD || "";
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
+hydrateStockSecIdentity();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
 const REMEMBER_SESSION_TTL_MS = boundedDurationMs(process.env.REMEMBER_SESSION_TTL_MS, 30 * DAY_MS, 30 * DAY_MS);
@@ -50,6 +114,171 @@ const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
+const stockGuruRefreshManager = createStockGuruRefreshManager({ runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+const stockIntelligenceStore = createStockIntelligenceStore({ dataDir: STOCK_GURU_USER_DATA_DIR });
+const stockEventBus = createStockEventBus({ persist: (event) => stockIntelligenceStore.recordSystemEvent(event) });
+const stockIntelligenceScheduler = createStockIntelligenceScheduler({
+  refreshManager: stockGuruRefreshManager,
+  stockRoot: resolveStockRoot(ROOT),
+  statusFile: STOCK_INTELLIGENCE_STATUS_FILE,
+  onCompleted: async (result) => {
+    if (process.env.NODE_ENV === "test") return;
+    const schedulerStatus = stockIntelligenceScheduler.getStatus();
+    if (["success", "partial"].includes(result.status)) {
+      try {
+        const intelligenceSnapshot = stockOfficeSnapshot(readState());
+        const persisted = stockIntelligenceStore.ingestSnapshot(intelligenceSnapshot, {
+          status: result.status,
+          startedAt: schedulerStatus.lastStartedAt,
+          completedAt: result.completedAt || schedulerStatus.lastCompletedAt,
+          nextScheduledAt: schedulerStatus.nextRunAt,
+          cycleType: marketSession(new Date(result.completedAt || Date.now())).status,
+          trigger: "scheduler",
+        });
+        stockEventBus.publish("research.completed", {
+          runId: persisted.runId,
+          status: result.status,
+          symbolsScanned: persisted.opportunities.length,
+          reportTypes: Object.keys(persisted.reports || {}),
+        }, { correlationId: persisted.correlationId });
+        if (persisted.reports?.overnight) {
+          stockEventBus.publish("overnight.completed", { status: "ready" }, { correlationId: persisted.correlationId });
+        }
+        if (persisted.reports?.morning) {
+          stockEventBus.publish("morning.report_ready", { status: "ready" }, { correlationId: persisted.correlationId });
+        }
+        const persistedSnapshot = stockOfficeSnapshot(readState());
+        const portfolioPlan = buildCopyPortfolioPlan(persistedSnapshot);
+        portfolioPlan.proposals.forEach((proposal) => {
+          stockIntelligenceStore.upsertProposal(proposal, { opportunityId: proposal.opportunityId });
+          stockIntelligenceStore.recordRiskDecision({
+            correlationId: persisted.correlationId,
+            proposalId: proposal.id,
+            symbol: proposal.symbol,
+            decision: proposal.draftEligible ? "passed" : proposal.side === "HOLD" ? "monitoring" : "blocked",
+            reasons: proposal.blockers || [],
+            data: { side: proposal.side, scores: proposal.scores || null },
+          });
+          if (!proposal.draftEligible && proposal.side !== "HOLD" && proposal.blockers?.length) {
+            stockEventBus.publish("risk.blocked", {
+              proposalId: proposal.id,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              status: "blocked",
+              reason: proposal.blockers[0],
+              blockers: proposal.blockers.slice(0, 8),
+            }, { id: `risk.blocked:${proposal.fingerprint}`, correlationId: persisted.correlationId });
+          }
+        });
+        const brokerControl = brokerControlOverview(persistedSnapshot);
+        const workers = buildStockMarketWorkers({
+          snapshot: persistedSnapshot,
+          brokerControl,
+          portfolioPlan,
+          intelligenceScheduler: schedulerStatus,
+          intelligence: persistedSnapshot.intelligence,
+        });
+        workers.workers.forEach((worker) => stockIntelligenceStore.updateWorkerHeartbeat(worker, {
+          correlationId: persisted.correlationId,
+          cycleType: workers.market.status,
+          startedAt: schedulerStatus.lastStartedAt,
+          completedAt: result.completedAt || schedulerStatus.lastCompletedAt,
+          itemsSeen: worker.metrics?.[0]?.value || 0,
+          itemsCreated: worker.metrics?.[1]?.value || 0,
+          errors: worker.status === "blocked" ? 1 : 0,
+        }));
+      } catch (error) {
+        console.warn("Stock research persistence failed safely:", error.message);
+        stockEventBus.publish("source.failed", { source: "stock_intelligence_database", error: error.message, status: "failed" });
+      }
+    } else {
+      stockEventBus.publish("research.failed", { status: result.status, error: result.errors?.[0] || result.message || "Research cycle failed safely." });
+    }
+    if (result.recordsMayHaveChanged) {
+      try {
+        refreshStockShadowPortfolio({ force: true });
+        refreshStockSimulationLab({ force: true });
+      } catch (error) {
+        console.warn("Stock simulation follow-up cycle failed safely:", error.message);
+      }
+    }
+    if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+      await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+        stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Official Robinhood refresh failed; execution remains closed." });
+        return null;
+      });
+      await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Stock order lifecycle reconciliation failed safely:", error.message));
+    }
+    await runStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
+  },
+});
+const robinhoodMcpClient = createRobinhoodMcpClient({
+  dataDir: path.join(STOCK_GURU_USER_DATA_DIR, "broker-auth"),
+  codexConfigFile: process.env.ARGENTUM_CODEX_CONFIG_PATH || path.join(os.homedir(), ".codex", "config.toml"),
+});
+const stockTelegramSecretCache = new Map();
+const stockTelegramNotifier = createStockTelegramNotifier({
+  environment: process.env,
+  controlTransport: ["127.0.0.1", "localhost", "::1"].includes(String(HOST).toLowerCase()) ? "local_polling" : "webhook",
+  getSetting: (key, fallback) => readStockTelegramSettings(key, fallback),
+  setSetting: (key, value) => writeStockTelegramSettings(key, value),
+  getSecret: (provider) => {
+    if (stockTelegramSecretCache.has(provider)) return stockTelegramSecretCache.get(provider);
+    const value = secureSecrets.getSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider });
+    stockTelegramSecretCache.set(provider, value);
+    return value;
+  },
+  setSecret: (provider, value) => {
+    const saved = secureSecrets.setSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider, value, preferKeychain: true });
+    stockTelegramSecretCache.set(provider, value);
+    return saved;
+  },
+  deleteSecret: (provider) => {
+    const removed = secureSecrets.deleteSecret({ dataDir: STOCK_GURU_USER_DATA_DIR, provider });
+    stockTelegramSecretCache.delete(provider);
+    return removed;
+  },
+  reserveEvent: (event) => stockIntelligenceStore.reserveTelegramEvent(event),
+  completeEvent: (id, result) => stockIntelligenceStore.completeTelegramEvent(id, result),
+  commandContext: (input) => stockTelegramCommandContext(input),
+  approvalAction: (input) => stockTelegramApprovalAction(input),
+  watchAction: (input) => stockTelegramWatchAction(input),
+});
+stockEventBus.subscribe("overnight.completed", (event) => {
+  const report = stockIntelligenceStore.latestReport("overnight");
+  return stockTelegramNotifier.notifySystemEvent({
+    eventId: event.id,
+    kind: "overnight_report",
+    text: stockTelegramReportText("ARGENTUM NIGHT RESEARCH", report),
+  }, readState().approvals || []).catch(() => null);
+});
+stockEventBus.subscribe("morning.report_ready", (event) => {
+  const report = stockIntelligenceStore.latestReport("morning");
+  return stockTelegramNotifier.notifySystemEvent({
+    eventId: event.id,
+    kind: "morning_report",
+    text: stockTelegramReportText("ARGENTUM MORNING INTELLIGENCE", report),
+  }, readState().approvals || []).catch(() => null);
+});
+stockEventBus.subscribe("broker.disconnected", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "broker_failure",
+  text: `ARGENTUM BROKER FAILURE\n${redactSensitiveText(event.payload?.reason || event.payload?.error || "Official Robinhood state is unavailable.").slice(0, 800)}\nExecution is closed. Research continues.`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.rejected", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "order_rejected",
+  text: `ARGENTUM ORDER STOPPED\n${event.payload?.side || ""} ${event.payload?.symbol || ""}\n${redactSensitiveText(event.payload?.reason || "Broker review or reconciliation did not pass.").slice(0, 800)}\nNo automatic retry.`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.cancelled", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "order_cancelled",
+  text: `ARGENTUM ORDER CANCELLED\n${event.payload?.side || ""} ${event.payload?.symbol || ""}\n${redactSensitiveText(event.payload?.reason || "Official broker state reports this order as cancelled.").slice(0, 800)}`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.filled", (event) => {
+  const draft = event.payload?.draft;
+  return draft ? stockTelegramNotifier.notifyVerifiedTrade(draft, readState().approvals || []).catch(() => null) : null;
+});
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
 const AI_RISKY_ACTION_TYPES = new Set([
@@ -245,6 +474,59 @@ function boundedDurationMs(value, fallback, max) {
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function readStockTelegramSettings(key, fallback = {}) {
+  try {
+    if (!fs.existsSync(STOCK_TELEGRAM_SETTINGS_FILE)) return fallback;
+    const store = JSON.parse(fs.readFileSync(STOCK_TELEGRAM_SETTINGS_FILE, "utf8"));
+    return Object.hasOwn(store, key) ? store[key] : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStockTelegramSettings(key, value) {
+  let store = {};
+  try {
+    if (fs.existsSync(STOCK_TELEGRAM_SETTINGS_FILE)) {
+      store = JSON.parse(fs.readFileSync(STOCK_TELEGRAM_SETTINGS_FILE, "utf8"));
+    }
+  } catch {
+    store = {};
+  }
+  fs.mkdirSync(path.dirname(STOCK_TELEGRAM_SETTINGS_FILE), { recursive: true });
+  fs.writeFileSync(STOCK_TELEGRAM_SETTINGS_FILE, `${JSON.stringify({ ...store, [key]: value }, null, 2)}\n`, { mode: 0o600 });
+}
+
+function normalizeStockSecIdentity(value) {
+  const identity = String(value || "").trim().replace(/\s+/g, " ").slice(0, 240);
+  const email = identity.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
+  const label = email ? identity.replace(email, "").trim().replace(/[-|,;]+$/, "").trim() : "";
+  if (!email || label.length < 2) {
+    throw guardedError("Enter an organization or operator name plus a monitored email, for example: Argentum Stock Office ops@example.com.", 400);
+  }
+  return identity;
+}
+
+function hydrateStockSecIdentity() {
+  if (process.env.STOCK_GURU_SEC_USER_AGENT) return;
+  try {
+    const stored = readStockTelegramSettings("secUserAgent", "");
+    if (stored) process.env.STOCK_GURU_SEC_USER_AGENT = normalizeStockSecIdentity(stored);
+  } catch {
+    // Invalid old values leave automated SEC intake safely disabled.
+  }
+}
+
+function stockSecSetupPayload() {
+  const configured = Boolean(String(process.env.STOCK_GURU_SEC_USER_AGENT || "").trim());
+  return {
+    configured,
+    status: configured ? "ready" : "setup_required",
+    storage: configured ? "server_only_local_file" : "not_configured",
+    transmittedTo: "SEC.gov automated filing requests only",
+  };
 }
 
 function readPersistentSessionSecret() {
@@ -863,6 +1145,8 @@ function defaultState() {
       chatMessages: [],
       syncRuns: [],
       assistantRuns: [],
+      tradeDrafts: [],
+      proposalDecisions: [],
     },
     toolConnections: {
       openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
@@ -3496,23 +3780,631 @@ function createClipsApprovalPackage(payload = {}) {
 function createHumanGateRequest(payload = {}) {
   const actionType = String(payload.actionType || detectRiskyAction(payload.message || payload.title || "") || "external_api_action");
   const state = readState();
+  const linkedId = String(payload.linkedId || "").slice(0, 240) || null;
+  const existing = linkedId
+    ? (state.approvals || []).find((item) => item.linkedId === linkedId && item.actionType === actionType && item.status === "pending")
+    : null;
+  if (existing) return { approval: existing, message: "Human Gate approval required.", requiresApproval: true, riskLevel: existing.riskLevel };
+  const evidenceObject = payload.evidence && typeof payload.evidence === "object" ? payload.evidence : null;
+  const details = payload.details && typeof payload.details === "object"
+    ? payload.details
+    : evidenceObject?.details && typeof evidenceObject.details === "object"
+      ? evidenceObject.details
+      : {};
+  const evidence = typeof payload.evidence === "string"
+    ? payload.evidence
+    : evidenceObject?.reason || "Agent 101 routed this request to Human Gate before any consequential action.";
   const approval = {
     id: `approval-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title: String(payload.title || `Review blocked action: ${actionType}`),
     actionType,
     risk: payload.riskLevel || "high",
     riskLevel: payload.riskLevel || "high",
-    evidence: String(payload.evidence || "Agent 101 routed this request to Human Gate before any external action."),
+    evidence: String(evidence).slice(0, 4000),
     action: String(payload.action || "Operator approval required. No external action was executed."),
+    exactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    originalExactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    details,
+    originalDetails: JSON.parse(JSON.stringify(details)),
+    grantedDetails: null,
+    linkedId,
+    officeId: payload.officeId || details.officeId || null,
+    workflowId: payload.workflowId || null,
+    runId: payload.runId || evidenceObject?.runId || null,
+    missionId: payload.missionId || null,
+    reversible: payload.reversible !== false,
+    expiresAt: payload.expiresAt || new Date(Date.now() + (1000 * 60 * 60 * 24)).toISOString(),
+    expectedPostcondition: String(payload.expectedPostcondition || "The exact approved action completes and is recorded in the audit trail.").slice(0, 2000),
+    rollbackPlan: String(payload.rollbackPlan || "Stop on mismatch; source edits use atomic rollback and output actions remain isolated.").slice(0, 2000),
     status: "pending",
+    useCount: 0,
+    consumedAt: null,
     createdBy: "agent-101",
     createdAt: now(),
   };
   state.approvals.unshift(approval);
-  state.approvals = state.approvals.slice(0, 50);
+  const activeApprovals = state.approvals.filter((item) => ["pending", "approved", "needs_revision"].includes(item.status) && !item.consumedAt);
+  const archivedApprovals = state.approvals.filter((item) => !activeApprovals.includes(item)).slice(0, Math.max(0, 50 - activeApprovals.length));
+  state.approvals = [...activeApprovals, ...archivedApprovals];
   audit(state, "Risky action blocked", `${actionType}: Human Gate approval required.`);
   writeState(state);
   return { approval, message: "Human Gate approval required.", requiresApproval: true, riskLevel: approval.riskLevel };
+}
+
+function createStockOrderApprovalRequest(draft) {
+  const envelope = executionEnvelope(draft);
+  const approvalResult = createHumanGateRequest({
+    actionType: "place_robinhood_equity_order",
+    title: `Approve exact Robinhood order: ${draft.side} ${draft.symbol}`,
+    riskLevel: "critical",
+    linkedId: `stock-office:order:${draft.fingerprint}`,
+    officeId: "stock-office",
+    workflowId: "workflow-stock-watch",
+    expiresAt: draft.expiresAt,
+    evidence: `${draft.thesis} Reference price $${draft.referencePrice.toFixed(2)}; requested and capped notional $${draft.cappedDollars.toFixed(2)}; all local capital, position, freshness, and kill-switch checks passed. Robinhood review must still return no warnings before placement.`,
+    action: `Review and, only if Robinhood's review_equity_order returns no warning or scope change before ${draft.expiresAt}, place this one ${draft.side} ${draft.symbol} order in the dedicated Agentic account.`,
+    exactScope: `One-use order fingerprint ${draft.fingerprint}: ${draft.side} ${draft.symbol}, market notional no more than $${draft.cappedDollars.toFixed(2)}, regular market hours, GFD, ref_id ${draft.clientRefId}. Reject on any broker warning, repricing outside policy, account mismatch, stale data, or scope change.`,
+    details: {
+      officeId: "stock-office",
+      draftId: draft.id,
+      fingerprint: draft.fingerprint,
+      executionEnvelope: envelope,
+      maxNotionalDollars: draft.cappedDollars,
+      accountScope: "dedicated_agentic_account_only",
+      moneyMovementAuthorized: false,
+      recurringAuthorization: false,
+    },
+    reversible: false,
+    expectedPostcondition: "The exact order is broker-reviewed, placed at most once, and reconciled to a Robinhood order ID; otherwise no order is placed.",
+    rollbackPlan: "If still open, cancel the exact broker order; if filled, stop automation and create a separate explicit SELL review. Never create an offsetting order automatically.",
+  });
+  stockIntelligenceStore.recordApproval(approvalResult.approval, {
+    proposalId: draft.sourceId || draft.id,
+    actorType: "SYSTEM",
+  });
+  stockEventBus.publish("trade.approval_requested", {
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approvalResult.approval.id,
+    symbol: draft.symbol,
+    side: draft.side,
+    status: "pending",
+    draft,
+    approval: approvalResult.approval,
+  }, { id: `trade.approval_requested:${approvalResult.approval.id}` });
+  return { approvalResult, envelope };
+}
+
+function stockTelegramReportText(label, report) {
+  if (!report) return `${label}\nNo persisted report is available yet.`;
+  const top = (report.topOpportunities || []).slice(0, 5);
+  return [
+    label,
+    `Generated ${report.generatedAt || "unknown"}`,
+    `Researched ${report.summary?.researched || 0} · High ${report.summary?.highPriority || 0} · Candidates ${report.summary?.candidates || 0}`,
+    "",
+    ...(top.length ? top.map((item, index) => `${index + 1}. ${item.symbol} — ${Math.round(Number(item.aiScore || item.overallScore || 0))} · ${item.status}`) : ["No opportunity currently meets the persisted candidate threshold."]),
+    "",
+    report.type === "morning" ? "Overnight theses still require current premarket and broker revalidation." : "Research only. No order authority.",
+  ].join("\n");
+}
+
+async function stockTelegramCommandContext(input = {}) {
+  const command = String(input.command || "help").toLowerCase();
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const control = brokerControlOverview(snapshot);
+  const plan = buildCopyPortfolioPlan(snapshot);
+  const intelligence = snapshot.intelligence;
+  const session = marketSession(new Date());
+  const opportunities = intelligence.opportunities || [];
+  const pending = (state.approvals || []).filter((item) => item.officeId === "stock-office" && item.status === "pending" && !item.consumedAt);
+  const money = (value) => value === null || value === undefined ? "unavailable" : `$${Number(value).toFixed(2)}`;
+  if (command === "help") return { text: "ARGENTUM COMMANDS\n/status /portfolio /positions /opportunities /pending /research SYMBOL /overnight /morning /mirror /sources /risk /health /symbol SYMBOL /help\n\nOnly environment-authorized Telegram user and chat IDs can control Human Gate." };
+  if (command === "status") return { text: [
+    "ARGENTUM STATUS",
+    `${control.executionMode} · ${session.label}`,
+    `Portfolio ${money(control.accountValueDollars)} · Buying power ${money(control.buyingPowerDollars)}`,
+    `Opportunities ${opportunities.filter((item) => ["candidate", "high_priority"].includes(item.status)).length}`,
+    `Pending Human Gate ${pending.length}`,
+    `Execution ${control.liveReady ? "eligible for exact approval" : `blocked — ${control.blockers[0] || "unknown state"}`}`,
+  ].join("\n") };
+  if (command === "portfolio") return { text: [
+    "ARGENTUM PORTFOLIO",
+    `Value ${money(control.accountValueDollars)} · Cash ${money(control.cashDollars)} · Buying power ${money(control.buyingPowerDollars)}`,
+    `Stocks ${money(control.equityValueDollars)} · Today P&L ${money(control.capital.dayPnlDollars)}`,
+    `Positions ${control.positions.length} · Open orders ${control.openOrderCount}`,
+    `Updated ${control.snapshotUpdatedAt || "unavailable"}`,
+  ].join("\n") };
+  if (command === "positions") return { text: ["ARGENTUM POSITIONS", ...(control.positions.length ? control.positions.slice(0, 15).map((position) => {
+    const quantity = Number(position.quantity ?? position.sharesAvailableForSells ?? 0);
+    const price = Number(position.currentPrice);
+    return `${position.symbol} · ${quantity.toFixed(4)} shares · ${Number.isFinite(price) ? `$${price.toFixed(2)}` : "price unavailable"}`;
+  }) : ["No verified live positions."])].join("\n") };
+  if (command === "opportunities") {
+    const top = opportunities.filter((item) => item.status !== "rejected").slice(0, 8);
+    return { text: ["ARGENTUM OPPORTUNITIES", ...(top.length ? top.map((item, index) => `${index + 1}. ${item.symbol} · AI ${Math.round(item.aiScore)} · Tech ${Math.round(item.technicalScore || 0)} · ${item.confidence}`) : ["No opportunity currently meets the persisted research threshold."])].join("\n") };
+  }
+  if (command === "pending") return { text: ["ARGENTUM PENDING", ...(pending.length ? pending.slice(0, 10).map((item) => `${item.title} · expires ${item.expiresAt || "unknown"}`) : ["No Stock Office Human Gate request is pending."])].join("\n") };
+  if (["research", "symbol", "why"].includes(command)) {
+    const symbol = String(input.args?.[0] || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    if (!symbol) return { text: "Use /research SYMBOL, for example /research NET." };
+    const opportunity = opportunities.find((item) => item.symbol === symbol);
+    const proposal = plan.proposals.find((item) => item.symbol === symbol);
+    if (!opportunity && !proposal) return { text: `${symbol}\nNo persisted Argentum research is available for this symbol.` };
+    return { text: [
+      `ARGENTUM RESEARCH · ${symbol}`,
+      `Thesis ${opportunity?.thesis?.setup || proposal?.research?.setupType || "monitoring"}`,
+      `AI ${opportunity?.aiScore ?? "unavailable"} · Technical ${opportunity?.technicalScore ?? "unavailable"} · Mirror ${opportunity?.mirrorScore ?? "unavailable"} · Risk ${opportunity?.riskScore ?? "unavailable"}`,
+      `Confidence ${opportunity?.confidence || proposal?.research?.confidence || "unavailable"}`,
+      ...(opportunity?.evidence || []).slice(0, 6).map((item) => `${item.direction === "supporting" ? "✓" : "!"} ${item.label}`),
+      `Risk ${opportunity?.thesis?.risk || proposal?.research?.mainRisk || "unavailable"}`,
+      `Updated ${opportunity?.lastResearchedAt || "unavailable"} · Next ${opportunity?.nextReviewAt || "unavailable"}`,
+      proposal?.blockers?.length ? `Blocked ${proposal.blockers[0]}` : "Execution still requires exact Human Gate and broker revalidation.",
+    ].join("\n") };
+  }
+  if (command === "overnight") return { text: stockTelegramReportText("ARGENTUM NIGHT RESEARCH", intelligence.reports?.overnight) };
+  if (command === "morning") return { text: stockTelegramReportText("ARGENTUM MORNING INTELLIGENCE", intelligence.reports?.morning) };
+  if (command === "mirror") {
+    const mirror = intelligence.mirror || {};
+    return { text: ["ARGENTUM MIRROR", `Sources ${(mirror.sources || []).filter((item) => item.active).length}/${(mirror.sources || []).length}`, `Events ${(mirror.events || []).length} · Consensus ${(mirror.consensus || []).length}`, ...(mirror.consensus || []).slice(0, 5).map((item) => `${item.symbol} ${item.side} · ${item.sourceCount} sources · ${Math.round(item.score)}`)].join("\n") };
+  }
+  if (command === "sources") return { text: ["ARGENTUM SOURCES", ...(snapshot.sources || []).slice(0, 15).map((source) => `${source.label || source.id} · ${source.status} · ${source.generatedAt || source.lastModified || "no timestamp"}`)].join("\n") };
+  if (command === "risk") return { text: ["ARGENTUM RISK", `Mode ${control.executionMode}`, `Max order $${control.guardrails.maxOrderDollars.toFixed(2)} · Max deployed $${control.guardrails.maxTotalDollars.toFixed(2)}`, ...(control.blockers.length ? control.blockers.slice(0, 8).map((item) => `BLOCK · ${item}`) : ["Current loaded checks pass."])].join("\n") };
+  if (command === "health") {
+    const health = stockIntelligenceStore.health({ executionMode: snapshot.executionMode, executionBlocked: !control.liveReady, sourceHealth: snapshot.sourceHealth, broker: { authenticationVerified: control.authenticationVerified, updatedAt: control.snapshotUpdatedAt }, telegram: stockTelegramNotifier.publicStatus(state.approvals || []) });
+    return { text: ["ARGENTUM HEALTH", `Market data ${health.marketData.status}`, `Broker ${health.broker.status}`, `Telegram ${health.telegram.status}`, `Research ${health.research.status}`, `Mirror ${health.mirror.healthy}/${health.mirror.total}`, `Database ${health.database.status}`, `Worker heartbeat ${health.lastWorkerHeartbeat || "pending"}`].join("\n") };
+  }
+  return { text: "Use /help for Argentum commands." };
+}
+
+async function stockTelegramApprovalAction(input = {}) {
+  const state = readState();
+  const approval = (state.approvals || []).find((item) => item.id === String(input.approvalId || ""));
+  if (!approval || approval.officeId !== "stock-office" || approval.actionType !== "place_robinhood_equity_order") return { text: "BLOCKED\nThis immutable Stock Office approval ID is unavailable or invalid." };
+  if (approval.status !== "pending") return { text: `NO CHANGE\nThis request is already ${approval.status}.` };
+  const approved = input.decision === "approve";
+  approval.status = approved ? "approved" : "blocked";
+  approval.decision = approved ? "approve" : "reject";
+  approval.grantedDetails = approved ? JSON.parse(JSON.stringify(approval.originalDetails || approval.details || {})) : null;
+  approval.resolvedAt = now();
+  approval.decidedAt = now();
+  approval.decidedBy = "telegram";
+  approval.decidedById = String(input.actorId || "").slice(0, 160);
+  approval.telegramMessageId = String(input.messageId || "").slice(0, 160);
+  audit(state, `Human Gate ${approval.status}`, `${approval.title}: authorized Telegram decision.`);
+  writeState(state);
+  stockIntelligenceStore.recordApproval(approval, { proposalId: approval.details?.draftId || "", actorType: "TELEGRAM", actorId: input.actorId, idempotencyKey: input.idempotencyKey, telegramMessageId: input.messageId });
+  stockEventBus.publish(approved ? "trade.approved" : "trade.rejected", { approvalId: approval.id, proposalId: approval.details?.draftId || "", symbol: approval.details?.executionEnvelope?.args?.symbol || "", decision: approval.decision, status: approval.status }, { actorType: "TELEGRAM", actorId: input.actorId, id: `telegram:${approval.decision}:${approval.id}` });
+  if (!approved) return { text: "DECLINED\nThe exact Human Gate request was rejected. No broker review or order occurred." };
+  try {
+    const execution = await executeApprovedStockDraft(String(approval.details?.draftId || ""), { dispatchMode: "telegram_human_gate_approval", actorType: "TELEGRAM", actorId: input.actorId, telegramMessageId: input.messageId });
+    return { text: execution.liveOrderPlaced ? `APPROVED\n${execution.draft.side} ${execution.draft.symbol} was broker-reviewed and independently reconciled as ${execution.draft.status}.` : `BLOCKED AFTER APPROVAL\n${execution.draft.lastDispatchError || "No independently verified broker order was recorded."}` };
+  } catch (error) {
+    return { text: `BLOCKED AFTER APPROVAL\n${redactSensitiveText(error.message).slice(0, 800)}\nNo retry will occur automatically.` };
+  }
+}
+
+async function stockTelegramWatchAction(input = {}) {
+  const state = readState();
+  const proposal = buildCopyPortfolioPlan(stockOfficeSnapshot(state)).proposals.find((item) => item.id === String(input.proposalId || ""));
+  if (!proposal) return { text: "WATCH FAILED\nThe proposal changed or expired. Request /opportunities again." };
+  const current = normalizeStockOfficeState(state.stockOffice);
+  const decision = { proposalId: proposal.id, fingerprint: proposal.fingerprint, symbol: proposal.symbol, side: proposal.side, decision: "reviewed", decidedAt: now() };
+  state.stockOffice = normalizeStockOfficeState({ ...current, proposalDecisions: [decision, ...current.proposalDecisions.filter((item) => item.proposalId !== proposal.id)] });
+  writeState(state);
+  stockEventBus.publish("opportunity.updated", { proposalId: proposal.id, symbol: proposal.symbol, decision: "watch", status: "monitoring" }, { actorType: "TELEGRAM", actorId: input.actorId, id: `telegram:watch:${input.idempotencyKey}` });
+  return { text: `WATCHING ${proposal.symbol}\nArgentum will retain it in research memory and re-evaluate it. No order occurred.` };
+}
+
+async function processStockContinuousReview(result = {}) {
+  const completedAt = result.completedAt || now();
+  const session = marketSession(new Date(completedAt));
+  const initialState = readState();
+  const initialOffice = normalizeStockOfficeState(initialState.stockOffice);
+  const baseReview = initialOffice.continuousReview || {};
+  const recordReview = (updates) => {
+    const state = readState();
+    const current = normalizeStockOfficeState(state.stockOffice);
+    const evaluatedAt = now();
+    const nextReview = {
+      ...current.continuousReview,
+      lastCycleCompletedAt: completedAt,
+      lastEvaluatedAt: evaluatedAt,
+      reviewTrigger: result.trigger || "market_research",
+      decisionCadenceSeconds: Math.round(stockReadinessIntervalMs() / 1_000),
+      ...updates,
+    };
+    const materialKeys = ["lastOutcome", "lastMessage", "activeProposalFingerprint", "activeDraftId", "activeApprovalId", "notificationState", "notificationSentAt"];
+    const materialStateUnchanged = materialKeys.every((key) => JSON.stringify(current.continuousReview[key] ?? null) === JSON.stringify(nextReview[key] ?? null));
+    const lastPersistedAt = Date.parse(current.continuousReview.lastEvaluatedAt || "");
+    const throttleUnchangedFastTick = result.trigger === "live_readiness"
+      && materialStateUnchanged
+      && current.continuousReview.reviewTrigger === "live_readiness"
+      && current.continuousReview.decisionCadenceSeconds === nextReview.decisionCadenceSeconds
+      && Number.isFinite(lastPersistedAt)
+      && Date.now() - lastPersistedAt < 15_000;
+    if (throttleUnchangedFastTick) return nextReview;
+    state.stockOffice = normalizeStockOfficeState({
+      ...current,
+      continuousReview: nextReview,
+    });
+    writeState(state);
+    return state.stockOffice.continuousReview;
+  };
+  if (!session.regular) {
+    return recordReview({ lastOutcome: "market_closed", lastMessage: `${session.label}; research remains scheduled, but no live order request is staged outside regular hours.` });
+  }
+
+  if (!["success", "partial"].includes(result.status)) {
+    return recordReview({ lastOutcome: "failed_safe", lastMessage: result.errors?.[0] || result.message || "The research cycle did not complete successfully; no proposal was staged." });
+  }
+
+  const snapshot = stockOfficeSnapshot(initialState);
+  const plan = buildCopyPortfolioPlan(snapshot);
+  const tradeDrafts = initialOffice.tradeDrafts.map((draft) => tradeDraftWithApprovalState(draft, initialState.approvals || []));
+  const activeDraft = tradeDrafts.find((draft) => ["awaiting_human_gate", "approved", "dispatch_claimed"].includes(draft.status));
+  if (activeDraft) {
+    return recordReview({
+      lastOutcome: "waiting_for_human_gate",
+      lastMessage: `${activeDraft.side} ${activeDraft.symbol} is already waiting for operator review; market research continues on the next cycle.`,
+      activeDraftId: activeDraft.id,
+      activeApprovalId: activeDraft.approvalId,
+    });
+  }
+
+  const cycleDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(completedAt));
+  const priorCycleDay = baseReview.lastCycleCompletedAt
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(baseReview.lastCycleCompletedAt))
+    : "";
+  const selectionReview = priorCycleDay && priorCycleDay !== cycleDay ? { ...baseReview, stagedProposalFingerprints: [] } : baseReview;
+  const proposal = selectNextQualifiedProposal(plan, selectionReview, { session, now: completedAt });
+  if (!proposal) {
+    const blockers = plan.proposals?.find((item) => item.side !== "HOLD")?.blockers || [];
+    return recordReview({
+      lastOutcome: "no_qualified_proposal",
+      lastMessage: blockers[0] || "Cycle completed with BUY, HOLD, and SELL reviews; no exact order passed every current check.",
+      activeProposalFingerprint: "",
+      activeDraftId: "",
+      activeApprovalId: "",
+    });
+  }
+
+  const draft = buildTradeDraft({
+    candidateId: proposal.candidateId || undefined,
+    symbol: proposal.symbol,
+    side: proposal.side,
+    requestedDollars: proposal.requestedDollars,
+  }, snapshot, { approvalTtlMinutes: stockApprovalTtlMinutes() });
+  if (draft.status !== "ready_for_broker_review" || draft.blockers.length || draft.fingerprint !== proposal.draftFingerprint) {
+    return recordReview({
+      lastOutcome: "failed_safe",
+      lastMessage: draft.blockers[0] || "Proposal evidence changed during final cycle revalidation; nothing was staged.",
+    });
+  }
+
+  let state = readState();
+  let current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    tradeDrafts: [draft, ...current.tradeDrafts.filter((item) => item.fingerprint !== draft.fingerprint)],
+  });
+  audit(state, "Stock Office continuous order draft", `${draft.side} ${draft.symbol} passed the completed research cycle and was staged locally; no broker review or order occurred.`);
+  writeState(state);
+
+  const { approvalResult } = createStockOrderApprovalRequest(draft);
+  state = readState();
+  current = normalizeStockOfficeState(state.stockOffice);
+  const awaitingDraft = tradeDraftWithApprovalState({
+    ...draft,
+    approvalId: approvalResult.approval.id,
+    status: "awaiting_human_gate",
+    updatedAt: now(),
+  }, [approvalResult.approval]);
+  const review = {
+    ...current.continuousReview,
+    lastCycleCompletedAt: completedAt,
+    lastEvaluatedAt: now(),
+    lastOutcome: "proposal_staged",
+    lastMessage: `${proposal.side} ${proposal.symbol} passed this cycle and is waiting in Human Gate. Research continues; no order has occurred.`,
+    activeProposalFingerprint: proposal.fingerprint,
+    activeDraftId: awaitingDraft.id,
+    activeApprovalId: approvalResult.approval.id,
+    notificationState: "pending",
+    notificationSentAt: null,
+    stagedProposalFingerprints: [...selectionReview.stagedProposalFingerprints, proposal.fingerprint].slice(-40),
+  };
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+    continuousReview: review,
+  });
+  audit(state, "Stock Office cycle awaiting Human Gate", `${proposal.side} ${proposal.symbol} is the one exact proposal staged from this market cycle; no live order placed.`);
+  writeState(state);
+
+  const notificationState = readState();
+  const delivery = await stockTelegramNotifier.notifyQualifiedProposal(proposal, awaitingDraft, approvalResult.approval, notificationState.approvals || []);
+  state = readState();
+  current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    continuousReview: {
+      ...current.continuousReview,
+      lastOutcome: delivery.sent ? "notification_delivered" : "notification_unavailable",
+      notificationState: delivery.state || "unavailable",
+      notificationSentAt: delivery.sentAt || null,
+      lastMessage: delivery.sent
+        ? `${proposal.side} ${proposal.symbol} is in Human Gate and Telegram was notified. No order has occurred.`
+        : `${proposal.side} ${proposal.symbol} is in Human Gate. Telegram did not send: ${delivery.reason || delivery.state}.`,
+    },
+  });
+  audit(state, delivery.sent ? "Qualified proposal Telegram delivered" : "Qualified proposal Telegram not delivered", delivery.sent ? `${proposal.side} ${proposal.symbol} Human Gate alert delivered.` : `No proposal alert sent: ${delivery.reason || delivery.state}.`);
+  writeState(state);
+  return state.stockOffice.continuousReview;
+}
+
+async function executeApprovedStockDraft(draftId, options = {}) {
+  if (stockExecutionMode() !== "live") {
+    throw guardedError("Stock Office is in PAPER mode. Live dispatch requires STOCK_GURU_EXECUTION_MODE=live and an app restart.", 409);
+  }
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state, options.permissions);
+  const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+  if (!draft) throw guardedError("Order draft not found.", 404);
+  if (options.confirmationFingerprint && String(options.confirmationFingerprint) !== draft.fingerprint) {
+    throw guardedError("Action-time order confirmation does not match the exact approved fingerprint.", 409);
+  }
+  const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+    || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+  if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+  let claimed;
+  try {
+    claimed = claimApprovedDispatch(draft, approval, snapshot);
+  } catch (error) {
+    const approvalCanBeFinalized = approval.status === "approved"
+      && approval.actionType === "place_robinhood_equity_order"
+      && !approval.consumedAt
+      && !(Number(approval.useCount) > 0);
+    if (!approvalCanBeFinalized) throw error;
+    const stoppedAt = now();
+    const stoppedReason = redactSensitiveText(error.message || "Final order revalidation stopped safely.").slice(0, 500);
+    const current = normalizeStockOfficeState(state.stockOffice);
+    const stoppedDraftInput = {
+      ...draft,
+      status: "review_rejected",
+      brokerReviewPassed: false,
+      brokerWarnings: [],
+      lastDispatchError: stoppedReason,
+      liveOrderPlaced: false,
+      updatedAt: stoppedAt,
+    };
+    const stoppedApproval = {
+      ...approval,
+      useCount: Number(approval.useCount || 0) + 1,
+      consumedAt: stoppedAt,
+      executionOutcome: "broker_execution_stopped",
+      executionError: stoppedReason,
+      executionStoppedAt: stoppedAt,
+      executionDraftId: draft.id,
+      executionBrokerOrderId: null,
+    };
+    state.stockOffice = normalizeStockOfficeState({
+      ...current,
+      tradeDrafts: [stoppedDraftInput, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      continuousReview: {
+        ...current.continuousReview,
+        activeDraftId: "",
+        activeApprovalId: "",
+        lastOutcome: "failed_safe",
+        lastMessage: `${draft.side} ${draft.symbol} stopped during final revalidation: ${stoppedReason}`,
+      },
+    });
+    const approvalIndex = (state.approvals || []).findIndex((item) => item.id === approval.id);
+    if (approvalIndex >= 0) state.approvals[approvalIndex] = stoppedApproval;
+    const stoppedDraft = state.stockOffice.tradeDrafts.find((item) => item.id === draft.id) || stoppedDraftInput;
+    stockIntelligenceStore.recordOrderAudit({
+      correlationId: `revalidation:${approval.id}`,
+      actorType: options.actorType || "WEB",
+      actorId: options.actorId || "",
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      action: "final_revalidation_stopped",
+      oldState: draft.status,
+      newState: stoppedDraft.status,
+      reason: stoppedReason,
+      error: stoppedReason,
+      telegramMessageId: options.telegramMessageId || "",
+    });
+    stockEventBus.publish("order.rejected", {
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      status: stoppedDraft.status,
+      reason: stoppedReason,
+      draft: stoppedDraft,
+    }, { correlationId: `revalidation:${approval.id}`, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+    audit(state, "Approved Stock Office order stopped during final revalidation", `${draft.side} ${draft.symbol}: ${stoppedReason}; exact one-use approval consumed and no broker order was attempted.`);
+    writeState(state);
+    return {
+      draft: stoppedDraft,
+      approval: stoppedApproval,
+      liveOrderPlaced: false,
+      reconciliationRequired: false,
+      notificationDelivery: { sent: false, state: "ineligible", reason: "No broker order was recorded." },
+      notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []),
+    };
+  }
+  const current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+  });
+  approval.dispatchClaimId = claimed.claim.id;
+  approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+  approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+  approval.dispatchMode = options.dispatchMode || "direct_official_robinhood_mcp";
+  stockIntelligenceStore.recordOrderAudit({
+    correlationId: claimed.claim.id,
+    actorType: options.actorType || "WEB",
+    actorId: options.actorId || "",
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    symbol: draft.symbol,
+    side: draft.side,
+    action: "dispatch_claimed",
+    oldState: draft.status,
+    newState: claimed.draft.status,
+    reason: "One-use claim persisted before official broker review.",
+    telegramMessageId: options.telegramMessageId || "",
+  });
+  stockEventBus.publish("order.review_started", {
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    symbol: draft.symbol,
+    side: draft.side,
+    status: "broker_review",
+    draft: claimed.draft,
+  }, { correlationId: claimed.claim.id, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+  audit(state, "Stock Office direct dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} was persisted before any official Robinhood broker call.`);
+  writeState(state);
+
+  let brokerResult;
+  try {
+    brokerResult = await robinhoodMcpClient.executeApprovedEnvelope(claimed.claim.envelope);
+  } catch (error) {
+    brokerResult = {
+      reviewPassed: false,
+      warnings: [],
+      placementAttempted: false,
+      brokerOrderId: "",
+      brokerState: "",
+      reconciliation: { matched: false },
+      error: `Official Robinhood execution stopped before a verified placement: ${error.message}`,
+    };
+  }
+
+  const latestState = readState();
+  const latestCurrent = normalizeStockOfficeState(latestState.stockOffice);
+  const latestDraft = latestCurrent.tradeDrafts.find((item) => item.id === draft.id);
+  const approvalIndex = (latestState.approvals || []).findIndex((item) => item.id === approval.id);
+  if (!latestDraft || approvalIndex < 0) throw guardedError("The persisted dispatch state changed during broker execution; manual reconciliation is required.", 409);
+  const settled = settleApprovedDispatch(
+    latestDraft,
+    latestState.approvals[approvalIndex],
+    brokerResult,
+    claimed.claim.token,
+    { trustedBrokerResult: true },
+  );
+  latestState.stockOffice = normalizeStockOfficeState({
+    ...latestCurrent,
+    tradeDrafts: [settled.draft, ...latestCurrent.tradeDrafts.filter((item) => item.id !== draft.id)],
+    continuousReview: {
+      ...latestCurrent.continuousReview,
+      activeDraftId: "",
+      activeApprovalId: "",
+      lastOutcome: settled.liveOrderPlaced ? "proposal_staged" : "failed_safe",
+      lastMessage: settled.liveOrderPlaced
+        ? `${draft.side} ${draft.symbol} was independently reconciled by Robinhood. Research continues on the next cycle.`
+        : `${draft.side} ${draft.symbol} stopped safely: ${settled.draft.lastDispatchError || "no independently verified order"}.`,
+    },
+  });
+  latestState.approvals[approvalIndex] = settled.approval;
+  stockIntelligenceStore.recordOrderAudit({
+    correlationId: claimed.claim.id,
+    actorType: options.actorType || "WEB",
+    actorId: options.actorId || "",
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    orderId: settled.draft.brokerOrderId || "",
+    symbol: draft.symbol,
+    side: draft.side,
+    action: settled.liveOrderPlaced ? "broker_reconciled" : "broker_stopped",
+    oldState: claimed.draft.status,
+    newState: settled.draft.status,
+    reason: settled.draft.lastDispatchError || "Official Robinhood result reconciled.",
+    brokerResponse: brokerResult,
+    error: settled.liveOrderPlaced ? "" : settled.draft.lastDispatchError,
+    telegramMessageId: options.telegramMessageId || "",
+  });
+  stockEventBus.publish(settled.liveOrderPlaced ? (settled.draft.status === "filled" ? "order.filled" : "order.submitted") : "order.rejected", {
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    orderId: settled.draft.brokerOrderId || "",
+    symbol: draft.symbol,
+    side: draft.side,
+    status: settled.draft.status,
+    reason: settled.draft.lastDispatchError || "",
+    draft: settled.draft,
+  }, { correlationId: claimed.claim.id, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+  audit(
+    latestState,
+    settled.liveOrderPlaced ? "Stock Office broker order independently reconciled" : "Stock Office direct dispatch stopped or needs reconciliation",
+    settled.liveOrderPlaced
+      ? `${draft.side} ${draft.symbol} matched official Robinhood order ${settled.draft.brokerOrderId}; exact one-use approval consumed.`
+      : `${draft.side} ${draft.symbol}: ${settled.draft.lastDispatchError || "no independently verified order"}; exact one-use approval consumed and placement will not be retried.`,
+  );
+  writeState(latestState);
+  const notificationDelivery = settled.liveOrderPlaced
+    ? await stockTelegramNotifier.notifyVerifiedTrade(settled.draft, latestState.approvals || []).catch((error) => ({ sent: false, state: "failed", reason: error.message }))
+    : { sent: false, state: "ineligible", reason: "No independently reconciled broker order was recorded." };
+  if (settled.liveOrderPlaced) {
+    audit(
+      latestState,
+      notificationDelivery.sent ? "Verified trade Telegram delivered" : "Verified trade Telegram not delivered",
+      notificationDelivery.sent ? `${draft.side} ${draft.symbol} alert delivered after broker reconciliation.` : `No Telegram alert sent: ${notificationDelivery.reason || notificationDelivery.state}.`,
+    );
+    writeState(latestState);
+  }
+  return {
+    draft: settled.draft,
+    approval: settled.approval,
+    liveOrderPlaced: settled.liveOrderPlaced,
+    reconciliationRequired: settled.reconciliationRequired,
+    notificationDelivery,
+    notificationStatus: stockTelegramNotifier.publicStatus(latestState.approvals || []),
+  };
+}
+
+async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpClient.currentBrokerSnapshot()) {
+  const state = readState();
+  const current = normalizeStockOfficeState(state.stockOffice);
+  const reconciled = reconcileOrderDrafts(current.tradeDrafts, brokerSnapshot, { now: now() });
+  if (!reconciled.changes.length) return { changed: 0 };
+  state.stockOffice = normalizeStockOfficeState({ ...current, tradeDrafts: reconciled.drafts });
+  for (const change of reconciled.changes) {
+    const { before, after } = change;
+    const eventType = after.status === "filled" ? "order.filled" : after.status === "cancelled" ? "order.cancelled" : after.status === "rejected" ? "order.rejected" : "order.updated";
+    stockIntelligenceStore.recordOrderAudit({
+      correlationId: `broker-order:${after.brokerOrderId}`,
+      actorType: "SYSTEM",
+      proposalId: after.sourceId || after.id,
+      approvalId: after.approvalId,
+      orderId: after.brokerOrderId,
+      symbol: after.symbol,
+      side: after.side,
+      action: "broker_state_reconciled",
+      oldState: before.brokerState || before.status,
+      newState: after.brokerState,
+      reason: "Official Robinhood order history changed state.",
+      brokerResponse: change.order,
+    });
+    stockEventBus.publish(eventType, {
+      proposalId: after.sourceId || after.id,
+      approvalId: after.approvalId,
+      orderId: after.brokerOrderId,
+      symbol: after.symbol,
+      side: after.side,
+      oldState: before.brokerState || before.status,
+      newState: after.brokerState,
+      status: after.status,
+      reason: "Official Robinhood order history changed state.",
+      draft: after,
+    }, { correlationId: `broker-order:${after.brokerOrderId}` });
+  }
+  writeState(state);
+  return { changed: reconciled.changes.length };
 }
 
 function createHumanGatePackage(payload = {}) {
@@ -4414,6 +5306,61 @@ function sendHtml(req, res, status, html, extraHeaders = {}) {
   res.end(html);
 }
 
+function sendRobinhoodOauthResultPage(req, res, result) {
+  const views = {
+    connected: {
+      status: 200,
+      eyebrow: "CONNECTION COMPLETE",
+      title: "Robinhood is connected",
+      message: "Return to Argentum. Stock Office will load the connected account automatically.",
+      tone: "#43d99b",
+    },
+    needs_refresh: {
+      status: 200,
+      eyebrow: "CONNECTION SAVED",
+      title: "Robinhood is connected",
+      message: "Return to Argentum and use Refresh account if the broker snapshot does not appear automatically.",
+      tone: "#f5c451",
+    },
+    connection_error: {
+      status: 400,
+      eyebrow: "CONNECTION NOT FINISHED",
+      title: "Robinhood did not connect",
+      message: "Return to Argentum and try Connect Robinhood again. No trade or money movement occurred.",
+      tone: "#ff7f8b",
+    },
+  };
+  const view = views[result] || views.connection_error;
+  sendHtml(req, res, view.status, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${view.title} | Argentum</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #edf5ff; background: radial-gradient(circle at 15% 15%, #12334b, transparent 34%), radial-gradient(circle at 85% 10%, #22205a, transparent 38%), #07101f; }
+    main { width: min(560px, 100%); padding: 34px; border: 1px solid #284968; border-radius: 22px; background: rgba(8, 20, 38, .9); box-shadow: 0 24px 80px rgba(0, 0, 0, .42); }
+    .mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 24px; border-radius: 14px; color: #06131d; background: ${view.tone}; font-size: 24px; font-weight: 900; }
+    .eyebrow { margin: 0 0 8px; color: ${view.tone}; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
+    h1 { margin: 0; font-size: clamp(28px, 6vw, 42px); line-height: 1.05; }
+    p { margin: 16px 0 0; color: #b9cbe0; font-size: 17px; line-height: 1.55; }
+    .safe { margin-top: 26px; padding-top: 18px; border-top: 1px solid #243a55; color: #8198b3; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">A</div>
+    <p class="eyebrow">${view.eyebrow}</p>
+    <h1>${view.title}</h1>
+    <p>${view.message}</p>
+    <p class="safe">You can close this window. Argentum never receives your Robinhood password.</p>
+  </main>
+</body>
+</html>`);
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -4673,12 +5620,65 @@ function requireStockOfficeAccess(req, capability = "view") {
     chat_write: "canPostChat",
     assistant: "canUseAssistant",
     sync: "canTriggerSync",
+    mirror_request: "canRequestMirrorApproval",
+    broker_view: "canViewWorkspace",
+    broker_connect: "canRequestBrokerConnection",
+    broker_guardrails: "canRequestGuardrailChange",
+    order_draft: "canDraftBrokerOrder",
+    order_approval: "canRequestOrderApproval",
   };
   const permissionKey = capabilityMap[capability] || "canViewWorkspace";
   if (!permissions[permissionKey]) {
     throw guardedError("You do not have permission to use this Stock Office action.", 403);
   }
   return { user: access.user, permissions };
+}
+
+function stockLogoSymbol(pathname = "") {
+  const match = String(pathname).match(/^\/api\/stock-office\/logos\/([A-Za-z0-9.-]{1,12})$/);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function stockLogoPlaceholder(symbol) {
+  const label = String(symbol || "?").slice(0, 2);
+  const hue = [...symbol].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="hsl(${hue} 70% 48%)"/><stop offset="1" stop-color="hsl(${(hue + 46) % 360} 70% 26%)"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="39" fill="white" font-family="Arial,sans-serif" font-size="22" font-weight="700" text-anchor="middle">${label}</text></svg>`);
+}
+
+async function sendStockLogo(req, res, symbol) {
+  requireStockOfficeAccess(req, "view");
+  fs.mkdirSync(STOCK_LOGO_CACHE_DIR, { recursive: true });
+  const cachePath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.img`);
+  const metaPath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.json`);
+  try {
+    const cached = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    const stat = fs.statSync(cachePath);
+    if (stat.isFile() && Date.now() - stat.mtimeMs <= STOCK_LOGO_MAX_AGE_MS && ["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(cached.contentType)) {
+      res.writeHead(200, { ...securityHeaders(req), "content-type": cached.contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "cache" });
+      res.end(fs.readFileSync(cachePath));
+      return;
+    }
+  } catch {}
+  try {
+    const response = await fetch(`https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png&size=96`, {
+      headers: { accept: "image/png,image/webp,image/svg+xml", "user-agent": "Argentum-Stock-Office/1.0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+    const body = Buffer.from(await response.arrayBuffer());
+    if (!response.ok || !["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(contentType) || body.length < 64 || body.length > 1_000_000) {
+      throw new Error("logo unavailable");
+    }
+    const temporary = `${cachePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, body, { mode: 0o600 });
+    fs.renameSync(temporary, cachePath);
+    fs.writeFileSync(metaPath, `${JSON.stringify({ contentType, source: "parqet_symbol_logo", observedAt: now() })}\n`, { mode: 0o600 });
+    res.writeHead(200, { ...securityHeaders(req), "content-type": contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "parqet" });
+    res.end(body);
+  } catch {
+    res.writeHead(200, { ...securityHeaders(req), "content-type": "image/svg+xml", "cache-control": "private, max-age=300", "x-argentum-logo-source": "generated-fallback" });
+    res.end(stockLogoPlaceholder(symbol));
+  }
 }
 
 function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 60_000) {
@@ -4693,10 +5693,182 @@ function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 6
   }
 }
 
+function stockExecutionMode() {
+  return String(process.env.STOCK_GURU_EXECUTION_MODE || "paper").trim().toLowerCase() === "live" ? "live" : "paper";
+}
+
+function stockApprovalTtlMinutes() {
+  const value = Number(process.env.STOCK_GURU_APPROVAL_TTL_MINUTES);
+  return Number.isFinite(value) ? Math.max(1, Math.min(30, Math.round(value))) : 15;
+}
+
+function stockIntelligenceState() {
+  return {
+    opportunities: stockIntelligenceStore.listOpportunities(),
+    reports: {
+      overnight: stockIntelligenceStore.latestReport("overnight"),
+      morning: stockIntelligenceStore.latestReport("morning"),
+    },
+    mirror: stockIntelligenceStore.mirrorState(),
+  };
+}
+
 function stockOfficeSnapshot(state, permissions) {
-  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state });
+  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state, runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+  if (!(process.env.NODE_ENV === "test" && process.env.ARGENTUM_TEST_TRUST_BROKER_FIXTURE === "1")) {
+    const officialBroker = robinhoodMcpClient.currentBrokerSnapshot();
+    snapshot.broker = officialBroker;
+    snapshot.positions = officialBroker.positions;
+    snapshot.metrics = {
+      ...snapshot.metrics,
+      brokerPositions: officialBroker.positions.length,
+      openOrders: officialBroker.openOrders.length,
+      accountValue: officialBroker.accountValue,
+      buyingPower: officialBroker.buyingPower,
+    };
+  }
+  snapshot.executionMode = stockExecutionMode();
+  snapshot.intelligence = stockIntelligenceState();
   snapshot.permissions = permissions || snapshot.permissions;
   return snapshot;
+}
+
+function readStockShadowPortfolio(snapshot = {}) {
+  try {
+    const stat = fs.statSync(STOCK_SHADOW_FILE);
+    if (!stat.isFile() || stat.size > 2_000_000) return normalizeShadowPortfolio({}, { snapshot });
+    return normalizeShadowPortfolio(JSON.parse(fs.readFileSync(STOCK_SHADOW_FILE, "utf8")), { snapshot });
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock shadow portfolio read failed safely:", error.message);
+    return normalizeShadowPortfolio({}, { snapshot });
+  }
+}
+
+function writeStockShadowPortfolio(portfolio) {
+  fs.mkdirSync(path.dirname(STOCK_SHADOW_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SHADOW_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(portfolio, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SHADOW_FILE);
+}
+
+let stockSimulationLabState = null;
+let stockContinuousReviewPromise = null;
+let stockReadinessBrokerSnapshotAt = "";
+
+function simulationInteger(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function stockReadinessIntervalMs() {
+  return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000);
+}
+
+async function runStockContinuousReview(result = {}) {
+  if (stockContinuousReviewPromise) return stockContinuousReviewPromise;
+  stockContinuousReviewPromise = processStockContinuousReview(result);
+  try {
+    return await stockContinuousReviewPromise;
+  } finally {
+    stockContinuousReviewPromise = null;
+  }
+}
+
+async function runStockReadinessCycle() {
+  if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+    const brokerSnapshot = await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+      stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Fast live-readiness refresh failed; execution remains closed." });
+      return null;
+    });
+    const snapshotAt = brokerSnapshot?.updatedAt || "";
+    if (snapshotAt && snapshotAt !== stockReadinessBrokerSnapshotAt) {
+      await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Fast Stock order reconciliation failed safely:", error.message));
+      stockReadinessBrokerSnapshotAt = snapshotAt;
+    }
+  }
+  return runStockContinuousReview({ status: "success", completedAt: now(), trigger: "live_readiness" });
+}
+
+function stockSimulationOptions() {
+  return {
+    intervalMs: simulationInteger(process.env.STOCK_SIMULATION_INTERVAL_MS, 2_000, 1_000, 60_000),
+    configurationsPerCandidate: simulationInteger(process.env.STOCK_SIMULATION_CONFIGURATIONS_PER_CANDIDATE, 64, 1, 256),
+    pathsPerConfiguration: simulationInteger(process.env.STOCK_SIMULATION_PATHS_PER_CONFIGURATION, 32, 1, 128),
+  };
+}
+
+function readStockSimulationLab() {
+  if (stockSimulationLabState) return stockSimulationLabState;
+  try {
+    const stat = fs.statSync(STOCK_SIMULATION_FILE);
+    if (!stat.isFile() || stat.size > 5_000_000) return null;
+    const persisted = JSON.parse(fs.readFileSync(STOCK_SIMULATION_FILE, "utf8"));
+    if (persisted?.mode !== "autonomous_local_stress_test" || !Array.isArray(persisted.results)) return null;
+    stockSimulationLabState = persisted;
+    return stockSimulationLabState;
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock simulation state read failed safely:", error.message);
+    return null;
+  }
+}
+
+function writeStockSimulationLab(simulationLab) {
+  fs.mkdirSync(path.dirname(STOCK_SIMULATION_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SIMULATION_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(simulationLab, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SIMULATION_FILE);
+}
+
+function refreshStockSimulationLab(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const settings = stockSimulationOptions();
+  const previous = readStockSimulationLab() || {};
+  const ageMs = previous.lastCycleAt ? Date.now() - new Date(previous.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < settings.intervalMs - 50) return previous;
+  const plan = options.plan || buildCopyPortfolioPlan(snapshot);
+  const updated = {
+    ...runAutonomousSimulationCycle(plan, previous, settings),
+    persistedAt: previous.persistedAt || null,
+  };
+  stockSimulationLabState = updated;
+  const lastPersistedAt = previous.persistedAt ? new Date(previous.persistedAt).getTime() : 0;
+  const shouldPersist = options.persist === true
+    || !lastPersistedAt
+    || Date.now() - lastPersistedAt >= 30_000
+    || previous.sourceFingerprint !== updated.sourceFingerprint;
+  if (shouldPersist) {
+    stockSimulationLabState = { ...updated, persistedAt: now() };
+    writeStockSimulationLab(stockSimulationLabState);
+  }
+  return stockSimulationLabState;
+}
+
+function refreshStockShadowPortfolio(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const existing = readStockShadowPortfolio(snapshot);
+  const ageMs = existing.lastCycleAt ? Date.now() - new Date(existing.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < 55_000) return existing;
+  const updated = runShadowPortfolioCycle(existing, snapshot);
+  writeStockShadowPortfolio(updated);
+  return updated;
+}
+
+function withPaperProposalReadiness(plan = {}, shadowPortfolio = {}, snapshot = {}) {
+  const proposals = (Array.isArray(plan.proposals) ? plan.proposals : []).map((proposal) => ({
+    ...proposal,
+    paperTest: paperProposalEligibility(shadowPortfolio, snapshot, proposal),
+  }));
+  return {
+    ...plan,
+    proposals,
+    summary: {
+      ...(plan.summary || {}),
+      paperReady: proposals.filter((proposal) => proposal.paperTest?.eligible).length,
+    },
+  };
 }
 
 function stockOfficeErrorResponse(error) {
@@ -4719,7 +5891,7 @@ function stockOfficeQueryOptions(url) {
   };
 }
 
-function createStockOfficeSyncRun(snapshot) {
+function createStockOfficeSyncRun(snapshot, refresh = null) {
   const warnings = [
     ...snapshot.alerts.filter((alert) => alert.level !== "error").map((alert) => `${alert.title}: ${alert.body}`),
     ...snapshot.sources.filter((source) => source.status === "stale").map((source) => `${source.label}: ${source.summary}`),
@@ -4730,13 +5902,16 @@ function createStockOfficeSyncRun(snapshot) {
     .slice(0, 8);
   return {
     id: `stock-sync-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    mode: "local_file_rescan",
-    status: errors.length ? "partial" : "success",
+    mode: "evaluator_and_mirror_refresh",
+    status: errors.length || ["partial", "failed"].includes(refresh?.status) ? "partial" : "success",
     recordsImported: snapshot.records.length,
     changedRecords: 0,
     warnings,
     errors,
-    startedAt: now(),
+    refreshStatus: refresh?.status || "rescan_only",
+    refreshMessage: refresh?.message || "Local reports rescanned.",
+    liveOrdersPlaced: 0,
+    startedAt: refresh?.startedAt || now(),
     completedAt: now(),
   };
 }
@@ -5175,6 +6350,23 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/webhook") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-webhook", 120, 60_000);
+      const payload = await readBody(req);
+      const state = readState();
+      const result = await stockTelegramNotifier.processUpdate(payload, {
+        webhookSecret: req.headers["x-telegram-bot-api-secret-token"],
+        approvals: state.approvals || [],
+      });
+      sendJson(res, result.httpStatus || 200, { ok: result.accepted === true, status: result.status, duplicate: result.duplicate === true });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/stock-office/permissions") {
     try {
       const access = requireStockOfficeAccess(req, "view");
@@ -5191,7 +6383,63 @@ async function handleApi(req, res, url) {
       enforceStockOfficeRateLimit(req, "overview", 80, 60_000);
       const access = requireStockOfficeAccess(req, "view");
       const snapshot = stockOfficeSnapshot(readState(), access.permissions);
-      sendJson(res, 200, stockOverview(snapshot));
+      const brokerControl = brokerControlOverview(snapshot);
+      sendJson(res, 200, {
+        ...stockOverview(snapshot),
+        intelligence: snapshot.intelligence,
+        systemHealth: stockIntelligenceStore.health({
+          executionMode: snapshot.executionMode,
+          executionBlocked: !brokerControl.liveReady,
+          sourceHealth: snapshot.sourceHealth,
+          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+          telegram: stockTelegramNotifier.publicStatus(readState().approvals || []),
+        }),
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/events") {
+    try {
+      enforceStockOfficeRateLimit(req, "events", 12, 60_000);
+      requireStockOfficeAccess(req, "view");
+      res.writeHead(200, {
+        ...securityHeaders(req),
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const detach = stockEventBus.attachSse(res);
+      req.on("close", detach);
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/intelligence") {
+    try {
+      enforceStockOfficeRateLimit(req, "intelligence", 80, 60_000);
+      requireStockOfficeAccess(req, "view");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const brokerControl = brokerControlOverview(snapshot);
+      sendJson(res, 200, {
+        ...snapshot.intelligence,
+        events: stockIntelligenceStore.recentEvents(80),
+        systemHealth: stockIntelligenceStore.health({
+          executionMode: snapshot.executionMode,
+          executionBlocked: !brokerControl.liveReady,
+          sourceHealth: snapshot.sourceHealth,
+          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+          telegram: stockTelegramNotifier.publicStatus(state.approvals || []),
+        }),
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5245,8 +6493,34 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         sources: snapshot.sources,
         sourceHealth: snapshot.sourceHealth,
+        secSetup: stockSecSetupPayload(),
         threatModel: snapshot.threatModel,
         workspace: snapshot.workspace,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/sources/sec-identity") {
+    try {
+      enforceStockOfficeRateLimit(req, "sec-identity", 6, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      const payload = await readBody(req);
+      const identity = normalizeStockSecIdentity(payload.identity);
+      writeStockTelegramSettings("secUserAgent", identity);
+      process.env.STOCK_GURU_SEC_USER_AGENT = identity;
+      const intelligenceScheduler = stockIntelligenceScheduler.refreshConfiguration();
+      const state = readState();
+      audit(state, "Stock Office SEC contact configured", "A monitored SEC request identity was saved server-side. The value was not returned to the browser; the next bounded SEC research cycle may transmit it to SEC.gov.");
+      writeState(state);
+      sendJson(res, 200, {
+        secSetup: stockSecSetupPayload(),
+        intelligenceScheduler,
+        externalRequestMade: false,
+        liveOrderPlaced: false,
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -5261,6 +6535,893 @@ async function handleApi(req, res, url) {
       const access = requireStockOfficeAccess(req, "view");
       const snapshot = stockOfficeSnapshot(readState(), access.permissions);
       sendJson(res, 200, { activity: snapshot.activity, syncRuns: snapshot.syncRuns, assistantRuns: snapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/mirror") {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror", 60, 60_000);
+      const access = requireStockOfficeAccess(req, "view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      sendJson(res, 200, { mirror: snapshot.mirror, mirrorIntelligence: snapshot.intelligence.mirror, safety: snapshot.workspace.safetyRule });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const mirrorSourceControlMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/sources\/([^/]+)$/);
+  if (req.method === "POST" && mirrorSourceControlMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror-source-control", 20, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const payload = await readBody(req);
+      const source = stockIntelligenceStore.setMirrorSourceState(decodeURIComponent(mirrorSourceControlMatch[1]), {
+        following: payload.following,
+        mirrorEnabled: payload.mirrorEnabled,
+        actorType: "WEB",
+        actorId: "local-owner",
+      });
+      if (!source) throw guardedError("Mirror source not found. Run a research refresh first.", 404);
+      stockEventBus.publish("mirror.source_control_changed", {
+        sourceId: source.id,
+        following: source.following,
+        mirrorEnabled: source.mirrorEnabled,
+        status: "updated",
+      }, { actorType: "WEB", actorId: "local-owner" });
+      sendJson(res, 200, {
+        source,
+        mirrorIntelligence: stockIntelligenceStore.mirrorState(),
+        safety: "Mirror controls affect research/proposal eligibility only. Human Gate and broker revalidation remain mandatory.",
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/live") {
+    try {
+      enforceStockOfficeRateLimit(req, "live-portfolio", 150, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        // The browser can request a fresh display every second while the
+        // connector's own cache keeps external Robinhood reads at >= 5s.
+        await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+        await reconcileStockBrokerOrderLifecycle().catch(() => null);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
+      const tradeDrafts = snapshot.tradeDrafts
+        .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
+        .slice(0, 20);
+      const shadowPortfolio = readStockShadowPortfolio(snapshot);
+      const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
+        plan: buildCopyPortfolioPlan(snapshot),
+        review: normalizeStockOfficeState(state.stockOffice).continuousReview,
+        scheduler: intelligenceScheduler,
+        tradeDrafts,
+      }), shadowPortfolio, snapshot);
+      portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      const simulationLab = readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true });
+      const brokerControl = brokerControlOverview(snapshot);
+      sendJson(res, 200, {
+        brokerControl,
+        portfolioPlan,
+        shadowPortfolio,
+        simulationLab,
+        intelligence: snapshot.intelligence,
+        systemHealth: stockIntelligenceStore.health({
+          executionMode: snapshot.executionMode,
+          executionBlocked: !brokerControl.liveReady,
+          sourceHealth: snapshot.sourceHealth,
+          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+          telegram: stockTelegramNotifier.publicStatus(state.approvals || []),
+        }),
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        tradeDrafts,
+        intelligenceScheduler,
+        serverTime: now(),
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/broker-control") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+        await reconcileStockBrokerOrderLifecycle().catch(() => null);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const tradeDrafts = snapshot.tradeDrafts
+        .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
+        .slice(0, 20);
+      const connectionApproval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      const guardrailApproval = (state.approvals || []).find((item) => item.actionType === "change_stock_trading_guardrails" && !item.consumedAt) || null;
+      const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
+      const brokerControl = brokerControlOverview(snapshot);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
+      const shadowPortfolio = refreshStockShadowPortfolio({ state });
+      const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
+        plan: buildCopyPortfolioPlan(snapshot),
+        review: normalizeStockOfficeState(state.stockOffice).continuousReview,
+        scheduler: intelligenceScheduler,
+        tradeDrafts,
+      }), shadowPortfolio, snapshot);
+      portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      const simulationLab = readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true });
+      const notificationScope = stockTelegramNotifier.approvalScope();
+      const notificationApproval = notificationScope.destinationHash
+        ? (state.approvals || []).find((item) => {
+            const details = item.grantedDetails || item.originalDetails || item.details || {};
+            const eventTypes = Array.isArray(details.eventTypes) ? details.eventTypes : [];
+            return item.actionType === STOCK_TELEGRAM_APPROVAL_ACTION
+              && item.linkedId === `stock-office:telegram:${notificationScope.destinationHash}`
+              && notificationScope.eventTypes.every((type) => eventTypes.includes(type));
+          }) || null
+        : null;
+      const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
+      const systemHealth = stockIntelligenceStore.health({
+        executionMode: snapshot.executionMode,
+        executionBlocked: !brokerControl.liveReady,
+        sourceHealth: snapshot.sourceHealth,
+        broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+        telegram: notificationStatus,
+      });
+      sendJson(res, 200, {
+        brokerControl,
+        portfolioPlan,
+        intelligence: snapshot.intelligence,
+        systemHealth,
+        shadowPortfolio,
+        simulationLab,
+        intelligenceScheduler,
+        marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
+        notificationStatus,
+        notificationApproval: notificationApproval ? {
+          id: notificationApproval.id,
+          status: notificationApproval.status,
+          expiresAt: notificationApproval.expiresAt || null,
+          activatedAt: notificationApproval.activatedAt || null,
+        } : null,
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: connectionApproval ? {
+          id: connectionApproval.id,
+          status: connectionApproval.status,
+          consumedAt: connectionApproval.consumedAt || null,
+          expiresAt: connectionApproval.expiresAt || null,
+        } : null,
+        guardrailApproval: guardrailApproval ? {
+          id: guardrailApproval.id,
+          status: guardrailApproval.status,
+          expiresAt: guardrailApproval.expiresAt || null,
+          fingerprint: String(guardrailDetails.fingerprint || ""),
+          guardrails: normalizeGuardrails(guardrailDetails.guardrails || {}),
+        } : null,
+        guardrailsSource: snapshot.guardrailsSource,
+        tradeDrafts,
+        permissions: access.permissions,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockProposalDecisionMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/decline$/);
+  if (req.method === "POST" && stockProposalDecisionMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-decline", 30, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      const proposalId = decodeURIComponent(stockProposalDecisionMatch[1]);
+      const proposal = portfolioPlan.proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const decision = {
+        proposalId: proposal.id,
+        fingerprint: proposal.fingerprint,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        decision: "declined",
+        decidedAt: now(),
+      };
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        proposalDecisions: [decision, ...current.proposalDecisions.filter((item) => item.proposalId !== proposal.id)],
+      });
+      audit(state, "Stock Office proposal declined", `${proposal.side} ${proposal.symbol} research proposal was dismissed locally; no Human Gate request, broker review, order, or money movement occurred.`);
+      writeState(state);
+      sendJson(res, 200, { decision, liveOrderPlaced: false, humanGateCreated: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockPaperProposalMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/paper-test$/);
+  if (req.method === "POST" && stockPaperProposalMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-paper-test", 20, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const proposalId = decodeURIComponent(stockPaperProposalMatch[1]);
+      const proposal = buildCopyPortfolioPlan(snapshot).proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const result = applyPaperProposal(readStockShadowPortfolio(snapshot), snapshot, proposal);
+      if (result.action.outcome !== "filled") throw guardedError(result.action.reason || "Paper test is not currently eligible.", 409);
+      writeStockShadowPortfolio(result.portfolio);
+      audit(
+        state,
+        "Stock Office proposal paper-tested",
+        `${proposal.side} ${proposal.symbol} recorded a $${result.action.requestedDollars.toFixed(2)} simulated fill. No Robinhood call, money movement, Human Gate request, or live order occurred.`,
+      );
+      writeState(state);
+      const plan = withPaperProposalReadiness(buildCopyPortfolioPlan(snapshot), result.portfolio, snapshot);
+      sendJson(res, 200, {
+        action: result.action,
+        shadowPortfolio: result.portfolio,
+        portfolioPlan: plan,
+        liveOrderPlaced: false,
+        brokerCalled: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-configure", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.configure({ botToken: payload.botToken, chatId: payload.chatId }, state.approvals || []);
+      audit(state, "Stock Office Telegram configured", "Telegram destination and bot credentials were stored in local secure storage; values were not written to Argentum state or returned to the browser.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-remove", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.removeConfiguration(state.approvals || []);
+      audit(state, "Stock Office Telegram removed", "Telegram notifications were disabled and both local secure values were removed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-gate", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const scope = stockTelegramNotifier.approvalScope();
+      if (!scope.configured) throw guardedError("Configure the Telegram bot token and chat ID before requesting notification approval.", 409);
+      const approvalResult = createHumanGateRequest({
+        actionType: STOCK_TELEGRAM_APPROVAL_ACTION,
+        title: "Enable Stock Office Telegram approval center",
+        riskLevel: "medium",
+        linkedId: `stock-office:telegram:${scope.destinationHash}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${scope.destination} is configured in local secure storage. No credential value is available to the browser.`,
+        action: "Allow Stock Office to send actionable approval cards, broker outcomes, source/broker failures, persisted night and morning reports, health replies, and operator-requested command responses to the one authorized Telegram destination.",
+        exactScope: "Telegram only, one configured private destination or an environment-allowlisted group user. Human Gate approvals reference immutable internal approval IDs and use the same one-use broker path as web approvals. No raw Telegram text can create an order. Ordinary rejected research candidates, unverified fills, and secret values are excluded.",
+        details: {
+          officeId: "stock-office",
+          channel: scope.channel,
+          destinationHash: scope.destinationHash,
+          eventTypes: STOCK_TELEGRAM_EVENT_TYPES,
+          automaticBrokerNotifications: true,
+          qualifiedProposalAlertsAuthorized: true,
+          brokerAndSourceFailureAlertsAuthorized: true,
+          rejectedResearchAlertsAuthorized: false,
+          blockedDraftsAuthorized: false,
+          paperTradesAuthorized: false,
+          customerContactAuthorized: false,
+        },
+        reversible: true,
+        expiresAt: new Date(Date.now() + 365 * DAY_MS).toISOString(),
+        expectedPostcondition: "The exact Telegram destination may receive only qualified Human Gate proposal alerts, verified broker order alerts, and requested connection tests.",
+        rollbackPlan: "Disable Telegram in Stock Office or remove its secure configuration immediately.",
+      });
+      sendJson(res, 200, { ...approvalResult, notificationStatus: stockTelegramNotifier.publicStatus(readState().approvals || []), liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/enable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-enable", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval) throw guardedError("Approved Telegram notification request not found.", 404);
+      const result = stockTelegramNotifier.enable(approval, state.approvals || []);
+      approval.activatedAt = now();
+      approval.activatedBy = "stock-office";
+      audit(state, "Stock Office Telegram enabled", "The approved server-side Telegram channel can now send qualified Human Gate proposal alerts, broker-confirmed trade alerts, and operator-requested tests.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/disable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-disable", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const result = stockTelegramNotifier.disable(state.approvals || []);
+      audit(state, "Stock Office Telegram disabled", "Automatic Telegram notifications were stopped; no broker or account setting changed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/test") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-test", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const delivery = await stockTelegramNotifier.sendTest(state.approvals || []);
+      audit(state, delivery.sent ? "Stock Office Telegram test delivered" : "Stock Office Telegram test stopped", delivery.sent ? "One operator-requested Telegram test was delivered." : `No message sent: ${delivery.reason || delivery.state}.`);
+      writeState(state);
+      sendJson(res, delivery.sent ? 200 : 409, { delivery, notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []), liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/shadow/reset") {
+    try {
+      enforceStockOfficeRateLimit(req, "shadow-reset", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requestedCash = payload.startingCashDollars === undefined ? null : Number(payload.startingCashDollars);
+      if (requestedCash !== null && (!Number.isFinite(requestedCash) || requestedCash < 1 || requestedCash > 1_000_000)) {
+        throw guardedError("Paper starting cash must be between $1 and $1,000,000.", 400);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const shadowPortfolio = resetShadowPortfolio(snapshot, { startingCashDollars: requestedCash });
+      writeStockShadowPortfolio(shadowPortfolio);
+      audit(
+        state,
+        "Stock Office paper shadow portfolio reset",
+        `A fresh $${shadowPortfolio.initialCashDollars.toFixed(2)} simulated portfolio was created. No broker call, money movement, or live order occurred.`,
+      );
+      writeState(state);
+      sendJson(res, 200, { shadowPortfolio, liveOrderPlaced: false, brokerCalled: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/status") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-status", 80, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: approval ? {
+          id: approval.id,
+          status: approval.status,
+          consumedAt: approval.consumedAt || null,
+          expiresAt: approval.expiresAt || null,
+        } : null,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/oauth/start") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-oauth-start", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding" && item.status === "approved" && !item.consumedAt);
+      if (!approval) throw guardedError("Approve the exact Robinhood connection request in Human Gate before starting OAuth.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      if (details.provider !== "robinhood_agentic_mcp" || details.accountScope !== "dedicated_agentic_account_only" || details.orderPlacementAuthorized !== false || details.moneyMovementAuthorized !== false) {
+        throw guardedError("The approved Robinhood connection scope does not match the required read-only Agentic-account onboarding contract.", 409);
+      }
+      const redirectUri = `http://127.0.0.1:${PORT}/api/stock-office/robinhood/oauth/callback`;
+      const started = await robinhoodMcpClient.beginAuthorization({ redirectUri, approvalId: approval.id });
+      approval.oauthStartedAt = now();
+      audit(state, "Robinhood OAuth handoff prepared", `Human Gate approval ${approval.id} opened only the official Robinhood OAuth flow; no order or money movement was authorized.`);
+      writeState(state);
+      sendJson(res, 200, { ...started, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/oauth/callback") {
+    try {
+      const completed = await robinhoodMcpClient.completeAuthorization({
+        state: url.searchParams.get("state") || "",
+        code: url.searchParams.get("code") || "",
+      });
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === completed.approvalId);
+      if (!approval || approval.status !== "approved" || approval.consumedAt) {
+        robinhoodMcpClient.disconnect();
+        throw guardedError("The Robinhood connection approval is no longer valid. The local OAuth token was removed.", 409);
+      }
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = now();
+      approval.executionOutcome = "robinhood_oauth_connected";
+      let refreshError = "";
+      try {
+        await robinhoodMcpClient.refreshBrokerSnapshot();
+      } catch (error) {
+        refreshError = error.message;
+      }
+      audit(state, "Robinhood OAuth completed", refreshError
+        ? `Official OAuth completed, but the dedicated Agentic-account snapshot did not verify: ${refreshError}`
+        : "Official OAuth and the dedicated Agentic-account read-only snapshot verified; no order or money movement occurred.");
+      writeState(state);
+      sendRobinhoodOauthResultPage(req, res, refreshError ? "needs_refresh" : "connected");
+    } catch (error) {
+      sendRobinhoodOauthResultPage(req, res, "connection_error");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/refresh") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-refresh", 12, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const broker = await robinhoodMcpClient.refreshBrokerSnapshot();
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        brokerControl: brokerControlOverview(snapshot),
+        broker: {
+          account: broker.account,
+          buyingPower: broker.buyingPower,
+          positions: broker.positions.length,
+          openOrders: broker.openOrders.length,
+          updatedAt: broker.updatedAt,
+        },
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/broker-connect/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-connect", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const snapshot = stockOfficeSnapshot(readState());
+      const control = brokerControlOverview(snapshot);
+      const approvalResult = createHumanGateRequest({
+        actionType: "connect_robinhood_agentic_mcp",
+        title: "Connect the dedicated Robinhood Agentic account",
+        riskLevel: "high",
+        linkedId: "stock-office:robinhood-agentic-mcp:onboarding",
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Robinhood Trading MCP is registered at ${control.endpoint}. Current connector status: ${control.connectorStatus}. Authentication is not treated as complete until a fresh account snapshot is returned.`,
+        action: "Authorize opening Robinhood's official OAuth/onboarding flow for a dedicated Agentic Trading account. This approval does not authorize a deposit, transfer, order, option trade, crypto trade, or event contract.",
+        exactScope: `Connect only the official Robinhood Trading MCP endpoint ${control.endpoint}, authenticate through Robinhood, and verify the dedicated Agentic account. No money movement or order placement is included.`,
+        details: {
+          officeId: "stock-office",
+          provider: "robinhood_agentic_mcp",
+          endpoint: control.endpoint,
+          accountScope: control.accountScope,
+          allowedResult: "fresh_read_only_account_snapshot",
+          orderPlacementAuthorized: false,
+          moneyMovementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Robinhood OAuth returns a fresh read-only Agentic-account snapshot and required MCP tool availability; no order is placed.",
+        rollbackPlan: "Disconnect the Robinhood Trading MCP from Robinhood or Codex and keep the live-order kill switch active.",
+      });
+      sendJson(res, 200, { ...approvalResult, brokerControl: control, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requested = normalizeGuardrails(payload);
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0) {
+        throw guardedError("Principal, maximum deployed capital, and per-order cap must be greater than zero.", 400);
+      }
+      if (requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Per-order cap must not exceed maximum deployed capital, and maximum deployed capital must not exceed principal.", 400);
+      }
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      const approvalResult = createHumanGateRequest({
+        actionType: "change_stock_trading_guardrails",
+        title: "Review Stock Office capital limits",
+        riskLevel: "high",
+        linkedId: `stock-office:guardrails:${fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Requested principal $${requested.principalDollars.toFixed(2)}, maximum deployed $${requested.maxTotalDollars.toFixed(2)}, maximum order $${requested.maxOrderDollars.toFixed(2)}, cash reserve $${requested.cashReserveDollars.toFixed(2)}, daily loss lock ${(requested.dailyLossLimitPct * 100).toFixed(2)}%.`,
+        action: "Review these exact risk limits. Approval changes no Robinhood setting and moves no money by itself.",
+        exactScope: `Approve only guardrail fingerprint ${fingerprint}: ${JSON.stringify(requested)}. No deposit, transfer, account change, or broker order is included.`,
+        details: {
+          officeId: "stock-office",
+          fingerprint,
+          guardrails: requested,
+          moneyMovementAuthorized: false,
+          orderPlacementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "The exact capital-policy proposal is approved for a later controlled configuration apply; no external financial action occurs.",
+        rollbackPlan: "Reject or supersede this proposal before applying it; if later applied, create a new approval to restore prior limits.",
+      });
+      sendJson(res, 200, { ...approvalResult, guardrails: requested, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/apply") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails-apply", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval || approval.actionType !== "change_stock_trading_guardrails") throw guardedError("Approved capital-policy request not found.", 404);
+      if (approval.status !== "approved" || approval.consumedAt || Number(approval.useCount || 0) > 0) {
+        throw guardedError("Capital-policy approval is not approved and unused.", 409);
+      }
+      if (approval.expiresAt && new Date(approval.expiresAt).getTime() <= Date.now()) throw guardedError("Capital-policy approval expired.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      const requested = normalizeGuardrails(details.guardrails || {});
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      if (!details.fingerprint || details.fingerprint !== fingerprint || approval.linkedId !== `stock-office:guardrails:${fingerprint}`) {
+        throw guardedError("Capital-policy approval fingerprint does not match the exact limits.", 409);
+      }
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0
+        || requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Approved capital limits are internally invalid.", 409);
+      }
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const appliedAt = now();
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        activeGuardrails: requested,
+        guardrailsAppliedAt: appliedAt,
+        guardrailsApprovalId: approval.id,
+      });
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = appliedAt;
+      approval.executionOutcome = "stock_guardrails_applied_locally";
+      audit(state, "Stock Office capital limits applied", `Exact Human Gate fingerprint ${fingerprint} became the active local order policy. No deposit, transfer, broker setting, or order occurred.`);
+      writeState(state);
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        guardrails: snapshot.guardrails,
+        guardrailsSource: snapshot.guardrailsSource,
+        brokerControl: brokerControlOverview(snapshot),
+        portfolioPlan: buildCopyPortfolioPlan(snapshot),
+        approval: { id: approval.id, status: approval.status, consumedAt: approval.consumedAt },
+        moneyMoved: false,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/orders/draft") {
+    try {
+      enforceStockOfficeRateLimit(req, "order-draft", 20, 300_000);
+      const access = requireStockOfficeAccess(req, "order_draft");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draft = buildTradeDraft({
+        symbol: payload.symbol,
+        side: payload.side,
+        requestedDollars: payload.requestedDollars,
+        candidateId: payload.candidateId,
+      }, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [draft, ...current.tradeDrafts.filter((item) => item.fingerprint !== draft.fingerprint)],
+      });
+      audit(state, "Stock Office order draft", `${draft.side} ${draft.symbol} $${draft.requestedDollars.toFixed(2)}: ${draft.status}; ${draft.blockers.length} blocker(s); no live order placed.`);
+      writeState(state);
+      sendJson(res, 200, {
+        draft,
+        brokerControl: brokerControlOverview(stockOfficeSnapshot(readState(), access.permissions)),
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockOrderGateMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockOrderGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-human-gate", 10, 300_000);
+      requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === decodeURIComponent(stockOrderGateMatch[1]));
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      if (new Date(draft.expiresAt).getTime() <= Date.now()) throw guardedError("Order draft expired. Rebuild it with fresh market and broker data.", 409);
+      if (draft.status !== "ready_for_broker_review" || draft.blockers.length) {
+        throw guardedError(`Order draft is blocked: ${draft.blockers[0] || "fresh broker review is unavailable"}`, 409);
+      }
+      const { approvalResult, envelope } = createStockOrderApprovalRequest(draft);
+      const latestState = readState();
+      const current = normalizeStockOfficeState(latestState.stockOffice);
+      const awaitingDraft = tradeDraftWithApprovalState({
+        ...draft,
+        approvalId: approvalResult.approval.id,
+        status: "awaiting_human_gate",
+        updatedAt: now(),
+      }, [approvalResult.approval]);
+      latestState.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      audit(latestState, "Stock Office order awaiting Human Gate", `${draft.side} ${draft.symbol} order fingerprint ${draft.fingerprint} is awaiting one-use approval; no live order placed.`);
+      writeState(latestState);
+      const notificationState = readState();
+      const matchingProposal = buildCopyPortfolioPlan(snapshot).proposals.find((proposal) => proposal.draftFingerprint === draft.fingerprint);
+      const notificationProposal = matchingProposal || {
+        id: draft.sourceId || draft.id,
+        fingerprint: draft.fingerprint,
+        draftEligible: true,
+        symbol: draft.symbol,
+        side: draft.side,
+        requestedDollars: draft.requestedDollars,
+        referencePrice: draft.referencePrice,
+        research: {
+          sourceLabel: draft.sourceType,
+          mainReason: draft.thesis,
+          checksPassed: draft.checks.filter((check) => check.passed).length,
+          checksTotal: draft.checks.length,
+        },
+      };
+      const notificationDelivery = await stockTelegramNotifier.notifyQualifiedProposal(
+        notificationProposal,
+        awaitingDraft,
+        approvalResult.approval,
+        notificationState.approvals || [],
+      ).catch((error) => ({ sent: false, state: "failed", reason: redactSensitiveText(error.message).slice(0, 300) }));
+      const auditState = readState();
+      audit(auditState, notificationDelivery.sent ? "Qualified proposal Telegram delivered" : "Qualified proposal Telegram not delivered", notificationDelivery.sent
+        ? `${draft.side} ${draft.symbol} Human Gate approval card delivered.`
+        : `No proposal approval card sent: ${notificationDelivery.reason || notificationDelivery.state}.`);
+      writeState(auditState);
+      sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, notificationDelivery, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+
+  const stockDirectExecuteMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/execute$/);
+  if (req.method === "POST" && stockDirectExecuteMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-direct-execute", 3, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const draftId = decodeURIComponent(stockDirectExecuteMatch[1]);
+      const execution = await executeApprovedStockDraft(draftId, {
+        permissions: access.permissions,
+        confirmationFingerprint: payload.confirmationFingerprint,
+      });
+      sendJson(res, 200, execution);
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+
+  const stockDispatchClaimMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/claim$/);
+  if (req.method === "POST" && stockDispatchClaimMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-claim", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchClaimMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+        || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const claimed = claimApprovedDispatch(draft, approval, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      approval.dispatchClaimId = claimed.claim.id;
+      approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+      approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+      audit(state, "Stock Office one-use dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} expires ${claimed.claim.expiresAt}; broker review required before any placement.`);
+      writeState(state);
+      sendJson(res, 200, {
+        claim: claimed.claim,
+        draft: claimed.draft,
+        liveOrderPlaced: false,
+        warning: "This claim is single-use. Run Robinhood review first and submit the result before expiry; never place on warnings or changed scope.",
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockDispatchResultMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/result$/);
+  if (req.method === "POST" && stockDispatchResultMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-result", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchResultMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approvalIndex = (state.approvals || []).findIndex((item) => item.id === draft.approvalId || item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (approvalIndex < 0) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const settled = settleApprovedDispatch(draft, state.approvals[approvalIndex], payload, payload.claimToken);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [settled.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      state.approvals[approvalIndex] = settled.approval;
+      audit(
+        state,
+        settled.liveOrderPlaced ? "Stock Office broker order recorded" : "Stock Office dispatch stopped safely",
+        settled.liveOrderPlaced
+          ? `${draft.side} ${draft.symbol} reconciled to broker order ${settled.draft.brokerOrderId}; one-use approval consumed.`
+          : `${draft.side} ${draft.symbol} stopped after broker review or incomplete placement evidence; no live order recorded; one-use approval consumed.`,
+      );
+      writeState(state);
+      sendJson(res, 200, {
+        draft: settled.draft,
+        approval: settled.approval,
+        liveOrderPlaced: settled.liveOrderPlaced,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+
+  const stockMirrorGateMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockMirrorGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror-gate", 10, 300_000);
+      const access = requireStockOfficeAccess(req, "mirror_request");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const candidate = getMirrorCandidate(snapshot, decodeURIComponent(stockMirrorGateMatch[1]));
+      if (!candidate) throw guardedError("Copy Trader candidate not found.", 404);
+      if (snapshot.mirror.stale) throw guardedError("Copy Trader plan is stale. Refresh the public signal and current price before Human Gate review.", 409);
+      if (!candidate.humanGateEligible || candidate.status !== "paper_ready") {
+        throw guardedError("Only a fresh paper-ready mirror candidate can be sent to Human Gate.", 409);
+      }
+      if (!candidate.sourceUrl || !candidate.fingerprint) {
+        throw guardedError("Mirror candidate provenance is incomplete.", 409);
+      }
+      const mirrorNotionalLabel = `$${Number(candidate.mirrorNotionalDollars || 0).toFixed(2)}`;
+      const approvalResult = createHumanGateRequest({
+        actionType: "review_trade_plan",
+        title: `Review copy-mirror plan: ${candidate.side} ${candidate.symbol}`,
+        riskLevel: "high",
+        linkedId: `stock-mirror:${candidate.fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${candidate.traderName} public signal from ${candidate.sourceName}. Reported transaction ${candidate.transactionAt}; disclosed ${candidate.disclosedAt}; disclosure lag ${candidate.disclosureLagHours.toFixed(1)}h; current-price drift ${candidate.priceDriftPct === null ? "unknown" : `${(candidate.priceDriftPct * 100).toFixed(2)}%`}; provenance ${candidate.sourceUrl}.`,
+        action: `Review a capped ${mirrorNotionalLabel} ${candidate.side} ${candidate.symbol} mirror plan. This plan-review approval records the decision only and is not an order approval.`,
+        exactScope: `Review only: ${candidate.side} ${candidate.symbol}, maximum ${mirrorNotionalLabel}, source fingerprint ${candidate.fingerprint}. No order placement, money movement, account change, event-contract trade, or recurring authorization is included.`,
+        details: {
+          officeId: "stock-office",
+          candidateId: candidate.id,
+          fingerprint: candidate.fingerprint,
+          symbol: candidate.symbol,
+          side: candidate.side,
+          maxNotionalDollars: candidate.mirrorNotionalDollars,
+          sourceName: candidate.sourceName,
+          sourceUrl: candidate.sourceUrl,
+          disclosureLagHours: candidate.disclosureLagHours,
+          priceDriftPct: candidate.priceDriftPct,
+          executionAvailable: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Human Gate records an operator decision on this exact mirror plan. No broker order is submitted.",
+        rollbackPlan: "No external rollback is needed because this review route performs no broker action; reject or expire the review record.",
+      });
+      sendJson(res, 200, { ...approvalResult, candidate, liveOrderPlaced: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5366,19 +7527,53 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "sync", 8, 300_000);
       const access = requireStockOfficeAccess(req, "sync");
+      const refresh = await stockGuruRefreshManager.refresh({ stockRoot: resolveStockRoot(ROOT) });
+      stockIntelligenceScheduler.recordManualRefresh(refresh);
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
-      const syncRun = createStockOfficeSyncRun(snapshot);
+      const syncRun = createStockOfficeSyncRun(snapshot, refresh);
       const current = normalizeStockOfficeState(state.stockOffice);
       state.stockOffice = normalizeStockOfficeState({
         ...current,
         lastLocalSyncAt: syncRun.completedAt,
         syncRuns: [syncRun, ...current.syncRuns],
       });
-      audit(state, "Stock Office local sync", `Rescanned ${syncRun.recordsImported} Stock Guru record(s) in read-only mode.`);
+      audit(state, "Stock Office data refresh", `Refresh ${refresh.status}; loaded ${syncRun.recordsImported} Stock Guru record(s); 0 live orders placed.`);
       writeState(state);
-      const updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
-      sendJson(res, 200, { syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 20 }) });
+      let updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      if (["success", "partial"].includes(refresh.status)) {
+        const persisted = stockIntelligenceStore.ingestSnapshot(updatedSnapshot, {
+          status: refresh.status,
+          startedAt: refresh.startedAt,
+          completedAt: refresh.completedAt,
+          nextScheduledAt: stockIntelligenceScheduler.getStatus().nextRunAt,
+          cycleType: marketSession(new Date(refresh.completedAt || Date.now())).status,
+          trigger: "manual_refresh",
+        });
+        stockEventBus.publish("research.completed", {
+          runId: persisted.runId,
+          status: refresh.status,
+          symbolsScanned: persisted.opportunities.length,
+          reportTypes: Object.keys(persisted.reports || {}),
+        }, { correlationId: persisted.correlationId });
+        updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      }
+      sendJson(res, 200, { refresh, syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 30 }) });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/refresh-status") {
+    try {
+      enforceStockOfficeRateLimit(req, "refresh-status", 240, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      sendJson(res, 200, {
+        refresh: stockGuruRefreshManager.getStatus(),
+        intelligenceScheduler: stockIntelligenceScheduler.getStatus(),
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5388,6 +7583,27 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/state") {
     sendJson(res, 200, readState());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/human-gate/pending") {
+    const state = readState();
+    const approvals = (state.approvals || [])
+      .filter((approval) => approval?.status === "pending")
+      .map((approval) => ({
+        id: String(approval.id || ""),
+        title: redactSensitiveText(approval.title || "Approval required"),
+        action: redactSensitiveText(approval.action || "Operator review required."),
+        exactScope: redactSensitiveText(approval.exactScope || "Only this recorded action is included."),
+        evidence: redactSensitiveText(approval.evidence || "No additional evidence was attached."),
+        risk: String(approval.risk || approval.riskLevel || "medium"),
+        riskLevel: String(approval.riskLevel || approval.risk || "medium"),
+        officeId: String(approval.officeId || ""),
+        workflowId: String(approval.workflowId || ""),
+        createdAt: approval.createdAt || null,
+      }))
+      .slice(0, 50);
+    sendJson(res, 200, { approvals, pending: approvals.length, generatedAt: now() });
     return;
   }
 
@@ -5566,7 +7782,41 @@ async function handleApi(req, res, url) {
       }
     }
     writeState(state);
-    sendJson(res, 200, state);
+    if (approval.officeId === "stock-office") {
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      stockIntelligenceStore.recordApproval(approval, { proposalId: details.draftId || details.candidateId || "", actorType: "WEB" });
+      stockEventBus.publish(approval.status === "approved" ? "trade.approved" : approval.status === "blocked" ? "trade.rejected" : "trade.approval_revised", {
+        approvalId: approval.id,
+        proposalId: details.draftId || details.candidateId || "",
+        symbol: details.executionEnvelope?.args?.symbol || details.symbol || "",
+        decision: action,
+        status: approval.status,
+      }, { actorType: "WEB", id: `web:${action}:${approval.id}` });
+    }
+    if (action === "approve" && approval.actionType === "place_robinhood_equity_order") {
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      try {
+        const execution = await executeApprovedStockDraft(String(details.draftId || ""), { dispatchMode: "human_gate_approval" });
+        const latest = readState();
+        const latestApproval = (latest.approvals || []).find((item) => item.id === approval.id);
+        if (latestApproval) {
+          latestApproval.executionOutcome = execution.liveOrderPlaced ? "broker_order_reconciled" : "broker_execution_stopped";
+          latestApproval.executionDraftId = execution.draft?.id || null;
+          latestApproval.executionBrokerOrderId = execution.draft?.brokerOrderId || null;
+          writeState(latest);
+        }
+      } catch (error) {
+        const latest = readState();
+        const latestApproval = (latest.approvals || []).find((item) => item.id === approval.id);
+        if (latestApproval) {
+          latestApproval.executionOutcome = "broker_execution_stopped";
+          latestApproval.executionError = redactSensitiveText(error.message || "The approved order stopped during final revalidation.").slice(0, 500);
+          audit(latest, "Approved Stock Office order stopped safely", latestApproval.executionError);
+          writeState(latest);
+        }
+      }
+    }
+    sendJson(res, 200, readState());
     return;
   }
 
@@ -5747,6 +7997,13 @@ readAuthStore();
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
+  const isLocalRobinhoodOauthCallback = req.method === "GET"
+    && loopbackHosts.has(String(HOST).toLowerCase())
+    && loopbackHosts.has(url.hostname.toLowerCase())
+    && url.pathname === "/api/stock-office/robinhood/oauth/callback";
+  const isTelegramWebhook = req.method === "POST"
+    && url.pathname === "/api/stock-office/notifications/telegram/webhook";
   try {
     assertTrustedOrigin(req);
     if (handlePublicWebsite(req, res, url)) {
@@ -5762,12 +8019,28 @@ const server = http.createServer(async (req, res) => {
     if (await handleLogin(req, res)) {
       return;
     }
+    // Robinhood returns from another browser origin, so the Argentum session
+    // cookie may be absent. The one-use state, PKCE verifier, and Human Gate
+    // approval still protect this loopback-only callback.
+    if (isLocalRobinhoodOauthCallback) {
+      await handleApi(req, res, url);
+      return;
+    }
+    if (isTelegramWebhook) {
+      await handleApi(req, res, url);
+      return;
+    }
     if (!currentSession(req)) {
       if (url.pathname.startsWith("/api/")) {
         sendJson(res, 401, { error: "Authentication required" });
         return;
       }
       redirect(res, "/login", req);
+      return;
+    }
+    const logoSymbol = stockLogoSymbol(url.pathname);
+    if (req.method === "GET" && logoSymbol) {
+      await sendStockLogo(req, res, logoSymbol);
       return;
     }
     if (url.pathname === "/app/") {
@@ -5794,4 +8067,56 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Argentum is running on ${HOST}:${PORT}`);
+  if (process.env.NODE_ENV !== "test") {
+    stockIntelligenceScheduler.start();
+    try {
+      refreshStockShadowPortfolio({ force: true });
+    } catch (error) {
+      console.warn("Stock shadow portfolio startup cycle failed safely:", error.message);
+    }
+    const shadowTimer = setInterval(() => {
+      try {
+        refreshStockShadowPortfolio({ force: true });
+      } catch (error) {
+        console.warn("Stock shadow portfolio cycle failed safely:", error.message);
+      }
+    }, 60_000);
+    shadowTimer.unref();
+    const simulationSettings = stockSimulationOptions();
+    try {
+      refreshStockSimulationLab({ force: true, persist: true });
+    } catch (error) {
+      console.warn("Stock autonomous simulation startup failed safely:", error.message);
+    }
+    const simulationTimer = setInterval(() => {
+      try {
+        refreshStockSimulationLab({ force: true });
+      } catch (error) {
+        console.warn("Stock autonomous simulation cycle failed safely:", error.message);
+      }
+    }, simulationSettings.intervalMs);
+    simulationTimer.unref();
+    const readinessTimer = setInterval(() => {
+      runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness cycle failed safely:", error.message));
+    }, stockReadinessIntervalMs());
+    readinessTimer.unref();
+    runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness startup failed safely:", error.message));
+    if (["127.0.0.1", "localhost", "::1"].includes(String(HOST).toLowerCase())) {
+      let telegramPollPromise = null;
+      const pollTelegram = async () => {
+        if (telegramPollPromise) return telegramPollPromise;
+        telegramPollPromise = stockTelegramNotifier.pollUpdates({ approvals: readState().approvals || [] });
+        try {
+          return await telegramPollPromise;
+        } finally {
+          telegramPollPromise = null;
+        }
+      };
+      const telegramTimer = setInterval(() => {
+        pollTelegram().catch((error) => console.warn("Telegram local polling failed safely:", error.message));
+      }, simulationInteger(process.env.STOCK_GURU_TELEGRAM_POLL_INTERVAL_MS, 2_000, 1_000, 30_000));
+      telegramTimer.unref();
+      pollTelegram().catch((error) => console.warn("Telegram local polling startup failed safely:", error.message));
+    }
+  }
 });

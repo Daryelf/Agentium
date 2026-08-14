@@ -33,7 +33,9 @@ const { materializeStockGuruRuntime, resolveStockGuruWorkspace } = require("./se
 const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
 const secureSecrets = require("./services/secure-secrets");
 const {
+  applyPaperProposal,
   normalizeShadowPortfolio,
+  paperProposalEligibility,
   resetShadowPortfolio,
   runShadowPortfolioCycle,
 } = require("./services/stock-shadow-portfolio");
@@ -5636,6 +5638,21 @@ function refreshStockShadowPortfolio(options = {}) {
   return updated;
 }
 
+function withPaperProposalReadiness(plan = {}, shadowPortfolio = {}, snapshot = {}) {
+  const proposals = (Array.isArray(plan.proposals) ? plan.proposals : []).map((proposal) => ({
+    ...proposal,
+    paperTest: paperProposalEligibility(shadowPortfolio, snapshot, proposal),
+  }));
+  return {
+    ...plan,
+    proposals,
+    summary: {
+      ...(plan.summary || {}),
+      paperReady: proposals.filter((proposal) => proposal.paperTest?.eligible).length,
+    },
+  };
+}
+
 function stockOfficeErrorResponse(error) {
   const status = error.status || 500;
   return {
@@ -6341,12 +6358,13 @@ async function handleApi(req, res, url) {
       const tradeDrafts = snapshot.tradeDrafts
         .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
         .slice(0, 20);
-      const portfolioPlan = buildContinuousReviewView({
+      const shadowPortfolio = readStockShadowPortfolio(snapshot);
+      const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
         plan: buildCopyPortfolioPlan(snapshot),
         review: normalizeStockOfficeState(state.stockOffice).continuousReview,
         scheduler: intelligenceScheduler,
         tradeDrafts,
-      });
+      }), shadowPortfolio, snapshot);
       portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
       const brokerControl = brokerControlOverview(snapshot);
       sendJson(res, 200, {
@@ -6390,12 +6408,13 @@ async function handleApi(req, res, url) {
       const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
       const brokerControl = brokerControlOverview(snapshot);
       const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
-      const portfolioPlan = buildContinuousReviewView({
+      const shadowPortfolio = refreshStockShadowPortfolio({ state });
+      const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
         plan: buildCopyPortfolioPlan(snapshot),
         review: normalizeStockOfficeState(state.stockOffice).continuousReview,
         scheduler: intelligenceScheduler,
         tradeDrafts,
-      });
+      }), shadowPortfolio, snapshot);
       portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
       const notificationScope = stockTelegramNotifier.approvalScope();
       const notificationApproval = notificationScope.destinationHash
@@ -6420,7 +6439,7 @@ async function handleApi(req, res, url) {
         portfolioPlan,
         intelligence: snapshot.intelligence,
         systemHealth,
-        shadowPortfolio: refreshStockShadowPortfolio({ state }),
+        shadowPortfolio,
         intelligenceScheduler,
         marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
         notificationStatus,
@@ -6482,6 +6501,40 @@ async function handleApi(req, res, url) {
       audit(state, "Stock Office proposal declined", `${proposal.side} ${proposal.symbol} research proposal was dismissed locally; no Human Gate request, broker review, order, or money movement occurred.`);
       writeState(state);
       sendJson(res, 200, { decision, liveOrderPlaced: false, humanGateCreated: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockPaperProposalMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/paper-test$/);
+  if (req.method === "POST" && stockPaperProposalMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-paper-test", 20, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const proposalId = decodeURIComponent(stockPaperProposalMatch[1]);
+      const proposal = buildCopyPortfolioPlan(snapshot).proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const result = applyPaperProposal(readStockShadowPortfolio(snapshot), snapshot, proposal);
+      if (result.action.outcome !== "filled") throw guardedError(result.action.reason || "Paper test is not currently eligible.", 409);
+      writeStockShadowPortfolio(result.portfolio);
+      audit(
+        state,
+        "Stock Office proposal paper-tested",
+        `${proposal.side} ${proposal.symbol} recorded a $${result.action.requestedDollars.toFixed(2)} simulated fill. No Robinhood call, money movement, Human Gate request, or live order occurred.`,
+      );
+      writeState(state);
+      const plan = withPaperProposalReadiness(buildCopyPortfolioPlan(snapshot), result.portfolio, snapshot);
+      sendJson(res, 200, {
+        action: result.action,
+        shadowPortfolio: result.portfolio,
+        portfolioPlan: plan,
+        liveOrderPlaced: false,
+        brokerCalled: false,
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);

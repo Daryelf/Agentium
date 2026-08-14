@@ -116,10 +116,15 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
 
   assert.match(html, /id="tradeProposalsTitle">Trade proposals/);
   assert.match(html, /id="overviewProposalList"/);
+  assert.match(html, /id="overviewTradeReadiness"/);
   assert.match(html, /id="overviewLiveClock"/);
   assert.match(html, /Company logos provided by Parqet/);
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
+  assert.match(script, /data-proposal-paper/);
+  assert.match(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/paper-test/);
+  assert.match(script, /Fix live setup/);
+  assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
   assert.match(script, /data-proposal-decline/);
   assert.match(script, /expandedProposalResearch: new Set\(\)/);
   assert.match(script, /state\.expandedProposalResearch\.has\(proposal\.id\) \? "open" : ""/);

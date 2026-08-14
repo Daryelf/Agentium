@@ -340,6 +340,185 @@ function resetShadowPortfolio(snapshot = {}, options = {}) {
   }, { snapshot, now: at });
 }
 
+function paperProposalEligibility(input = {}, snapshot = {}, proposal = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  let portfolio = normalizeShadowPortfolio(input, { snapshot, now: at });
+  const guardrails = normalizeGuardrails(snapshot.guardrails || {});
+  const currentDay = marketDay(at);
+  if (portfolio.day.key !== currentDay) {
+    portfolio.day = { key: currentDay, startingEquityDollars: portfolio.equityDollars, fills: 0 };
+  }
+  portfolio = applyRiskMetadata(portfolio, snapshot);
+  const proposalSymbol = symbol(proposal.symbol);
+  const side = String(proposal.side || "").toUpperCase();
+  const prices = priceMap(snapshot, portfolio);
+  const proposalPrice = finiteNumber(prices.get(proposalSymbol), finiteNumber(proposal.referencePrice, 0));
+  const sourceFingerprint = String(proposal.fingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64)
+    || stableFingerprint({ id: proposal.id, symbol: proposalSymbol, side, kind: proposal.kind });
+  const blockers = [];
+
+  if (side !== "BUY") blockers.push("Only BUY proposals can be opened from this paper-test control.");
+  if (!proposalSymbol) blockers.push("The proposal has no valid symbol.");
+  if (!(proposalPrice > 0)) blockers.push("A current paper reference price is unavailable.");
+  if (proposal.kind === "copy_entry") {
+    const candidate = (snapshot.mirror?.candidates || []).find((item) => item.id === proposal.candidateId);
+    if (snapshot.mirror?.stale || !candidate || candidate.status !== "paper_ready" || candidate.side !== "BUY") {
+      blockers.push("The copy signal is no longer current and paper-ready.");
+    }
+  } else {
+    const record = (snapshot.records || []).find((item) => symbol(item.ticker || item.symbol) === proposalSymbol);
+    if (!record || record.status !== "valid_setup" || !record.dataFresh) {
+      blockers.push("The evaluator setup is no longer fresh and valid.");
+    }
+  }
+  if (portfolio.positions.some((item) => item.symbol === proposalSymbol)) blockers.push("Already held in the paper portfolio.");
+  if (portfolio.processedSourceFingerprints.includes(sourceFingerprint)) blockers.push("This exact proposal was already paper-tested.");
+  if (portfolio.dailyLossLocked) blockers.push("The paper daily-loss lock is active.");
+  if (portfolio.day.fills >= guardrails.maxTradesPerDay) blockers.push(`The paper daily trade limit of ${guardrails.maxTradesPerDay} is reached.`);
+  if (portfolio.positions.length >= guardrails.maxPositions) blockers.push(`The paper position limit of ${guardrails.maxPositions} is reached.`);
+
+  const deployed = money(portfolio.positions.reduce((sum, item) => sum + item.marketValueDollars, 0));
+  const perSymbolCap = money(guardrails.maxTotalDollars / Math.max(1, guardrails.maxPositions));
+  let requested = Math.min(finiteNumber(proposal.requestedDollars, 0), guardrails.maxOrderDollars, perSymbolCap);
+  const stopLoss = finiteNumber(proposal.outlook?.stopPrice, 0);
+  if (stopLoss > 0 && stopLoss < proposalPrice) {
+    const stopDistancePct = (proposalPrice - stopLoss) / proposalPrice;
+    requested = Math.min(requested, (portfolio.initialCashDollars * guardrails.riskPerTradePct) / stopDistancePct);
+  }
+  const availableByCash = Math.max(0, portfolio.cashDollars - guardrails.cashReserveDollars);
+  const availableByDeployment = Math.max(0, guardrails.maxTotalDollars - deployed);
+  requested = money(Math.min(requested, availableByCash, availableByDeployment));
+  if (requested < guardrails.minOrderDollars) {
+    blockers.push(`Only $${requested.toFixed(2)} remains after paper limits; minimum is $${guardrails.minOrderDollars.toFixed(2)}.`);
+  }
+
+  return {
+    eligible: blockers.length === 0,
+    blockers: [...new Set(blockers)],
+    reason: blockers[0] || "Cash-covered paper test is ready.",
+    requestedDollars: requested,
+    referencePrice: money(proposalPrice),
+    sourceFingerprint,
+    symbol: proposalSymbol,
+    belowAutomaticScore: proposal.kind !== "copy_entry"
+      && finiteNumber((snapshot.records || []).find((item) => symbol(item.ticker || item.symbol) === proposalSymbol)?.score, 0) < guardrails.minEntryScore,
+    mode: MODE,
+    liveOrderPlaced: false,
+    brokerCalled: false,
+  };
+}
+
+function applyPaperProposal(input = {}, snapshot = {}, proposal = {}, options = {}) {
+  const at = options.now ? new Date(options.now) : new Date();
+  let portfolio = normalizeShadowPortfolio(input, { snapshot, now: at });
+  const currentDay = marketDay(at);
+  if (portfolio.day.key !== currentDay) {
+    portfolio.day = { key: currentDay, startingEquityDollars: portfolio.equityDollars, fills: 0 };
+  }
+  const readiness = paperProposalEligibility(portfolio, snapshot, proposal, { now: at });
+  if (!readiness.eligible) {
+    recordDecision(portfolio, {
+      action: "BUY",
+      symbol: readiness.symbol || proposal.symbol,
+      outcome: "blocked",
+      reason: readiness.reason,
+      requestedDollars: readiness.requestedDollars,
+      sourceType: proposal.kind === "copy_entry" ? "copy_signal" : "evaluator",
+      sourceId: proposal.candidateId || proposal.id,
+      traderName: proposal.traderName,
+      strategy: proposal.kind || "native_entry",
+      observedVersion: proposal.fingerprint,
+    }, at);
+    portfolio.updatedAt = at.toISOString();
+    return {
+      portfolio: applyRiskMetadata(portfolio, snapshot),
+      action: { outcome: "blocked", reason: readiness.reason, symbol: readiness.symbol, requestedDollars: readiness.requestedDollars },
+      liveOrderPlaced: false,
+      brokerCalled: false,
+    };
+  }
+
+  const shares = quantity(readiness.requestedDollars / readiness.referencePrice);
+  const actualNotional = money(shares * readiness.referencePrice);
+  if (shares <= 0 || actualNotional <= 0 || actualNotional > portfolio.cashDollars) {
+    const reason = "Paper share rounding could not produce a cash-covered order.";
+    recordDecision(portfolio, {
+      action: "BUY",
+      symbol: readiness.symbol,
+      outcome: "blocked",
+      reason,
+      requestedDollars: readiness.requestedDollars,
+      sourceType: proposal.kind === "copy_entry" ? "copy_signal" : "evaluator",
+      sourceId: proposal.candidateId || proposal.id,
+      traderName: proposal.traderName,
+      strategy: proposal.kind || "native_entry",
+      observedVersion: proposal.fingerprint,
+    }, at);
+    portfolio.updatedAt = at.toISOString();
+    return {
+      portfolio: applyRiskMetadata(portfolio, snapshot),
+      action: { outcome: "blocked", reason, symbol: readiness.symbol, requestedDollars: readiness.requestedDollars },
+      liveOrderPlaced: false,
+      brokerCalled: false,
+    };
+  }
+  const sourceType = proposal.kind === "copy_entry" ? "copy_signal" : "evaluator";
+  const positionId = `paper-position-${stableFingerprint({ symbol: readiness.symbol, sourceFingerprint: readiness.sourceFingerprint, at: at.toISOString() }).slice(0, 24)}`;
+  portfolio.cashDollars = money(portfolio.cashDollars - actualNotional);
+  portfolio.positions.push(normalizePosition({
+    id: positionId,
+    symbol: readiness.symbol,
+    quantity: shares,
+    avgEntryPrice: readiness.referencePrice,
+    currentPrice: readiness.referencePrice,
+    sourceType,
+    sourceId: proposal.candidateId || proposal.id,
+    sourceFingerprint: readiness.sourceFingerprint,
+    traderName: proposal.traderName,
+    entryKind: proposal.kind || "native_entry",
+    stopLoss: proposal.outlook?.stopPrice,
+    target1: proposal.outlook?.targetPrice,
+    openedAt: at.toISOString(),
+    lastMarkedAt: at.toISOString(),
+  }));
+  const fill = makeFill(portfolio, {
+    side: "BUY",
+    symbol: readiness.symbol,
+    quantity: shares,
+    price: readiness.referencePrice,
+    notionalDollars: actualNotional,
+    reason: "Operator selected this current proposal for a simulated paper fill.",
+    sourceType,
+    sourceId: proposal.candidateId || proposal.id,
+    traderName: proposal.traderName,
+    strategy: proposal.kind || "native_entry",
+    sourceFingerprint: readiness.sourceFingerprint,
+    positionId,
+  }, at);
+  portfolio.processedSourceFingerprints.push(readiness.sourceFingerprint);
+  portfolio.processedSourceFingerprints = [...new Set(portfolio.processedSourceFingerprints)].slice(-MAX_PROCESSED_SOURCES);
+  recordDecision(portfolio, {
+    action: "BUY",
+    symbol: readiness.symbol,
+    outcome: "filled",
+    reason: "Simulated fill only; no broker call was made.",
+    requestedDollars: actualNotional,
+    sourceType,
+    sourceId: proposal.candidateId || proposal.id,
+    traderName: proposal.traderName,
+    strategy: proposal.kind || "native_entry",
+    observedVersion: proposal.fingerprint,
+  }, at);
+  portfolio.lastCycleAt = at.toISOString();
+  portfolio.updatedAt = at.toISOString();
+  return {
+    portfolio: applyRiskMetadata(portfolio, snapshot),
+    action: { outcome: "filled", reason: "Paper fill recorded. No broker call was made.", symbol: readiness.symbol, requestedDollars: actualNotional, fillId: fill.id },
+    liveOrderPlaced: false,
+    brokerCalled: false,
+  };
+}
+
 function runShadowPortfolioCycle(input = {}, snapshot = {}, options = {}) {
   const at = options.now ? new Date(options.now) : new Date();
   let portfolio = normalizeShadowPortfolio(input, { snapshot, now: at });
@@ -561,8 +740,10 @@ function runShadowPortfolioCycle(input = {}, snapshot = {}, options = {}) {
 
 module.exports = {
   MODE,
+  applyPaperProposal,
   learningFromFills,
   normalizeShadowPortfolio,
+  paperProposalEligibility,
   resetShadowPortfolio,
   runShadowPortfolioCycle,
 };

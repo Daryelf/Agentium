@@ -2612,6 +2612,29 @@ select {
 .overview-cycle-copy strong,
 .overview-cycle-result strong { margin-top: 2px; overflow: hidden; color: #cbd5e1; font-size: 0.59rem; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes overview-cycle-pulse { 50% { opacity: 0.5; } }
+.overview-trade-readiness {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.45fr) minmax(190px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  background: rgba(8, 18, 34, 0.5);
+}
+.overview-readiness-state { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.overview-readiness-state > i { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 99px; background: #64748b; }
+.overview-readiness-state.ready > i { background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.1); }
+.overview-readiness-state.waiting > i { background: #38bdf8; box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.09); }
+.overview-readiness-state small,
+.overview-readiness-state strong,
+.overview-readiness-metric small,
+.overview-readiness-metric strong { display: block; }
+.overview-readiness-state small,
+.overview-readiness-metric small { color: #64748b; font-size: 0.49rem; font-weight: 950; letter-spacing: 0.06em; }
+.overview-readiness-state strong,
+.overview-readiness-metric strong { margin-top: 2px; overflow: hidden; color: #dbeafe; font-size: 0.64rem; text-overflow: ellipsis; white-space: nowrap; }
+.overview-trade-readiness > button { min-height: 29px; padding: 0 12px; border-radius: 8px; font-size: 0.56rem; font-weight: 900; }
 .overview-proposal-list { display: grid; }
 
 .overview-proposal {
@@ -2625,6 +2648,7 @@ select {
 }
 
 .overview-proposal.ready { box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.65); }
+.overview-proposal.paper-ready { box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.62); }
 .overview-proposal.monitoring { box-shadow: inset 3px 0 0 rgba(250, 204, 21, 0.4); }
 .overview-proposal.blocked { box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.45); }
 .overview-proposal-company .company-logo { width: 38px; height: 38px; flex-basis: 38px; border-radius: 11px; }
@@ -2650,9 +2674,24 @@ select {
 .overview-proposal-evidence summary { color: #7dd3fc; cursor: pointer; font-size: 0.55rem; font-weight: 850; }
 .overview-proposal-evidence p { margin: 6px 0 0; color: #8594a9; font-size: 0.57rem; line-height: 1.4; }
 .overview-proposal-evidence p strong { margin-right: 5px; color: #cbd5e1; }
-.overview-proposal-actions { grid-column: 4; grid-row: 1 / span 2; width: 154px; display: grid; grid-template-columns: 1fr 0.72fr; gap: 6px; }
+.overview-proposal-actions { grid-column: 4; grid-row: 1 / span 2; width: 154px; display: grid; grid-template-columns: 1fr; gap: 6px; }
 .overview-proposal-actions button { min-height: 32px; padding: 0 8px; border-radius: 8px; font-size: 0.57rem; font-weight: 850; }
 .overview-proposal-actions .secondary { border-color: rgba(148, 163, 184, 0.16); color: #aab7c8; background: rgba(30, 41, 59, 0.55); }
+.proposal-action-status {
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  border-radius: 8px;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.38);
+  font-size: 0.54rem;
+  font-weight: 900;
+  text-align: center;
+}
+.proposal-action-status.owned { color: #86efac; border-color: rgba(52, 211, 153, 0.2); background: rgba(5, 150, 105, 0.09); }
+.proposal-action-status.pending { color: #bae6fd; border-color: rgba(56, 189, 248, 0.2); background: rgba(14, 116, 144, 0.1); }
 .overview-proposal-actions small { grid-column: 1 / -1; color: #718198; font-size: 0.52rem; line-height: 1.35; }
 .overview-proposal.blocked .overview-proposal-actions small { color: #f0c86a; }
 .overview-proposal.monitoring .overview-proposal-actions small { color: #fde68a; }
@@ -2750,6 +2789,8 @@ select {
 @media (max-width: 820px) {
   .overview-cycle-rail { grid-template-columns: 1fr 1fr; }
   .overview-cycle-result { grid-column: 1 / -1; }
+  .overview-trade-readiness { grid-template-columns: 1fr 1fr; }
+  .overview-trade-readiness > button { width: 100%; }
   .overview-account-band { grid-template-columns: 1fr auto; }
   .overview-account-tape { grid-column: 1 / -1; order: 3; }
   .overview-data-grid { grid-template-columns: 1fr; }
@@ -2768,6 +2809,7 @@ select {
 }
 
 @media (max-width: 520px) {
+  .overview-trade-readiness { grid-template-columns: 1fr; }
   .overview-account-band { grid-template-columns: 1fr; }
   .overview-account-band > button { width: 100%; }
   .overview-account-tape { grid-column: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }

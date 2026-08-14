@@ -390,8 +390,22 @@ function renderTradeProposals() {
     <div class="overview-cycle-result"><small>Last cycle</small><strong>${escapeHtml(review.lastMessage || "Workers continue automatically while the market is open.")}</strong></div>`;
   const decisions = new Set((state.proposalDecisions || state.portfolioPlan?.decisions || []).filter((item) => item.decision === "declined").map((item) => item.proposalId));
   const visible = proposals.filter((proposal) => !decisions.has(proposal.id)).slice(0, 4);
-  const ready = visible.filter((proposal) => proposal.draftEligible).length;
-  $("#overviewProposalCount").textContent = visible.length ? `${ready} ready · ${visible.length} reviewed` : "No active proposal";
+  const liveReady = visible.filter((proposal) => proposal.draftEligible).length;
+  const paperReady = visible.filter((proposal) => proposal.paperTest?.eligible).length;
+  const buyIdeas = visible.filter((proposal) => proposal.side === "BUY");
+  const uniqueLiveBlockers = [...new Set(buyIdeas.flatMap((proposal) => Array.isArray(proposal.blockers) ? proposal.blockers : []))];
+  const paperCash = Number(state.shadowPortfolio?.cashDollars);
+  $("#overviewProposalCount").textContent = visible.length ? `${paperReady} paper-ready · ${liveReady} live-ready` : "No active proposal";
+  $("#overviewTradeReadiness").innerHTML = buyIdeas.length
+    ? `<div class="overview-readiness-state ${paperReady ? "ready" : "waiting"}">
+        <i aria-hidden="true"></i><span><small>PAPER TEST</small><strong>${escapeHtml(paperReady ? `${paperReady} buy idea${paperReady === 1 ? "" : "s"} ready` : "Portfolio limits active")}</strong></span>
+      </div>
+      <div class="overview-readiness-metric"><small>PAPER CASH</small><strong>${escapeHtml(Number.isFinite(paperCash) ? formatMoney(paperCash) : "Not started")}</strong></div>
+      <div class="overview-readiness-state ${liveReady ? "ready" : "waiting"}">
+        <i aria-hidden="true"></i><span><small>LIVE ORDER</small><strong>${escapeHtml(liveReady ? `${liveReady} ready for Human Gate` : `${uniqueLiveBlockers.length} setup item${uniqueLiveBlockers.length === 1 ? "" : "s"}`)}</strong></span>
+      </div>
+      <button class="secondary" type="button" data-live-readiness>${escapeHtml(liveReady ? "Open trade desk" : "Fix live setup")}</button>`
+    : `<div class="overview-readiness-state waiting"><i aria-hidden="true"></i><span><small>TRADE QUEUE</small><strong>No BUY idea in this cycle</strong></span></div>`;
   $("#overviewProposalList").innerHTML = visible.length
     ? visible.map((proposal) => {
         const research = proposal.research || {};
@@ -399,16 +413,25 @@ function renderTradeProposals() {
         const targetText = proposal.side === "BUY" && outlook.targetPrice
           ? `${outlookValue(outlook.targetPrice)}${Number.isFinite(Number(outlook.targetReturnPct)) ? ` · ${(Number(outlook.targetReturnPct) * 100).toFixed(1)}% · ${formatMoney(outlook.targetScenarioDollars)} scenario` : ""}`
           : proposal.side === "SELL" ? "Reduce verified holding" : "Keep monitoring position";
-        const blockers = Array.isArray(proposal.blockers) ? proposal.blockers : [];
-        const blocker = blockers[0] || "";
         const isHold = proposal.side === "HOLD";
+        const paperTest = proposal.paperTest || {};
+        const paperHeld = /already held/i.test(paperTest.reason || "");
+        const paperStatus = paperHeld
+          ? "Paper position open"
+          : /trade limit/i.test(paperTest.reason || "")
+            ? "Paper daily limit"
+            : /position limit/i.test(paperTest.reason || "")
+              ? "Paper position limit"
+              : /cash|minimum|loss lock/i.test(paperTest.reason || "")
+                ? "Paper cash / risk limit"
+                : "Paper evidence changed";
         const scores = proposal.scores || {};
         const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : isHold ? "monitoring" : "blocked");
         const pendingGate = reviewState === "awaiting_human_gate";
         const approved = reviewState === "approved";
         const reviewExpiresAt = Date.parse(proposal.reviewExpiresAt || "");
         const approvalRemaining = Number.isFinite(reviewExpiresAt) ? Math.max(0, Math.ceil((reviewExpiresAt - Date.now()) / 1_000)) : null;
-        return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : isHold ? "monitoring" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
+        return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : paperTest.eligible ? "paper-ready" : isHold ? "monitoring" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
@@ -440,14 +463,16 @@ function renderTradeProposals() {
           <div class="overview-proposal-actions">
             <button class="secondary" type="button" data-proposal-drawer="${escapeHtml(proposal.id)}">Why / Research</button>
             ${isHold
-              ? `<button type="button" disabled>Monitoring</button><small>No order is needed. The next cycle checks exit conditions again.</small>`
+              ? `<span class="proposal-action-status monitoring">Monitoring</span>`
               : approved
-                ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review & execute once</button><small>Human Gate approved. Robinhood review and final confirmation still apply.</small>`
+                ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review live order</button>`
                 : pendingGate
-                  ? `<button type="button" disabled>Human Gate pending</button><small>${approvalRemaining === null ? "Approval window active" : `Expires in ${escapeHtml(formatCountdown(approvalRemaining))}`} · use the bottom-left bubble or Telegram. No broker review or order has occurred.</small>`
-                  : `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>${proposal.draftEligible ? "Send to Human Gate" : "Blocked"}</button>
-                     <button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Decline</button>
-                     ${blocker ? `<small><strong>${escapeHtml(`${blockers.length} check${blockers.length === 1 ? "" : "s"} blocking`)}</strong> · ${escapeHtml(blockers.slice(0, 3).join(" · "))}</small>` : `<small>One-use approval only; no automatic order.</small>`}`}
+                  ? `<span class="proposal-action-status pending">Gate pending${approvalRemaining === null ? "" : ` · ${escapeHtml(formatCountdown(approvalRemaining))}`}</span>`
+                  : proposal.draftEligible
+                    ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send to Human Gate</button>`
+                    : paperTest.eligible
+                      ? `<button type="button" data-proposal-paper="${escapeHtml(proposal.id)}">Paper buy ${escapeHtml(formatMoney(paperTest.requestedDollars))}</button>`
+                      : `<span class="proposal-action-status ${paperHeld ? "owned" : "waiting"}">${escapeHtml(paperStatus)}</span>`}
           </div>
         </article>`;
       }).join("")
@@ -1365,6 +1390,27 @@ async function declineOverviewProposal(proposalId) {
   }
 }
 
+async function paperTestOverviewProposal(proposalId) {
+  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
+  const button = $(`[data-proposal-paper="${CSS.escape(proposalId)}"]`);
+  const feedback = $("#overviewProposalFeedback");
+  if (!proposal || !button) return;
+  button.disabled = true;
+  button.textContent = "Recording paper fill…";
+  feedback.textContent = `Paper testing ${proposal.symbol} with simulated cash…`;
+  try {
+    const payload = await api(`/api/stock-office/proposals/${encodeURIComponent(proposalId)}/paper-test`, { method: "POST", body: "{}" });
+    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    feedback.textContent = `${proposal.symbol} paper fill recorded for ${formatMoney(payload.action?.requestedDollars)}. No Robinhood call or real money was used.`;
+    renderTradeProposals();
+    renderShadowPortfolio();
+  } catch (error) {
+    feedback.textContent = error.message;
+    await pollBrokerControl();
+  }
+}
+
 async function requestBrokerConnection() {
   const button = $("#brokerConnectGate");
   button.disabled = true;
@@ -1947,12 +1993,15 @@ document.addEventListener("click", (event) => {
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
   if (proposalApprove && !proposalApprove.disabled) approveOverviewProposal(proposalApprove.dataset.proposalApprove);
+  const proposalPaper = event.target.closest("[data-proposal-paper]");
+  if (proposalPaper && !proposalPaper.disabled) paperTestOverviewProposal(proposalPaper.dataset.proposalPaper);
   const mirrorApprove = event.target.closest("[data-mirror-approve]");
   if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");
   if (proposalDecline && !proposalDecline.disabled) declineOverviewProposal(proposalDecline.dataset.proposalDecline);
   const proposalDetails = event.target.closest("[data-proposal-drawer]");
   if (proposalDetails) proposalDrawer(proposalDetails.dataset.proposalDrawer);
+  if (event.target.closest("[data-live-readiness]")) setStockView("trade");
   const opportunityDetails = event.target.closest("[data-opportunity-drawer]");
   if (opportunityDetails) opportunityDrawer(opportunityDetails.dataset.opportunityDrawer);
   const workerDetails = event.target.closest("[data-worker-drawer]");

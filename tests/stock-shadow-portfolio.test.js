@@ -4,7 +4,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  applyPaperProposal,
   normalizeShadowPortfolio,
+  paperProposalEligibility,
   resetShadowPortfolio,
   runShadowPortfolioCycle,
 } = require("../services/stock-shadow-portfolio");
@@ -190,6 +192,87 @@ test("explicit paper reset uses only simulated starting cash", () => {
   assert.equal(result.fills.length, 0);
   assert.equal(result.liveOrderPlaced, false);
   assert.equal(result.brokerCalled, false);
+});
+
+test("an operator can paper-test one current proposal without broker authority", () => {
+  const record = {
+    id: "ticker-NET",
+    ticker: "NET",
+    status: "valid_setup",
+    decision: "VALID_BUY_SETUP",
+    score: 92,
+    currentPrice: 10,
+    stopLoss: 9,
+    target1: 12,
+    dataFresh: true,
+    lastUpdated: "2026-08-10T13:55:00.000Z",
+  };
+  const current = snapshot({ records: [record] });
+  const proposal = {
+    id: "portfolio-proposal-net",
+    fingerprint: "e".repeat(64),
+    kind: "native_entry",
+    symbol: "NET",
+    side: "BUY",
+    requestedDollars: 5,
+    referencePrice: 10,
+    outlook: { stopPrice: 9, targetPrice: 12 },
+  };
+  const readiness = paperProposalEligibility({}, current, proposal, { now: "2026-08-10T14:00:00.000Z" });
+  const result = applyPaperProposal({}, current, proposal, { now: "2026-08-10T14:00:00.000Z" });
+
+  assert.equal(readiness.eligible, true);
+  assert.equal(readiness.requestedDollars, 5);
+  assert.equal(result.action.outcome, "filled");
+  assert.equal(result.portfolio.positions.length, 1);
+  assert.equal(result.portfolio.positions[0].symbol, "NET");
+  assert.equal(result.portfolio.cashDollars, 95);
+  assert.equal(result.portfolio.fills[0].notionalDollars, 5);
+  assert.equal(result.liveOrderPlaced, false);
+  assert.equal(result.brokerCalled, false);
+  assert.ok(result.portfolio.fills.every((fill) => !fill.liveOrderPlaced && !fill.brokerCalled));
+});
+
+test("paper-test readiness blocks stale evidence and duplicate paper positions", () => {
+  const proposal = {
+    id: "portfolio-proposal-net",
+    fingerprint: "f".repeat(64),
+    kind: "native_entry",
+    symbol: "NET",
+    side: "BUY",
+    requestedDollars: 5,
+    referencePrice: 10,
+    outlook: {},
+  };
+  const stale = paperProposalEligibility({}, snapshot({ records: [{ ticker: "NET", status: "valid_setup", score: 92, currentPrice: 10, dataFresh: false }] }), proposal);
+  assert.equal(stale.eligible, false);
+  assert.match(stale.reason, /no longer fresh/i);
+
+  const current = snapshot({ records: [{ ticker: "NET", status: "valid_setup", score: 92, currentPrice: 10, dataFresh: true }] });
+  const opened = applyPaperProposal({}, current, proposal, { now: "2026-08-10T14:00:00.000Z" });
+  const duplicate = paperProposalEligibility(opened.portfolio, current, proposal, { now: "2026-08-10T14:01:00.000Z" });
+  assert.equal(duplicate.eligible, false);
+  assert.match(duplicate.reason, /already held/i);
+});
+
+test("explicit paper testing can measure a fresh setup below the automatic entry score", () => {
+  const current = snapshot({ records: [{ ticker: "ANET", status: "valid_setup", score: 75, currentPrice: 100, stopLoss: 90, dataFresh: true }] });
+  const proposal = {
+    id: "portfolio-proposal-anet",
+    fingerprint: "1".repeat(64),
+    kind: "native_entry",
+    symbol: "ANET",
+    side: "BUY",
+    requestedDollars: 5,
+    referencePrice: 100,
+    outlook: { stopPrice: 90 },
+  };
+  const readiness = paperProposalEligibility({}, current, proposal, { now: "2026-08-10T14:00:00.000Z" });
+
+  assert.equal(readiness.eligible, true);
+  assert.equal(readiness.belowAutomaticScore, true);
+  assert.equal(readiness.liveOrderPlaced, false);
+  assert.equal(readiness.brokerCalled, false);
 });
 
 test("the automatic paper engine has no Robinhood client, network, review, or placement call", () => {

@@ -217,6 +217,15 @@ test("Research combines no-look-ahead copy evidence, consensus, and explicit sou
   assert.match(script, /mirror\/sources/);
   assert.match(script, /Copy on/);
   assert.match(script, /Symbols researched/);
+  assert.match(script, /Ready for gate/);
+  assert.match(script, /Scenario tests/);
+  assert.match(script, /Paper outcomes/);
+  assert.match(script, /SELL READY/);
+  assert.match(script, /BUY READY/);
+  assert.match(script, /isCurrentCopyCandidate/);
+  assert.match(script, /13F HISTORY/);
+  assert.match(script, /never counted as a current BUY or SELL/);
+  assert.doesNotMatch(script, /planSummary\.sells \|\| candidates\.filter/);
   assert.match(script, /INDEPENDENT SCAN/);
   assert.match(script, /independentProposals/);
   assert.match(script, /data-proposal-drawer/);

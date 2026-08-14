@@ -86,7 +86,7 @@ test("managed runtime copies writable reports while linking the existing Python 
 
   assert.equal(runtime.available, true);
   assert.equal(runtime.pythonLinked, true);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(runtime.path, ".argentum-runtime.json"), "utf8")).runtimeVersion, 2);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runtime.path, ".argentum-runtime.json"), "utf8")).runtimeVersion, 3);
   assert.equal(fs.lstatSync(path.join(runtime.path, ".venv")).isSymbolicLink(), true);
   assert.match(fs.readFileSync(path.join(runtime.path, "reports", "evaluations.json"), "utf8"), /AAPL/);
   fs.writeFileSync(path.join(runtime.path, "reports", "write-check.json"), "{}\n");

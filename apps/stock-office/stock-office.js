@@ -1009,6 +1009,16 @@ function mirrorStatusLabel(value) {
   return String(value || "unknown").replaceAll("_", " ");
 }
 
+function isCurrentCopyCandidate(candidate = {}) {
+  const symbol = String(candidate.symbol || "").toUpperCase();
+  return candidate.referenceOnly !== true
+    && candidate.tickerResolved !== false
+    && !symbol.startsWith("CUSIP:")
+    && /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol)
+    && candidate.status === "paper_ready"
+    && Number(candidate.currentPrice) > 0;
+}
+
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
   const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
@@ -1025,6 +1035,8 @@ function renderMirror() {
   const cycle = plan.cycle || {};
   const planSummary = plan.summary || {};
   const paper = state.shadowPortfolio || {};
+  const simulation = state.simulationLab || {};
+  const paperLearning = paper.learning || {};
   const guardrails = state.brokerControl?.guardrails || {};
   const scheduler = state.intelligenceScheduler || {};
   const cadenceMinutes = Number(cycle.cadenceMinutes || scheduler.activeCadenceMinutes || 5);
@@ -1035,9 +1047,11 @@ function renderMirror() {
   const activeWatchers = watchers.filter((watcher) => watcher.enabled);
   const fastWatchers = activeWatchers.filter((watcher) => watcher.copyEligible);
   const delayedWatchers = activeWatchers.filter((watcher) => watcher.researchOnly);
+  const currentCopyCandidates = candidates.filter(isCurrentCopyCandidate).slice(0, 6);
   const independentProposals = (plan.proposals || [])
     .filter((proposal) => !proposal.candidateId)
-    .slice(0, Math.max(0, 8 - candidates.length));
+    .sort((a, b) => Number(b.draftEligible) - Number(a.draftEligible) || Number(b.rankingScore || 0) - Number(a.rankingScore || 0))
+    .slice(0, Math.max(0, 10 - currentCopyCandidates.length));
   const proposalByCandidate = new Map((plan.proposals || []).filter((proposal) => proposal.candidateId).map((proposal) => [proposal.candidateId, proposal]));
   const liveGateCount = (plan.proposals || []).filter((proposal) => ["awaiting_human_gate", "approved"].includes(proposal.reviewState)).length;
   const pill = $("#mirrorStatusPill");
@@ -1060,21 +1074,22 @@ function renderMirror() {
 
   $("#mirrorMetrics").innerHTML = [
     ["Symbols researched", state.overview?.metrics?.trackedRecords || state.records.length || 0, `${state.overview?.metrics?.validSetups || 0} valid setups`],
-    ["Public signals", summary.signalsReceived ?? 0, `${summary.paperReady ?? 0} copy candidates`],
-    ["Copy sources", activeWatchers.length || Number(importer.enabledEntries || 0) + Number(importer13f.enabledEntries || 0), `${fastWatchers.length} fast · ${delayedWatchers.length} delayed`],
-    ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} pending`],
+    ["Ready for gate", planSummary.readyForExactDraft ?? 0, `${planSummary.proposals ?? 0} current reviews`],
+    ["Scenario tests", formatCount(simulation.scenarioPaths || 0), `${simulation.candidatesTested || 0} candidates this cycle`],
+    ["Paper outcomes", paperLearning.closedTrades ?? 0, paperLearning.hitRate === null || paperLearning.hitRate === undefined ? "building measured history" : `${formatPercent(paperLearning.hitRate)} hit rate`],
   ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
   $("#mirrorAllocation").innerHTML = `
     <div><small>SIMULATION RESULT</small><strong>${escapeHtml(formatMoney(paper.equityDollars || paper.initialCashDollars || 0))}</strong><span class="${Number(paper.totalPnlDollars || 0) >= 0 ? "positive" : "negative"}">${escapeHtml(`${formatMoney(paper.totalPnlDollars || 0)} P&L`)}</span></div>
     <div><small>REAL ORDER CAP</small><strong>${escapeHtml(formatMoney(guardrails.maxOrderDollars || mirror.policy?.maxTradeDollars || 0))}</strong><span>Human Gate required</span></div>`;
 
+  const currentProposals = plan.proposals || [];
   $("#mirrorDecisionCounts").innerHTML = [
-    ["sell", "SELL", planSummary.sells || candidates.filter((candidate) => candidate.side === "SELL").length],
-    ["hold", "HOLD", planSummary.holds || candidates.filter((candidate) => candidate.status !== "paper_ready").length],
-    ["buy", "BUY", planSummary.buys || candidates.filter((candidate) => candidate.side === "BUY" && candidate.status === "paper_ready").length],
+    ["sell", "SELL READY", currentProposals.filter((proposal) => proposal.side === "SELL" && proposal.draftEligible).length],
+    ["hold", "WATCH", currentProposals.filter((proposal) => proposal.side === "HOLD" || !proposal.draftEligible).length],
+    ["buy", "BUY READY", currentProposals.filter((proposal) => proposal.side === "BUY" && proposal.draftEligible).length],
   ].map(([className, label, value]) => `<span class="${className}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
 
-  const copyCandidateCards = candidates.map((candidate) => {
+  const copyCandidateCards = currentCopyCandidates.map((candidate) => {
         const proposal = proposalByCandidate.get(candidate.id) || null;
         const reviewState = proposal?.reviewState || "";
         const pendingGate = reviewState === "awaiting_human_gate";
@@ -1162,11 +1177,16 @@ function renderMirror() {
       </article>`;
   }).join("");
   const researchCandidateCards = `${copyCandidateCards}${independentCandidateCards}`;
-  $("#mirrorCandidates").innerHTML = researchCandidateCards || `<div class="mirror-empty">
+  const holdingChanges = Number(importer13f.holdingChangesFound || summary.referenceOnlySignals || 0);
+  const unmappedChanges = Number(importer13f.unmappedChanges || summary.unresolvedSymbols || 0);
+  const historicalReferenceRail = holdingChanges || Number(importer13f.signalsImported || 0)
+    ? `<div class="mirror-reference-rail"><strong>13F HISTORY</strong><span>${escapeHtml(`${formatCount(holdingChanges || importer13f.signalsImported || 0)} holdings changes`)}</span><span>${escapeHtml(`${formatCount(unmappedChanges)} without verified tickers`)}</span><em>Archive only · never counted as a current BUY or SELL</em></div>`
+    : "";
+  $("#mirrorCandidates").innerHTML = (researchCandidateCards || `<div class="mirror-empty">
     <span class="mirror-radar" aria-hidden="true"><i></i></span>
     <div><h3>No research candidate yet</h3><p>${escapeHtml(cycleRunning ? "Research is checking filings, sources, and prices now." : remainingSeconds !== null ? `Research checks again in ${formatCountdown(remainingSeconds)}.` : "Research is waiting for its next scheduled scan.")}</p></div>
     <strong>${escapeHtml(`${activeWatchers.length} copy sources active`)}</strong>
-  </div>`;
+  </div>`) + historicalReferenceRail;
 
   $("#mirrorWatcherCount").textContent = `${activeWatchers.length} monitored`;
   $("#mirrorWatchers").innerHTML = watchers.length
@@ -1188,9 +1208,16 @@ function renderMirror() {
     ? consensus.slice(0, 8).map((item) => `<article><span>${logoMarkup(item.symbol)}</span><strong>${escapeHtml(item.side)}</strong><b>${escapeHtml(Math.round(item.score))}</b><small>${escapeHtml(`${item.sourceCount} sources · ${relativeCycle(item.lastUpdatedAt)}`)}</small></article>`).join("")
     : `<div class="mirror-watch-empty"><strong>No multi-source consensus</strong><span>A consensus appears only when at least two distinct attributable sources align.</span></div>`;
   const mirrorEvents = Array.isArray(mirrorIntelligence.events) ? mirrorIntelligence.events : [];
-  $("#mirrorEventFeed").innerHTML = mirrorEvents.length
-    ? mirrorEvents.slice(0, 10).map((item) => `<article><i></i><div><strong>${escapeHtml(`${item.side || "OBSERVE"} ${item.symbol || "—"}`)}</strong><span>${escapeHtml(item.sourceId || "public source")}</span></div><em>${escapeHtml(item.delaySeconds === null || item.delaySeconds === undefined ? "delay unavailable" : item.delaySeconds < 3600 ? `${Math.round(item.delaySeconds / 60)}m delay` : `${(item.delaySeconds / 3600).toFixed(1)}h delay`)}</em><small>${escapeHtml(relativeCycle(item.receivedAt))}</small></article>`).join("")
-    : `<div class="mirror-watch-empty"><strong>No persisted source event</strong><span>Only attributable imported events appear here.</span></div>`;
+  const currentMirrorEvents = mirrorEvents.filter((item) => {
+    const data = item.data || {};
+    return data.referenceOnly !== true
+      && data.tickerResolved !== false
+      && !String(item.symbol || "").toUpperCase().startsWith("CUSIP:")
+      && String(item.sourceId || "").toLowerCase() !== "sec_13f";
+  });
+  $("#mirrorEventFeed").innerHTML = currentMirrorEvents.length
+    ? currentMirrorEvents.slice(0, 10).map((item) => `<article><i></i><div><strong>${escapeHtml(`${item.side || "OBSERVE"} ${item.symbol || "—"}`)}</strong><span>${escapeHtml(item.sourceId || "public source")}</span></div><em>${escapeHtml(item.delaySeconds === null || item.delaySeconds === undefined ? "delay unavailable" : item.delaySeconds < 3600 ? `${Math.round(item.delaySeconds / 60)}m delay` : `${(item.delaySeconds / 3600).toFixed(1)}h delay`)}</em><small>${escapeHtml(relativeCycle(item.receivedAt))}</small></article>`).join("")
+    : `<div class="mirror-watch-empty"><strong>No current copy event</strong><span>Historical 13F changes stay in the archive summary, not the live signal feed.</span></div>`;
 
   $("#mirrorSources").innerHTML = sources.length
     ? sources.slice(0, 8).map((source) => `<article data-source-health="${escapeHtml(source.health || "waiting")}">
@@ -1201,17 +1228,15 @@ function renderMirror() {
       </article>`).join("")
     : `<span><i class="delay"></i><strong>Source registry</strong><em>pending</em></span>`;
   const profiles = knowledge.sourceProfiles || [];
-  $("#knowledgeStatus").textContent = !knowledge.available
-    ? "No measured outcomes"
-    : knowledge.stale
-      ? "Ledger stale"
-      : `${knowledgeSummary.measuredOutcomes || 0} measured`;
+  $("#knowledgeStatus").textContent = knowledge.stale
+    ? "Evidence stale"
+    : `${paperLearning.closedTrades || 0} paper closes · ${knowledgeSummary.measuredOutcomes || 0} copy outcomes`;
   $("#knowledgeMetrics").innerHTML = [
-    ["Observations", knowledgeSummary.observationsSeen ?? 0],
-    ["Measured", knowledgeSummary.measuredOutcomes ?? 0],
-    ["Pending", knowledgeSummary.pendingOutcomes ?? 0],
-    ["Form 4 signals", importer.signalsImported ?? 0],
-    ["13F changes", importer13f.signalsImported ?? 0],
+    ["Scenario paths", formatCount(simulation.scenarioPaths || 0)],
+    ["Ideas tested", simulation.candidatesTested ?? 0],
+    ["Paper closes", paperLearning.closedTrades ?? 0],
+    ["Copy outcomes", knowledgeSummary.measuredOutcomes ?? 0],
+    ["Copy pending", knowledgeSummary.pendingOutcomes ?? 0],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join("");
   $("#knowledgeProfiles").innerHTML = profiles.length
     ? profiles.map((profile) => `

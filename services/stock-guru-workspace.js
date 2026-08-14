@@ -3,7 +3,7 @@ const path = require("node:path");
 
 const SETTINGS_FILE = "stock-guru-workspace.json";
 const RUNTIME_FOLDER = "stock-guru-runtime";
-const RUNTIME_VERSION = 2;
+const RUNTIME_VERSION = 3;
 const COPY_EXCLUDES = new Set([".DS_Store", ".git", ".pytest_cache", "__pycache__", ".venv"]);
 
 function isStockGuruWorkspace(candidatePath, fsImpl = fs) {

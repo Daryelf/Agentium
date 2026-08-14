@@ -181,6 +181,8 @@ def test_change_signals_are_explicitly_delayed_research_references() -> None:
         ("BUY", "CUSIP:000000003"),
         ("SELL", "CUSIP:000000002"),
     }
+    assert sum(item["ticker_resolved"] is True for item in signals) == 1
+    assert sum(item["ticker_resolved"] is False for item in signals) == 2
     assert all(item["transaction_code"] == "13F_CHANGE" for item in signals)
     assert all(item["signal_price"] is None and item["current_price"] is None for item in signals)
     assert all("does not identify the exact trade date or price" in item["notes"] for item in signals)
@@ -229,13 +231,45 @@ def test_refresh_is_idempotent_preserves_other_importers_and_never_places_orders
     payload = json.loads(signals_path.read_text())
     status = json.loads(status_path.read_text())
     imported = [item for item in payload["signals"] if item.get("importer") == SEC_13F_IMPORTER_ID]
-    assert first.signals_imported == 3
-    assert second.signals_retained == 5
+    assert first.holding_changes_found == 3
+    assert first.unmapped_changes == 2
+    assert first.signals_imported == 1
+    assert second.signals_retained == 3
     assert {item["id"] for item in payload["signals"]} >= {"form4-signal", "manual-signal"}
-    assert len(imported) == 3
+    assert len(imported) == 1
     assert all(item["observed_at"] == "2026-05-15T20:01:00Z" for item in imported)
     assert status["research_only"] is True
+    assert status["holding_changes_found"] == 3
+    assert status["unmapped_changes"] == 2
+    assert status["resolved_signals_imported"] == 1
     assert status["live_orders_placed"] == 0
+
+
+def test_refresh_removes_old_or_unresolved_automatic_13f_rows(tmp_path: Path) -> None:
+    watchlist = write_json(
+        tmp_path / "watchlist.json",
+        {"sec_13f": [{"cik": "123", "label": "Example manager", "enabled": True, "cusip_ticker_map": {"000000001": "ACME"}}]},
+    )
+    signals_path = write_json(
+        tmp_path / "signals.json",
+        {"signals": [
+            {"id": "old-unresolved", "importer": SEC_13F_IMPORTER_ID, "symbol": "CUSIP:999999999"},
+            {"id": "manual-signal", "source_id": "verified_public_signal"},
+        ]},
+    )
+
+    refresh_sec_13f_signals(
+        watchlist_path=watchlist,
+        signals_path=signals_path,
+        status_path=tmp_path / "status.json",
+        now=datetime(2026, 5, 15, 20, 1, tzinfo=timezone.utc),
+        client=FakeEdgarClient(),
+    )
+
+    rows = json.loads(signals_path.read_text())["signals"]
+    assert "old-unresolved" not in {item.get("id") for item in rows}
+    assert {item.get("id") for item in rows} >= {"manual-signal"}
+    assert all(not str(item.get("symbol") or "").startswith("CUSIP:") for item in rows)
 
 
 def test_refresh_fails_closed_without_enabled_managers(tmp_path: Path) -> None:

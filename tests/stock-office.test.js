@@ -83,6 +83,9 @@ function makeWorkspace() {
     watchlist_entries: 4,
     enabled_entries: 4,
     filings_scanned: 8,
+    holding_changes_found: 1302,
+    unmapped_changes: 1302,
+    resolved_signals_imported: 0,
     signals_imported: 12,
     signals_retained: 13,
     research_only: true,
@@ -262,6 +265,9 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.importer.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.importer13f.enabledEntries, 4);
   assert.equal(snapshot.mirror.importer13f.signalsImported, 12);
+  assert.equal(snapshot.mirror.importer13f.holdingChangesFound, 1302);
+  assert.equal(snapshot.mirror.importer13f.unmappedChanges, 1302);
+  assert.equal(snapshot.mirror.importer13f.resolvedSignalsImported, 0);
   assert.equal(snapshot.mirror.importer13f.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.watchers.length, 2);
   assert.deepEqual(snapshot.mirror.watchers.map((watcher) => watcher.filingType), ["Form 4", "13F"]);

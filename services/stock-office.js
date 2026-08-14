@@ -676,6 +676,9 @@ function normalizeMirrorPlan(data, source) {
     stale: Boolean(source?.stale),
     summary: {
       signalsReceived: 0,
+      actionableSignals: 0,
+      referenceOnlySignals: 0,
+      unresolvedSymbols: 0,
       paperReady: 0,
       researchOnly: 0,
       rejected: 0,
@@ -691,7 +694,8 @@ function normalizeMirrorPlan(data, source) {
   };
   if (!isPlainObject(data)) return empty;
   const allowedStatuses = new Set(["paper_ready", "research_only", "rejected", "duplicate"]);
-  const candidates = (Array.isArray(data.candidates) ? data.candidates : [])
+  const rawCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+  const candidates = rawCandidates
     .slice(0, 250)
     .map((candidate, index) => {
       if (!isPlainObject(candidate)) return null;
@@ -703,6 +707,11 @@ function normalizeMirrorPlan(data, source) {
       const notional = Number(candidate.mirror_notional_dollars);
       const shares = Number(candidate.mirror_shares);
       const drift = Number(candidate.price_drift_pct);
+      const tickerResolved = candidate.ticker_resolved === true
+        || (/^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol) && !symbol.startsWith("CUSIP"));
+      const referenceOnly = String(candidate.source_id || "").toLowerCase() === "sec_13f"
+        || String(candidate.transaction_code || "").toUpperCase() === "13F_CHANGE"
+        || !tickerResolved;
       return {
         id: String(candidate.id || `mirror-${index + 1}`).slice(0, 160),
         fingerprint: String(candidate.fingerprint || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
@@ -711,6 +720,8 @@ function normalizeMirrorPlan(data, source) {
         traderName: redactSensitiveText(String(candidate.trader_name || "Unknown public source")).slice(0, 160),
         assetType,
         symbol,
+        tickerResolved,
+        referenceOnly,
         side,
         transactionCode: String(candidate.transaction_code || "").slice(0, 12),
         transactionAt: safeDate(candidate.transaction_at),
@@ -743,6 +754,20 @@ function normalizeMirrorPlan(data, source) {
   const inputSummary = isPlainObject(data.summary) ? data.summary : {};
   const count = (key, status) => clampNumber(inputSummary[key], 0, 1_000_000, candidates.filter((candidate) => candidate.status === status).length);
   const liveOrdersPlaced = clampNumber(inputSummary.live_orders_placed, 0, 1_000_000, 0);
+  const rawReferenceOnly = rawCandidates.filter((candidate) => {
+    const symbol = String(candidate?.symbol || "").toUpperCase();
+    return String(candidate?.source_id || "").toLowerCase() === "sec_13f"
+      || String(candidate?.transaction_code || "").toUpperCase() === "13F_CHANGE"
+      || symbol.startsWith("CUSIP:");
+  });
+  const unresolvedSymbols = rawCandidates.filter((candidate) => String(candidate?.symbol || "").toUpperCase().startsWith("CUSIP:")).length;
+  const actionableSignals = rawCandidates.filter((candidate) => {
+    const symbol = String(candidate?.symbol || "").toUpperCase();
+    return candidate?.status === "paper_ready"
+      && candidate?.human_gate_eligible === true
+      && /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol)
+      && Number(candidate?.current_price) > 0;
+  }).length;
   return {
     available: true,
     mode: String(data.mode || "paper_and_human_gate_only").slice(0, 80),
@@ -750,6 +775,9 @@ function normalizeMirrorPlan(data, source) {
     stale: Boolean(source?.stale),
     summary: {
       signalsReceived: clampNumber(inputSummary.signals_received, 0, 1_000_000, candidates.length),
+      actionableSignals,
+      referenceOnlySignals: rawReferenceOnly.length,
+      unresolvedSymbols,
       paperReady: count("paper_ready", "paper_ready"),
       researchOnly: count("research_only", "research_only"),
       rejected: count("rejected", "rejected"),
@@ -888,6 +916,9 @@ function normalizeCopyImportStatus(data, source) {
     filingsScanned: 0,
     signalsImported: 0,
     signalsRetained: 0,
+    holdingChangesFound: 0,
+    unmappedChanges: 0,
+    resolvedSignalsImported: 0,
     liveOrdersPlaced: 0,
     warnings: [],
   };
@@ -902,6 +933,9 @@ function normalizeCopyImportStatus(data, source) {
     filingsScanned: clampNumber(data.filings_scanned, 0, 100_000, 0),
     signalsImported: clampNumber(data.signals_imported, 0, 100_000, 0),
     signalsRetained: clampNumber(data.signals_retained, 0, 100_000, 0),
+    holdingChangesFound: clampNumber(data.holding_changes_found, 0, 1_000_000, 0),
+    unmappedChanges: clampNumber(data.unmapped_changes, 0, 1_000_000, 0),
+    resolvedSignalsImported: clampNumber(data.resolved_signals_imported, 0, 100_000, data.signals_imported || 0),
     liveOrdersPlaced: clampNumber(data.live_orders_placed, 0, 1_000_000, 0),
     warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
   };

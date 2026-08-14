@@ -49,6 +49,8 @@ class Sec13fRefreshResult:
     watchlist_entries: int
     enabled_entries: int
     filings_scanned: int
+    holding_changes_found: int
+    unmapped_changes: int
     signals_imported: int
     signals_retained: int
     warnings: tuple[str, ...]
@@ -282,6 +284,7 @@ def build_13f_change_signals(
             continue
         side = "BUY" if delta > 0 else "SELL"
         symbol = entry.cusip_ticker_map.get(reference.cusip) or f"CUSIP:{reference.cusip}"
+        ticker_resolved = reference.cusip in entry.cusip_ticker_map
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
         notes = (
             "Official SEC Form 13F period-end holding comparison; research only. "
@@ -298,6 +301,8 @@ def build_13f_change_signals(
                 "trader_name": entry.label,
                 "asset_type": "equity",
                 "symbol": symbol,
+                "ticker_resolved": ticker_resolved,
+                "security_identifier": reference.cusip,
                 "side": side,
                 "transaction_code": "13F_CHANGE",
                 "transaction_at": _report_timestamp(current_report_date),
@@ -328,14 +333,18 @@ def _read_existing_signals(path: Path) -> list[dict[str, Any]]:
 
 def _merge_signals(existing: Iterable[dict[str, Any]], imported: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     retained = [item for item in existing if item.get("importer") != SEC_13F_IMPORTER_ID]
-    automatic_by_id: dict[str, dict[str, Any]] = {
+    previous_automatic_by_id: dict[str, dict[str, Any]] = {
         str(item.get("id")): item
         for item in existing
         if item.get("importer") == SEC_13F_IMPORTER_ID and item.get("id")
     }
+    # The automatic 13F portion is a current snapshot, not an append-only
+    # event stream. Rebuild it from this refresh so old quarters and unresolved
+    # CUSIPs cannot accumulate as apparent current BUY/SELL signals.
+    automatic_by_id: dict[str, dict[str, Any]] = {}
     for item in imported:
         signal_id = str(item["id"])
-        previous = automatic_by_id.get(signal_id)
+        previous = previous_automatic_by_id.get(signal_id)
         if previous:
             item["observed_at"] = previous.get("observed_at") or item.get("observed_at")
             item["current_price_observed_at"] = previous.get("current_price_observed_at") or item.get("current_price_observed_at")
@@ -369,6 +378,8 @@ def refresh_sec_13f_signals(
         "SEC Form 13F signals are delayed period-end holding comparisons and remain research-only regardless of score."
     ]
     imported: list[dict[str, Any]] = []
+    holding_changes_found = 0
+    unmapped_changes = 0
     filings_scanned = 0
 
     for entry in enabled:
@@ -399,8 +410,7 @@ def refresh_sec_13f_signals(
         prior_row, prior_holdings, _ = parsed_periods[1]
         try:
             disclosed_at = sec_acceptance_timestamp(latest_row.get("acceptanceDateTime"), latest_row.get("filingDate"))
-            imported.extend(
-                build_13f_change_signals(
+            changes = build_13f_change_signals(
                     entry=entry,
                     previous=prior_holdings,
                     current=latest_holdings,
@@ -411,7 +421,11 @@ def refresh_sec_13f_signals(
                     accession_number=str(latest_row.get("accessionNumber") or ""),
                     source_url=latest_index_url,
                 )
-            )
+            holding_changes_found += len(changes)
+            unmapped_changes += sum(item.get("ticker_resolved") is not True for item in changes)
+            # An unresolved CUSIP has no verified ticker or price path. Keep it
+            # in the filing count, but never put it in the copy-signal inbox.
+            imported.extend(item for item in changes if item.get("ticker_resolved") is True)
         except Exception as exc:
             warnings.append(f"{entry.label}: holding changes were skipped ({exc}).")
 
@@ -425,6 +439,9 @@ def refresh_sec_13f_signals(
         "watchlist_entries": len(watchlist),
         "enabled_entries": len(enabled),
         "filings_scanned": filings_scanned,
+        "holding_changes_found": holding_changes_found,
+        "unmapped_changes": unmapped_changes,
+        "resolved_signals_imported": len(imported),
         "signals_imported": len(imported),
         "signals_retained": len(merged),
         "research_only": True,
@@ -438,6 +455,8 @@ def refresh_sec_13f_signals(
         watchlist_entries=len(watchlist),
         enabled_entries=len(enabled),
         filings_scanned=filings_scanned,
+        holding_changes_found=holding_changes_found,
+        unmapped_changes=unmapped_changes,
         signals_imported=len(imported),
         signals_retained=len(merged),
         warnings=tuple(warnings),

@@ -66,6 +66,7 @@ function createStockGuruRefreshManager(options = {}) {
   const spawnImpl = options.spawnImpl || spawn;
   const fsImpl = options.fsImpl || fs;
   const environment = options.env || process.env;
+  const configuredRuntimeRoot = options.runtimeRoot ? path.resolve(String(options.runtimeRoot)) : "";
   const timeoutMs = Math.max(1_000, Number(options.timeoutMs || environment.STOCK_GURU_REFRESH_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
   let activePromise = null;
   let status = {
@@ -87,7 +88,24 @@ function createStockGuruRefreshManager(options = {}) {
     return publicStatus(status);
   }
 
-  function runCommand(executable, args, commandLabel, stockRoot) {
+  function prepareRuntimeRoot(stockRoot) {
+    if (!configuredRuntimeRoot || configuredRuntimeRoot === stockRoot) return stockRoot;
+    for (const directory of ["data", "reports"]) {
+      const source = path.join(stockRoot, directory);
+      const target = path.join(configuredRuntimeRoot, directory);
+      fsImpl.mkdirSync(target, { recursive: true });
+      if (!fsImpl.existsSync(source) || typeof fsImpl.cpSync !== "function") continue;
+      fsImpl.cpSync(source, target, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+        filter: (candidate) => !/(?:provider[_-]?keys|password|credential|oauth|token|secret|auth)/i.test(path.basename(candidate)),
+      });
+    }
+    return configuredRuntimeRoot;
+  }
+
+  function runCommand(executable, args, commandLabel, stockRoot, runtimeRoot) {
     const commandState = {
       name: commandLabel,
       status: "running",
@@ -117,6 +135,7 @@ function createStockGuruRefreshManager(options = {}) {
         ...environment,
         PYTHONPATH: [path.join(stockRoot, "src"), environment.PYTHONPATH].filter(Boolean).join(path.delimiter),
         PYTHONPYCACHEPREFIX: environment.PYTHONPYCACHEPREFIX || path.join(os.tmpdir(), "argentum-stock-guru-pycache"),
+        STOCK_GURU_RUNTIME_DIR: runtimeRoot,
       };
       const child = spawnImpl(executable, ["-m", "stock_guru", ...args], {
         cwd: stockRoot,
@@ -184,6 +203,7 @@ function createStockGuruRefreshManager(options = {}) {
           warnings: ["Runner disabled by STOCK_GURU_REFRESH_DISABLED."],
         });
       }
+      const runtimeRoot = prepareRuntimeRoot(workspace.stockRoot);
 
       const results = [];
       results.push(await runCommand(workspace.executable, [
@@ -192,11 +212,11 @@ function createStockGuruRefreshManager(options = {}) {
         "--history-cache-hours", "36",
         "--max-symbols", "80",
         "--rotate-count", "40",
-      ], "evaluate", workspace.stockRoot));
+      ], "evaluate", workspace.stockRoot, runtimeRoot));
 
-      const researchSymbols = includeResearch ? researchTickers(workspace.stockRoot, fsImpl) : [];
+      const researchSymbols = includeResearch ? researchTickers(runtimeRoot, fsImpl) : [];
       if (includeResearch && researchSymbols.length) {
-        results.push(await runCommand(workspace.executable, ["research", "--tickers", researchSymbols.join(","), "--news-limit", "3"], "research", workspace.stockRoot));
+        results.push(await runCommand(workspace.executable, ["research", "--tickers", researchSymbols.join(","), "--news-limit", "3"], "research", workspace.stockRoot, runtimeRoot));
       } else {
         const reason = includeResearch
           ? "Structured company/news research deferred because the evaluator produced no eligible candidate symbols."
@@ -207,7 +227,7 @@ function createStockGuruRefreshManager(options = {}) {
       const secIdentityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
       const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_form4");
       if (includeSecForm4 && secEntries > 0 && secIdentityConfigured) {
-        results.push(await runCommand(workspace.executable, ["copy-refresh-sec", "--max-filings", "10"], "copy_refresh_sec", workspace.stockRoot));
+        results.push(await runCommand(workspace.executable, ["copy-refresh-sec", "--max-filings", "10"], "copy_refresh_sec", workspace.stockRoot, runtimeRoot));
       } else {
         const reason = !includeSecForm4
           ? "SEC Form 4 refresh deferred until its bounded automatic cadence."
@@ -220,7 +240,7 @@ function createStockGuruRefreshManager(options = {}) {
 
       const sec13fEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_13f");
       if (includeSec13f && sec13fEntries > 0 && secIdentityConfigured) {
-        results.push(await runCommand(workspace.executable, ["copy-refresh-13f", "--max-filings", "3"], "copy_refresh_13f", workspace.stockRoot));
+        results.push(await runCommand(workspace.executable, ["copy-refresh-13f", "--max-filings", "3"], "copy_refresh_13f", workspace.stockRoot, runtimeRoot));
       } else {
         const reason = !includeSec13f
           ? "SEC Form 13F refresh deferred until its bounded automatic cadence."
@@ -231,7 +251,7 @@ function createStockGuruRefreshManager(options = {}) {
         status.warnings.push(reason);
       }
 
-      results.push(await runCommand(workspace.executable, ["copy-plan"], "copy_plan", workspace.stockRoot));
+      results.push(await runCommand(workspace.executable, ["copy-plan"], "copy_plan", workspace.stockRoot, runtimeRoot));
       const failures = results.filter((result) => !result.ok);
       const warnings = [...status.warnings];
       for (const result of failures) warnings.push(`${result.command.name}: ${result.command.detail || "command failed"}`);

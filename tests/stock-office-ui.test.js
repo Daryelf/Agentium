@@ -29,6 +29,8 @@ test("Stock Office uses a compact left navigation shell instead of a repeated of
   assert.match(html, /data-stock-nav="overview"/);
   assert.match(html, /data-stock-nav="trade"/);
   assert.match(html, /data-stock-view="mirror"/);
+  assert.match(html, /data-stock-nav="mirror"[^]*<span>Research<\/span>/);
+  assert.match(html, /data-stock-nav="portfolio"[^]*<span>Simulation<\/span>/);
   assert.match(script, /function setStockView/);
   assert.match(script, /history\.replaceState/);
   assert.doesNotMatch(html, /<h1>Stock Guru Office<\/h1>/);
@@ -121,9 +123,12 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(html, /Company logos provided by Parqet/);
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
-  assert.match(script, /data-proposal-paper/);
-  assert.match(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/paper-test/);
-  assert.match(script, /Fix live setup/);
+  assert.doesNotMatch(script, /data-proposal-paper/);
+  assert.doesNotMatch(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/paper-test/);
+  assert.match(script, /Finish live setup/);
+  assert.match(script, /REAL ORDERS/);
+  assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
+  assert.match(script, /No real order is ready/);
   assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
   assert.match(script, /data-proposal-decline/);
   assert.match(script, /expandedProposalResearch: new Set\(\)/);
@@ -151,11 +156,14 @@ test("Stock Office UI exposes secure approval-gated Telegram alerts for verified
   assert.doesNotMatch(script, /STOCK_GURU_TELEGRAM_BOT_TOKEN/);
 });
 
-test("Stock Office UI exposes no-look-ahead mirror evidence, consensus, and explicit source controls", () => {
+test("Research combines no-look-ahead copy evidence, consensus, and explicit source controls", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
-  assert.match(html, /Evidence &amp; safety/);
+  assert.match(html, /RESEARCH \+ COPY TRADING/);
+  assert.match(html, /Research center/);
+  assert.match(html, /Methods &amp; evidence/);
+  assert.match(html, /Traders &amp; funds/);
   assert.match(html, /Multi-source matches/);
   assert.match(html, /Source events/);
   assert.match(script, /knowledgeSummary\.measuredOutcomes/);
@@ -168,13 +176,20 @@ test("Stock Office UI exposes no-look-ahead mirror evidence, consensus, and expl
   assert.match(script, /data-mirror-follow/);
   assert.match(script, /data-mirror-enable/);
   assert.match(script, /mirror\/sources/);
+  assert.match(script, /Copy on/);
+  assert.match(script, /Symbols researched/);
+  assert.match(script, /INDEPENDENT SCAN/);
+  assert.match(script, /independentProposals/);
+  assert.match(script, /data-proposal-drawer/);
+  assert.match(script, /Send to Human Gate/);
+  assert.doesNotMatch(script, /No current copy signal/);
   assert.match(html, /Market workers/);
 });
 
 test("production UI labels unavailable values and never hardcodes a live portfolio or fake score", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
-  assert.match(html, /id="executionModePill"[^>]*>PAPER/);
+  assert.match(html, /id="executionModePill"[^>]*>Checking live orders/);
   assert.match(script, /buyingPower === null \? "—"/);
   assert.match(script, /scores\.mirror \?\? "—"/);
   assert.match(script, /No qualified opportunity/);

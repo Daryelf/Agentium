@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260814-2" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260814-3" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260814-2" defer></script>
+    <script src="./stock-office.js?v=20260814-3" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -14,8 +14,8 @@
         <a class="stock-mark" href="/" aria-label="Back to Argentum">A</a>
         <nav class="stock-nav">
           <button class="active" type="button" data-stock-nav="overview" aria-current="page"><i>⌂</i><span>Overview</span></button>
-          <button type="button" data-stock-nav="portfolio"><i>◫</i><span>Portfolio</span></button>
-          <button type="button" data-stock-nav="mirror"><i>⇄</i><span>Mirror</span></button>
+          <button type="button" data-stock-nav="portfolio"><i>◫</i><span>Simulation</span></button>
+          <button type="button" data-stock-nav="mirror"><i>⌁</i><span>Research</span></button>
           <button type="button" data-stock-nav="markets"><i>⌁</i><span>Markets</span></button>
           <button type="button" data-stock-nav="trade"><i>↗</i><span>Trade desk</span></button>
           <button type="button" data-stock-nav="sources"><i>◎</i><span>Sources</span></button>
@@ -31,7 +31,7 @@
             <h1 id="viewTitle">Overview</h1>
           </div>
           <div class="command-actions">
-            <span id="executionModePill" class="status-pill warning">PAPER</span>
+            <span id="executionModePill" class="status-pill warning">Checking live orders</span>
             <span id="brokerStatusPill" class="status-pill muted">Checking Robinhood</span>
             <button id="syncButton" type="button">Update market data</button>
           </div>
@@ -78,8 +78,8 @@
           </section>
           <section class="overview-proposals-board" aria-labelledby="tradeProposalsTitle">
             <div class="overview-board-head overview-proposals-head">
-              <div><span>Evidence-backed review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
-              <div><strong id="overviewProposalCount">0 ready</strong><small>One qualified action enters Human Gate at a time.</small></div>
+              <div><span>Live Robinhood review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
+              <div><strong id="overviewProposalCount">0 ready</strong><small>Real orders only. Human Gate approval required.</small></div>
             </div>
             <div id="overviewCycleRail" class="overview-cycle-rail" aria-live="polite"></div>
             <div id="overviewTradeReadiness" class="overview-trade-readiness" aria-live="polite"></div>
@@ -112,7 +112,7 @@
         <section class="stock-view" data-stock-view="portfolio" hidden>
           <article class="panel shadow-portfolio">
             <div class="panel-head compact">
-              <div><p class="eyebrow">Paper portfolio</p><h2>Simulation and learning</h2></div>
+              <div><p class="eyebrow">Testing only</p><h2>Simulation and learning</h2></div>
               <span id="shadowPortfolioStatus">Starting paper engine</span>
             </div>
             <div id="shadowPortfolioMetrics" class="portfolio-capital-metrics"></div>
@@ -134,9 +134,9 @@
           <section class="mirror-console">
             <header class="mirror-console-head">
               <div>
-                <span class="mirror-kicker">COPY TRADING</span>
-                <h2>Mirror control</h2>
-                <p>Public trades in. Ranked decisions out.</p>
+                <span class="mirror-kicker">RESEARCH + COPY TRADING</span>
+                <h2>Research center</h2>
+                <p>Market ideas, public-trader signals, and measured outcomes.</p>
               </div>
               <div class="mirror-head-actions">
                 <span id="mirrorStatusPill" class="status-pill muted">Loading engine</span>
@@ -151,7 +151,7 @@
             <div class="mirror-workspace">
               <section class="mirror-signal-board">
                 <div class="mirror-section-head">
-                  <div><span>SIGNAL QUEUE</span><h3>Copy decisions</h3></div>
+                  <div><span>MARKET + COPY SIGNALS</span><h3>Research candidates</h3></div>
                   <div class="mirror-decision-counts" id="mirrorDecisionCounts"></div>
                 </div>
                 <div id="mirrorCandidates" class="mirror-candidates"></div>
@@ -159,19 +159,19 @@
               </section>
               <aside class="mirror-watch-board">
                 <div class="mirror-section-head">
-                  <div><span>WATCHING NOW</span><h3>People &amp; funds</h3></div>
+                  <div><span>COPY SOURCES</span><h3>Traders &amp; funds</h3></div>
                   <strong id="mirrorWatcherCount">0 active</strong>
                 </div>
                 <div id="mirrorWatchers" class="mirror-watchers"></div>
-                <div class="mirror-section-head compact"><div><span>CONSENSUS</span><h3>Multi-source matches</h3></div></div>
+                <div class="mirror-section-head compact"><div><span>AGREEMENT</span><h3>Multi-source matches</h3></div></div>
                 <div id="mirrorConsensus" class="mirror-consensus"></div>
-                <div class="mirror-section-head compact"><div><span>RECENT</span><h3>Source events</h3></div></div>
+                <div class="mirror-section-head compact"><div><span>LATEST</span><h3>Source events</h3></div></div>
                 <div id="mirrorEventFeed" class="mirror-event-feed"></div>
                 <div id="mirrorSources" class="mirror-source-rail"></div>
               </aside>
             </div>
             <details class="mirror-proof">
-              <summary><span>Evidence &amp; safety</span><strong id="knowledgeStatus">Neutral</strong></summary>
+              <summary><span>Methods &amp; evidence</span><strong id="knowledgeStatus">Neutral</strong></summary>
               <div class="mirror-proof-grid">
                 <div id="knowledgeMetrics" class="knowledge-metrics"></div>
                 <div id="knowledgeProfiles" class="knowledge-profiles"></div>

@@ -326,7 +326,6 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   if (capital.tradeLimitReached) blockers.push(`The ${capital.maxTradesPerDay}-trade daily limit has been reached.`);
   if (capital.availableForNewBuys <= 0) blockers.push("No deployable capital remains after current positions, pending buys, and the cash reserve.");
   if (killSwitchActive) blockers.push("The live-order kill switch is active or has not been explicitly cleared.");
-  if (!snapshot.readiness?.readyForLiveAuto) blockers.push(...(snapshot.readiness?.blockers || ["Strict live-readiness evidence has not passed."]).slice(0, 4));
   return {
     provider: "Robinhood Agentic Trading",
     transport: "official_streamable_http_mcp",
@@ -417,7 +416,6 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   addCheck(checks, blockers, "agentic_account_identity", Boolean(snapshot.broker?.accountIdentityHash), "A cryptographically bound Agentic-account identity is required.");
   if (side === "BUY") {
     addCheck(checks, blockers, "kill_switch", !control.killSwitchActive, "The live-order kill switch must be explicitly cleared for a new BUY.");
-    addCheck(checks, blockers, "live_readiness", Boolean(snapshot.readiness?.readyForLiveAuto), "Strict live-readiness evidence must pass before a new BUY.");
     addCheck(checks, blockers, "fresh_price", Boolean(record?.dataFresh) && referencePrice > 0, "Fresh evaluator and quote data are required for a BUY.");
   } else {
     addCheck(checks, blockers, "risk_reducing_exit", Boolean(position) && referencePrice > 0, "A SELL must reduce a verified owned position.");

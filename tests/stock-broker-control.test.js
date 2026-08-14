@@ -132,6 +132,17 @@ test("fresh official connector and strict checks produce an exact BUY review env
   assert.equal(envelope.accountIdentityHash, "b".repeat(64));
 });
 
+test("manual Human Gate orders do not depend on the separate legacy auto-readiness report", () => {
+  const current = snapshot({ readiness: { readyForLiveAuto: false, blockers: ["legacy autonomous planner is not armed"] } });
+  const control = brokerControlOverview(current, { now: "2026-08-10T17:00:00.000Z" });
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(control.liveReady, true);
+  assert.equal(draft.status, "ready_for_broker_review");
+  assert.equal(draft.checks.some((check) => check.name === "live_readiness"), false);
+  assert.equal(draft.blockers.some((blocker) => /auto|live-readiness/i.test(blocker)), false);
+});
+
 test("missing broker balances remain unknown instead of being presented as zero", () => {
   const current = snapshot({ broker: { ...snapshot().broker, accountValue: null, cash: null, buyingPower: null } });
   const control = brokerControlOverview(current, { now: "2026-08-10T17:00:00.000Z" });

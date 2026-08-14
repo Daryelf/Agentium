@@ -78,6 +78,31 @@ test("structured news research runs on a bounded shortlist from evaluator output
   assert.equal(JSON.stringify(calls).match(/order|broker|transfer|robinhood/gi), null);
 });
 
+test("refresh writes through a separate runtime root when the source workspace is read-only", async (t) => {
+  const stockRoot = createRunnableWorkspace(t);
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-"));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(stockRoot, "reports"), { recursive: true });
+  fs.writeFileSync(path.join(stockRoot, "reports", "evaluations.json"), JSON.stringify([
+    { ticker: "NET", status: "valid_setup", score: 92 },
+  ]));
+  const calls = [];
+  const manager = createStockGuruRefreshManager({
+    spawnImpl: successfulSpawn(calls),
+    env: {},
+    runtimeRoot,
+    timeoutMs: 2_000,
+  });
+
+  const result = await manager.refresh({ stockRoot, includeResearch: true });
+
+  assert.equal(result.status, "success");
+  assert.equal(fs.existsSync(path.join(runtimeRoot, "reports", "evaluations.json")), true);
+  assert.equal(calls.every((call) => call.options.cwd === stockRoot), true);
+  assert.equal(calls.every((call) => call.options.env.STOCK_GURU_RUNTIME_DIR === runtimeRoot), true);
+  assert.equal(calls.some((call) => call.args[2] === "research" && call.args.includes("NET")), true);
+});
+
 test("official SEC refresh runs only with enabled named CIKs and contact identity", async (t) => {
   const stockRoot = createRunnableWorkspace(t, {
     sec_form4: [{ label: "Named reporting person", cik: "0000123456", enabled: true }],

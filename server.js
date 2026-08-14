@@ -59,6 +59,7 @@ const STOCK_GURU_USER_DATA_DIR = path.resolve(process.env.ARGENTUM_STOCK_GURU_DA
     ? path.join(os.homedir(), "Library", "Application Support", "Argentum OS")
     : path.join(os.homedir(), ".argentum-os")
 ));
+const STOCK_GURU_RUNTIME_ROOT = path.resolve(process.env.STOCK_GURU_RUNTIME_DIR || path.join(STOCK_GURU_USER_DATA_DIR, "stock-guru-runtime"));
 const stockGuruSourceWorkspace = resolveStockGuruWorkspace({
   workspaceRoot: ROOT,
   userDataPath: STOCK_GURU_USER_DATA_DIR,
@@ -110,7 +111,7 @@ const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
-const stockGuruRefreshManager = createStockGuruRefreshManager();
+const stockGuruRefreshManager = createStockGuruRefreshManager({ runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
 const stockIntelligenceStore = createStockIntelligenceStore({ dataDir: STOCK_GURU_USER_DATA_DIR });
 const stockEventBus = createStockEventBus({ persist: (event) => stockIntelligenceStore.recordSystemEvent(event) });
 const stockIntelligenceScheduler = createStockIntelligenceScheduler({
@@ -5590,7 +5591,7 @@ function stockIntelligenceState() {
 }
 
 function stockOfficeSnapshot(state, permissions) {
-  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state });
+  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state, runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
   if (!(process.env.NODE_ENV === "test" && process.env.ARGENTUM_TEST_TRUST_BROKER_FIXTURE === "1")) {
     const officialBroker = robinhoodMcpClient.currentBrokerSnapshot();
     snapshot.broker = officialBroker;

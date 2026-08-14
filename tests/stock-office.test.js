@@ -272,6 +272,33 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");
 });
 
+test("Stock Office prefers newer generated reports from the writable runtime overlay", () => {
+  const { root } = makeWorkspace();
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-overlay-"));
+  fs.mkdirSync(path.join(runtimeRoot, "reports"), { recursive: true });
+  writeJson(path.join(runtimeRoot, "reports", "evaluations.json"), [{
+    ticker: "NET",
+    status: "valid_setup",
+    decision: "VALID_BUY_SETUP",
+    score: 96,
+    current_price: 100,
+    stop_loss: 95,
+    target_1: 110,
+    data_fresh: true,
+    generated_at: "2026-08-14T15:00:00.000Z",
+  }]);
+
+  const snapshot = loadStockOfficeSnapshot({
+    rootDir: root,
+    runtimeRoot,
+    now: "2026-08-14T15:01:00.000Z",
+  });
+
+  assert.deepEqual(snapshot.records.map((record) => record.ticker), ["NET"]);
+  assert.equal(snapshot.records[0].score, 96);
+  assert.equal(snapshot.sources.find((source) => source.id === "provider_keys").status, "configured");
+});
+
 test("Stock Office record APIs filter and retrieve sanitized records", () => {
   const { root } = makeWorkspace();
   const snapshot = loadStockOfficeSnapshot({ rootDir: root, now: "2026-06-19T12:00:00.000Z" });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -8,8 +9,9 @@ from typing import Iterable, List
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "config"
-DATA_DIR = ROOT / "data"
-REPORT_DIR = ROOT / "reports"
+RUNTIME_ROOT = Path(os.environ.get("STOCK_GURU_RUNTIME_DIR", str(ROOT))).expanduser().resolve()
+DATA_DIR = RUNTIME_ROOT / "data"
+REPORT_DIR = RUNTIME_ROOT / "reports"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 UNIVERSE_PATH = CONFIG_DIR / "universe.txt"
 LEDGER_PATH = DATA_DIR / "paper_trades.csv"

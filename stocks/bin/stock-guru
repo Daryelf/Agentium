@@ -11,4 +11,5 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 
 cd "$ROOT"
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PYTHON" -m stock_guru "$@"

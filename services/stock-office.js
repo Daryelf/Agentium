@@ -236,7 +236,7 @@ function sourceAgeHours(source, at = new Date()) {
   return Math.max(0, (at.getTime() - date.getTime()) / 3_600_000);
 }
 
-function readSource(stockRoot, definition, at = new Date()) {
+function readSource(stockRoot, definition, at = new Date(), runtimeRoot = "") {
   const source = {
     id: definition.id,
     label: definition.label,
@@ -255,7 +255,20 @@ function readSource(stockRoot, definition, at = new Date()) {
 
   let absolutePath;
   try {
-    absolutePath = safeJoin(stockRoot, definition.relPath);
+    const sourcePath = safeJoin(stockRoot, definition.relPath);
+    const canUseRuntime = Boolean(runtimeRoot)
+      && definition.type !== "secret"
+      && /^(?:data|reports)\//.test(definition.relPath);
+    const runtimePath = canUseRuntime ? safeJoin(runtimeRoot, definition.relPath) : "";
+    if (runtimePath && fs.existsSync(runtimePath)) {
+      const runtimeStat = fs.statSync(runtimePath);
+      const sourceStat = fs.existsSync(sourcePath) ? fs.statSync(sourcePath) : null;
+      absolutePath = runtimeStat.isFile() && (!sourceStat?.isFile() || runtimeStat.mtimeMs >= sourceStat.mtimeMs)
+        ? runtimePath
+        : sourcePath;
+    } else {
+      absolutePath = sourcePath;
+    }
   } catch (error) {
     source.status = "error";
     source.safeError = "Unsafe source path blocked.";
@@ -1021,7 +1034,7 @@ function buildAlerts({ available, sources, records, readiness, broker, sourceHea
     alerts.push({ level: "warning", title: "Market data may be stale", body: `${sourceHealth.stale} source(s) are older than their freshness window.` });
   }
   if (!readiness.readyForLiveAuto) {
-    alerts.push({ level: "warning", title: "Live auto is not armable", body: "Readiness checks block autonomous live-broker behavior. Paper mirroring and Human Gate review remain available." });
+    alerts.push({ level: "warning", title: "Autonomous planning is not armed", body: "Legacy automatic-planning checks remain separate. Real orders still require every current per-order check and exact Human Gate approval." });
   }
   if (broker.configured && broker.buyingPower === "$0.00") {
     alerts.push({ level: "info", title: "No buying power", body: "The latest broker snapshot blocks BUY orders. A risk-reducing SELL would still require fresh verified holdings, exact Human Gate approval, and Robinhood review." });
@@ -1133,6 +1146,7 @@ function loadStockOfficeSnapshot(options = {}) {
   const state = options.state || {};
   const at = options.now ? new Date(options.now) : new Date();
   const stockRoot = resolveStockRoot(rootDir, options.stockRoot);
+  const runtimeRoot = options.runtimeRoot ? path.resolve(String(options.runtimeRoot)) : "";
   const workspaceState = normalizeStockOfficeState(state.stockOffice || {});
 
   if (!fs.existsSync(stockRoot)) {
@@ -1177,7 +1191,7 @@ function loadStockOfficeSnapshot(options = {}) {
     return snapshot;
   }
 
-  const readResults = SOURCE_DEFINITIONS.map((definition) => readSource(stockRoot, definition, at));
+  const readResults = SOURCE_DEFINITIONS.map((definition) => readSource(stockRoot, definition, at, runtimeRoot));
   const sources = readResults.map((result) => result.source);
   const byId = Object.fromEntries(readResults.map((result) => [result.source.id, result]));
   const sourceHealth = summarizeSourceHealth(sources);

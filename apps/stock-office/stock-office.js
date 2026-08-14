@@ -37,13 +37,26 @@ const $ = (selector) => document.querySelector(selector);
 
 const STOCK_VIEWS = {
   overview: ["Stock workspace", "Overview"],
-  portfolio: ["Paper engine", "Portfolio"],
-  mirror: ["Copy trading", "Mirror"],
+  portfolio: ["Testing only", "Simulation"],
+  mirror: ["Market intelligence", "Research"],
   markets: ["Evaluator", "Markets"],
   trade: ["Supervised broker", "Trade desk"],
   sources: ["Market inputs", "Sources"],
   assistant: ["Research help", "Assistant"],
 };
+
+function renderExecutionModePill() {
+  const modePill = $("#executionModePill");
+  if (!modePill) return;
+  if (state.activeView === "portfolio") {
+    modePill.textContent = "SIMULATION ONLY";
+    modePill.className = "status-pill warning";
+    return;
+  }
+  const live = String(state.brokerControl?.executionMode || "PAPER").toUpperCase() === "LIVE";
+  modePill.textContent = live ? "LIVE · HUMAN GATE" : "LIVE ORDERS OFF";
+  modePill.className = `status-pill ${live ? "ready" : "warning"}`;
+}
 
 function setStockView(requestedView, options = {}) {
   const view = STOCK_VIEWS[requestedView] ? requestedView : "overview";
@@ -63,6 +76,7 @@ function setStockView(requestedView, options = {}) {
   $("#viewKicker").textContent = kicker;
   $("#viewTitle").textContent = title;
   $("#syncButton").hidden = view === "trade";
+  renderExecutionModePill();
   if (options.updateHash !== false) history.replaceState(null, "", `#${view}`);
   if (options.scroll !== false) $(".stock-main").scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -272,10 +286,7 @@ function renderOverviewDashboard() {
   const realizedPnl = numericMoney(control.realizedPnlDollars);
   const calculatedUnrealized = positions.reduce((sum, position) => sum + (numericMoney(position.unrealizedPnlDollars ?? position.unrealizedPnl) || 0), 0);
   const unrealizedPnl = numericMoney(control.unrealizedPnlDollars) ?? (positions.length ? calculatedUnrealized : null);
-  const executionMode = String(control.executionMode || state.systemHealth?.mode || "PAPER").toUpperCase();
-  const modePill = $("#executionModePill");
-  modePill.textContent = executionMode === "LIVE" ? "LIVE · HUMAN GATE" : "PAPER / SIMULATION";
-  modePill.className = `status-pill ${executionMode === "LIVE" ? "ready" : "warning"}`;
+  renderExecutionModePill();
   const utilization = maxDeployed > 0 ? Math.max(0, Math.min(100, (deployed / maxDeployed) * 100)) : 0;
   const accountBand = $("#overviewAccountBand");
   accountBand.dataset.status = control.authenticationVerified ? "live" : "offline";
@@ -334,7 +345,7 @@ function renderOverviewDashboard() {
     ["Broker", health.broker?.status],
     ["Telegram", health.telegram?.status],
     ["Research", health.research?.status],
-    ["Mirror", health.mirror ? `${health.mirror.healthy}/${health.mirror.total}` : "waiting"],
+    ["Copy", health.mirror ? `${health.mirror.healthy}/${health.mirror.total}` : "waiting"],
     ["DB", health.database?.status],
   ].map(([label, value]) => `<span data-status="${escapeHtml(value || "waiting")}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value || "waiting").replaceAll("_", " "))}</strong></span>`).join("");
 
@@ -389,23 +400,35 @@ function renderTradeProposals() {
     <div class="overview-cycle-copy"><small>Copy watch</small><strong>${escapeHtml(summary.copyWatchers || 0)} people · ${escapeHtml(summary.copySignalsObserved || 0)} signals</strong></div>
     <div class="overview-cycle-result"><small>Last cycle</small><strong>${escapeHtml(review.lastMessage || "Workers continue automatically while the market is open.")}</strong></div>`;
   const decisions = new Set((state.proposalDecisions || state.portfolioPlan?.decisions || []).filter((item) => item.decision === "declined").map((item) => item.proposalId));
-  const visible = proposals.filter((proposal) => !decisions.has(proposal.id)).slice(0, 4);
+  const current = proposals.filter((proposal) => !decisions.has(proposal.id));
+  const realOrderStates = new Set(["awaiting_human_gate", "approved", "dispatch_claimed", "dispatched", "filled"]);
+  const visible = current.filter((proposal) => (
+    ["BUY", "SELL"].includes(proposal.side)
+    && (proposal.draftEligible || realOrderStates.has(proposal.reviewState))
+  )).slice(0, 4);
   const liveReady = visible.filter((proposal) => proposal.draftEligible).length;
-  const paperReady = visible.filter((proposal) => proposal.paperTest?.eligible).length;
-  const buyIdeas = visible.filter((proposal) => proposal.side === "BUY");
-  const uniqueLiveBlockers = [...new Set(buyIdeas.flatMap((proposal) => Array.isArray(proposal.blockers) ? proposal.blockers : []))];
-  const paperCash = Number(state.shadowPortfolio?.cashDollars);
-  $("#overviewProposalCount").textContent = visible.length ? `${paperReady} paper-ready · ${liveReady} live-ready` : "No active proposal";
-  $("#overviewTradeReadiness").innerHTML = buyIdeas.length
-    ? `<div class="overview-readiness-state ${paperReady ? "ready" : "waiting"}">
-        <i aria-hidden="true"></i><span><small>PAPER TEST</small><strong>${escapeHtml(paperReady ? `${paperReady} buy idea${paperReady === 1 ? "" : "s"} ready` : "Portfolio limits active")}</strong></span>
-      </div>
-      <div class="overview-readiness-metric"><small>PAPER CASH</small><strong>${escapeHtml(Number.isFinite(paperCash) ? formatMoney(paperCash) : "Not started")}</strong></div>
-      <div class="overview-readiness-state ${liveReady ? "ready" : "waiting"}">
-        <i aria-hidden="true"></i><span><small>LIVE ORDER</small><strong>${escapeHtml(liveReady ? `${liveReady} ready for Human Gate` : `${uniqueLiveBlockers.length} setup item${uniqueLiveBlockers.length === 1 ? "" : "s"}`)}</strong></span>
-      </div>
-      <button class="secondary" type="button" data-live-readiness>${escapeHtml(liveReady ? "Open trade desk" : "Fix live setup")}</button>`
-    : `<div class="overview-readiness-state waiting"><i aria-hidden="true"></i><span><small>TRADE QUEUE</small><strong>No BUY idea in this cycle</strong></span></div>`;
+  const pendingGate = visible.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
+  const researchCandidates = current.filter((proposal) => ["BUY", "SELL"].includes(proposal.side) && !proposal.draftEligible && !realOrderStates.has(proposal.reviewState));
+  const executionLive = String(state.brokerControl?.executionMode || "PAPER").toUpperCase() === "LIVE";
+  const accountVerified = state.brokerControl?.authenticationVerified === true;
+  const buyingPower = Number(state.brokerControl?.buyingPowerDollars);
+  $("#overviewProposalCount").textContent = pendingGate
+    ? `${pendingGate} in Human Gate`
+    : liveReady
+      ? `${liveReady} ready for Human Gate`
+      : "0 real orders ready";
+  $("#overviewTradeReadiness").innerHTML = `
+    <div class="overview-readiness-state ${executionLive ? "ready" : "waiting"}">
+      <i aria-hidden="true"></i><span><small>REAL ORDERS</small><strong>${escapeHtml(executionLive ? "Enabled with Human Gate" : "Live setup required")}</strong></span>
+    </div>
+    <div class="overview-readiness-state ${accountVerified ? "ready" : "waiting"}">
+      <i aria-hidden="true"></i><span><small>ROBINHOOD</small><strong>${escapeHtml(accountVerified ? "Account verified" : "Refresh required")}</strong></span>
+    </div>
+    <div class="overview-readiness-metric"><small>BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
+    <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
+      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : `${researchCandidates.length} still in research`)}</strong></span>
+    </div>
+    <button class="secondary" type="button" data-live-readiness>${escapeHtml(executionLive && accountVerified ? "Open trade desk" : "Finish live setup")}</button>`;
   $("#overviewProposalList").innerHTML = visible.length
     ? visible.map((proposal) => {
         const research = proposal.research || {};
@@ -413,25 +436,13 @@ function renderTradeProposals() {
         const targetText = proposal.side === "BUY" && outlook.targetPrice
           ? `${outlookValue(outlook.targetPrice)}${Number.isFinite(Number(outlook.targetReturnPct)) ? ` · ${(Number(outlook.targetReturnPct) * 100).toFixed(1)}% · ${formatMoney(outlook.targetScenarioDollars)} scenario` : ""}`
           : proposal.side === "SELL" ? "Reduce verified holding" : "Keep monitoring position";
-        const isHold = proposal.side === "HOLD";
-        const paperTest = proposal.paperTest || {};
-        const paperHeld = /already held/i.test(paperTest.reason || "");
-        const paperStatus = paperHeld
-          ? "Paper position open"
-          : /trade limit/i.test(paperTest.reason || "")
-            ? "Paper daily limit"
-            : /position limit/i.test(paperTest.reason || "")
-              ? "Paper position limit"
-              : /cash|minimum|loss lock/i.test(paperTest.reason || "")
-                ? "Paper cash / risk limit"
-                : "Paper evidence changed";
         const scores = proposal.scores || {};
-        const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : isHold ? "monitoring" : "blocked");
-        const pendingGate = reviewState === "awaiting_human_gate";
+        const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : "blocked");
+        const waitingGate = reviewState === "awaiting_human_gate";
         const approved = reviewState === "approved";
         const reviewExpiresAt = Date.parse(proposal.reviewExpiresAt || "");
         const approvalRemaining = Number.isFinite(reviewExpiresAt) ? Math.max(0, Math.ceil((reviewExpiresAt - Date.now()) / 1_000)) : null;
-        return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : paperTest.eligible ? "paper-ready" : isHold ? "monitoring" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
+        return `<article class="overview-proposal ready" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
@@ -439,7 +450,7 @@ function renderTradeProposals() {
           <div class="overview-proposal-scores">
             <span><small>AI</small><strong>${escapeHtml(scores.ai ?? research.score ?? "—")}</strong></span>
             <span><small>TECH</small><strong>${escapeHtml(scores.technical ?? research.score ?? "—")}</strong></span>
-            <span><small>MIRROR</small><strong>${escapeHtml(scores.mirror ?? "—")}</strong></span>
+            <span><small>COPY</small><strong>${escapeHtml(scores.mirror ?? "—")}</strong></span>
             <span><small>RISK</small><strong>${escapeHtml(scores.risk === null || scores.risk === undefined ? "—" : Math.round(scores.risk))}</strong></span>
           </div>
           <div class="overview-proposal-thesis">
@@ -462,21 +473,17 @@ function renderTradeProposals() {
           </details>
           <div class="overview-proposal-actions">
             <button class="secondary" type="button" data-proposal-drawer="${escapeHtml(proposal.id)}">Why / Research</button>
-            ${isHold
-              ? `<span class="proposal-action-status monitoring">Monitoring</span>`
-              : approved
+            ${approved
                 ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review live order</button>`
-                : pendingGate
+                : waitingGate
                   ? `<span class="proposal-action-status pending">Gate pending${approvalRemaining === null ? "" : ` · ${escapeHtml(formatCountdown(approvalRemaining))}`}</span>`
                   : proposal.draftEligible
-                    ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send to Human Gate</button>`
-                    : paperTest.eligible
-                      ? `<button type="button" data-proposal-paper="${escapeHtml(proposal.id)}">Paper buy ${escapeHtml(formatMoney(paperTest.requestedDollars))}</button>`
-                      : `<span class="proposal-action-status ${paperHeld ? "owned" : "waiting"}">${escapeHtml(paperStatus)}</span>`}
+                    ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send ${escapeHtml(proposal.side)} ${escapeHtml(formatMoney(proposal.requestedDollars))} to Human Gate</button>`
+                    : `<span class="proposal-action-status waiting">Live checks changed</span>`}
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row"><strong>No actionable trade proposal</strong><span>The research planner is waiting for fresh evidence and available risk capacity.</span></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No real order is ready</strong><span>${escapeHtml(researchCandidates.length ? `${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still being evaluated in Research.` : "Research is continuing until a BUY or SELL passes every live check.")}</span><button type="button" data-live-readiness>Open live setup</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {
@@ -508,7 +515,7 @@ function proposalDrawer(proposalId) {
     kicker: `${proposal.side} PROPOSAL`,
     title: proposal.symbol,
     tabs: [
-      { id: "why", label: "Why", html: `<div class="drawer-score-grid">${[["AI", scores.ai ?? research.score], ["Technical", scores.technical ?? research.score], ["Mirror", scores.mirror], ["Risk", scores.risk]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value ?? "—")}</strong></span>`).join("")}</div><section><h3>Thesis</h3><p>${escapeHtml(research.mainReason || proposal.reasons?.[0] || "No thesis was recorded.")}</p></section><section><h3>Conflicting evidence</h3><p>${escapeHtml(research.mainRisk || "No explicit conflict was recorded.")}</p></section>` },
+      { id: "why", label: "Why", html: `<div class="drawer-score-grid">${[["AI", scores.ai ?? research.score], ["Technical", scores.technical ?? research.score], ["Copy", scores.mirror], ["Risk", scores.risk]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value ?? "—")}</strong></span>`).join("")}</div><section><h3>Thesis</h3><p>${escapeHtml(research.mainReason || proposal.reasons?.[0] || "No thesis was recorded.")}</p></section><section><h3>Conflicting evidence</h3><p>${escapeHtml(research.mainRisk || "No explicit conflict was recorded.")}</p></section>` },
       { id: "research", label: "Research", html: `<dl class="drawer-facts"><div><dt>Setup</dt><dd>${escapeHtml(research.setupType || "—")}</dd></div><div><dt>Market</dt><dd>${escapeHtml(research.marketCondition || "—")}</dd></div><div><dt>Entry</dt><dd>${escapeHtml(research.entryZone || "Reprice before order")}</dd></div><div><dt>Last researched</dt><dd>${escapeHtml(research.lastResearchedAt ? formatTime(research.lastResearchedAt) : "—")}</dd></div><div><dt>Next review</dt><dd>${escapeHtml(research.nextReviewAt ? formatTime(research.nextReviewAt) : "—")}</dd></div></dl>${evidence.length ? `<ul class="drawer-evidence">${evidence.map((item) => `<li data-direction="${escapeHtml(item.direction)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.source)}</span></li>`).join("")}</ul>` : `<div class="drawer-empty">No separate persisted evidence rows are attached.</div>`}` },
       { id: "risk", label: "Risk", html: `<section><h3>Invalidation</h3><p>${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p></section><section><h3>Execution blockers</h3>${checks.length ? `<ol class="drawer-blockers">${checks.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>` : `<p>Current draft checks pass. Final account, price, duplicate-order, approval, and broker checks still run at execution.</p>`}</section>` },
       { id: "source", label: "Source", html: `<dl class="drawer-facts"><div><dt>Source</dt><dd>${escapeHtml(research.sourceLabel || "Stock Guru evaluator")}</dd></div><div><dt>Fresh</dt><dd>${research.dataFresh ? "Yes" : "No / unavailable"}</dd></div><div><dt>Score method</dt><dd>${escapeHtml(scores.formula?.description || "Evaluator score; missing inputs are not invented.")}</dd></div></dl>${research.sourceUrl ? `<a href="${escapeHtml(research.sourceUrl)}" target="_blank" rel="noreferrer">Open original evidence ↗</a>` : ""}` },
@@ -524,7 +531,7 @@ function opportunityDrawer(opportunityId) {
     kicker: "PERSISTENT OPPORTUNITY",
     title: opportunity.symbol,
     tabs: [
-      { id: "research", label: "Research", html: `<div class="drawer-score-grid">${[["AI", opportunity.aiScore], ["Technical", opportunity.technicalScore], ["Mirror", opportunity.mirrorScore], ["Risk", opportunity.riskScore]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value === null || value === undefined ? "—" : Math.round(value))}</strong></span>`).join("")}</div><section><h3>${escapeHtml(opportunity.thesis?.setup || "Research thesis")}</h3><p>${escapeHtml(opportunity.thesis?.reason || "No thesis statement was persisted.")}</p></section><ul class="drawer-evidence">${(opportunity.evidence || []).map((item) => `<li data-direction="${escapeHtml(item.direction)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.source)}</span></li>`).join("")}</ul>` },
+      { id: "research", label: "Research", html: `<div class="drawer-score-grid">${[["AI", opportunity.aiScore], ["Technical", opportunity.technicalScore], ["Copy", opportunity.mirrorScore], ["Risk", opportunity.riskScore]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value === null || value === undefined ? "—" : Math.round(value))}</strong></span>`).join("")}</div><section><h3>${escapeHtml(opportunity.thesis?.setup || "Research thesis")}</h3><p>${escapeHtml(opportunity.thesis?.reason || "No thesis statement was persisted.")}</p></section><ul class="drawer-evidence">${(opportunity.evidence || []).map((item) => `<li data-direction="${escapeHtml(item.direction)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.source)}</span></li>`).join("")}</ul>` },
       { id: "history", label: "History", html: `<dl class="drawer-facts"><div><dt>First seen</dt><dd>${escapeHtml(formatTime(opportunity.firstSeenAt))}</dd></div><div><dt>Last researched</dt><dd>${escapeHtml(formatTime(opportunity.lastResearchedAt))}</dd></div><div><dt>Next review</dt><dd>${escapeHtml(formatTime(opportunity.nextReviewAt))}</dd></div><div><dt>Trend</dt><dd>${escapeHtml(opportunity.change?.trend || "—")} ${opportunity.change?.scoreDelta === null ? "" : `(${opportunity.change.scoreDelta >= 0 ? "+" : ""}${opportunity.change.scoreDelta})`}</dd></div></dl>` },
       { id: "risk", label: "Risk", html: `<section><h3>Main risk</h3><p>${escapeHtml(opportunity.thesis?.risk || "Unavailable")}</p></section><section><h3>Invalidation</h3><p>${escapeHtml(opportunity.thesis?.invalidation || "Unavailable")}</p></section>` },
     ],
@@ -539,7 +546,7 @@ function workerDrawer(workerId) {
 
 function reportDrawer(reportType) {
   const report = state.intelligence?.reports?.[reportType];
-  openIntelligenceDrawer({ kicker: reportType === "morning" ? "MORNING INTELLIGENCE" : "NIGHT RESEARCH", title: report?.generatedAt ? formatTime(report.generatedAt) : "Report pending", tabs: [{ id: "report", label: "Report", html: report ? `<div class="drawer-score-grid"><span><small>Researched</small><strong>${escapeHtml(report.summary?.researched || 0)}</strong></span><span><small>High</small><strong>${escapeHtml(report.summary?.highPriority || 0)}</strong></span><span><small>Candidates</small><strong>${escapeHtml(report.summary?.candidates || 0)}</strong></span><span><small>Mirror</small><strong>${escapeHtml(report.summary?.mirrorMatched || 0)}</strong></span></div><ol class="drawer-opportunities">${(report.topOpportunities || []).slice(0, 10).map((item) => `<li><strong>${logoMarkup(item.symbol)}</strong><span>AI ${escapeHtml(item.aiScore)} · ${escapeHtml(item.status)}</span></li>`).join("")}</ol><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || report.limitations?.[0] || "Research only.")}</p>` : `<div class="drawer-empty">This report has not been generated yet. Research continues on the session-aware scheduler.</div>` }] });
+  openIntelligenceDrawer({ kicker: reportType === "morning" ? "MORNING INTELLIGENCE" : "NIGHT RESEARCH", title: report?.generatedAt ? formatTime(report.generatedAt) : "Report pending", tabs: [{ id: "report", label: "Report", html: report ? `<div class="drawer-score-grid"><span><small>Researched</small><strong>${escapeHtml(report.summary?.researched || 0)}</strong></span><span><small>High</small><strong>${escapeHtml(report.summary?.highPriority || 0)}</strong></span><span><small>Candidates</small><strong>${escapeHtml(report.summary?.candidates || 0)}</strong></span><span><small>Copy matched</small><strong>${escapeHtml(report.summary?.mirrorMatched || 0)}</strong></span></div><ol class="drawer-opportunities">${(report.topOpportunities || []).slice(0, 10).map((item) => `<li><strong>${logoMarkup(item.symbol)}</strong><span>AI ${escapeHtml(item.aiScore)} · ${escapeHtml(item.status)}</span></li>`).join("")}</ol><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || report.limitations?.[0] || "Research only.")}</p>` : `<div class="drawer-empty">This report has not been generated yet. Research continues on the session-aware scheduler.</div>` }] });
 }
 
 function renderMetrics() {
@@ -913,6 +920,9 @@ function renderMirror() {
   const activeWatchers = watchers.filter((watcher) => watcher.enabled);
   const fastWatchers = activeWatchers.filter((watcher) => watcher.copyEligible);
   const delayedWatchers = activeWatchers.filter((watcher) => watcher.researchOnly);
+  const independentProposals = (plan.proposals || [])
+    .filter((proposal) => !proposal.candidateId)
+    .slice(0, Math.max(0, 8 - candidates.length));
   const proposalByCandidate = new Map((plan.proposals || []).filter((proposal) => proposal.candidateId).map((proposal) => [proposal.candidateId, proposal]));
   const liveGateCount = (plan.proposals || []).filter((proposal) => ["awaiting_human_gate", "approved"].includes(proposal.reviewState)).length;
   const pill = $("#mirrorStatusPill");
@@ -920,28 +930,28 @@ function renderMirror() {
   pill.className = `status-pill ${cycleRunning || (!mirror.stale && mirror.available) ? "ready" : mirror.stale ? "warning" : "muted"}`;
 
   const cycleLabel = cycleRunning
-    ? String(scheduler.currentMessage || "Refreshing copy signals and market evidence")
+    ? String(scheduler.currentMessage || "Refreshing market research and public-trader signals")
     : marketOpen && remainingSeconds !== null
       ? `Next scan ${formatCountdown(remainingSeconds)}`
       : cycle.session?.label || "Market schedule unavailable";
   $("#mirrorCycleRail").innerHTML = `
     <div class="mirror-cycle-primary" data-status="${escapeHtml(cycleRunning ? "working" : marketOpen ? "countdown" : "quiet")}">
-      <i aria-hidden="true"></i><span><small>${escapeHtml(`${cadenceMinutes}-MINUTE ENGINE`)}</small><strong>${escapeHtml(cycleLabel)}</strong></span>
+      <i aria-hidden="true"></i><span><small>${escapeHtml(`${cadenceMinutes}-MINUTE RESEARCH`)}</small><strong>${escapeHtml(cycleLabel)}</strong></span>
     </div>
-    <div class="mirror-flow-step ${activeWatchers.length ? "done" : "blocked"}"><small>01</small><span><strong>Watch</strong><em>${escapeHtml(`${activeWatchers.length} people & funds`)}</em></span></div>
-    <div class="mirror-flow-step ${cycleRunning ? "working" : mirror.available ? "done" : "waiting"}"><small>02</small><span><strong>Score</strong><em>${escapeHtml(`${summary.signalsReceived || 0} signals ranked`)}</em></span></div>
-    <div class="mirror-flow-step ${paper.mode === "paper_shadow_only" ? "done" : "waiting"}"><small>03</small><span><strong>Paper copy</strong><em>${escapeHtml(paper.mode === "paper_shadow_only" ? "Runs automatically" : "Not started")}</em></span></div>
-    <div class="mirror-flow-step gate"><small>04</small><span><strong>Live order</strong><em>${escapeHtml(liveGateCount ? `${liveGateCount} in Human Gate` : "Approval required")}</em></span></div>`;
+    <div class="mirror-flow-step ${cycleRunning ? "working" : mirror.available ? "done" : "waiting"}"><small>01</small><span><strong>Research</strong><em>${escapeHtml(`${state.overview?.metrics?.trackedRecords || state.records.length || 0} symbols`)}</em></span></div>
+    <div class="mirror-flow-step ${activeWatchers.length ? "done" : "blocked"}"><small>02</small><span><strong>Copy sources</strong><em>${escapeHtml(`${activeWatchers.length} traders & funds`)}</em></span></div>
+    <div class="mirror-flow-step ${paper.mode === "paper_shadow_only" ? "done" : "waiting"}"><small>03</small><span><strong>Test results</strong><em>${escapeHtml(`${(paper.positions || []).length} simulated positions`)}</em></span></div>
+    <div class="mirror-flow-step gate"><small>04</small><span><strong>Real order</strong><em>${escapeHtml(liveGateCount ? `${liveGateCount} in Human Gate` : "Only after every check passes")}</em></span></div>`;
 
   $("#mirrorMetrics").innerHTML = [
-    ["Watching", activeWatchers.length || Number(importer.enabledEntries || 0) + Number(importer13f.enabledEntries || 0), `${fastWatchers.length} fast · ${delayedWatchers.length} delayed`],
-    ["Signals", summary.signalsReceived ?? 0, `${summary.paperReady ?? 0} copy-ready`],
-    ["Paper positions", (paper.positions || []).length, `${formatMoney(paper.deployedDollars || 0)} deployed`],
+    ["Symbols researched", state.overview?.metrics?.trackedRecords || state.records.length || 0, `${state.overview?.metrics?.validSetups || 0} valid setups`],
+    ["Public signals", summary.signalsReceived ?? 0, `${summary.paperReady ?? 0} copy candidates`],
+    ["Copy sources", activeWatchers.length || Number(importer.enabledEntries || 0) + Number(importer13f.enabledEntries || 0), `${fastWatchers.length} fast · ${delayedWatchers.length} delayed`],
     ["Measured", knowledgeSummary.measuredOutcomes ?? 0, `${knowledgeSummary.pendingOutcomes ?? 0} pending`],
   ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
   $("#mirrorAllocation").innerHTML = `
-    <div><small>PAPER EQUITY</small><strong>${escapeHtml(formatMoney(paper.equityDollars || paper.initialCashDollars || 0))}</strong><span class="${Number(paper.totalPnlDollars || 0) >= 0 ? "positive" : "negative"}">${escapeHtml(`${formatMoney(paper.totalPnlDollars || 0)} P&L`)}</span></div>
-    <div><small>MAX COPY</small><strong>${escapeHtml(formatMoney(guardrails.maxOrderDollars || mirror.policy?.maxTradeDollars || 0))}</strong><span>per live review</span></div>`;
+    <div><small>SIMULATION RESULT</small><strong>${escapeHtml(formatMoney(paper.equityDollars || paper.initialCashDollars || 0))}</strong><span class="${Number(paper.totalPnlDollars || 0) >= 0 ? "positive" : "negative"}">${escapeHtml(`${formatMoney(paper.totalPnlDollars || 0)} P&L`)}</span></div>
+    <div><small>REAL ORDER CAP</small><strong>${escapeHtml(formatMoney(guardrails.maxOrderDollars || mirror.policy?.maxTradeDollars || 0))}</strong><span>Human Gate required</span></div>`;
 
   $("#mirrorDecisionCounts").innerHTML = [
     ["sell", "SELL", planSummary.sells || candidates.filter((candidate) => candidate.side === "SELL").length],
@@ -949,8 +959,7 @@ function renderMirror() {
     ["buy", "BUY", planSummary.buys || candidates.filter((candidate) => candidate.side === "BUY" && candidate.status === "paper_ready").length],
   ].map(([className, label, value]) => `<span class="${className}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
 
-  $("#mirrorCandidates").innerHTML = candidates.length
-      ? candidates.map((candidate) => {
+  const copyCandidateCards = candidates.map((candidate) => {
         const proposal = proposalByCandidate.get(candidate.id) || null;
         const reviewState = proposal?.reviewState || "";
         const pendingGate = reviewState === "awaiting_human_gate";
@@ -958,7 +967,7 @@ function renderMirror() {
         const actionable = proposal?.draftEligible === true && !mirror.stale;
         const mainReason = candidate.reasons?.[0] || "No evaluation reason recorded.";
         const signalAge = Number(candidate.signalAgeHours ?? candidate.disclosureLagHours ?? 0);
-        const statusLabel = candidate.status === "paper_ready" ? "COPY READY" : candidate.status === "research_only" ? "WATCH" : mirrorStatusLabel(candidate.status).toUpperCase();
+        const statusLabel = candidate.status === "paper_ready" ? "COPY CANDIDATE" : candidate.status === "research_only" ? "RESEARCH" : mirrorStatusLabel(candidate.status).toUpperCase();
         const sourceMode = candidate.sourceId === "sec_form4" || /form 4/i.test(candidate.sourceName) ? "FAST DISCLOSURE" : "DELAYED FILING";
         return `
           <article class="mirror-candidate ${escapeHtml(statusClass(candidate.status))}" data-side="${escapeHtml(candidate.side.toLowerCase())}">
@@ -975,7 +984,7 @@ function renderMirror() {
               <span><small>Signal → now</small><strong>${escapeHtml(`${outlookValue(candidate.signalPrice)} → ${outlookValue(candidate.currentPrice)}`)}</strong></span>
               <span><small>Drift</small><strong>${escapeHtml(candidate.priceDriftPct === null ? "—" : formatPercent(candidate.priceDriftPct, 2))}</strong></span>
               <span><small>Age</small><strong>${escapeHtml(signalAge < 1 ? `${Math.round(signalAge * 60)}m` : `${signalAge.toFixed(1)}h`)}</strong></span>
-              <span><small>Copy size</small><strong>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</strong></span>
+              <span><small>Proposed size</small><strong>${escapeHtml(formatMoney(candidate.mirrorNotionalDollars))}</strong></span>
             </div>
             <div class="mirror-candidate-verdict">
               <em class="tag ${escapeHtml(statusClass(candidate.status))}">${escapeHtml(statusLabel)}</em>
@@ -994,14 +1003,57 @@ function renderMirror() {
             </div>
           </article>
         `;
-      }).join("")
-    : `<div class="mirror-empty">
-        <span class="mirror-radar" aria-hidden="true"><i></i></span>
-        <div><h3>No current copy signal</h3><p>${escapeHtml(cycleRunning ? "The scanner is checking filings and prices now." : remainingSeconds !== null ? `The engine checks again in ${formatCountdown(remainingSeconds)}.` : "The engine is waiting for its next scheduled scan.")}</p></div>
-        <strong>${escapeHtml(`${activeWatchers.length} watchers active`)}</strong>
-      </div>`;
+      }).join("");
+  const independentCandidateCards = independentProposals.map((proposal) => {
+    const research = proposal.research || {};
+    const checkCount = Number(research.checksPassed || 0);
+    const checkTotal = Number(research.checksTotal || 0);
+    const liveReady = proposal.draftEligible === true && ["BUY", "SELL"].includes(proposal.side);
+    const pendingGate = proposal.reviewState === "awaiting_human_gate";
+    const statusLabel = pendingGate ? "HUMAN GATE" : liveReady ? "READY FOR GATE" : "RESEARCH";
+    const primaryNote = liveReady
+      ? research.mainReason || "Every current local check passed."
+      : proposal.blockers?.[0] || research.mainRisk || "Waiting for the next evidence check.";
+    return `
+      <article class="mirror-candidate ${liveReady ? "paper_ready" : "research_only"}" data-side="${escapeHtml(String(proposal.side || "HOLD").toLowerCase())}">
+        <div class="mirror-candidate-company">
+          ${logoMarkup(proposal.symbol)}
+          <span class="proposal-side ${escapeHtml(String(proposal.side || "HOLD").toLowerCase())}">${escapeHtml(proposal.side || "HOLD")}</span>
+        </div>
+        <div class="mirror-candidate-source">
+          <small>INDEPENDENT SCAN</small>
+          <strong>${escapeHtml(proposal.symbol)}</strong>
+          <span>${escapeHtml(research.setupType || "Evaluator research")}</span>
+        </div>
+        <div class="mirror-candidate-market">
+          <span><small>Reference</small><strong>${escapeHtml(outlookValue(proposal.referencePrice))}</strong></span>
+          <span><small>Order size</small><strong>${escapeHtml(proposal.requestedDollars ? formatMoney(proposal.requestedDollars) : "—")}</strong></span>
+          <span><small>Checks</small><strong>${escapeHtml(`${checkCount}/${checkTotal || "—"}`)}</strong></span>
+          <span><small>Next review</small><strong>${escapeHtml(research.nextReviewAt ? relativeCycle(research.nextReviewAt) : `${cadenceMinutes}m cycle`)}</strong></span>
+        </div>
+        <div class="mirror-candidate-verdict">
+          <em class="tag ${liveReady ? "valid_setup" : "research_only"}">${escapeHtml(statusLabel)}</em>
+          <strong>${escapeHtml(`${research.score ?? Math.round(Number(proposal.rankingScore || 0) * 100)} score`)}</strong>
+          <span>${escapeHtml(primaryNote)}</span>
+        </div>
+        <div class="mirror-candidate-actions">
+          <button class="secondary" type="button" data-proposal-drawer="${escapeHtml(proposal.id)}">Why / Research</button>
+          ${pendingGate
+            ? `<button type="button" disabled>Human Gate pending</button>`
+            : liveReady
+              ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send to Human Gate</button>`
+              : `<button type="button" disabled>Monitoring</button>`}
+        </div>
+      </article>`;
+  }).join("");
+  const researchCandidateCards = `${copyCandidateCards}${independentCandidateCards}`;
+  $("#mirrorCandidates").innerHTML = researchCandidateCards || `<div class="mirror-empty">
+    <span class="mirror-radar" aria-hidden="true"><i></i></span>
+    <div><h3>No research candidate yet</h3><p>${escapeHtml(cycleRunning ? "Research is checking filings, sources, and prices now." : remainingSeconds !== null ? `Research checks again in ${formatCountdown(remainingSeconds)}.` : "Research is waiting for its next scheduled scan.")}</p></div>
+    <strong>${escapeHtml(`${activeWatchers.length} copy sources active`)}</strong>
+  </div>`;
 
-  $("#mirrorWatcherCount").textContent = `${activeWatchers.length} active`;
+  $("#mirrorWatcherCount").textContent = `${activeWatchers.length} monitored`;
   $("#mirrorWatchers").innerHTML = watchers.length
     ? watchers.map((watcher) => {
         const initials = watcher.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -1030,7 +1082,7 @@ function renderMirror() {
         <i class="${source.active ? "ready" : "delay"}"></i>
         <div><strong>${escapeHtml(source.name)}</strong><em>${escapeHtml(`${String(source.delayClass || "delay unknown").replaceAll("_", " ")} · ${source.health || "waiting"}`)}</em></div>
         <button type="button" data-mirror-follow="${escapeHtml(source.id)}" data-next-following="${source.following ? "false" : "true"}">${source.following ? "Following" : "Follow"}</button>
-        <button type="button" data-mirror-enable="${escapeHtml(source.id)}" data-next-enabled="${source.mirrorEnabled ? "false" : "true"}" ${source.following ? "" : "disabled"}>${source.mirrorEnabled ? "Mirror enabled" : "Mirror off"}</button>
+        <button type="button" data-mirror-enable="${escapeHtml(source.id)}" data-next-enabled="${source.mirrorEnabled ? "false" : "true"}" ${source.following ? "" : "disabled"}>${source.mirrorEnabled ? "Copy on" : "Copy off"}</button>
       </article>`).join("")
     : `<span><i class="delay"></i><strong>Source registry</strong><em>pending</em></span>`;
   const profiles = knowledge.sourceProfiles || [];
@@ -1177,7 +1229,7 @@ function renderChat() {
           </article>
         `,
       )
-      .join("") || `<article class="chat-message assistant"><strong>Stock Guru</strong><p>Ask about evaluator records, Mirror Lab decisions, source delay, price drift, or readiness blockers.</p></article>`;
+      .join("") || `<article class="chat-message assistant"><strong>Stock Guru</strong><p>Ask about market research, copy-trader signals, source delay, price drift, or live-order readiness.</p></article>`;
   $("#stockChat").scrollTop = $("#stockChat").scrollHeight;
 }
 
@@ -1368,7 +1420,7 @@ async function approveOverviewProposal(proposalId) {
   } catch (error) {
     feedback.textContent = `Proposal stopped safely: ${error.message}`;
     button.disabled = false;
-    button.textContent = "Review & approve";
+    button.textContent = "Send to Human Gate";
   }
 }
 
@@ -1387,27 +1439,6 @@ async function declineOverviewProposal(proposalId) {
     button.disabled = false;
     button.textContent = "Decline";
     $("#overviewProposalFeedback").textContent = error.message;
-  }
-}
-
-async function paperTestOverviewProposal(proposalId) {
-  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
-  const button = $(`[data-proposal-paper="${CSS.escape(proposalId)}"]`);
-  const feedback = $("#overviewProposalFeedback");
-  if (!proposal || !button) return;
-  button.disabled = true;
-  button.textContent = "Recording paper fill…";
-  feedback.textContent = `Paper testing ${proposal.symbol} with simulated cash…`;
-  try {
-    const payload = await api(`/api/stock-office/proposals/${encodeURIComponent(proposalId)}/paper-test`, { method: "POST", body: "{}" });
-    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
-    state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
-    feedback.textContent = `${proposal.symbol} paper fill recorded for ${formatMoney(payload.action?.requestedDollars)}. No Robinhood call or real money was used.`;
-    renderTradeProposals();
-    renderShadowPortfolio();
-  } catch (error) {
-    feedback.textContent = error.message;
-    await pollBrokerControl();
   }
 }
 
@@ -1856,7 +1887,7 @@ function renderRefreshFeedback(refresh) {
     ? refresh.errors?.[0] || refresh.warnings?.[0]
     : "";
   $("#refreshFeedbackMessage").textContent = refresh.status === "success"
-    ? "Latest available prices, rankings, and Mirror decisions loaded. Automatic monitoring continues."
+    ? "Latest available prices, rankings, research, and copy-source decisions loaded. Automatic monitoring continues."
     : issue || refresh.message || "Market data status updated.";
   $("#refreshFeedbackTime").textContent = refresh.completedAt ? formatTime(refresh.completedAt) : "Working now";
 }
@@ -1952,11 +1983,11 @@ async function updateMirrorSourcePolicy(button) {
   try {
     const response = await api(`/api/stock-office/mirror/sources/${encodeURIComponent(sourceId)}`, { method: "POST", body: JSON.stringify(payload) });
     state.mirrorIntelligence = response.mirrorIntelligence || state.mirrorIntelligence;
-    renderMirrorLab();
-    showRefreshFeedback("Mirror policy updated", response.safety || "Source controls updated.", "success");
+    renderMirror();
+    showRefreshFeedback("Copy policy updated", response.safety || "Source controls updated.", "success");
   } catch (error) {
     button.disabled = false;
-    showRefreshFeedback("Mirror policy not changed", error.message, "error");
+    showRefreshFeedback("Copy policy not changed", error.message, "error");
   }
 }
 
@@ -1993,8 +2024,6 @@ document.addEventListener("click", (event) => {
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
   if (proposalApprove && !proposalApprove.disabled) approveOverviewProposal(proposalApprove.dataset.proposalApprove);
-  const proposalPaper = event.target.closest("[data-proposal-paper]");
-  if (proposalPaper && !proposalPaper.disabled) paperTestOverviewProposal(proposalPaper.dataset.proposalPaper);
   const mirrorApprove = event.target.closest("[data-mirror-approve]");
   if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");

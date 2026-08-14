@@ -219,6 +219,7 @@ const robinhoodMcpClient = createRobinhoodMcpClient({
 const stockTelegramSecretCache = new Map();
 const stockTelegramNotifier = createStockTelegramNotifier({
   environment: process.env,
+  controlTransport: ["127.0.0.1", "localhost", "::1"].includes(String(HOST).toLowerCase()) ? "local_polling" : "webhook",
   getSetting: (key, fallback) => readStockTelegramSettings(key, fallback),
   setSetting: (key, value) => writeStockTelegramSettings(key, value),
   getSecret: (provider) => {
@@ -263,11 +264,6 @@ stockEventBus.subscribe("broker.disconnected", (event) => stockTelegramNotifier.
   eventId: event.id,
   kind: "broker_failure",
   text: `ARGENTUM BROKER FAILURE\n${redactSensitiveText(event.payload?.reason || event.payload?.error || "Official Robinhood state is unavailable.").slice(0, 800)}\nExecution is closed. Research continues.`,
-}, readState().approvals || []).catch(() => null));
-stockEventBus.subscribe("risk.blocked", (event) => stockTelegramNotifier.notifySystemEvent({
-  eventId: event.id,
-  kind: "risk_alert",
-  text: `ARGENTUM RISK BLOCK\n${event.payload?.side || ""} ${event.payload?.symbol || ""}\n${redactSensitiveText(event.payload?.reason || "A current risk rule blocked execution.").slice(0, 800)}\nNo order was placed.`,
 }, readState().approvals || []).catch(() => null));
 stockEventBus.subscribe("order.rejected", (event) => stockTelegramNotifier.notifySystemEvent({
   eventId: event.id,
@@ -4160,7 +4156,86 @@ async function executeApprovedStockDraft(draftId, options = {}) {
   const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
     || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
   if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
-  const claimed = claimApprovedDispatch(draft, approval, snapshot);
+  let claimed;
+  try {
+    claimed = claimApprovedDispatch(draft, approval, snapshot);
+  } catch (error) {
+    const approvalCanBeFinalized = approval.status === "approved"
+      && approval.actionType === "place_robinhood_equity_order"
+      && !approval.consumedAt
+      && !(Number(approval.useCount) > 0);
+    if (!approvalCanBeFinalized) throw error;
+    const stoppedAt = now();
+    const stoppedReason = redactSensitiveText(error.message || "Final order revalidation stopped safely.").slice(0, 500);
+    const current = normalizeStockOfficeState(state.stockOffice);
+    const stoppedDraftInput = {
+      ...draft,
+      status: "review_rejected",
+      brokerReviewPassed: false,
+      brokerWarnings: [],
+      lastDispatchError: stoppedReason,
+      liveOrderPlaced: false,
+      updatedAt: stoppedAt,
+    };
+    const stoppedApproval = {
+      ...approval,
+      useCount: Number(approval.useCount || 0) + 1,
+      consumedAt: stoppedAt,
+      executionOutcome: "broker_execution_stopped",
+      executionError: stoppedReason,
+      executionStoppedAt: stoppedAt,
+      executionDraftId: draft.id,
+      executionBrokerOrderId: null,
+    };
+    state.stockOffice = normalizeStockOfficeState({
+      ...current,
+      tradeDrafts: [stoppedDraftInput, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      continuousReview: {
+        ...current.continuousReview,
+        activeDraftId: "",
+        activeApprovalId: "",
+        lastOutcome: "failed_safe",
+        lastMessage: `${draft.side} ${draft.symbol} stopped during final revalidation: ${stoppedReason}`,
+      },
+    });
+    const approvalIndex = (state.approvals || []).findIndex((item) => item.id === approval.id);
+    if (approvalIndex >= 0) state.approvals[approvalIndex] = stoppedApproval;
+    const stoppedDraft = state.stockOffice.tradeDrafts.find((item) => item.id === draft.id) || stoppedDraftInput;
+    stockIntelligenceStore.recordOrderAudit({
+      correlationId: `revalidation:${approval.id}`,
+      actorType: options.actorType || "WEB",
+      actorId: options.actorId || "",
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      action: "final_revalidation_stopped",
+      oldState: draft.status,
+      newState: stoppedDraft.status,
+      reason: stoppedReason,
+      error: stoppedReason,
+      telegramMessageId: options.telegramMessageId || "",
+    });
+    stockEventBus.publish("order.rejected", {
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      status: stoppedDraft.status,
+      reason: stoppedReason,
+      draft: stoppedDraft,
+    }, { correlationId: `revalidation:${approval.id}`, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+    audit(state, "Approved Stock Office order stopped during final revalidation", `${draft.side} ${draft.symbol}: ${stoppedReason}; exact one-use approval consumed and no broker order was attempted.`);
+    writeState(state);
+    return {
+      draft: stoppedDraft,
+      approval: stoppedApproval,
+      liveOrderPlaced: false,
+      reconciliationRequired: false,
+      notificationDelivery: { sent: false, state: "ineligible", reason: "No broker order was recorded." },
+      notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []),
+    };
+  }
   const current = normalizeStockOfficeState(state.stockOffice);
   state.stockOffice = normalizeStockOfficeState({
     ...current,
@@ -6758,14 +6833,14 @@ async function handleApi(req, res, url) {
       if (!scope.configured) throw guardedError("Configure the Telegram bot token and chat ID before requesting notification approval.", 409);
       const approvalResult = createHumanGateRequest({
         actionType: STOCK_TELEGRAM_APPROVAL_ACTION,
-        title: "Enable qualified proposal and verified trade alerts to Telegram",
+        title: "Enable Stock Office Telegram approval center",
         riskLevel: "medium",
         linkedId: `stock-office:telegram:${scope.destinationHash}`,
         officeId: "stock-office",
         workflowId: "workflow-stock-watch",
         evidence: `${scope.destination} is configured in local secure storage. No credential value is available to the browser.`,
-        action: "Allow Stock Office to send a Telegram alert when a fully checked BUY or SELL proposal reaches Human Gate, after an independently reconciled Robinhood order, or for an operator-requested connection test.",
-        exactScope: "Telegram only, one configured destination, fully qualified equity proposal alerts with a pending Human Gate request, broker-confirmed equity order alerts, and operator-requested tests. Blocked drafts, HOLD reviews, paper trades, rejected orders, and unverified placements are excluded.",
+        action: "Allow Stock Office to send actionable approval cards, broker outcomes, source/broker failures, persisted night and morning reports, health replies, and operator-requested command responses to the one authorized Telegram destination.",
+        exactScope: "Telegram only, one configured private destination or an environment-allowlisted group user. Human Gate approvals reference immutable internal approval IDs and use the same one-use broker path as web approvals. No raw Telegram text can create an order. Ordinary rejected research candidates, unverified fills, and secret values are excluded.",
         details: {
           officeId: "stock-office",
           channel: scope.channel,
@@ -6773,6 +6848,8 @@ async function handleApi(req, res, url) {
           eventTypes: STOCK_TELEGRAM_EVENT_TYPES,
           automaticBrokerNotifications: true,
           qualifiedProposalAlertsAuthorized: true,
+          brokerAndSourceFailureAlertsAuthorized: true,
+          rejectedResearchAlertsAuthorized: false,
           blockedDraftsAuthorized: false,
           paperTradesAuthorized: false,
           customerContactAuthorized: false,
@@ -7165,7 +7242,35 @@ async function handleApi(req, res, url) {
       });
       audit(latestState, "Stock Office order awaiting Human Gate", `${draft.side} ${draft.symbol} order fingerprint ${draft.fingerprint} is awaiting one-use approval; no live order placed.`);
       writeState(latestState);
-      sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, liveOrderPlaced: false });
+      const notificationState = readState();
+      const matchingProposal = buildCopyPortfolioPlan(snapshot).proposals.find((proposal) => proposal.draftFingerprint === draft.fingerprint);
+      const notificationProposal = matchingProposal || {
+        id: draft.sourceId || draft.id,
+        fingerprint: draft.fingerprint,
+        draftEligible: true,
+        symbol: draft.symbol,
+        side: draft.side,
+        requestedDollars: draft.requestedDollars,
+        referencePrice: draft.referencePrice,
+        research: {
+          sourceLabel: draft.sourceType,
+          mainReason: draft.thesis,
+          checksPassed: draft.checks.filter((check) => check.passed).length,
+          checksTotal: draft.checks.length,
+        },
+      };
+      const notificationDelivery = await stockTelegramNotifier.notifyQualifiedProposal(
+        notificationProposal,
+        awaitingDraft,
+        approvalResult.approval,
+        notificationState.approvals || [],
+      ).catch((error) => ({ sent: false, state: "failed", reason: redactSensitiveText(error.message).slice(0, 300) }));
+      const auditState = readState();
+      audit(auditState, notificationDelivery.sent ? "Qualified proposal Telegram delivered" : "Qualified proposal Telegram not delivered", notificationDelivery.sent
+        ? `${draft.side} ${draft.symbol} Human Gate approval card delivered.`
+        : `No proposal approval card sent: ${notificationDelivery.reason || notificationDelivery.state}.`);
+      writeState(auditState);
+      sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, notificationDelivery, liveOrderPlaced: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -7996,5 +8101,22 @@ server.listen(PORT, HOST, () => {
     }, stockReadinessIntervalMs());
     readinessTimer.unref();
     runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness startup failed safely:", error.message));
+    if (["127.0.0.1", "localhost", "::1"].includes(String(HOST).toLowerCase())) {
+      let telegramPollPromise = null;
+      const pollTelegram = async () => {
+        if (telegramPollPromise) return telegramPollPromise;
+        telegramPollPromise = stockTelegramNotifier.pollUpdates({ approvals: readState().approvals || [] });
+        try {
+          return await telegramPollPromise;
+        } finally {
+          telegramPollPromise = null;
+        }
+      };
+      const telegramTimer = setInterval(() => {
+        pollTelegram().catch((error) => console.warn("Telegram local polling failed safely:", error.message));
+      }, simulationInteger(process.env.STOCK_GURU_TELEGRAM_POLL_INTERVAL_MS, 2_000, 1_000, 30_000));
+      telegramTimer.unref();
+      pollTelegram().catch((error) => console.warn("Telegram local polling startup failed safely:", error.message));
+    }
   }
 });

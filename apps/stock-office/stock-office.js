@@ -38,6 +38,11 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 
+function setInputValue(selector, value) {
+  const input = $(selector);
+  if (input) input.value = value;
+}
+
 try {
   state.operationsCollapsed = window.localStorage.getItem("stock-office:operations-collapsed") === "1";
 } catch {
@@ -971,16 +976,16 @@ function renderBrokerControl() {
   connectionFeedback.hidden = !connectionFeedback.textContent;
 
   if (!$("#guardrailForm").dataset.loaded) {
-    $("#principalDollars").value = displayedGuardrails.principalDollars || 25;
-    $("#maxTotalDollars").value = displayedGuardrails.maxTotalDollars || 25;
-    $("#maxOrderDollars").value = displayedGuardrails.maxOrderDollars || 5;
-    $("#cashReserveDollars").value = displayedGuardrails.cashReserveDollars || 0;
-    $("#dailyLossLimitPct").value = ((displayedGuardrails.dailyLossLimitPct || 0.02) * 100).toFixed(1);
-    $("#riskPerTradePct").value = ((displayedGuardrails.riskPerTradePct || 0.01) * 100).toFixed(1);
-    $("#maxPositions").value = displayedGuardrails.maxPositions || 5;
-    $("#maxTradesPerDay").value = displayedGuardrails.maxTradesPerDay || 3;
-    $("#minEntryScore").value = displayedGuardrails.minEntryScore || 85;
-    $("#orderDollars").value = Math.min(displayedGuardrails.maxOrderDollars || 5, 5);
+    setInputValue("#principalDollars", displayedGuardrails.principalDollars || 25);
+    setInputValue("#maxTotalDollars", displayedGuardrails.maxTotalDollars || 25);
+    setInputValue("#maxOrderDollars", displayedGuardrails.maxOrderDollars || 5);
+    setInputValue("#cashReserveDollars", displayedGuardrails.cashReserveDollars || 0);
+    setInputValue("#dailyLossLimitPct", ((displayedGuardrails.dailyLossLimitPct || 0.02) * 100).toFixed(1));
+    setInputValue("#riskPerTradePct", ((displayedGuardrails.riskPerTradePct || 0.01) * 100).toFixed(1));
+    setInputValue("#maxPositions", displayedGuardrails.maxPositions || 5);
+    setInputValue("#maxTradesPerDay", displayedGuardrails.maxTradesPerDay || 3);
+    setInputValue("#minEntryScore", displayedGuardrails.minEntryScore || 85);
+    setInputValue("#orderDollars", Math.min(displayedGuardrails.maxOrderDollars || 5, 5));
     $("#guardrailForm").dataset.loaded = "true";
   }
   const applyGuardrails = $("#applyGuardrails");

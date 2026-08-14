@@ -23,10 +23,10 @@ function fixture(options = {}) {
     getSecret: (provider) => secrets[provider] || "",
     setSecret: (provider, value) => { secrets[provider] = value; },
     deleteSecret: (provider) => { delete secrets[provider]; },
-    fetchImpl: async (url, options) => {
+    fetchImpl: options.fetchImpl || (async (url, options) => {
       requests.push({ url, options });
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
-    },
+    }),
     reserveEvent: options.reserveEvent || ((event) => {
       const duplicate = reserved.has(event.idempotencyKey);
       reserved.add(event.idempotencyKey);
@@ -99,6 +99,16 @@ test("only verified broker orders send, and the broker order ID is idempotent", 
   assert.match(requests[0].options.body, /Argentum verified BUY/);
   assert.doesNotMatch(requests[0].options.body, /broker-order-sensitive-1234/);
   assert.equal(settings().recent[0].kind, "verified_broker_order");
+});
+
+test("ordinary rejected research candidates never generate Telegram risk spam", async () => {
+  const { notifier, requests } = fixture();
+  notifier.configure({ botToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", chatId: "1234567890" });
+  const approval = approvalFor(notifier.approvalScope());
+  notifier.enable(approval, [approval]);
+  const result = await notifier.notifySystemEvent({ kind: "risk_alert", eventId: "risk-one", text: "BUY score must be at least 85." }, [approval]);
+  assert.equal(result.state, "ineligible");
+  assert.equal(requests.length, 0);
 });
 
 test("changing the Telegram destination revokes the prior standing permission", () => {
@@ -193,6 +203,50 @@ test("Telegram approval uses a final confirmation and duplicate callbacks are id
   assert.equal(approvalCalls.length, 1);
   assert.equal(approvalCalls[0].decision, "approve");
   assert.equal(approvalCalls[0].approvalId, "trade-approval-one");
+});
+
+test("local polling accepts a private configured chat without a public webhook", async () => {
+  let settings = {};
+  const secrets = {};
+  const approvalCalls = [];
+  const methods = [];
+  const standingApprovals = [];
+  const notifier = createStockTelegramNotifier({
+    environment: {},
+    controlTransport: "local_polling",
+    now: () => new Date("2026-08-12T14:00:00.000Z"),
+    getSetting: (_key, fallback) => settings || fallback,
+    setSetting: (_key, value) => { settings = value; },
+    getSecret: (provider) => secrets[provider] || "",
+    setSecret: (provider, value) => { secrets[provider] = value; },
+    reserveEvent: () => ({ id: "event-poll", duplicate: false }),
+    completeEvent: () => {},
+    approvalAction: async (input) => { approvalCalls.push(input); return { text: "Approved through Human Gate." }; },
+    fetchImpl: async (url) => {
+      const method = String(url).split("/").pop();
+      methods.push(method);
+      if (method === "getUpdates") return { ok: true, status: 200, json: async () => ({ ok: true, result: [{
+        update_id: 77,
+        callback_query: { id: "poll-confirm", data: "hg:c:trade-approval-poll", from: { id: 1234567890 }, message: { message_id: 9, chat: { id: 1234567890, type: "private" } } },
+      }] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) };
+    },
+  });
+  notifier.configure({ botToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", chatId: "1234567890" });
+  const standing = approvalFor(notifier.approvalScope());
+  standingApprovals.push(standing);
+  notifier.enable(standing, standingApprovals);
+
+  assert.equal(notifier.publicStatus(standingApprovals).controlReady, true);
+  assert.equal(notifier.publicStatus(standingApprovals).controlTransport, "local_polling");
+  const result = await notifier.pollUpdates({ approvals: standingApprovals });
+  assert.equal(result.processed, 1);
+  assert.equal(approvalCalls.length, 1);
+  assert.equal(approvalCalls[0].approvalId, "trade-approval-poll");
+  assert.equal(settings.lastUpdateId, 77);
+  assert.ok(methods.includes("getUpdates"));
+  assert.ok(methods.includes("answerCallbackQuery"));
+  assert.ok(methods.includes("sendMessage"));
 });
 
 test("Telegram webhook secret and per-user rate limit fail closed", async () => {

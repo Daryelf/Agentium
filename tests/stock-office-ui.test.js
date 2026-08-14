@@ -58,6 +58,7 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(html, /id="overviewOperationsSummary"/);
   assert.match(html, /Trade risk/);
   assert.match(html, /Daily trades/);
+  assert.match(html, /id="cashReserveDollars"/);
   assert.match(html, /Apply approved limits/);
   assert.doesNotMatch(html, /No password scraping|No API path|Human Gate stays on|Read first|App session/);
   assert.match(script, /\/api\/stock-office\/broker-control/);
@@ -113,6 +114,7 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
   assert.match(script, /toolContract\.registered/);
   assert.match(script, /No settled buying power\. Add funds in Robinhood, then refresh\./);
+  assert.match(script, /function setInputValue/);
   assert.match(script, /target\.hidden = true/);
   assert.doesNotMatch(`${html}\n${script}`, /Robinhood password|enter your Robinhood login/i);
 });
@@ -176,6 +178,7 @@ test("Stock Office runs fast local readiness checks between full market-data sca
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
 
   assert.match(html, /id="telegramConfigForm"/);
   assert.match(html, /Stored in Mac Keychain/);
@@ -186,6 +189,10 @@ test("Stock Office UI exposes secure approval-gated Telegram alerts for verified
   assert.match(script, /notifications\/telegram\/enable/);
   assert.match(script, /telegramAction\("test"\)/);
   assert.doesNotMatch(script, /STOCK_GURU_TELEGRAM_BOT_TOKEN/);
+  assert.match(server, /controlTransport: .*"local_polling" : "webhook"/);
+  assert.match(server, /stockTelegramNotifier\.pollUpdates/);
+  assert.match(server, /notificationProposal/);
+  assert.doesNotMatch(server, /subscribe\("risk\.blocked", \(event\) => stockTelegramNotifier/);
 });
 
 test("Research combines no-look-ahead copy evidence, consensus, and explicit source controls", () => {

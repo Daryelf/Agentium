@@ -536,6 +536,25 @@ test("approved exact order becomes a two-minute one-use dispatch claim", () => {
   assert.match(expired.lastDispatchError, /handoff expired/i);
 });
 
+test("an approval with a final stopped outcome cannot remain sticky or be reused", () => {
+  const current = snapshot();
+  const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });
+  const approval = {
+    ...approvedApproval(draft),
+    executionOutcome: "broker_execution_stopped",
+    executionError: "Market evidence changed during final revalidation.",
+    executionStoppedAt: "2026-08-10T17:00:20.000Z",
+  };
+  const normalized = tradeDraftWithApprovalState({ ...draft, approvalId: approval.id }, [approval], { now: "2026-08-10T17:00:21.000Z" });
+
+  assert.equal(normalized.status, "review_rejected");
+  assert.match(normalized.lastDispatchError, /evidence changed/i);
+  assert.throws(
+    () => claimApprovedDispatch({ ...draft, approvalId: approval.id }, approval, current, { now: "2026-08-10T17:00:21.000Z" }),
+    /final execution outcome|not approved for dispatch/i,
+  );
+});
+
 test("broker review warnings consume the one-use approval without recording an order", () => {
   const current = snapshot();
   const draft = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 10 }, current, { now: "2026-08-10T17:00:00.000Z" });

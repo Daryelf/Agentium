@@ -914,6 +914,15 @@ function tradeDraftWithApprovalState(draft = {}, approvals = [], options = {}) {
   const approval = (Array.isArray(approvals) ? approvals : []).find((item) => item?.id === normalized.approvalId)
     || (Array.isArray(approvals) ? approvals : []).find((item) => item?.linkedId === `stock-office:order:${normalized.fingerprint}`);
   if (!approval) return normalized;
+  if (approval.executionOutcome === "broker_execution_stopped") {
+    return normalizeTradeDraft({
+      ...normalized,
+      approvalId: approval.id,
+      status: "review_rejected",
+      lastDispatchError: approval.executionError || normalized.lastDispatchError || "Final order revalidation stopped safely.",
+      updatedAt: approval.executionStoppedAt || approval.decidedAt || at.toISOString(),
+    });
+  }
   if (approval.status === "approved" && !approval.consumedAt) return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "approved", updatedAt: approval.decidedAt || at.toISOString() });
   if (approval.status === "pending") return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "awaiting_human_gate", updatedAt: normalized.updatedAt });
   if (["blocked", "rejected", "needs_revision"].includes(approval.status)) return normalizeTradeDraft({ ...normalized, approvalId: approval.id, status: "cancelled", updatedAt: approval.decidedAt || approval.resolvedAt || at.toISOString() });
@@ -925,6 +934,7 @@ function claimApprovedDispatch(draft = {}, approval = {}, snapshot = {}, options
   const normalized = tradeDraftWithApprovalState(draft, [approval], { now: at });
   const match = approvalMatchesDraft(approval, normalized, { now: at });
   const reasons = [...match.reasons];
+  if (approval.executionOutcome) reasons.push("This Human Gate approval already has a final execution outcome and cannot be reused.");
   if (normalized.status !== "approved") reasons.push(`Order draft is not approved for dispatch: ${normalized.status}.`);
   if (normalized.dispatchClaimHash || normalized.dispatchAttempts > 0) reasons.push("This order draft already has a dispatch claim or attempt.");
   if (new Date(normalized.expiresAt).getTime() <= at.getTime()) reasons.push("Order draft expired before dispatch.");

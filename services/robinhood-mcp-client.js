@@ -158,8 +158,9 @@ function stringValue(objects, keys) {
 
 function explicitBoolean(objects, keys) {
   const value = firstValue(objects, keys);
-  if (value === true || String(value).toLowerCase() === "true") return true;
-  if (value === false || String(value).toLowerCase() === "false") return false;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (value === true || ["true", "tradable", "tradeable", "active", "enabled"].includes(normalized)) return true;
+  if (value === false || ["false", "untradable", "not_tradable", "not_tradeable", "inactive", "disabled"].includes(normalized)) return false;
   return null;
 }
 
@@ -800,8 +801,8 @@ function createRobinhoodMcpClient(options = {}) {
     ]);
     const preflightWarnings = [...blockingWarnings(quotePayload), ...blockingWarnings(tradabilityPayload)];
     const tradabilityObjects = walkObjects(tradabilityPayload);
-    const tradable = explicitBoolean(tradabilityObjects, ["tradable", "is_tradable", "equity_tradable"]);
-    const fractional = explicitBoolean(tradabilityObjects, ["fractional_tradable", "is_fractional_tradable", "fractional"]);
+    const tradable = explicitBoolean(tradabilityObjects, ["tradable", "tradeable", "is_tradable", "is_tradeable", "equity_tradable", "equity_tradeable"]);
+    const fractional = explicitBoolean(tradabilityObjects, ["fractional_tradability", "fractional_tradable", "fractional_tradeable", "is_fractional_tradable", "is_fractional_tradeable", "fractional"]);
     if (tradable !== true) preflightWarnings.push("Robinhood did not explicitly confirm that the equity is tradable.");
     if (reviewArgs.dollar_amount !== undefined && fractional !== true) preflightWarnings.push("Robinhood did not explicitly confirm fractional-dollar tradability.");
     const quoteObjects = walkObjects(quotePayload);

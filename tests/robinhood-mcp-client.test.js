@@ -144,6 +144,14 @@ function fakeRobinhood(options = {}) {
     }
     if (name === "get_equity_tradability") {
       assert.equal(args.symbol, "AAPL");
+      if (options.officialTradabilityShape) {
+        return mcpResult(body.id, toolResult({
+          symbol: "AAPL",
+          state: "active",
+          tradeable: options.tradable ?? true,
+          fractional_tradability: options.fractional ?? "tradable",
+        }));
+      }
       return mcpResult(body.id, toolResult({ symbol: "AAPL", tradable: options.tradable ?? true, fractional_tradable: options.fractional ?? true }));
     }
     if (name === "review_equity_order") return mcpResult(body.id, toolResult({ warnings: options.reviewWarnings || [] }));
@@ -257,6 +265,31 @@ test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliatio
   const cached = await client.refreshIfStale(60_000);
   assert.equal(cached.updatedAt, snapshot.updatedAt);
   assert.equal(fake.calls.length, callsBeforeCachedRefresh);
+});
+
+test("official Robinhood tradeable and fractional_tradability fields pass order preflight", async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-tradability-shape-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let stored = null;
+  const tokenStore = { ready: () => true, load: () => stored, save: (value) => { stored = structuredClone(value); }, clear: () => { stored = null; } };
+  const fake = fakeRobinhood({ officialTradabilityShape: true });
+  const client = createRobinhoodMcpClient({ dataDir, tokenStore, fetchImpl: fake.fetchImpl, now: () => new Date("2026-08-10T17:00:00.000Z") });
+  const started = await client.beginAuthorization({ redirectUri: "http://127.0.0.1:5173/api/stock-office/robinhood/oauth/callback", approvalId: "approval-connect" });
+  await client.completeAuthorization({ state: new URL(started.authorizationUrl).searchParams.get("state"), code: "oauth-code" });
+  await client.refreshBrokerSnapshot();
+
+  const result = await client.executeApprovedEnvelope({
+    reviewTool: "review_equity_order",
+    placementTool: "place_equity_order",
+    reviewArgs: { symbol: "AAPL", side: "buy", type: "market", dollar_amount: "5.00", time_in_force: "gfd", market_hours: "regular_hours" },
+    placementArgs: { symbol: "AAPL", side: "buy", type: "market", dollar_amount: "5.00", time_in_force: "gfd", market_hours: "regular_hours", ref_id: "one-use-ref" },
+    referencePrice: 100.5,
+    maxPriceDriftPct: 0.02,
+  });
+
+  assert.equal(result.reviewPassed, true);
+  assert.equal(result.placementAttempted, true);
+  assert.equal(result.reconciliation.matched, true);
 });
 
 test("Agentic account selection fails closed on ambiguity and never selects the primary account", () => {

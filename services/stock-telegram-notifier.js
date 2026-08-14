@@ -8,7 +8,6 @@ const ALLOWED_EVENT_TYPES = [
   "qualified_trade_proposal",
   "verified_broker_order",
   "operator_test",
-  "risk_alert",
   "source_failure",
   "broker_failure",
   "order_rejected",
@@ -50,6 +49,7 @@ function normalizeSettings(value = {}) {
     enabledAt: input.enabledAt || null,
     disabledAt: input.disabledAt || null,
     lastSentAt: input.lastSentAt || null,
+    lastUpdateId: Number.isSafeInteger(Number(input.lastUpdateId)) ? Number(input.lastUpdateId) : null,
     lastError: cleanError(input.lastError || ""),
     deliveredEventIds: (Array.isArray(input.deliveredEventIds) ? input.deliveredEventIds : []).map(String).slice(-100),
     recent: (Array.isArray(input.recent) ? input.recent : []).filter((item) => item && typeof item === "object").slice(0, MAX_RECENT),
@@ -126,6 +126,7 @@ function createStockTelegramNotifier(options = {}) {
   const commandContext = options.commandContext || (async () => ({ text: "Command data is unavailable." }));
   const approvalAction = options.approvalAction || (async () => ({ text: "Human Gate action is unavailable." }));
   const watchAction = options.watchAction || (async () => ({ text: "Watch action is unavailable." }));
+  const controlTransport = options.controlTransport === "local_polling" ? "local_polling" : "webhook";
   const active = new Map();
   const inboundActivity = new Map();
 
@@ -140,7 +141,12 @@ function createStockTelegramNotifier(options = {}) {
     const userId = String(from.id || "");
     const configured = credentials();
     const allowedChats = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_CHAT_IDS || configured.chatId);
-    const allowedUsers = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS);
+    const explicitUsers = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS);
+    const allowedUsers = explicitUsers.size
+      ? explicitUsers
+      : /^\d+$/.test(configured.chatId)
+        ? new Set([configured.chatId])
+        : new Set();
     const reasons = [];
     if (!chatId || !allowedChats.has(chatId)) reasons.push("Telegram chat is not authorized.");
     if (!userId || !allowedUsers.has(userId)) reasons.push("Telegram user is not authorized.");
@@ -193,6 +199,8 @@ function createStockTelegramNotifier(options = {}) {
     const destinationHashValue = chatId ? secretHash(chatId) : "";
     const approval = settings.approvalId ? approvals.find((item) => item?.id === settings.approvalId) : null;
     const authorized = settings.enabled && approvalAuthorizes(approval, destinationHashValue) && settings.destinationHash === destinationHashValue;
+    const userAuthorized = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS).size > 0 || /^\d+$/.test(chatId);
+    const transportReady = controlTransport === "local_polling" || Boolean(environment.STOCK_GURU_TELEGRAM_WEBHOOK_SECRET);
     return {
       configured: Boolean(token && chatId),
       enabled: authorized,
@@ -201,8 +209,9 @@ function createStockTelegramNotifier(options = {}) {
       lastSentAt: settings.lastSentAt,
       lastError: settings.lastError,
       recent: settings.recent.slice(0, 6),
-      allowedEvents: ["Trade approvals", "Broker-confirmed orders", "Risk and source failures", "Night and morning reports", "System health", "Operator test"],
-      controlReady: Boolean(token && chatId && environment.STOCK_GURU_TELEGRAM_WEBHOOK_SECRET && allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS).size),
+      allowedEvents: ["Trade approvals", "Broker-confirmed orders", "Broker and source failures", "Night and morning reports", "System health", "Operator test"],
+      controlReady: Boolean(token && chatId && authorized && userAuthorized && transportReady),
+      controlTransport,
       commands: CONTROL_COMMANDS.map((command) => `/${command}`),
       security: "Credentials remain server-side in Mac Keychain or environment variables.",
     };
@@ -391,10 +400,7 @@ function createStockTelegramNotifier(options = {}) {
     return CONTROL_COMMANDS.includes(command) ? { command, args } : { command: "help", args: [] };
   }
 
-  async function processUpdate(update = {}, input = {}) {
-    if (!verifyWebhookSecret(input.webhookSecret)) {
-      return { accepted: false, status: "unauthorized_webhook", httpStatus: 403 };
-    }
+  async function processAuthorizedUpdate(update = {}, input = {}) {
     const authorization = inboundAuthorization(update);
     const updateId = String(update.update_id ?? "");
     const callback = update.callback_query || null;
@@ -469,6 +475,43 @@ function createStockTelegramNotifier(options = {}) {
     }
   }
 
+  async function processUpdate(update = {}, input = {}) {
+    if (!verifyWebhookSecret(input.webhookSecret)) {
+      return { accepted: false, status: "unauthorized_webhook", httpStatus: 403 };
+    }
+    return processAuthorizedUpdate(update, input);
+  }
+
+  async function pollUpdates(input = {}) {
+    const approvals = Array.isArray(input.approvals) ? input.approvals : [];
+    const status = publicStatus(approvals);
+    if (controlTransport !== "local_polling") return { polled: false, state: "webhook_mode", processed: 0 };
+    if (!status.enabled || !status.controlReady) return { polled: false, state: status.state, processed: 0 };
+    const settings = readSettings();
+    try {
+      const response = await telegramRequest("getUpdates", {
+        ...(settings.lastUpdateId === null ? {} : { offset: settings.lastUpdateId + 1 }),
+        timeout: 0,
+        allowed_updates: ["message", "callback_query"],
+      });
+      const updates = Array.isArray(response.result) ? response.result : [];
+      const results = [];
+      let lastUpdateId = settings.lastUpdateId;
+      for (const update of updates) {
+        results.push(await processAuthorizedUpdate(update, { approvals }));
+        const updateId = Number(update?.update_id);
+        if (Number.isSafeInteger(updateId) && (lastUpdateId === null || updateId > lastUpdateId)) lastUpdateId = updateId;
+        writeSettings({ ...readSettings(), lastUpdateId, lastError: "" });
+      }
+      if (!updates.length && settings.lastError) writeSettings({ ...settings, lastError: "" });
+      return { polled: true, state: "active", processed: updates.length, results };
+    } catch (error) {
+      const message = cleanError(error);
+      writeSettings({ ...readSettings(), lastError: message });
+      return { polled: false, state: "failed", processed: 0, reason: message };
+    }
+  }
+
   return {
     approvalScope,
     configure,
@@ -477,6 +520,7 @@ function createStockTelegramNotifier(options = {}) {
     notifyQualifiedProposal,
     notifySystemEvent,
     notifyVerifiedTrade,
+    pollUpdates,
     processUpdate,
     publicStatus,
     removeConfiguration,

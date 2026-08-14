@@ -2315,6 +2315,7 @@ select {
 
 .simulation-candidate:last-child { border-bottom: 0; }
 .simulation-candidate[data-status="ready"] { background: linear-gradient(90deg, rgba(6, 78, 59, 0.1), transparent 58%); }
+.simulation-candidate[data-status="running"] { background: linear-gradient(90deg, rgba(8, 47, 73, 0.13), transparent 58%); }
 
 .simulation-company { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .simulation-company .company-logo { width: 28px; height: 28px; }
@@ -2339,6 +2340,26 @@ select {
 .simulation-action > span { color: #a7f3d0; font-size: 0.55rem; font-weight: 950; text-transform: uppercase; }
 .simulation-action > small { color: #7d8ca2; font-size: 0.54rem; line-height: 1.3; }
 .simulation-action button { min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 0.58rem; }
+
+.simulation-paper-capital {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 11px 0 4px;
+}
+
+.simulation-paper-capital span {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 10px;
+  background: rgba(8, 47, 73, 0.14);
+}
+
+.simulation-paper-capital small,
+.simulation-paper-capital strong { display: block; }
+.simulation-paper-capital small { color: #71839b; font-size: 0.52rem; text-transform: uppercase; }
+.simulation-paper-capital strong { margin-top: 4px; overflow: hidden; font-size: 0.76rem; text-overflow: ellipsis; }
 
 .simulation-accuracy-grid {
   display: grid;

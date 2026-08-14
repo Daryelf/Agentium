@@ -39,6 +39,7 @@ const {
   resetShadowPortfolio,
   runShadowPortfolioCycle,
 } = require("./services/stock-shadow-portfolio");
+const { runAutonomousSimulationCycle } = require("./services/stock-simulation-engine");
 const {
   brokerControlOverview,
   buildCopyPortfolioPlan,
@@ -81,6 +82,7 @@ const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
 const STOCK_SHADOW_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-shadow-portfolio.json");
+const STOCK_SIMULATION_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-simulation-lab.json");
 const STOCK_INTELLIGENCE_STATUS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-intelligence-scheduler.json");
 const STOCK_TELEGRAM_SETTINGS_FILE = path.join(STOCK_GURU_USER_DATA_DIR, "stock-telegram-notifications.json");
 const STOCK_LOGO_CACHE_DIR = path.join(STOCK_GURU_USER_DATA_DIR, "company-logos");
@@ -195,8 +197,9 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
     if (result.recordsMayHaveChanged) {
       try {
         refreshStockShadowPortfolio({ force: true });
+        refreshStockSimulationLab({ force: true });
       } catch (error) {
-        console.warn("Stock paper-shadow follow-up cycle failed safely:", error.message);
+        console.warn("Stock simulation follow-up cycle failed safely:", error.message);
       }
     }
     if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
@@ -5659,6 +5662,69 @@ function writeStockShadowPortfolio(portfolio) {
   fs.renameSync(temporaryPath, STOCK_SHADOW_FILE);
 }
 
+let stockSimulationLabState = null;
+
+function simulationInteger(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function stockSimulationOptions() {
+  return {
+    intervalMs: simulationInteger(process.env.STOCK_SIMULATION_INTERVAL_MS, 2_000, 1_000, 60_000),
+    configurationsPerCandidate: simulationInteger(process.env.STOCK_SIMULATION_CONFIGURATIONS_PER_CANDIDATE, 64, 1, 256),
+    pathsPerConfiguration: simulationInteger(process.env.STOCK_SIMULATION_PATHS_PER_CONFIGURATION, 32, 1, 128),
+  };
+}
+
+function readStockSimulationLab() {
+  if (stockSimulationLabState) return stockSimulationLabState;
+  try {
+    const stat = fs.statSync(STOCK_SIMULATION_FILE);
+    if (!stat.isFile() || stat.size > 5_000_000) return null;
+    const persisted = JSON.parse(fs.readFileSync(STOCK_SIMULATION_FILE, "utf8"));
+    if (persisted?.mode !== "autonomous_local_stress_test" || !Array.isArray(persisted.results)) return null;
+    stockSimulationLabState = persisted;
+    return stockSimulationLabState;
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock simulation state read failed safely:", error.message);
+    return null;
+  }
+}
+
+function writeStockSimulationLab(simulationLab) {
+  fs.mkdirSync(path.dirname(STOCK_SIMULATION_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SIMULATION_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(simulationLab, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SIMULATION_FILE);
+}
+
+function refreshStockSimulationLab(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const settings = stockSimulationOptions();
+  const previous = readStockSimulationLab() || {};
+  const ageMs = previous.lastCycleAt ? Date.now() - new Date(previous.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < settings.intervalMs - 50) return previous;
+  const plan = options.plan || buildCopyPortfolioPlan(snapshot);
+  const updated = {
+    ...runAutonomousSimulationCycle(plan, previous, settings),
+    persistedAt: previous.persistedAt || null,
+  };
+  stockSimulationLabState = updated;
+  const lastPersistedAt = previous.persistedAt ? new Date(previous.persistedAt).getTime() : 0;
+  const shouldPersist = options.persist === true
+    || !lastPersistedAt
+    || Date.now() - lastPersistedAt >= 30_000
+    || previous.sourceFingerprint !== updated.sourceFingerprint;
+  if (shouldPersist) {
+    stockSimulationLabState = { ...updated, persistedAt: now() };
+    writeStockSimulationLab(stockSimulationLabState);
+  }
+  return stockSimulationLabState;
+}
+
 function refreshStockShadowPortfolio(options = {}) {
   const state = options.state || readState();
   const snapshot = stockOfficeSnapshot(state);
@@ -6424,10 +6490,13 @@ async function handleApi(req, res, url) {
         tradeDrafts,
       }), shadowPortfolio, snapshot);
       portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      const simulationLab = readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true });
       const brokerControl = brokerControlOverview(snapshot);
       sendJson(res, 200, {
         brokerControl,
         portfolioPlan,
+        shadowPortfolio,
+        simulationLab,
         intelligence: snapshot.intelligence,
         systemHealth: stockIntelligenceStore.health({
           executionMode: snapshot.executionMode,
@@ -6474,6 +6543,7 @@ async function handleApi(req, res, url) {
         tradeDrafts,
       }), shadowPortfolio, snapshot);
       portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      const simulationLab = readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true });
       const notificationScope = stockTelegramNotifier.approvalScope();
       const notificationApproval = notificationScope.destinationHash
         ? (state.approvals || []).find((item) => {
@@ -6498,6 +6568,7 @@ async function handleApi(req, res, url) {
         intelligence: snapshot.intelligence,
         systemHealth,
         shadowPortfolio,
+        simulationLab,
         intelligenceScheduler,
         marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
         notificationStatus,
@@ -7861,5 +7932,19 @@ server.listen(PORT, HOST, () => {
       }
     }, 60_000);
     shadowTimer.unref();
+    const simulationSettings = stockSimulationOptions();
+    try {
+      refreshStockSimulationLab({ force: true, persist: true });
+    } catch (error) {
+      console.warn("Stock autonomous simulation startup failed safely:", error.message);
+    }
+    const simulationTimer = setInterval(() => {
+      try {
+        refreshStockSimulationLab({ force: true });
+      } catch (error) {
+        console.warn("Stock autonomous simulation cycle failed safely:", error.message);
+      }
+    }, simulationSettings.intervalMs);
+    simulationTimer.unref();
   }
 });

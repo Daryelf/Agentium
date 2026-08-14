@@ -99,6 +99,14 @@ The paper engine:
 
 Paper results are not live results and do not guarantee future performance. Resetting the paper portfolio is an authenticated local simulation action; it does not reset, fund, or change Robinhood.
 
+### Autonomous strategy stress lab
+
+The Simulation page does not require the operator to start each candidate. While Argentum is running, `services/stock-simulation-engine.js` automatically consumes every priced BUY proposal and evaluates a bounded grid of stop, target, horizon, and drift configurations every two seconds by default. Each configuration runs multiple deterministic modeled paths. The UI reports the actual measured configurations-per-second, paths-per-second, cycle duration, candidate result distribution, and downside percentile from the latest completed local cycle.
+
+This is a forward scenario stress test, not a historical backtest and not a claim of win probability. The engine explicitly reports that no market history was used. Closed-paper hit rate and realized paper P&L remain separate and appear only after the slower paper-shadow portfolio records real subsequent marks and exits. The stress engine imports no Robinhood client, has no order authority, and cannot create a Human Gate approval or live order.
+
+The bounded defaults can be tuned with `STOCK_SIMULATION_INTERVAL_MS`, `STOCK_SIMULATION_CONFIGURATIONS_PER_CANDIDATE`, and `STOCK_SIMULATION_PATHS_PER_CONFIGURATION`. State is kept live in memory and checkpointed to the local application-support directory at most every 30 seconds unless the candidate fingerprint changes.
+
 ### Always-on market intelligence scheduler
 
 `services/stock-intelligence-scheduler.js` keeps the evaluator, bounded online research, and copy plan current while Argentum is open, even when the Stock Office page is not visible. Its restart-safe state is stored with mode `0600` in the local Argentum application-support directory. The session-aware defaults are: regular market 5 minutes, pre-market 10 minutes, after-hours 15 minutes, overnight 60 minutes, and weekend research 240 minutes. Live Robinhood display data uses a separate five-second connector cache. Official Form 4 attempts are limited to hourly, delayed Form 13F research attempts to daily, and structured news/profile context to every 30 minutes.

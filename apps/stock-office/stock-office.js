@@ -14,6 +14,7 @@ const state = {
   brokerControl: null,
   portfolioPlan: null,
   shadowPortfolio: null,
+  simulationLab: null,
   intelligenceScheduler: null,
   marketWorkers: null,
   intelligence: null,
@@ -127,6 +128,12 @@ function formatPercent(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Unknown";
   return `${(number * 100).toFixed(digits)}%`;
+}
+
+function formatCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: number >= 1_000 ? 1 : 0 }).format(number);
 }
 
 function formatBrokerPercent(value, digits = 2) {
@@ -586,46 +593,45 @@ function renderPortfolioPlan() {
 
 function renderShadowPortfolio() {
   const portfolio = state.shadowPortfolio || {};
+  const simulation = state.simulationLab || {};
   const positions = portfolio.positions || [];
   const decisions = [...(portfolio.decisions || [])].reverse().slice(0, 8);
   const learning = portfolio.learning || {};
-  const scheduler = state.intelligenceScheduler || {};
   const proposals = (state.portfolioPlan?.proposals || []).filter((proposal) => proposal.side === "BUY").slice(0, 12);
+  const simulationByProposal = new Map((simulation.results || []).map((result) => [result.proposalId, result]));
   const status = $("#shadowPortfolioStatus");
-  const running = portfolio.mode === "paper_shadow_only" && portfolio.initialCashDollars > 0;
-  status.textContent = running
-    ? `Paper only · ${portfolio.lastCycleAt ? formatTime(portfolio.lastCycleAt) : "first cycle pending"}`
-    : "Set paper starting cash";
+  const running = simulation.mode === "autonomous_local_stress_test" && simulation.status === "running";
+  status.textContent = running ? "AUTONOMOUS · RUNNING" : "Starting autonomous engine";
   status.className = running ? "ready-copy" : "danger-copy";
-  $("#simulationCycle").textContent = scheduler.running
-    ? `Research running · ${String(scheduler.currentStage || "scanning").replaceAll("_", " ")}`
-    : `Last marked ${portfolio.lastCycleAt ? formatTime(portfolio.lastCycleAt) : "pending"} · next research ${scheduler.nextRunAt ? formatTime(scheduler.nextRunAt) : "scheduled"}`;
+  $("#simulationCycle").textContent = running
+    ? `Cycle ${simulation.cycleCount || 0} · ${formatCount(simulation.strategyConfigurationsPerSecond)} configs/sec · updated ${formatTime(simulation.lastCycleAt)}`
+    : "Every current candidate will start automatically. No buttons required.";
   $("#shadowPortfolioMetrics").innerHTML = [
-    ["Paper equity", formatMoney(portfolio.equityDollars), `started ${formatMoney(portfolio.initialCashDollars)}`],
-    ["Paper cash", formatMoney(portfolio.cashDollars), `${formatMoney(portfolio.deployedDollars)} simulated deployment`],
-    ["Total paper P&L", formatMoney(portfolio.totalPnlDollars), formatPercent(portfolio.totalReturnPct || 0)],
-    ["Today paper P&L", formatMoney(portfolio.dayPnlDollars), portfolio.dailyLossLocked ? "new paper buys locked" : `lock ${formatMoney(portfolio.dailyLossLimitDollars)}`],
-    ["Paper drawdown", formatPercent(portfolio.currentDrawdownPct || 0), `maximum ${formatPercent(portfolio.maxDrawdownPct || 0)}`],
-    ["Closed outcomes", learning.closedTrades || 0, learning.hitRate === null || learning.hitRate === undefined ? "no closed sample yet" : `${formatPercent(learning.hitRate)} hit rate`],
+    ["Candidates", simulation.candidatesTested ?? 0, "all priced BUY ideas"],
+    ["Strategy configs", formatCount(simulation.strategyConfigurations), "tested each cycle"],
+    ["Scenario paths", formatCount(simulation.scenarioPaths), "modeled each cycle"],
+    ["Config throughput", `${formatCount(simulation.strategyConfigurationsPerSecond)}/s`, "measured local compute"],
+    ["Path throughput", `${formatCount(simulation.scenarioPathsPerSecond)}/s`, "measured local compute"],
+    ["Cycle time", Number.isFinite(Number(simulation.durationMs)) ? `${Number(simulation.durationMs).toFixed(1)} ms` : "—", `next ${simulation.nextCycleAt ? formatTime(simulation.nextCycleAt) : "automatic"}`],
   ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
-  $("#simulationCandidateCount").textContent = `${proposals.filter((proposal) => proposal.paperTest?.eligible).length} testable`;
+  $("#simulationCandidateCount").textContent = `${simulation.results?.length || 0} testing automatically`;
   $("#simulationCandidates").innerHTML = proposals.length
     ? proposals.map((proposal) => {
-        const paperTest = proposal.paperTest || {};
         const research = proposal.research || {};
-        const alreadyHeld = positions.some((position) => position.symbol === proposal.symbol);
-        const statusLabel = alreadyHeld ? "Running" : paperTest.eligible ? "Ready" : "Waiting";
-        return `<article class="simulation-candidate" data-status="${escapeHtml(paperTest.eligible ? "ready" : alreadyHeld ? "running" : "blocked")}">
+        const result = simulationByProposal.get(proposal.id);
+        const classification = String(result?.classification || "testing").replaceAll("_", " ");
+        const statusTone = result?.classification === "promising_scenario" ? "ready" : result ? "running" : "blocked";
+        return `<article class="simulation-candidate" data-status="${escapeHtml(statusTone)}">
           <div class="simulation-company">${logoMarkup(proposal.symbol)}<span><strong>${escapeHtml(proposal.symbol)}</strong><small>${escapeHtml(portfolioKindLabel(proposal.kind))}</small></span></div>
           <div class="simulation-score"><small>Score</small><strong>${escapeHtml(research.score ?? proposal.scores?.ai ?? "—")}</strong></div>
           <div class="simulation-thesis"><strong>${escapeHtml(research.setupType || research.mainReason || "Research candidate")}</strong><small>${escapeHtml(research.mainRisk || "Rechecked every cycle")}</small></div>
-          <div class="simulation-notional"><small>Simulated</small><strong>${escapeHtml(formatMoney(paperTest.requestedDollars ?? proposal.requestedDollars))}</strong></div>
-          <div class="simulation-action"><span>${escapeHtml(statusLabel)}</span>${paperTest.eligible
-            ? `<button type="button" data-simulation-test="${escapeHtml(proposal.id)}">Simulate now</button>`
-            : `<small>${escapeHtml(alreadyHeld ? "Position is already being measured." : paperTest.reason || "Waiting for eligible research.")}</small>`}</div>
+          <div class="simulation-notional"><small>Auto tested</small><strong>${result ? `${formatCount(result.configurationsTested)} × ${formatCount(result.pathsPerConfiguration)}` : "Starting"}</strong></div>
+          <div class="simulation-action"><span>${escapeHtml(classification)}</span>${result
+            ? `<small>${escapeHtml(`${formatPercent(result.finishPositiveRate)} positive · ${formatPercent(result.expectedReturnPct)} expected · ${formatPercent(result.downsideP10Pct)} P10`)}</small>`
+            : `<small>Queued for the next autonomous cycle.</small>`}</div>
         </article>`;
       }).join("")
-    : `<div class="empty-state"><p>No current BUY research candidate is available. The simulation ledger remains active and will use the next persisted cycle.</p></div>`;
+    : `<div class="empty-state"><p>The autonomous engine is running, but no current BUY proposal has a valid reference price. It will test the next persisted candidate automatically.</p></div>`;
   $("#shadowPositionTitle").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
   $("#shadowPositions").innerHTML = positions.length
     ? positions.map((position) => `
@@ -647,6 +653,12 @@ function renderShadowPortfolio() {
     : `<div class="empty-state"><p>No paper decision has been recorded yet.</p></div>`;
   const profiles = learning.profiles || [];
   $("#shadowLearning").innerHTML = `
+    <div class="simulation-paper-capital">
+      <span><small>Paper equity</small><strong>${escapeHtml(formatMoney(portfolio.equityDollars))}</strong></span>
+      <span><small>Paper cash</small><strong>${escapeHtml(formatMoney(portfolio.cashDollars))}</strong></span>
+      <span><small>Paper P&amp;L</small><strong class="${Number(portfolio.totalPnlDollars) >= 0 ? "ready-copy" : "danger-copy"}">${escapeHtml(formatMoney(portfolio.totalPnlDollars))}</strong></span>
+      <span><small>Drawdown</small><strong>${escapeHtml(formatPercent(portfolio.currentDrawdownPct || 0))}</strong></span>
+    </div>
     <div class="simulation-accuracy-grid">
       <span><small>Closed</small><strong>${escapeHtml(learning.closedTrades || 0)}</strong></span>
       <span><small>Hit rate</small><strong>${learning.hitRate === null || learning.hitRate === undefined ? "—" : escapeHtml(formatPercent(learning.hitRate))}</strong></span>
@@ -661,7 +673,7 @@ function renderShadowPortfolio() {
           <div><b>${escapeHtml(formatMoney(profile.expectancyDollars))}</b><small>paper expectancy</small></div>
         </article>
       `).join("")
-      : `<div class="simulation-sample-warning"><strong>Accuracy not available yet</strong><span>A hit rate appears only after simulated positions close. No result is invented from open trades.</span></div>`}`;
+      : `<div class="simulation-sample-warning"><strong>Measured accuracy is still building</strong><span>Scenario percentages above are stress tests. Hit rate appears only after paper positions close.</span></div>`}`;
   const startingCash = $("#shadowStartingCash");
   if (!startingCash.dataset.loaded && portfolio.initialCashDollars > 0) {
     startingCash.value = portfolio.initialCashDollars;
@@ -1339,6 +1351,7 @@ async function loadApp() {
     state.portfolioPlan = brokerPayload.portfolioPlan || null;
     state.proposalDecisions = brokerPayload.portfolioPlan?.decisions || [];
     state.shadowPortfolio = brokerPayload.shadowPortfolio || null;
+    state.simulationLab = brokerPayload.simulationLab || null;
     state.intelligenceScheduler = brokerPayload.intelligenceScheduler || null;
     state.marketWorkers = brokerPayload.marketWorkers || null;
     state.notificationStatus = brokerPayload.notificationStatus || null;
@@ -1538,27 +1551,6 @@ async function submitQuickOrder(event) {
     feedback.textContent = `Stopped safely: ${error.message}`;
     button.disabled = false;
     button.textContent = "Run checks & send to Human Gate";
-  }
-}
-
-async function testSimulationProposal(proposalId) {
-  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
-  const button = $(`[data-simulation-test="${CSS.escape(proposalId)}"]`);
-  const feedback = $("#shadowPortfolioFeedback");
-  if (!proposal || !button) return;
-  button.disabled = true;
-  button.textContent = "Simulating…";
-  feedback.textContent = `Recording an isolated ${proposal.symbol} simulation with current research inputs…`;
-  try {
-    const payload = await api(`/api/stock-office/proposals/${encodeURIComponent(proposalId)}/paper-test`, { method: "POST", body: "{}" });
-    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
-    state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
-    renderShadowPortfolio();
-    feedback.textContent = `${proposal.symbol} entered the simulation ledger. Robinhood was not called.`;
-  } catch (error) {
-    feedback.textContent = error.message;
-    button.disabled = false;
-    button.textContent = "Simulate now";
   }
 }
 
@@ -1886,6 +1878,7 @@ async function pollBrokerControl() {
     state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
     state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    state.simulationLab = payload.simulationLab || state.simulationLab;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.marketWorkers = payload.marketWorkers || state.marketWorkers;
     state.notificationStatus = payload.notificationStatus || state.notificationStatus;
@@ -1920,11 +1913,14 @@ async function pollLivePortfolio() {
     state.systemHealth = payload.systemHealth || state.systemHealth;
     state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
+    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    state.simulationLab = payload.simulationLab || state.simulationLab;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     state.tradeDrafts = payload.tradeDrafts || state.tradeDrafts;
     if (state.activeView === "overview") renderOverviewDashboard();
     if (state.activeView === "mirror") renderMirror();
+    if (state.activeView === "portfolio") renderShadowPortfolio();
   } catch (_error) {
   } finally {
     state.livePortfolioPolling = false;
@@ -2197,8 +2193,6 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-live-readiness]")) openQuickOrder();
   if (event.target.closest("[data-quick-order]")) openQuickOrder();
   if (event.target.closest("[data-close-quick-order]")) $("#quickOrderDialog").close();
-  const simulationTest = event.target.closest("[data-simulation-test]");
-  if (simulationTest && !simulationTest.disabled) testSimulationProposal(simulationTest.dataset.simulationTest);
   const opportunityDetails = event.target.closest("[data-opportunity-drawer]");
   if (opportunityDetails) opportunityDrawer(opportunityDetails.dataset.opportunityDrawer);
   const workerDetails = event.target.closest("[data-worker-drawer]");

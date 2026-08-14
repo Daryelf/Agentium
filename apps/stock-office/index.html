@@ -112,18 +112,18 @@
         <section class="stock-view" data-stock-view="portfolio" hidden>
           <section class="simulation-console">
             <header class="simulation-head">
-              <div><span>RESEARCH / SIMULATION</span><h2>Market testing lab</h2><p>Real research inputs, isolated simulated cash, persisted outcomes.</p></div>
+              <div><span>AUTONOMOUS RESEARCH / SIMULATION</span><h2>Strategy stress lab</h2><p>Every priced BUY candidate is continuously tested. No manual start buttons.</p></div>
               <div><strong id="shadowPortfolioStatus">Starting simulation</strong><small id="simulationCycle">Waiting for first cycle</small></div>
             </header>
             <div id="shadowPortfolioMetrics" class="simulation-metrics"></div>
             <div class="simulation-workspace">
               <section class="simulation-candidate-board">
-                <div class="simulation-section-head"><div><span>IDEAS UNDER TEST</span><h3>Current candidates</h3></div><strong id="simulationCandidateCount">0 available</strong></div>
+                <div class="simulation-section-head"><div><span>AUTO-TEST QUEUE</span><h3>Current candidates</h3></div><strong id="simulationCandidateCount">0 starting</strong></div>
                 <div id="simulationCandidates" class="simulation-candidates"></div>
                 <p id="shadowPortfolioFeedback" class="broker-feedback" aria-live="polite"></p>
               </section>
               <aside class="simulation-scoreboard">
-                <div class="simulation-section-head"><div><span>MEASURED ONLY</span><h3>Accuracy</h3></div></div>
+                <div class="simulation-section-head"><div><span>CLOSED PAPER TRADES ONLY</span><h3>Measured outcomes</h3></div></div>
                 <div id="shadowLearning" class="shadow-list"></div>
                 <form id="shadowResetForm" class="shadow-reset-form">
                   <label>Starting cash <input id="shadowStartingCash" type="number" min="1" max="1000000" step="1" required /></label>

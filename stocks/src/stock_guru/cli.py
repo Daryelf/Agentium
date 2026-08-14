@@ -82,7 +82,7 @@ from .notifier import (
     should_send_update,
 )
 from .paper import read_ledger, record_trade
-from .research import fetch_equity_research, money as research_money, pct as research_pct, ratio as research_ratio, write_research_report
+from .research import fetch_equity_research, money as research_money, pct as research_pct, ratio as research_ratio, write_research_json, write_research_report
 from .reports import write_markdown_report
 from .scoring import Candidate, score_candidates
 from .sec_13f import (
@@ -755,6 +755,8 @@ def research(
         return
     path = write_research_report(items)
     console.print(f"Wrote research report: {path}")
+    json_path = write_research_json(items)
+    console.print(f"Wrote structured research: {json_path}")
 
 
 @app.command("evaluate")

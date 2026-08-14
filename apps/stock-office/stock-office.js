@@ -15,6 +15,9 @@ const state = {
   shadowPortfolio: null,
   intelligenceScheduler: null,
   marketWorkers: null,
+  intelligence: null,
+  systemHealth: null,
+  mirrorIntelligence: null,
   notificationStatus: null,
   notificationApproval: null,
   robinhoodConnection: null,
@@ -108,6 +111,14 @@ function formatPercent(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Unknown";
   return `${(number * 100).toFixed(digits)}%`;
+}
+
+function formatBrokerPercent(value, digits = 2) {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  const normalized = Math.abs(number) > 1 ? number / 100 : number;
+  return `${(normalized * 100).toFixed(digits)}%`;
 }
 
 function logoMarkup(symbol, name = "") {
@@ -204,7 +215,7 @@ function renderMarketWorkers() {
           <div class="overview-worker-state"><i></i><strong>${escapeHtml(worker.status)}</strong></div>
           <div class="overview-worker-task"><strong>${escapeHtml(worker.task)}</strong><small>${escapeHtml(worker.finding)}</small></div>
           <div class="overview-worker-metrics">${metrics.map((metric) => `<span><small>${escapeHtml(metric.label)}</small><strong>${escapeHtml(metric.value)}</strong></span>`).join("")}</div>
-          <div class="overview-worker-cycle"><strong>${escapeHtml(cycle)}</strong><small>${escapeHtml(worker.evidence)}</small></div>
+          <div class="overview-worker-cycle"><strong>${escapeHtml(cycle)}</strong><small>${escapeHtml(worker.evidence)}</small>${worker.details?.length ? `<button type="button" data-worker-drawer="${escapeHtml(worker.id)}">Details</button>` : ""}</div>
         </article>`;
       }).join("")
     : `<div class="overview-empty-row"><strong>Worker status unavailable</strong><span>Refresh Stock Office to read the live scheduler.</span></div>`;
@@ -256,6 +267,15 @@ function renderOverviewDashboard() {
   const equity = numericMoney(control.accountValueDollars ?? broker.accountValue) ?? positionValue + (cash ?? buyingPower ?? 0);
   const deployed = numericMoney(capital.deployedDollars) ?? positionValue;
   const maxDeployed = numericMoney(capital.maxDeployedDollars ?? guardrails.maxTotalDollars) ?? 0;
+  const dayPnl = numericMoney(control.dayPnlDollars ?? capital.dayPnlDollars);
+  const dayPnlPct = numericMoney(control.dayPnlPct);
+  const realizedPnl = numericMoney(control.realizedPnlDollars);
+  const calculatedUnrealized = positions.reduce((sum, position) => sum + (numericMoney(position.unrealizedPnlDollars ?? position.unrealizedPnl) || 0), 0);
+  const unrealizedPnl = numericMoney(control.unrealizedPnlDollars) ?? (positions.length ? calculatedUnrealized : null);
+  const executionMode = String(control.executionMode || state.systemHealth?.mode || "PAPER").toUpperCase();
+  const modePill = $("#executionModePill");
+  modePill.textContent = executionMode === "LIVE" ? "LIVE · HUMAN GATE" : "PAPER / SIMULATION";
+  modePill.className = `status-pill ${executionMode === "LIVE" ? "ready" : "warning"}`;
   const utilization = maxDeployed > 0 ? Math.max(0, Math.min(100, (deployed / maxDeployed) * 100)) : 0;
   const accountBand = $("#overviewAccountBand");
   accountBand.dataset.status = control.authenticationVerified ? "live" : "offline";
@@ -265,6 +285,10 @@ function renderOverviewDashboard() {
     ["Buying power", buyingPower === null ? "—" : formatMoney(buyingPower), ""],
     ["Cash", cash === null ? "—" : formatMoney(cash), ""],
     ["Stocks", formatMoney(stocksValue), ""],
+    ["Today P&L", dayPnl === null ? "—" : formatMoney(dayPnl), dayPnl === null ? "" : dayPnl < 0 ? "negative" : "positive"],
+    ["Day %", formatBrokerPercent(dayPnlPct), dayPnlPct === null ? "" : dayPnlPct < 0 ? "negative" : "positive"],
+    ["Unrealized", unrealizedPnl === null ? "—" : formatMoney(unrealizedPnl), unrealizedPnl === null ? "" : unrealizedPnl < 0 ? "negative" : "positive"],
+    ["Realized", realizedPnl === null ? "—" : formatMoney(realizedPnl), realizedPnl === null ? "" : realizedPnl < 0 ? "negative" : "positive"],
     ["Pending", pendingDeposits === null ? "—" : formatMoney(pendingDeposits), ""],
     ["Unsettled", unsettledFunds === null ? "—" : formatMoney(unsettledFunds), ""],
     ["Open orders", String(control.openOrderCount || 0), ""],
@@ -289,17 +313,30 @@ function renderOverviewDashboard() {
     : `<div class="overview-empty-row"><strong>No live positions</strong><span>Robinhood is connected, but no holding is available.</span></div>`;
 
   const totalSources = Number(sourceHealth.total || 0);
+  const opportunities = Array.isArray(state.intelligence?.opportunities) ? state.intelligence.opportunities : [];
   $("#overviewFreshness").textContent = sourceHealth.stale ? `${sourceHealth.stale} stale` : sourceHealth.status || "Current";
   $("#overviewIntelSummary").innerHTML = [
-    ["Tracked", metrics.trackedRecords ?? 0],
-    ["Setups", metrics.validSetups ?? 0],
-    ["Watch", metrics.watchlistCount ?? 0],
+    ["Researched", opportunities.length || metrics.trackedRecords || 0],
+    ["High", opportunities.filter((item) => item.status === "high_priority").length],
+    ["Candidates", opportunities.filter((item) => item.status === "candidate").length],
     ["Sources", totalSources ? `${sourceHealth.ready || 0}/${totalSources}` : sourceHealth.ready ?? 0],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
-  const topSetups = state.records.filter((record) => record.status === "valid_setup").slice(0, 4);
+  const topSetups = opportunities.filter((item) => item.status !== "rejected").slice(0, 5);
   $("#overviewTopSetups").innerHTML = topSetups.length
-    ? topSetups.map((record) => `<article><span class="overview-setup-company">${logoMarkup(record.ticker, record.name)}</span><span>${escapeHtml(String(record.score ?? "—"))}</span><span>${escapeHtml(record.setupType || "Setup")}</span><em>${escapeHtml(record.currentPrice ? formatMoney(record.currentPrice) : "—")}</em></article>`).join("")
-    : `<div class="overview-empty-row"><strong>No current setup</strong><span>Evaluator has no fresh valid entry.</span></div>`;
+    ? topSetups.map((item) => `<article data-opportunity-status="${escapeHtml(item.status)}"><span class="overview-setup-company">${logoMarkup(item.symbol)}</span><span>${escapeHtml(String(item.aiScore ?? "—"))}</span><span>${escapeHtml(item.thesis?.setup || "Researching")}</span><em>${escapeHtml(item.change?.trend || item.confidence || "—")}</em><button type="button" data-opportunity-drawer="${escapeHtml(item.id)}">Research</button></article>`).join("")
+    : `<div class="overview-empty-row"><strong>No qualified opportunity</strong><span>No symbol currently meets the persisted research threshold.</span></div>`;
+
+  const health = state.systemHealth || {};
+  $("#overviewResearchState").textContent = health.research?.status || "Waiting";
+  $("#overviewResearchTimestamp").textContent = health.research?.updatedAt ? `Updated ${relativeCycle(health.research.updatedAt)}` : "No persisted cycle";
+  $("#overviewSystemHealth").innerHTML = [
+    ["Data", health.marketData?.status],
+    ["Broker", health.broker?.status],
+    ["Telegram", health.telegram?.status],
+    ["Research", health.research?.status],
+    ["Mirror", health.mirror ? `${health.mirror.healthy}/${health.mirror.total}` : "waiting"],
+    ["DB", health.database?.status],
+  ].map(([label, value]) => `<span data-status="${escapeHtml(value || "waiting")}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value || "waiting").replaceAll("_", " "))}</strong></span>`).join("");
 
   $("#overviewCapitalUse").textContent = `${formatMoney(deployed)} / ${formatMoney(maxDeployed)}`;
   $("#overviewCapitalFill").style.width = `${utilization.toFixed(1)}%`;
@@ -365,13 +402,22 @@ function renderTradeProposals() {
         const blockers = Array.isArray(proposal.blockers) ? proposal.blockers : [];
         const blocker = blockers[0] || "";
         const isHold = proposal.side === "HOLD";
+        const scores = proposal.scores || {};
         const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : isHold ? "monitoring" : "blocked");
         const pendingGate = reviewState === "awaiting_human_gate";
         const approved = reviewState === "approved";
+        const reviewExpiresAt = Date.parse(proposal.reviewExpiresAt || "");
+        const approvalRemaining = Number.isFinite(reviewExpiresAt) ? Math.max(0, Math.ceil((reviewExpiresAt - Date.now()) / 1_000)) : null;
         return `<article class="overview-proposal ${proposal.draftEligible ? "ready" : isHold ? "monitoring" : "blocked"}" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
+          </div>
+          <div class="overview-proposal-scores">
+            <span><small>AI</small><strong>${escapeHtml(scores.ai ?? research.score ?? "—")}</strong></span>
+            <span><small>TECH</small><strong>${escapeHtml(scores.technical ?? research.score ?? "—")}</strong></span>
+            <span><small>MIRROR</small><strong>${escapeHtml(scores.mirror ?? "—")}</strong></span>
+            <span><small>RISK</small><strong>${escapeHtml(scores.risk === null || scores.risk === undefined ? "—" : Math.round(scores.risk))}</strong></span>
           </div>
           <div class="overview-proposal-thesis">
             <div><span>${escapeHtml(portfolioKindLabel(proposal.kind))}</span><strong>${escapeHtml(formatMoney(proposal.requestedDollars))}</strong><em>${escapeHtml(research.confidence || "unknown confidence")}</em></div>
@@ -385,19 +431,20 @@ function renderTradeProposals() {
             <span><small>Review horizon</small><strong>${escapeHtml(outlook.horizonLabel || "Re-evaluate each market cycle")}</strong></span>
           </div>
           <details class="overview-proposal-evidence" data-proposal-research="${escapeHtml(proposal.id)}" ${state.expandedProposalResearch.has(proposal.id) ? "open" : ""}>
-            <summary>Research &amp; risk</summary>
+            <summary>Quick evidence</summary>
             <p><strong>Setup</strong>${escapeHtml(research.setupType || "Evaluator review")} · score ${escapeHtml(research.score ?? "—")} · ${escapeHtml(research.marketCondition || "market condition unavailable")}</p>
             <p><strong>Plan</strong>Entry ${escapeHtml(research.entryZone || "reprice before order")} · stop ${escapeHtml(outlookValue(outlook.stopPrice))}${Number.isFinite(Number(outlook.stopScenarioDollars)) ? ` · ${escapeHtml(formatMoney(outlook.stopScenarioDollars))} downside scenario` : ""} · ${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p>
             <p><strong>Timing</strong>${escapeHtml(outlook.timingNote || "No profit date can be estimated reliably.")}</p>
             <p><strong>Source</strong>${escapeHtml(research.sourceLabel || "Stock Guru evaluator")}</p>
           </details>
           <div class="overview-proposal-actions">
+            <button class="secondary" type="button" data-proposal-drawer="${escapeHtml(proposal.id)}">Why / Research</button>
             ${isHold
               ? `<button type="button" disabled>Monitoring</button><small>No order is needed. The next cycle checks exit conditions again.</small>`
               : approved
                 ? `<button type="button" data-order-execute="${escapeHtml(proposal.reviewDraftId)}">Review & execute once</button><small>Human Gate approved. Robinhood review and final confirmation still apply.</small>`
                 : pendingGate
-                  ? `<button type="button" disabled>Human Gate pending</button><small>Use the bubble at bottom left. No broker review or order has occurred.</small>`
+                  ? `<button type="button" disabled>Human Gate pending</button><small>${approvalRemaining === null ? "Approval window active" : `Expires in ${escapeHtml(formatCountdown(approvalRemaining))}`} · use the bottom-left bubble or Telegram. No broker review or order has occurred.</small>`
                   : `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}" ${proposal.draftEligible ? "" : "disabled"}>${proposal.draftEligible ? "Send to Human Gate" : "Blocked"}</button>
                      <button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Decline</button>
                      ${blocker ? `<small><strong>${escapeHtml(`${blockers.length} check${blockers.length === 1 ? "" : "s"} blocking`)}</strong> · ${escapeHtml(blockers.slice(0, 3).join(" · "))}</small>` : `<small>One-use approval only; no automatic order.</small>`}`}
@@ -405,6 +452,69 @@ function renderTradeProposals() {
         </article>`;
       }).join("")
     : `<div class="overview-empty-row"><strong>No actionable trade proposal</strong><span>The research planner is waiting for fresh evidence and available risk capacity.</span></div>`;
+}
+
+function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {
+  const drawer = $("#intelligenceDrawer");
+  if (!drawer) return;
+  $("#drawerKicker").textContent = kicker;
+  $("#drawerTitle").textContent = title;
+  const safeTabs = tabs.filter((tab) => tab && tab.label);
+  const renderTab = (id) => {
+    const selected = safeTabs.find((tab) => tab.id === id) || safeTabs[0];
+    $("#drawerTabs").querySelectorAll("button").forEach((button) => button.classList.toggle("active", button.dataset.drawerTab === selected?.id));
+    $("#drawerContent").innerHTML = selected?.html || `<div class="drawer-empty">No detail is available.</div>`;
+  };
+  $("#drawerTabs").innerHTML = safeTabs.map((tab, index) => `<button type="button" data-drawer-tab="${escapeHtml(tab.id)}" class="${index === 0 ? "active" : ""}">${escapeHtml(tab.label)}</button>`).join("");
+  $("#drawerTabs").querySelectorAll("button").forEach((button) => button.addEventListener("click", () => renderTab(button.dataset.drawerTab)));
+  renderTab(safeTabs[0]?.id);
+  if (typeof drawer.showModal === "function") drawer.showModal();
+  else drawer.setAttribute("open", "");
+}
+
+function proposalDrawer(proposalId) {
+  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
+  if (!proposal) return;
+  const research = proposal.research || {};
+  const scores = proposal.scores || {};
+  const evidence = Array.isArray(proposal.evidence) ? proposal.evidence : [];
+  const checks = Array.isArray(proposal.blockers) ? proposal.blockers : [];
+  openIntelligenceDrawer({
+    kicker: `${proposal.side} PROPOSAL`,
+    title: proposal.symbol,
+    tabs: [
+      { id: "why", label: "Why", html: `<div class="drawer-score-grid">${[["AI", scores.ai ?? research.score], ["Technical", scores.technical ?? research.score], ["Mirror", scores.mirror], ["Risk", scores.risk]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value ?? "—")}</strong></span>`).join("")}</div><section><h3>Thesis</h3><p>${escapeHtml(research.mainReason || proposal.reasons?.[0] || "No thesis was recorded.")}</p></section><section><h3>Conflicting evidence</h3><p>${escapeHtml(research.mainRisk || "No explicit conflict was recorded.")}</p></section>` },
+      { id: "research", label: "Research", html: `<dl class="drawer-facts"><div><dt>Setup</dt><dd>${escapeHtml(research.setupType || "—")}</dd></div><div><dt>Market</dt><dd>${escapeHtml(research.marketCondition || "—")}</dd></div><div><dt>Entry</dt><dd>${escapeHtml(research.entryZone || "Reprice before order")}</dd></div><div><dt>Last researched</dt><dd>${escapeHtml(research.lastResearchedAt ? formatTime(research.lastResearchedAt) : "—")}</dd></div><div><dt>Next review</dt><dd>${escapeHtml(research.nextReviewAt ? formatTime(research.nextReviewAt) : "—")}</dd></div></dl>${evidence.length ? `<ul class="drawer-evidence">${evidence.map((item) => `<li data-direction="${escapeHtml(item.direction)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.source)}</span></li>`).join("")}</ul>` : `<div class="drawer-empty">No separate persisted evidence rows are attached.</div>`}` },
+      { id: "risk", label: "Risk", html: `<section><h3>Invalidation</h3><p>${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p></section><section><h3>Execution blockers</h3>${checks.length ? `<ol class="drawer-blockers">${checks.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>` : `<p>Current draft checks pass. Final account, price, duplicate-order, approval, and broker checks still run at execution.</p>`}</section>` },
+      { id: "source", label: "Source", html: `<dl class="drawer-facts"><div><dt>Source</dt><dd>${escapeHtml(research.sourceLabel || "Stock Guru evaluator")}</dd></div><div><dt>Fresh</dt><dd>${research.dataFresh ? "Yes" : "No / unavailable"}</dd></div><div><dt>Score method</dt><dd>${escapeHtml(scores.formula?.description || "Evaluator score; missing inputs are not invented.")}</dd></div></dl>${research.sourceUrl ? `<a href="${escapeHtml(research.sourceUrl)}" target="_blank" rel="noreferrer">Open original evidence ↗</a>` : ""}` },
+      { id: "execution", label: "Execution", html: `<dl class="drawer-facts"><div><dt>State</dt><dd>${escapeHtml(proposal.reviewState || (proposal.draftEligible ? "qualified" : "blocked"))}</dd></div><div><dt>Amount</dt><dd>${escapeHtml(formatMoney(proposal.requestedDollars))}</dd></div><div><dt>Reference</dt><dd>${escapeHtml(outlookValue(proposal.referencePrice))}</dd></div><div><dt>Approval</dt><dd>One immutable Human Gate request; one-use broker claim</dd></div></dl><p class="drawer-boundary">Approval never skips fresh broker state, market freshness, risk, duplicate-order, price-drift, and Robinhood review checks.</p>` },
+    ],
+  });
+}
+
+function opportunityDrawer(opportunityId) {
+  const opportunity = (state.intelligence?.opportunities || []).find((item) => item.id === opportunityId);
+  if (!opportunity) return;
+  openIntelligenceDrawer({
+    kicker: "PERSISTENT OPPORTUNITY",
+    title: opportunity.symbol,
+    tabs: [
+      { id: "research", label: "Research", html: `<div class="drawer-score-grid">${[["AI", opportunity.aiScore], ["Technical", opportunity.technicalScore], ["Mirror", opportunity.mirrorScore], ["Risk", opportunity.riskScore]].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value === null || value === undefined ? "—" : Math.round(value))}</strong></span>`).join("")}</div><section><h3>${escapeHtml(opportunity.thesis?.setup || "Research thesis")}</h3><p>${escapeHtml(opportunity.thesis?.reason || "No thesis statement was persisted.")}</p></section><ul class="drawer-evidence">${(opportunity.evidence || []).map((item) => `<li data-direction="${escapeHtml(item.direction)}"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.source)}</span></li>`).join("")}</ul>` },
+      { id: "history", label: "History", html: `<dl class="drawer-facts"><div><dt>First seen</dt><dd>${escapeHtml(formatTime(opportunity.firstSeenAt))}</dd></div><div><dt>Last researched</dt><dd>${escapeHtml(formatTime(opportunity.lastResearchedAt))}</dd></div><div><dt>Next review</dt><dd>${escapeHtml(formatTime(opportunity.nextReviewAt))}</dd></div><div><dt>Trend</dt><dd>${escapeHtml(opportunity.change?.trend || "—")} ${opportunity.change?.scoreDelta === null ? "" : `(${opportunity.change.scoreDelta >= 0 ? "+" : ""}${opportunity.change.scoreDelta})`}</dd></div></dl>` },
+      { id: "risk", label: "Risk", html: `<section><h3>Main risk</h3><p>${escapeHtml(opportunity.thesis?.risk || "Unavailable")}</p></section><section><h3>Invalidation</h3><p>${escapeHtml(opportunity.thesis?.invalidation || "Unavailable")}</p></section>` },
+    ],
+  });
+}
+
+function workerDrawer(workerId) {
+  const worker = (state.marketWorkers?.workers || []).find((item) => item.id === workerId);
+  if (!worker) return;
+  openIntelligenceDrawer({ kicker: "WORKER", title: worker.name, tabs: [{ id: "details", label: "Details", html: `<div class="drawer-score-grid">${(worker.metrics || []).map((metric) => `<span><small>${escapeHtml(metric.label)}</small><strong>${escapeHtml(metric.value)}</strong></span>`).join("")}</div><dl class="drawer-facts"><div><dt>Status</dt><dd>${escapeHtml(worker.status)}</dd></div><div><dt>Last run</dt><dd>${escapeHtml(worker.lastRunAt ? formatTime(worker.lastRunAt) : "—")}</dd></div><div><dt>Next run</dt><dd>${escapeHtml(worker.nextRunAt ? formatTime(worker.nextRunAt) : "—")}</dd></div><div><dt>Evidence</dt><dd>${escapeHtml(worker.evidence || "—")}</dd></div></dl><ul class="drawer-evidence">${(worker.details || []).map((item) => `<li><strong>${escapeHtml(item)}</strong></li>`).join("")}</ul>` }] });
+}
+
+function reportDrawer(reportType) {
+  const report = state.intelligence?.reports?.[reportType];
+  openIntelligenceDrawer({ kicker: reportType === "morning" ? "MORNING INTELLIGENCE" : "NIGHT RESEARCH", title: report?.generatedAt ? formatTime(report.generatedAt) : "Report pending", tabs: [{ id: "report", label: "Report", html: report ? `<div class="drawer-score-grid"><span><small>Researched</small><strong>${escapeHtml(report.summary?.researched || 0)}</strong></span><span><small>High</small><strong>${escapeHtml(report.summary?.highPriority || 0)}</strong></span><span><small>Candidates</small><strong>${escapeHtml(report.summary?.candidates || 0)}</strong></span><span><small>Mirror</small><strong>${escapeHtml(report.summary?.mirrorMatched || 0)}</strong></span></div><ol class="drawer-opportunities">${(report.topOpportunities || []).slice(0, 10).map((item) => `<li><strong>${logoMarkup(item.symbol)}</strong><span>AI ${escapeHtml(item.aiScore)} · ${escapeHtml(item.status)}</span></li>`).join("")}</ol><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || report.limitations?.[0] || "Research only.")}</p>` : `<div class="drawer-empty">This report has not been generated yet. Research continues on the session-aware scheduler.</div>` }] });
 }
 
 function renderMetrics() {
@@ -754,6 +864,7 @@ function mirrorStatusLabel(value) {
 
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
+  const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
   const summary = mirror.summary || {};
   const candidates = mirror.candidates || [];
   const sources = mirror.sources || [];
@@ -880,8 +991,22 @@ function renderMirror() {
       }).join("")
     : `<div class="mirror-watch-empty"><strong>No named watchers</strong><span>Add verified CIKs in Sources to start the public filing watch.</span></div>`;
 
+  const consensus = Array.isArray(mirrorIntelligence.consensus) ? mirrorIntelligence.consensus : [];
+  $("#mirrorConsensus").innerHTML = consensus.length
+    ? consensus.slice(0, 8).map((item) => `<article><span>${logoMarkup(item.symbol)}</span><strong>${escapeHtml(item.side)}</strong><b>${escapeHtml(Math.round(item.score))}</b><small>${escapeHtml(`${item.sourceCount} sources · ${relativeCycle(item.lastUpdatedAt)}`)}</small></article>`).join("")
+    : `<div class="mirror-watch-empty"><strong>No multi-source consensus</strong><span>A consensus appears only when at least two distinct attributable sources align.</span></div>`;
+  const mirrorEvents = Array.isArray(mirrorIntelligence.events) ? mirrorIntelligence.events : [];
+  $("#mirrorEventFeed").innerHTML = mirrorEvents.length
+    ? mirrorEvents.slice(0, 10).map((item) => `<article><i></i><div><strong>${escapeHtml(`${item.side || "OBSERVE"} ${item.symbol || "—"}`)}</strong><span>${escapeHtml(item.sourceId || "public source")}</span></div><em>${escapeHtml(item.delaySeconds === null || item.delaySeconds === undefined ? "delay unavailable" : item.delaySeconds < 3600 ? `${Math.round(item.delaySeconds / 60)}m delay` : `${(item.delaySeconds / 3600).toFixed(1)}h delay`)}</em><small>${escapeHtml(relativeCycle(item.receivedAt))}</small></article>`).join("")
+    : `<div class="mirror-watch-empty"><strong>No persisted source event</strong><span>Only attributable imported events appear here.</span></div>`;
+
   $("#mirrorSources").innerHTML = sources.length
-    ? sources.slice(0, 4).map((source) => `<span><i class="${source.mirrorEligible && source.enabled ? "ready" : "delay"}"></i><strong>${escapeHtml(source.name)}</strong><em>${escapeHtml(source.mirrorEligible && source.enabled ? "copy feed" : "research")}</em></span>`).join("")
+    ? sources.slice(0, 8).map((source) => `<article data-source-health="${escapeHtml(source.health || "waiting")}">
+        <i class="${source.active ? "ready" : "delay"}"></i>
+        <div><strong>${escapeHtml(source.name)}</strong><em>${escapeHtml(`${String(source.delayClass || "delay unknown").replaceAll("_", " ")} · ${source.health || "waiting"}`)}</em></div>
+        <button type="button" data-mirror-follow="${escapeHtml(source.id)}" data-next-following="${source.following ? "false" : "true"}">${source.following ? "Following" : "Follow"}</button>
+        <button type="button" data-mirror-enable="${escapeHtml(source.id)}" data-next-enabled="${source.mirrorEnabled ? "false" : "true"}" ${source.following ? "" : "disabled"}>${source.mirrorEnabled ? "Mirror enabled" : "Mirror off"}</button>
+      </article>`).join("")
     : `<span><i class="delay"></i><strong>Source registry</strong><em>pending</em></span>`;
   const profiles = knowledge.sourceProfiles || [];
   $("#knowledgeStatus").textContent = !knowledge.available
@@ -1058,6 +1183,9 @@ async function loadApp() {
     state.activity = [...(activity.syncRuns || []), ...(activity.activity || []), ...(activity.assistantRuns || [])].sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     state.messages = chat.messages || [];
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
+    state.mirrorIntelligence = mirrorPayload.mirrorIntelligence || brokerPayload.intelligence?.mirror || null;
+    state.intelligence = brokerPayload.intelligence || overview.intelligence || null;
+    state.systemHealth = brokerPayload.systemHealth || overview.systemHealth || null;
     state.brokerControl = brokerPayload.brokerControl || null;
     state.portfolioPlan = brokerPayload.portfolioPlan || null;
     state.proposalDecisions = brokerPayload.portfolioPlan?.decisions || [];
@@ -1511,6 +1639,9 @@ async function pollBrokerControl() {
     const payload = await api("/api/stock-office/broker-control");
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    state.intelligence = payload.intelligence || state.intelligence;
+    state.mirrorIntelligence = payload.intelligence?.mirror || state.mirrorIntelligence;
+    state.systemHealth = payload.systemHealth || state.systemHealth;
     state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
     state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
@@ -1543,6 +1674,9 @@ async function pollLivePortfolio() {
     const payload = await api("/api/stock-office/live");
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    state.intelligence = payload.intelligence || state.intelligence;
+    state.mirrorIntelligence = payload.intelligence?.mirror || state.mirrorIntelligence;
+    state.systemHealth = payload.systemHealth || state.systemHealth;
     state.mirror = payload.mirror || state.mirror;
     state.proposalDecisions = payload.portfolioPlan?.decisions || state.proposalDecisions;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
@@ -1761,6 +1895,25 @@ async function askStockGuru(event) {
   }
 }
 
+async function updateMirrorSourcePolicy(button) {
+  if (!button || button.disabled) return;
+  const sourceId = button.dataset.mirrorFollow || button.dataset.mirrorEnable;
+  const followControl = Boolean(button.dataset.mirrorFollow);
+  const payload = followControl
+    ? { following: button.dataset.nextFollowing === "true", ...(button.dataset.nextFollowing === "false" ? { mirrorEnabled: false } : {}) }
+    : { mirrorEnabled: button.dataset.nextEnabled === "true" };
+  button.disabled = true;
+  try {
+    const response = await api(`/api/stock-office/mirror/sources/${encodeURIComponent(sourceId)}`, { method: "POST", body: JSON.stringify(payload) });
+    state.mirrorIntelligence = response.mirrorIntelligence || state.mirrorIntelligence;
+    renderMirrorLab();
+    showRefreshFeedback("Mirror policy updated", response.safety || "Source controls updated.", "success");
+  } catch (error) {
+    button.disabled = false;
+    showRefreshFeedback("Mirror policy not changed", error.message, "error");
+  }
+}
+
 document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-stock-nav]");
   if (nav) setStockView(nav.dataset.stockNav);
@@ -1786,6 +1939,10 @@ document.addEventListener("click", (event) => {
   if (mirrorGate && !mirrorGate.disabled) sendMirrorToHumanGate(mirrorGate.dataset.mirrorGate);
   const mirrorDraft = event.target.closest("[data-mirror-draft]");
   if (mirrorDraft && !mirrorDraft.disabled) stageMirrorOrder(mirrorDraft.dataset.mirrorDraft);
+  const mirrorFollow = event.target.closest("[data-mirror-follow]");
+  if (mirrorFollow) updateMirrorSourcePolicy(mirrorFollow);
+  const mirrorEnable = event.target.closest("[data-mirror-enable]");
+  if (mirrorEnable) updateMirrorSourcePolicy(mirrorEnable);
   const portfolioDraft = event.target.closest("[data-portfolio-draft]");
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
@@ -1794,6 +1951,14 @@ document.addEventListener("click", (event) => {
   if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");
   if (proposalDecline && !proposalDecline.disabled) declineOverviewProposal(proposalDecline.dataset.proposalDecline);
+  const proposalDetails = event.target.closest("[data-proposal-drawer]");
+  if (proposalDetails) proposalDrawer(proposalDetails.dataset.proposalDrawer);
+  const opportunityDetails = event.target.closest("[data-opportunity-drawer]");
+  if (opportunityDetails) opportunityDrawer(opportunityDetails.dataset.opportunityDrawer);
+  const workerDetails = event.target.closest("[data-worker-drawer]");
+  if (workerDetails) workerDrawer(workerDetails.dataset.workerDrawer);
+  const reportDetails = event.target.closest("[data-report-drawer]");
+  if (reportDetails) reportDrawer(reportDetails.dataset.reportDrawer);
   if (event.target.closest("#telegramApprovalButton")) requestTelegramApproval();
   if (event.target.closest("#telegramEnableButton")) enableTelegram();
   if (event.target.closest("#telegramTestButton")) telegramAction("test");
@@ -1852,3 +2017,46 @@ document.addEventListener("toggle", (event) => {
 window.addEventListener("argentum:approval-changed", () => {
   pollBrokerControl();
 });
+
+let intelligenceEventSource = null;
+let intelligenceEventTimer = null;
+function connectIntelligenceEvents() {
+  if (!("EventSource" in window) || intelligenceEventSource) return;
+  const source = new EventSource("/api/stock-office/events", { withCredentials: true });
+  intelligenceEventSource = source;
+  const refreshFromEvent = () => {
+    window.clearTimeout(intelligenceEventTimer);
+    intelligenceEventTimer = window.setTimeout(() => {
+      pollBrokerControl();
+      if (state.activeView === "overview") pollLivePortfolio();
+    }, 150);
+  };
+  [
+    "research.completed",
+    "opportunity.created",
+    "opportunity.updated",
+    "trade.approval_requested",
+    "trade.approved",
+    "trade.rejected",
+    "order.review_started",
+    "order.submitted",
+    "order.filled",
+    "order.cancelled",
+    "order.updated",
+    "order.rejected",
+    "risk.blocked",
+    "mirror.signal_detected",
+    "mirror.consensus_created",
+    "source.failed",
+    "broker.disconnected",
+    "overnight.completed",
+    "morning.report_ready",
+  ].forEach((eventName) => source.addEventListener(eventName, refreshFromEvent));
+  source.onerror = () => {
+    source.close();
+    intelligenceEventSource = null;
+    window.setTimeout(connectIntelligenceEvents, 5_000);
+  };
+}
+
+connectIntelligenceEvents();

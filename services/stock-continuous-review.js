@@ -43,6 +43,7 @@ function buildContinuousReviewView(input = {}, options = {}) {
       reviewState: draft?.status || (proposal.monitoring ? "monitoring" : proposal.draftEligible ? "qualified" : "blocked"),
       reviewDraftId: draft?.id || "",
       reviewApprovalId: draft?.approvalId || "",
+      reviewExpiresAt: draft?.expiresAt || null,
     };
   });
   const summary = plan.summary || {};

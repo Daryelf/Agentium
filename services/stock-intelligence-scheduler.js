@@ -7,6 +7,11 @@ const DEFAULT_ACTIVE_MINUTES = 5;
 const DEFAULT_QUIET_MINUTES = 240;
 const DEFAULT_FORM4_MINUTES = 60;
 const DEFAULT_13F_MINUTES = 24 * 60;
+const DEFAULT_NEWS_MINUTES = 30;
+const DEFAULT_PREMARKET_MINUTES = 10;
+const DEFAULT_AFTER_HOURS_MINUTES = 15;
+const DEFAULT_OVERNIGHT_MINUTES = 60;
+const DEFAULT_WEEKEND_MINUTES = 240;
 const DEFAULT_STARTUP_DELAY_MS = 10_000;
 
 function safeDate(value) {
@@ -44,6 +49,7 @@ function normalizeHistory(entries = []) {
     status: ["success", "partial", "failed", "skipped"].includes(entry?.status) ? entry.status : "failed",
     includeSecForm4: entry?.includeSecForm4 === true,
     includeSec13f: entry?.includeSec13f === true,
+    includeResearch: entry?.includeResearch === true,
     recordsMayHaveChanged: entry?.recordsMayHaveChanged === true,
     message: shortText(entry?.message, 500),
     startedAt: safeDate(entry?.startedAt),
@@ -64,15 +70,24 @@ function marketWindow(at = new Date(), timeZone = "America/New_York") {
   const weekday = !["Sat", "Sun"].includes(parts.weekday);
   const minutes = Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
   const active = weekday && minutes >= 8 * 60 && minutes < 18 * 60;
-  return { active, label: active ? "market_day_active" : "market_quiet" };
+  if (!weekday) return { active: false, label: "weekend_research", session: "weekend" };
+  if (minutes >= 570 && minutes < 960) return { active, label: "market_open", session: "regular" };
+  if (minutes >= 240 && minutes < 570) return { active, label: "premarket_research", session: "premarket" };
+  if (minutes >= 960 && minutes < 1200) return { active, label: "after_hours_research", session: "afterhours" };
+  return { active, label: "night_research", session: "overnight" };
 }
 
 function cadenceConfig(environment = {}) {
   return {
     activeMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES, 5, 120, DEFAULT_ACTIVE_MINUTES),
     quietMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_QUIET_MINUTES, 30, 24 * 60, DEFAULT_QUIET_MINUTES),
+    premarketMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_PREMARKET_MINUTES, 5, 120, DEFAULT_PREMARKET_MINUTES),
+    afterHoursMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_AFTER_HOURS_MINUTES, 5, 240, DEFAULT_AFTER_HOURS_MINUTES),
+    overnightMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_OVERNIGHT_MINUTES, 15, 240, DEFAULT_OVERNIGHT_MINUTES),
+    weekendMinutes: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_WEEKEND_MINUTES, 30, 24 * 60, DEFAULT_WEEKEND_MINUTES),
     form4Minutes: boundedNumber(environment.STOCK_GURU_AUTO_FORM4_MINUTES, 30, 24 * 60, DEFAULT_FORM4_MINUTES),
     form13Minutes: boundedNumber(environment.STOCK_GURU_AUTO_13F_MINUTES, 6 * 60, 7 * 24 * 60, DEFAULT_13F_MINUTES),
+    newsMinutes: boundedNumber(environment.STOCK_GURU_AUTO_NEWS_MINUTES, 15, 6 * 60, DEFAULT_NEWS_MINUTES),
     startupDelayMs: boundedNumber(environment.STOCK_GURU_AUTO_REFRESH_STARTUP_DELAY_MS, 1_000, 5 * 60_000, DEFAULT_STARTUP_DELAY_MS),
   };
 }
@@ -91,8 +106,13 @@ function normalizeStatus(input = {}, options = {}) {
     marketWindow: shortText(value.marketWindow || "unknown", 40),
     activeCadenceMinutes: cadence.activeMinutes,
     quietCadenceMinutes: cadence.quietMinutes,
+    premarketCadenceMinutes: cadence.premarketMinutes,
+    afterHoursCadenceMinutes: cadence.afterHoursMinutes,
+    overnightCadenceMinutes: cadence.overnightMinutes,
+    weekendCadenceMinutes: cadence.weekendMinutes,
     form4CadenceMinutes: cadence.form4Minutes,
     form13fCadenceMinutes: cadence.form13Minutes,
+    newsCadenceMinutes: cadence.newsMinutes,
     secIdentityConfigured: identityConfigured,
     blockers: identityConfigured ? [] : ["Automatic SEC intake needs STOCK_GURU_SEC_USER_AGENT with a monitored contact identity."],
     lastStartedAt: safeDate(value.lastStartedAt),
@@ -100,6 +120,7 @@ function normalizeStatus(input = {}, options = {}) {
     nextRunAt: safeDate(value.nextRunAt),
     lastForm4AttemptAt: safeDate(value.lastForm4AttemptAt),
     last13fAttemptAt: safeDate(value.last13fAttemptAt),
+    lastNewsAttemptAt: safeDate(value.lastNewsAttemptAt),
     lastResult: normalizeResult(value.lastResult || {}),
     history: normalizeHistory(value.history || []),
     liveOrdersPlaced: 0,
@@ -186,7 +207,17 @@ function createStockIntelligenceScheduler(options = {}) {
   }
 
   function cadenceMs(at) {
-    return (marketWindow(at).active ? config.activeMinutes : config.quietMinutes) * 60_000;
+    const window = marketWindow(at);
+    const minutes = window.session === "regular"
+      ? config.activeMinutes
+      : window.session === "premarket"
+        ? config.premarketMinutes
+        : window.session === "afterhours"
+          ? config.afterHoursMinutes
+          : window.session === "overnight"
+            ? config.overnightMinutes
+            : config.weekendMinutes;
+    return minutes * 60_000;
   }
 
   function due(lastAt, intervalMinutes, at) {
@@ -218,16 +249,18 @@ function createStockIntelligenceScheduler(options = {}) {
       const identityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
       const includeSecForm4 = identityConfigured && due(status.lastForm4AttemptAt, config.form4Minutes, started);
       const includeSec13f = identityConfigured && due(status.last13fAttemptAt, config.form13Minutes, started);
+      const includeResearch = due(status.lastNewsAttemptAt, config.newsMinutes, started);
       status.running = true;
       status.marketWindow = marketWindow(started).label;
       status.lastStartedAt = started.toISOString();
       status.nextRunAt = null;
       if (includeSecForm4) status.lastForm4AttemptAt = started.toISOString();
       if (includeSec13f) status.last13fAttemptAt = started.toISOString();
+      if (includeResearch) status.lastNewsAttemptAt = started.toISOString();
       persist();
       let result;
       try {
-        result = await refreshManager.refresh({ stockRoot, includeSecForm4, includeSec13f });
+        result = await refreshManager.refresh({ stockRoot, includeSecForm4, includeSec13f, includeResearch });
       } catch (error) {
         result = { status: "failed", message: "Automatic intelligence refresh failed safely.", errors: [shortText(error?.message || error)], recordsMayHaveChanged: false };
       }
@@ -241,6 +274,7 @@ function createStockIntelligenceScheduler(options = {}) {
         status: normalizedResult.status,
         includeSecForm4,
         includeSec13f,
+        includeResearch,
         recordsMayHaveChanged: normalizedResult.recordsMayHaveChanged,
         message: normalizedResult.message,
         startedAt: started.toISOString(),
@@ -264,6 +298,7 @@ function createStockIntelligenceScheduler(options = {}) {
     const commands = Array.isArray(refresh.commands) ? refresh.commands : [];
     if (commands.some((item) => item?.name === "copy_refresh_sec" && item?.status !== "skipped")) status.lastForm4AttemptAt = at.toISOString();
     if (commands.some((item) => item?.name === "copy_refresh_13f" && item?.status !== "skipped")) status.last13fAttemptAt = at.toISOString();
+    if (commands.some((item) => item?.name === "research" && item?.status !== "skipped")) status.lastNewsAttemptAt = at.toISOString();
     status.lastStartedAt = safeDate(refresh.startedAt) || at.toISOString();
     status.lastCompletedAt = at.toISOString();
     status.lastResult = result;
@@ -273,6 +308,7 @@ function createStockIntelligenceScheduler(options = {}) {
       status: result.status,
       includeSecForm4: commands.some((item) => item?.name === "copy_refresh_sec" && item?.status !== "skipped"),
       includeSec13f: commands.some((item) => item?.name === "copy_refresh_13f" && item?.status !== "skipped"),
+      includeResearch: commands.some((item) => item?.name === "research" && item?.status !== "skipped"),
       recordsMayHaveChanged: result.recordsMayHaveChanged,
       message: result.message,
       startedAt: status.lastStartedAt,

@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 
 const ROBINHOOD_MCP_URL = "https://agent.robinhood.com/mcp/trading";
 const BROKER_SNAPSHOT_FRESH_MINUTES = 5;
-const ORDER_DRAFT_TTL_MINUTES = 5;
+const ORDER_DRAFT_TTL_MINUTES = 15;
 const DISPATCH_CLAIM_TTL_MINUTES = 2;
 const MAX_ORDER_DRAFTS = 80;
 const FINAL_NON_TRADE_STATES = new Set(["cancelled", "canceled", "rejected", "failed", "expired"]);
@@ -297,6 +297,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
   const accountValue = accountValueAvailable ? moneyNumber(broker.accountValue) : 0;
   const capital = portfolioCapitalState(snapshot, { now: at });
   const killSwitchActive = snapshot.killSwitch?.active !== false;
+  const executionMode = snapshot.executionMode === "paper" ? "paper" : "live";
   const connectorStatus = !toolContract.registered
     ? "setup_required"
     : !toolContract.oauthAuthenticated
@@ -307,6 +308,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
         ? "live_snapshot_verified"
         : "stale_snapshot";
   const blockers = [];
+  if (executionMode !== "live") blockers.push("Stock Office is in PAPER mode. Set STOCK_GURU_EXECUTION_MODE=live and restart before any broker order can be authorized.");
   if (!toolContract.registered) blockers.push("The official Robinhood Trading MCP registration has not been observed.");
   if (toolContract.registered && !toolContract.oauthAuthenticated) blockers.push("Robinhood is registered, but this Stock Office app session is not linked to the dedicated Agentic account.");
   if (toolContract.oauthAuthenticated && !toolContract.endpointMatches) blockers.push("The observed connector endpoint does not match the official Robinhood Trading MCP endpoint.");
@@ -350,14 +352,19 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     cryptoValueDollars: broker.cryptoValue === null || broker.cryptoValue === undefined ? null : moneyNumber(broker.cryptoValue),
     unsettledFundsDollars: broker.unsettledFunds === null || broker.unsettledFunds === undefined ? null : moneyNumber(broker.unsettledFunds),
     pendingDepositsDollars: broker.pendingDeposits === null || broker.pendingDeposits === undefined ? null : moneyNumber(broker.pendingDeposits),
+    dayPnlDollars: broker.dayPnlDollars === null || broker.dayPnlDollars === undefined ? null : moneyNumber(broker.dayPnlDollars),
+    dayPnlPct: finiteNumber(broker.dayPnlPct, null),
+    realizedPnlDollars: broker.realizedPnlDollars === null || broker.realizedPnlDollars === undefined ? null : moneyNumber(broker.realizedPnlDollars),
+    unrealizedPnlDollars: broker.unrealizedPnlDollars === null || broker.unrealizedPnlDollars === undefined ? null : moneyNumber(broker.unrealizedPnlDollars),
     positions: Array.isArray(broker.positions) ? broker.positions : [],
     openOrderCount: Array.isArray(broker.openOrders) ? broker.openOrders.length : 0,
     killSwitchActive,
+    executionMode: executionMode.toUpperCase(),
     guardrails,
     capital,
     liveReady: blockers.length === 0,
     buyReady: blockers.length === 0,
-    exitReady: authenticationVerified && Boolean(broker.account) && controlHasOwnedPositions(broker),
+    exitReady: executionMode === "live" && authenticationVerified && Boolean(broker.account) && controlHasOwnedPositions(broker),
     blockers: [...new Set(blockers)].slice(0, 10),
     requiredTools: REQUIRED_EQUITY_TOOLS,
     assets: {
@@ -382,6 +389,7 @@ function addCheck(checks, blockers, name, passed, detail) {
 
 function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
+  const approvalTtlMinutes = clamp(options.approvalTtlMinutes, 1, 30, ORDER_DRAFT_TTL_MINUTES);
   const control = brokerControlOverview(snapshot, { now, registrationStatus: options.registrationStatus });
   const guardrails = control.guardrails;
   const symbol = normalizeSymbol(input.symbol);
@@ -497,7 +505,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     status: blockers.length ? "blocked" : "ready_for_broker_review",
     liveOrderPlaced: false,
     createdAt,
-    expiresAt: new Date(now.getTime() + ORDER_DRAFT_TTL_MINUTES * 60_000).toISOString(),
+    expiresAt: new Date(now.getTime() + approvalTtlMinutes * 60_000).toISOString(),
     updatedAt: createdAt,
   });
 }
@@ -510,6 +518,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   const seen = new Set();
   const recordBySymbol = Object.fromEntries((snapshot.records || []).map((record) => [normalizeSymbol(record.ticker), record]));
   const positionBySymbol = Object.fromEntries((control.positions || []).map((position) => [normalizeSymbol(position.symbol), position]));
+  const opportunityBySymbol = Object.fromEntries((snapshot.intelligence?.opportunities || []).map((opportunity) => [normalizeSymbol(opportunity.symbol), opportunity]));
+  const mirrorSourcePolicy = Object.fromEntries((snapshot.intelligence?.mirror?.sources || []).map((source) => [String(source.id || ""), source]));
   const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, reasons = [] }) => {
     const key = `${side}:${symbol}`;
     if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= 12) return;
@@ -521,6 +531,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       candidateId: candidate?.id,
     }, snapshot, { now: at });
     const record = recordBySymbol[symbol] || null;
+    const opportunity = opportunityBySymbol[symbol] || null;
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
       kind,
@@ -554,6 +565,18 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       candidateId: candidate?.id || "",
       traderName: candidate?.traderName || "",
       rankingScore: finiteNumber(candidate?.rankingScore, finiteNumber((snapshot.records || []).find((item) => item.ticker === symbol)?.score, 0) / 100),
+      scores: opportunity ? {
+        ai: finiteNumber(opportunity.aiScore, null),
+        technical: finiteNumber(opportunity.technicalScore, null),
+        mirror: finiteNumber(opportunity.mirrorScore, null),
+        catalyst: finiteNumber(opportunity.catalystScore, null),
+        risk: finiteNumber(opportunity.riskScore, null),
+        formula: opportunity.scoreFormula || null,
+      } : null,
+      opportunityId: opportunity?.id || "",
+      opportunityStatus: opportunity?.status || "",
+      opportunityTrend: opportunity?.change?.trend || "",
+      evidence: Array.isArray(opportunity?.evidence) ? opportunity.evidence : [],
       draftEligible: draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
       blockers: draft.blockers,
       reasons: [...new Set(reasons)].slice(0, 6),
@@ -571,6 +594,10 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         dataFresh: record ? record.dataFresh === true : snapshot.mirror?.stale === false,
         checksPassed: draft.checks.filter((check) => check.passed).length,
         checksTotal: draft.checks.length,
+        firstSeenAt: opportunity?.firstSeenAt || null,
+        lastResearchedAt: opportunity?.lastResearchedAt || record?.lastUpdated || null,
+        nextReviewAt: opportunity?.nextReviewAt || null,
+        scoreTrend: opportunity?.change || null,
       },
       outlook: {
         horizonLabel,
@@ -673,6 +700,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       continue;
     }
     if (candidate.status !== "paper_ready" || !candidate.humanGateEligible) continue;
+    const sourcePolicy = mirrorSourcePolicy[candidate.sourceId];
+    if (!sourcePolicy || !sourcePolicy.following || !sourcePolicy.mirrorEnabled) continue;
     pushProposal({
       kind: "copy_entry",
       symbol: candidate.symbol,

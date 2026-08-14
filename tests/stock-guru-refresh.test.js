@@ -9,6 +9,7 @@ const test = require("node:test");
 const {
   createStockGuruRefreshManager,
   enabledSecWatchlistEntries,
+  researchTickers,
   validateWorkspace,
 } = require("../services/stock-guru-refresh");
 
@@ -56,6 +57,25 @@ test("refresh runs evaluator and guarded mirror plan without shell or broker com
   assert.equal(JSON.stringify(calls).match(/order|broker|transfer|robinhood/gi), null);
   assert.equal(result.commands.find((command) => command.name === "copy_refresh_sec").status, "skipped");
   assert.equal(result.commands.find((command) => command.name === "copy_refresh_13f").status, "skipped");
+});
+
+test("structured news research runs on a bounded shortlist from evaluator output", async (t) => {
+  const stockRoot = createRunnableWorkspace(t);
+  fs.mkdirSync(path.join(stockRoot, "reports"), { recursive: true });
+  fs.writeFileSync(path.join(stockRoot, "reports", "evaluations.json"), JSON.stringify([
+    { ticker: "NET", decision: "VALID_BUY_SETUP", score: 92 },
+    { ticker: "AAPL", status: "watch", score: 78 },
+    { ticker: "BAD$", status: "rejected", score: 99 },
+  ]));
+  const calls = [];
+  const manager = createStockGuruRefreshManager({ spawnImpl: successfulSpawn(calls), env: {}, timeoutMs: 2_000 });
+  const result = await manager.refresh({ stockRoot, includeResearch: true });
+  assert.equal(result.status, "success");
+  assert.deepEqual(researchTickers(stockRoot), ["NET", "AAPL"]);
+  assert.deepEqual(calls.map((call) => call.args[2]), ["evaluate", "research", "copy-plan"]);
+  const researchCall = calls.find((call) => call.args[2] === "research");
+  assert.equal(researchCall.args.includes("NET,AAPL"), true);
+  assert.equal(JSON.stringify(calls).match(/order|broker|transfer|robinhood/gi), null);
 });
 
 test("official SEC refresh runs only with enabled named CIKs and contact identity", async (t) => {
@@ -119,20 +139,4 @@ test("missing workspace fails closed and preserves zero live orders", async () =
   assert.equal(result.liveOrdersPlaced, 0);
   assert.match(result.errors[0], /not connected/i);
   assert.throws(() => validateWorkspace("/missing/stock-guru-workspace"), /not connected/i);
-});
-
-test("managed runtime falls back to the connected source Python environment", (t) => {
-  const stockRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-runtime-"));
-  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-source-"));
-  t.after(() => fs.rmSync(stockRoot, { recursive: true, force: true }));
-  t.after(() => fs.rmSync(sourceRoot, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(stockRoot, "src", "stock_guru"), { recursive: true });
-  fs.mkdirSync(path.join(sourceRoot, ".venv", "bin"), { recursive: true });
-  const sourcePython = path.join(sourceRoot, ".venv", "bin", "python");
-  fs.writeFileSync(sourcePython, "python placeholder");
-
-  const workspace = validateWorkspace(stockRoot, fs, sourceRoot);
-
-  assert.equal(workspace.stockRoot, stockRoot);
-  assert.equal(workspace.executable, sourcePython);
 });

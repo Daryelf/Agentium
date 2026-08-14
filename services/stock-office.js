@@ -23,6 +23,14 @@ const SOURCE_DEFINITIONS = [
     staleAfterHours: MARKET_STALE_HOURS,
   },
   {
+    id: "research_context",
+    label: "Structured company and news research",
+    relPath: "reports/research.json",
+    type: "json",
+    category: "research_news",
+    staleAfterHours: 6,
+  },
+  {
     id: "universe",
     label: "Tracked universe",
     relPath: "config/universe.txt",
@@ -476,6 +484,50 @@ function normalizeEvaluationRecord(record, source) {
     sourceId: source.id,
     provenance: definitionProvenance(source),
     lastUpdated: source.generatedAt || source.lastModified || null,
+  };
+}
+
+function normalizeResearchContext(data, source) {
+  const empty = {
+    available: false,
+    generatedAt: source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: "No structured company/news feed",
+    directionalNewsScoring: false,
+    tickers: [],
+    newsCount: 0,
+  };
+  if (!isPlainObject(data)) return empty;
+  const tickers = (Array.isArray(data.tickers) ? data.tickers : []).slice(0, 50).map((item) => {
+    if (!isPlainObject(item)) return null;
+    const ticker = String(item.ticker || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    if (!ticker) return null;
+    return {
+      ticker,
+      companyName: redactSensitiveText(String(item.company_name || "")).slice(0, 180),
+      sector: redactSensitiveText(String(item.sector || "")).slice(0, 100),
+      marketCap: Number.isFinite(Number(item.market_cap)) ? Number(item.market_cap) : null,
+      trailingPe: Number.isFinite(Number(item.trailing_pe)) ? Number(item.trailing_pe) : null,
+      forwardPe: Number.isFinite(Number(item.forward_pe)) ? Number(item.forward_pe) : null,
+      revenueGrowth: Number.isFinite(Number(item.revenue_growth)) ? Number(item.revenue_growth) : null,
+      recommendation: String(item.recommendation || "").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 60),
+      sourceNote: redactSensitiveText(String(item.source_note || "")).slice(0, 240),
+      news: (Array.isArray(item.news) ? item.news : []).slice(0, 8).map((news) => ({
+        title: redactSensitiveText(String(news?.title || "")).slice(0, 300),
+        publisher: redactSensitiveText(String(news?.publisher || "")).slice(0, 120),
+        publishedAt: safeDate(news?.published_at),
+        url: safePublicUrl(news?.url),
+      })).filter((news) => news.title),
+    };
+  }).filter(Boolean);
+  return {
+    available: true,
+    generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
+    stale: Boolean(source?.stale),
+    source: redactSensitiveText(String(data.source || "Structured company/news research")).slice(0, 180),
+    directionalNewsScoring: data.directional_news_scoring === true,
+    tickers,
+    newsCount: tickers.reduce((sum, item) => sum + item.news.length, 0),
   };
 }
 
@@ -1101,6 +1153,7 @@ function loadStockOfficeSnapshot(options = {}) {
         importer13f: normalizeCopyImportStatus(null, null),
         knowledge: normalizeCopyKnowledge(null, null),
       },
+      research: normalizeResearchContext(null, null),
       guardrails: workspaceState.activeGuardrails || normalizeGuardrails({}),
       guardrailsSource: workspaceState.activeGuardrails ? {
         type: "human_gate_override",
@@ -1148,6 +1201,7 @@ function loadStockOfficeSnapshot(options = {}) {
     knowledge: normalizeCopyKnowledge(byId.copy_knowledge?.data, byId.copy_knowledge?.source),
     watchers: normalizeCopyTraderWatchers(byId.copy_trader_watchlist?.data),
   };
+  const research = normalizeResearchContext(byId.research_context?.data, byId.research_context?.source);
   const guardrails = workspaceState.activeGuardrails || normalizeGuardrails(byId.settings?.data || {});
   const guardrailsSource = workspaceState.activeGuardrails ? {
     type: "human_gate_override",
@@ -1172,6 +1226,7 @@ function loadStockOfficeSnapshot(options = {}) {
     broker,
     readiness,
     mirror,
+    research,
     guardrails,
     guardrailsSource,
     killSwitch,
@@ -1189,6 +1244,7 @@ function loadStockOfficeSnapshot(options = {}) {
     reports: {
       latestTicket: byId.latest_ticket?.data ? redactSensitiveText(byId.latest_ticket.data).slice(0, 4000) : "",
       mission: byId.mission?.data ? redactSensitiveText(byId.mission.data).slice(0, 4000) : "",
+      researchGeneratedAt: research.generatedAt,
     },
   };
   snapshot.alerts = buildAlerts({ available: true, sources, records, readiness, broker, sourceHealth, mirror });

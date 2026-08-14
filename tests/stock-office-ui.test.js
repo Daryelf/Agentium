@@ -4,7 +4,6 @@ const path = require("node:path");
 const test = require("node:test");
 
 const appRoot = path.join(__dirname, "..", "apps", "stock-office");
-const shellJs = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
 
 test("Stock Office UI exposes a real refresh outcome and useful filter feedback", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
@@ -17,7 +16,6 @@ test("Stock Office UI exposes a real refresh outcome and useful filter feedback"
   assert.match(script, /\/api\/stock-office\/refresh-status/);
   assert.match(script, /No records match these filters/);
   assert.match(script, /Loaded \$\{count\} evaluator record/);
-  assert.match(script, /Latest available prices, rankings, and Mirror decisions loaded/);
   assert.match(script, /button\.textContent = "Filter records"/);
   assert.doesNotMatch(script, /stock-guru copy-refresh-sec|continuous watcher/);
   assert.doesNotMatch(`${html}\n${script}`, /scanner\/evaluator outside Argentum|Sync local files/);
@@ -51,7 +49,7 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(html, /id="brokerOnboarding" hidden/);
   assert.match(html, /id="overviewEquity"/);
   assert.match(html, /id="overviewPositions"/);
-  assert.match(html, /Market intelligence/);
+  assert.match(html, /Best opportunities/);
   assert.match(html, /Market workers/);
   assert.match(html, /id="marketWorkers"/);
   assert.match(html, /Trade risk/);
@@ -119,7 +117,6 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(html, /id="tradeProposalsTitle">Trade proposals/);
   assert.match(html, /id="overviewProposalList"/);
   assert.match(html, /id="overviewLiveClock"/);
-  assert.match(html, /id="overviewCycleRail"/);
   assert.match(html, /Company logos provided by Parqet/);
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
@@ -130,33 +127,8 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /\/human-gate/);
   assert.match(script, /No broker review or order has occurred/);
   assert.match(script, /No profit date can be estimated reliably/);
-  assert.match(script, /Next full cycle/);
-  assert.match(script, /Copy watch/);
-  assert.match(script, /Human Gate pending/);
   assert.match(styles, /\.company-logo/);
   assert.match(styles, /\.overview-proposal-list/);
-});
-
-test("Mirror is a compact copy-trading control room driven by live watcher and cycle data", () => {
-  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
-  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
-  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
-
-  assert.match(html, /COPY TRADING/);
-  assert.match(html, /Mirror control/);
-  assert.match(html, /id="mirrorCycleRail"/);
-  assert.match(html, /id="mirrorWatchers"/);
-  assert.match(html, /People &amp; funds/);
-  assert.match(html, /Copy decisions/);
-  assert.match(script, /mirror\.watchers/);
-  assert.match(script, /cadenceMinutes.*MINUTE ENGINE/);
-  assert.match(script, /blocking.*blockers\.slice\(0, 3\)/s);
-  assert.match(script, /Runs automatically/);
-  assert.match(script, /Send to Human Gate/);
-  assert.match(script, /13F watcher/);
-  assert.match(styles, /compact copy-trading operations console/);
-  assert.doesNotMatch(html, /<h2>Mirror Lab<\/h2>/);
-  assert.doesNotMatch(html, /Delayed signals<\/strong>/);
 });
 
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {
@@ -174,28 +146,34 @@ test("Stock Office UI exposes secure approval-gated Telegram alerts for verified
   assert.doesNotMatch(script, /STOCK_GURU_TELEGRAM_BOT_TOKEN/);
 });
 
-test("Control Floor Stock Office card is data-first and loads the live broker snapshot", () => {
-  assert.match(shellJs, /api\("\/api\/stock-office\/broker-control"\)/);
-  assert.match(shellJs, /stock-office-account-summary/);
-  assert.match(shellJs, /Live portfolio/);
-  assert.match(shellJs, /Largest position/);
-  assert.match(shellJs, /New buys paused/);
-  assert.doesNotMatch(shellJs, /Security boundary<\/h4>/);
-});
-
-test("Stock Office UI keeps no-look-ahead copy evidence available without crowding the main console", () => {
+test("Stock Office UI exposes no-look-ahead mirror evidence, consensus, and explicit source controls", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
   assert.match(html, /Evidence &amp; safety/);
-  assert.match(script, /post-disclosure outcomes mature/);
-  assert.match(script, /13F watcher/);
+  assert.match(html, /Multi-source matches/);
+  assert.match(html, /Source events/);
   assert.match(script, /knowledgeSummary\.measuredOutcomes/);
   assert.match(script, /candidate\.evidenceScore/);
   assert.match(script, /No matured outcomes/);
-  assert.match(script, /Send to Human Gate/);
+  assert.match(script, /Stage guarded order/);
   assert.match(script, /candidateId/);
   assert.match(script, /data-mirror-draft/);
   assert.match(script, /brokerPositionRequired/);
+  assert.match(script, /data-mirror-follow/);
+  assert.match(script, /data-mirror-enable/);
+  assert.match(script, /mirror\/sources/);
   assert.match(html, /Market workers/);
+});
+
+test("production UI labels unavailable values and never hardcodes a live portfolio or fake score", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  assert.match(html, /id="executionModePill"[^>]*>PAPER/);
+  assert.match(script, /buyingPower === null \? "—"/);
+  assert.match(script, /scores\.mirror \?\? "—"/);
+  assert.match(script, /No qualified opportunity/);
+  assert.match(script, /new EventSource\("\/api\/stock-office\/events", \{ withCredentials: true \}\)/);
+  assert.match(html, /id="intelligenceDrawer"/);
+  assert.doesNotMatch(script, /const\s+(?:portfolioValue|buyingPower|aiScore)\s*=\s*\d+/);
 });

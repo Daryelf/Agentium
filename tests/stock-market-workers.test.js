@@ -6,10 +6,10 @@ const { buildStockMarketWorkers, marketSession } = require("../services/stock-ma
 test("market session reports the actual regular New York trading window", () => {
   assert.deepEqual(marketSession(new Date("2026-08-12T14:00:00.000Z")), { status: "regular", label: "Regular market open", regular: true });
   assert.equal(marketSession(new Date("2026-08-12T12:00:00.000Z")).status, "premarket");
-  assert.equal(marketSession(new Date("2026-08-15T14:00:00.000Z")).status, "closed");
+  assert.equal(marketSession(new Date("2026-08-15T14:00:00.000Z")).status, "weekend");
 });
 
-test("four market workers reflect real scheduler, source, mirror, and broker evidence", () => {
+test("market workers reflect real scheduler, source, mirror, news, reports, and broker evidence", () => {
   const output = buildStockMarketWorkers({
     snapshot: {
       records: [
@@ -46,14 +46,17 @@ test("four market workers reflect real scheduler, source, mirror, and broker evi
     },
   }, { now: "2026-08-12T14:00:00.000Z" });
 
-  assert.equal(output.workers.length, 4);
-  assert.deepEqual(output.workers.map((worker) => worker.id), ["market-scanner", "filing-watch", "signal-analyst", "risk-sentinel"]);
+  assert.equal(output.workers.length, 8);
+  assert.deepEqual(output.workers.map((worker) => worker.id), [
+    "market-scanner", "signal-analyst", "mirror-watch", "filing-watch", "news-watch", "risk-sentinel", "overnight-research", "morning-intelligence",
+  ]);
   assert.equal(output.workers[0].status, "working");
-  assert.match(output.workers[0].task, /Refreshing market evaluator/i);
-  assert.equal(output.workers[1].metrics[0].value, 2);
-  assert.equal(output.workers[2].metrics[0].value, 5);
-  assert.equal(output.workers[3].status, "watching");
-  assert.match(output.workers[3].finding, /buying power/i);
+  assert.equal(output.workers[0].task, "Researching");
+  assert.equal(output.workers.find((worker) => worker.id === "filing-watch").metrics[0].value, 2);
+  assert.equal(output.workers.find((worker) => worker.id === "signal-analyst").metrics[0].value, 5);
+  assert.equal(output.workers.find((worker) => worker.id === "news-watch").status, "blocked");
+  assert.equal(output.workers.find((worker) => worker.id === "risk-sentinel").status, "watching");
+  assert.match(output.workers.find((worker) => worker.id === "risk-sentinel").finding, /buying power/i);
   assert.equal(output.safety.canPlaceOrders, false);
   assert.ok(output.workers.every((worker) => worker.brokerAuthority === false));
 });
@@ -67,6 +70,21 @@ test("workers expose blockers instead of pretending unavailable online inputs ar
   }, { now: "2026-08-12T14:00:00.000Z" });
 
   assert.equal(output.workers.find((worker) => worker.id === "filing-watch").status, "blocked");
-  assert.match(output.workers.find((worker) => worker.id === "filing-watch").task, /SEC contact identity/i);
+  assert.match(output.workers.find((worker) => worker.id === "filing-watch").finding, /SEC identity/i);
   assert.equal(output.workers.find((worker) => worker.id === "risk-sentinel").status, "blocked");
+});
+
+test("overnight workers continue research while execution is closed", () => {
+  const output = buildStockMarketWorkers({
+    snapshot: { records: [{ ticker: "NET", status: "watch", score: 74 }], sourceHealth: { total: 1, ready: 1 }, mirror: {} },
+    brokerControl: { authenticationVerified: true, positions: [], blockers: ["Market is closed."] },
+    portfolioPlan: { proposals: [] },
+    intelligenceScheduler: { enabled: true, running: true, currentStage: "evaluate", overnightCadenceMinutes: 60 },
+    intelligence: { opportunities: [{ symbol: "NET", status: "candidate" }], reports: {} },
+  }, { now: "2026-08-13T06:00:00.000Z" });
+
+  assert.equal(output.market.status, "closed");
+  assert.equal(output.workers.find((worker) => worker.id === "overnight-research").status, "working");
+  assert.equal(output.scheduler.cadenceMinutes, 60);
+  assert.equal(output.safety.canPlaceOrders, false);
 });

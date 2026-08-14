@@ -3,6 +3,7 @@ const path = require("node:path");
 
 const SETTINGS_FILE = "stock-guru-workspace.json";
 const RUNTIME_FOLDER = "stock-guru-runtime";
+const RUNTIME_VERSION = 2;
 const COPY_EXCLUDES = new Set([".DS_Store", ".git", ".pytest_cache", "__pycache__", ".venv"]);
 
 function isStockGuruWorkspace(candidatePath, fsImpl = fs) {
@@ -85,9 +86,7 @@ function linkPythonEnvironment(sourcePath, runtimePath, fsImpl = fs) {
   const sourceEnvironment = path.join(sourcePath, ".venv");
   const runtimeEnvironment = path.join(runtimePath, ".venv");
   if (!fsImpl.existsSync(path.join(sourceEnvironment, "bin", "python"))) return false;
-  if (path.resolve(sourceEnvironment) === path.resolve(runtimeEnvironment)) {
-    return true;
-  }
+  if (path.resolve(sourceEnvironment) === path.resolve(runtimeEnvironment)) return true;
   try {
     const current = fsImpl.lstatSync(runtimeEnvironment);
     if (current.isSymbolicLink() && path.resolve(path.dirname(runtimeEnvironment), fsImpl.readlinkSync(runtimeEnvironment)) === sourceEnvironment) return true;
@@ -104,6 +103,7 @@ function reuseExistingRuntime(sourcePath, userDataPath, fsImpl = fs) {
   try {
     const metadata = JSON.parse(fsImpl.readFileSync(path.join(runtimePath, ".argentum-runtime.json"), "utf8"));
     if (path.resolve(String(metadata?.sourcePath || "")) !== sourcePath) return null;
+    if (Number(metadata?.runtimeVersion || 0) !== RUNTIME_VERSION) return null;
   } catch (_error) {
     return null;
   }
@@ -148,6 +148,7 @@ function materializeStockGuruRuntime(options = {}) {
   }
   const pythonLinked = linkPythonEnvironment(sourcePath, runtimePath, fsImpl);
   fsImpl.writeFileSync(path.join(runtimePath, ".argentum-runtime.json"), `${JSON.stringify({
+    runtimeVersion: RUNTIME_VERSION,
     sourcePath,
     runtimePath,
     pythonLinked,
@@ -199,6 +200,7 @@ function resolveStockGuruWorkspace(options = {}) {
 }
 
 module.exports = {
+  RUNTIME_VERSION,
   RUNTIME_FOLDER,
   SETTINGS_FILE,
   copyTreeNewer,

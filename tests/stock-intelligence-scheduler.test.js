@@ -114,7 +114,7 @@ test("automatic refresh persists restart-safe status and has no broker authority
   assert.equal(completed.brokerCalled, false);
   assert.equal(completed.safety.brokerToolsAvailable, false);
   assert.deepEqual(completions, ["success"]);
-  assert.deepEqual(calls, [{ stockRoot: directory, includeSecForm4: false, includeSec13f: false }]);
+  assert.deepEqual(calls, [{ stockRoot: directory, includeSecForm4: false, includeSec13f: false, includeResearch: true }]);
   assert.match(completed.blockers[0], /SEC intake needs STOCK_GURU_SEC_USER_AGENT/i);
   assert.equal(completed.history.at(-1).trigger, "test");
   assert.equal(completed.history.at(-1).brokerCalled, false);
@@ -177,12 +177,14 @@ test("SEC jobs use independent bounded cadences and concurrent runs share one pr
     stockRoot: "/tmp/stock-intelligence-test",
     includeSecForm4: true,
     includeSec13f: true,
+    includeResearch: true,
   });
 
   clock.advance(15 * 60_000);
   await scheduler.runNow({ trigger: "test" });
   assert.equal(calls[1].includeSecForm4, false);
   assert.equal(calls[1].includeSec13f, false);
+  assert.equal(calls[1].includeResearch, false);
 });
 
 test("refresh exceptions and synchronous completion callbacks fail safely", async () => {

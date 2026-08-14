@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260813-4" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260813-6" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260813-5" defer></script>
+    <script src="./stock-office.js?v=20260813-7" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -31,6 +31,7 @@
             <h1 id="viewTitle">Overview</h1>
           </div>
           <div class="command-actions">
+            <span id="executionModePill" class="status-pill warning">PAPER</span>
             <span id="brokerStatusPill" class="status-pill muted">Checking Robinhood</span>
             <button id="syncButton" type="button">Update market data</button>
           </div>
@@ -63,6 +64,18 @@
             <div class="overview-worker-columns" aria-hidden="true"><span>Worker</span><span>Now</span><span>Activity</span><span>Evidence</span><span>Cycle</span></div>
             <div id="marketWorkers" class="overview-worker-list"></div>
           </section>
+          <section class="overview-intelligence-rail" aria-label="Research memory and system health">
+            <div class="overview-intelligence-state">
+              <span>Research memory</span>
+              <strong id="overviewResearchState">Waiting</strong>
+              <small id="overviewResearchTimestamp">No persisted cycle</small>
+            </div>
+            <div id="overviewSystemHealth" class="overview-system-health"></div>
+            <div class="overview-report-actions">
+              <button type="button" data-report-drawer="overnight">Night report</button>
+              <button type="button" data-report-drawer="morning">Morning report</button>
+            </div>
+          </section>
           <section class="overview-proposals-board" aria-labelledby="tradeProposalsTitle">
             <div class="overview-board-head overview-proposals-head">
               <div><span>Evidence-backed review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
@@ -78,7 +91,7 @@
               <div id="overviewPositions" class="overview-position-list"></div>
             </section>
             <section class="overview-intel-board">
-              <div class="overview-board-head"><div><span>Evaluator</span><h2>Market intelligence</h2></div><strong id="overviewFreshness">Loading</strong></div>
+              <div class="overview-board-head"><div><span>Persistent intelligence</span><h2>Best opportunities</h2></div><strong id="overviewFreshness">Loading</strong></div>
               <div id="overviewIntelSummary" class="overview-intel-summary"></div>
               <div id="overviewTopSetups" class="overview-setup-list"></div>
             </section>
@@ -149,6 +162,10 @@
                   <strong id="mirrorWatcherCount">0 active</strong>
                 </div>
                 <div id="mirrorWatchers" class="mirror-watchers"></div>
+                <div class="mirror-section-head compact"><div><span>CONSENSUS</span><h3>Multi-source matches</h3></div></div>
+                <div id="mirrorConsensus" class="mirror-consensus"></div>
+                <div class="mirror-section-head compact"><div><span>RECENT</span><h3>Source events</h3></div></div>
+                <div id="mirrorEventFeed" class="mirror-event-feed"></div>
                 <div id="mirrorSources" class="mirror-source-rail"></div>
               </aside>
             </div>
@@ -217,7 +234,6 @@
                   <summary>Advanced limits</summary>
                   <div class="limit-advanced">
                     <label>Max deployed <input id="maxTotalDollars" type="number" min="1" max="1000000" step="1" required /></label>
-                    <label>Cash reserve <input id="cashReserveDollars" type="number" min="0" max="1000000" step="1" required /></label>
                     <label>Max positions <input id="maxPositions" type="number" min="1" max="100" step="1" required /></label>
                     <label>Daily trades <input id="maxTradesPerDay" type="number" min="1" max="100" step="1" required /></label>
                     <label>Entry score <input id="minEntryScore" type="number" min="1" max="100" step="1" required /></label>
@@ -281,6 +297,13 @@
         </section>
       </main>
     </div>
+    <dialog id="intelligenceDrawer" class="intelligence-drawer">
+      <form method="dialog" class="intelligence-drawer-shell">
+        <header><div><span id="drawerKicker">INTELLIGENCE</span><h2 id="drawerTitle">Details</h2></div><button value="close" aria-label="Close details">×</button></header>
+        <div id="drawerTabs" class="intelligence-drawer-tabs"></div>
+        <div id="drawerContent" class="intelligence-drawer-content"></div>
+      </form>
+    </dialog>
     <script src="/human-gate-bubble.js?v=20260812-2"></script>
   </body>
 </html>

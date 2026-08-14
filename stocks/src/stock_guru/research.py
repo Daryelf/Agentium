@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+import json
 import re
 import urllib.parse
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from .data import ALPHA_VANTAGE_URL, FMP_URL, fetch_json, load_provider_keys
 
 
 RESEARCH_REPORT_PATH = REPORT_DIR / "research.md"
+RESEARCH_JSON_PATH = REPORT_DIR / "research.json"
 COMPANY_NEWS_ALIASES = {
     "BAC": ("Bank of America",),
 }
@@ -31,6 +33,7 @@ class EquityResearch:
     revenue_growth: float | None = None
     recommendation: str = ""
     headlines: tuple[str, ...] = ()
+    news_items: tuple[NewsHeadline, ...] = ()
     source_note: str = "yfinance company profile/news; verify with broker quote before trading"
 
 
@@ -47,7 +50,7 @@ def fetch_equity_research(tickers: Iterable[str], *, news_limit: int = 3) -> lis
     for ticker in normalize_tickers(tickers):
         stock = yf.Ticker(ticker)
         info = safe_info(stock)
-        headlines = safe_headlines(stock, limit=news_limit)
+        news_items = safe_news_items(stock, limit=news_limit)
         items.append(
             EquityResearch(
                 ticker=ticker,
@@ -58,7 +61,8 @@ def fetch_equity_research(tickers: Iterable[str], *, news_limit: int = 3) -> lis
                 forward_pe=number_or_none(info.get("forwardPE")),
                 revenue_growth=number_or_none(info.get("revenueGrowth")),
                 recommendation=str(info.get("recommendationKey") or ""),
-                headlines=tuple(headlines),
+                headlines=tuple(item.title for item in news_items),
+                news_items=tuple(news_items),
             )
         )
     return items
@@ -72,15 +76,19 @@ def safe_info(stock: yf.Ticker) -> Mapping[str, object]:
 
 
 def safe_headlines(stock: yf.Ticker, *, limit: int) -> list[str]:
+    return [item.title for item in safe_news_items(stock, limit=limit)]
+
+
+def safe_news_items(stock: yf.Ticker, *, limit: int) -> list[NewsHeadline]:
     try:
         news = stock.news or []
     except Exception:
         return []
-    headlines: list[str] = []
+    headlines: list[NewsHeadline] = []
     for item in news:
-        title = title_from_news_item(item)
-        if title:
-            headlines.append(title)
+        headline = headline_from_news_item(item)
+        if headline.title:
+            headlines.append(headline)
         if len(headlines) >= limit:
             break
     return headlines
@@ -430,4 +438,46 @@ def write_research_report(
         lines.extend(f"- {headline}" for headline in item.headlines)
     lines.append("")
     path.write_text("\n".join(lines))
+    return path
+
+
+def write_research_json(
+    items: Sequence[EquityResearch],
+    *,
+    path: Path = RESEARCH_JSON_PATH,
+    generated_at: datetime | None = None,
+) -> Path:
+    """Write browser-safe structured research without inferring news sentiment."""
+    observed_at = (generated_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    payload = {
+        "version": 1,
+        "generated_at": observed_at,
+        "source": "yfinance_profile_news_with_optional_configured_provider_context",
+        "directional_news_scoring": False,
+        "tickers": [
+            {
+                "ticker": item.ticker,
+                "company_name": item.company_name,
+                "sector": item.sector,
+                "market_cap": item.market_cap,
+                "trailing_pe": item.trailing_pe,
+                "forward_pe": item.forward_pe,
+                "revenue_growth": item.revenue_growth,
+                "recommendation": item.recommendation,
+                "source_note": item.source_note,
+                "news": [
+                    {
+                        "title": news.title,
+                        "publisher": news.publisher,
+                        "published_at": news.published_at.isoformat() if news.published_at else None,
+                        "url": news.link,
+                    }
+                    for news in item.news_items
+                ],
+            }
+            for item in items
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
     return path

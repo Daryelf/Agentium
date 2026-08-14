@@ -10,12 +10,13 @@ const {
   secretHash,
 } = require("../services/stock-telegram-notifier");
 
-function fixture() {
+function fixture(options = {}) {
   let settings = {};
   const secrets = {};
   const requests = [];
+  const reserved = new Set();
   const notifier = createStockTelegramNotifier({
-    environment: {},
+    environment: options.environment || {},
     now: () => new Date("2026-08-12T14:00:00.000Z"),
     getSetting: (_key, fallback) => settings || fallback,
     setSetting: (_key, value) => { settings = value; },
@@ -26,6 +27,15 @@ function fixture() {
       requests.push({ url, options });
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     },
+    reserveEvent: options.reserveEvent || ((event) => {
+      const duplicate = reserved.has(event.idempotencyKey);
+      reserved.add(event.idempotencyKey);
+      return { id: `event-${reserved.size}`, duplicate };
+    }),
+    completeEvent: options.completeEvent || (() => {}),
+    commandContext: options.commandContext,
+    approvalAction: options.approvalAction,
+    watchAction: options.watchAction,
   });
   return { notifier, requests, settings: () => settings };
 }
@@ -128,6 +138,77 @@ test("qualified proposal alert requires a pending exact Human Gate request and i
   assert.equal((await notifier.notifyQualifiedProposal(proposal, draft, gate, [approval])).sent, true);
   assert.equal((await notifier.notifyQualifiedProposal(proposal, draft, gate, [approval])).state, "duplicate");
   assert.equal(requests.length, 1);
-  assert.match(requests[0].options.body, /Argentum SELL proposal ready/);
+  assert.match(requests[0].options.body, /ARGENTUM SELL PROPOSAL/);
   assert.match(formatQualifiedProposalMessage(proposal, draft, gate), /No broker review or order has occurred/);
+  const payload = JSON.parse(requests[0].options.body);
+  assert.equal(payload.reply_markup.inline_keyboard[0][0].callback_data, `hg:a:${gate.id}`);
+  assert.equal(payload.reply_markup.inline_keyboard[1][0].callback_data, `wt:${proposal.fingerprint.slice(0, 48)}`);
+});
+
+test("unauthorized Telegram users cannot invoke Human Gate", async () => {
+  let approvalCalls = 0;
+  const { notifier } = fixture({
+    environment: {
+      STOCK_GURU_TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+      STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS: "42",
+      STOCK_GURU_TELEGRAM_ALLOWED_CHAT_IDS: "-1001234567890",
+    },
+    approvalAction: async () => { approvalCalls += 1; return { text: "approved" }; },
+  });
+  const result = await notifier.processUpdate({
+    update_id: 1,
+    callback_query: { id: "callback-1", data: "hg:c:approval-one", from: { id: 99 }, message: { message_id: 7, chat: { id: -1001234567890 } } },
+  }, { webhookSecret: "webhook-secret", approvals: [] });
+  assert.equal(result.status, "unauthorized_actor");
+  assert.equal(result.httpStatus, 403);
+  assert.equal(approvalCalls, 0);
+});
+
+test("Telegram approval uses a final confirmation and duplicate callbacks are idempotent", async () => {
+  const approvalCalls = [];
+  const environment = {
+    STOCK_GURU_TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS: "42",
+    STOCK_GURU_TELEGRAM_ALLOWED_CHAT_IDS: "-1001234567890",
+  };
+  const { notifier, requests } = fixture({
+    environment,
+    commandContext: async () => ({ text: "status" }),
+    approvalAction: async (input) => { approvalCalls.push(input); return { text: "Approved through Human Gate.", toast: "Approved" }; },
+  });
+  notifier.configure({ botToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", chatId: "-1001234567890" });
+  const standing = approvalFor(notifier.approvalScope());
+  notifier.enable(standing, [standing]);
+  const base = { from: { id: 42 }, message: { message_id: 7, chat: { id: -1001234567890 } } };
+  const first = await notifier.processUpdate({ update_id: 10, callback_query: { ...base, id: "tap-approve", data: "hg:a:trade-approval-one" } }, { webhookSecret: "webhook-secret", approvals: [standing] });
+  assert.equal(first.status, "processed");
+  assert.equal(approvalCalls.length, 0);
+  const confirmationMessage = requests.map((request) => JSON.parse(request.options.body)).find((payload) => payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data === "hg:c:trade-approval-one");
+  assert.ok(confirmationMessage, "a final confirmation button should reference the immutable approval ID");
+
+  const confirmed = await notifier.processUpdate({ update_id: 11, callback_query: { ...base, id: "tap-confirm", data: "hg:c:trade-approval-one" } }, { webhookSecret: "webhook-secret", approvals: [standing] });
+  const duplicate = await notifier.processUpdate({ update_id: 11, callback_query: { ...base, id: "tap-confirm", data: "hg:c:trade-approval-one" } }, { webhookSecret: "webhook-secret", approvals: [standing] });
+  assert.equal(confirmed.status, "processed");
+  assert.equal(duplicate.status, "duplicate");
+  assert.equal(approvalCalls.length, 1);
+  assert.equal(approvalCalls[0].decision, "approve");
+  assert.equal(approvalCalls[0].approvalId, "trade-approval-one");
+});
+
+test("Telegram webhook secret and per-user rate limit fail closed", async () => {
+  const environment = {
+    STOCK_GURU_TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS: "42",
+    STOCK_GURU_TELEGRAM_ALLOWED_CHAT_IDS: "-1001234567890",
+    STOCK_GURU_TELEGRAM_RATE_LIMIT_PER_MINUTE: "3",
+  };
+  const { notifier } = fixture({ environment, commandContext: async () => ({ text: "ok" }) });
+  assert.equal((await notifier.processUpdate({ update_id: 1 }, { webhookSecret: "wrong" })).status, "unauthorized_webhook");
+  const update = (id) => ({ update_id: id, message: { message_id: id, text: "/status", from: { id: 42 }, chat: { id: -1001234567890 } } });
+  await notifier.processUpdate(update(2), { webhookSecret: "webhook-secret", approvals: [] });
+  await notifier.processUpdate(update(3), { webhookSecret: "webhook-secret", approvals: [] });
+  await notifier.processUpdate(update(4), { webhookSecret: "webhook-secret", approvals: [] });
+  const limited = await notifier.processUpdate(update(5), { webhookSecret: "webhook-secret", approvals: [] });
+  assert.equal(limited.status, "rate_limited");
+  assert.equal(limited.httpStatus, 429);
 });

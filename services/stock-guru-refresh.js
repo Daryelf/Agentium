@@ -33,6 +33,21 @@ function enabledSecWatchlistEntries(stockRoot, fsImpl = fs, section = "sec_form4
   }
 }
 
+function researchTickers(stockRoot, fsImpl = fs, limit = 12) {
+  try {
+    const payload = JSON.parse(fsImpl.readFileSync(path.join(stockRoot, "reports", "evaluations.json"), "utf8"));
+    const records = Array.isArray(payload) ? payload : Array.isArray(payload?.evaluations) ? payload.evaluations : [];
+    const eligibleStatuses = new Set(["valid_setup", "valid_buy_setup", "watch", "watchlist", "review"]);
+    return [...new Set(records
+      .filter((item) => item && eligibleStatuses.has(String(item.status || item.decision || "").trim().toLowerCase().replace(/[\s-]+/g, "_")))
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+      .map((item) => String(item.ticker || item.symbol || "").toUpperCase().replace(/[^A-Z0-9.-]/g, ""))
+      .filter(Boolean))].slice(0, Math.max(1, Math.min(25, Number(limit) || 12)));
+  } catch (_error) {
+    return [];
+  }
+}
+
 function validateWorkspace(stockRoot, fsImpl = fs, sourcePath = "") {
   const resolved = path.resolve(String(stockRoot || ""));
   const packageRoot = path.join(resolved, "src", "stock_guru");
@@ -85,6 +100,8 @@ function createStockGuruRefreshManager(options = {}) {
       stage: commandLabel,
       message: commandLabel === "evaluate"
         ? "Refreshing market evaluator records..."
+        : commandLabel === "research"
+          ? "Refreshing structured company and news context for top candidates..."
         : commandLabel === "copy_refresh_sec"
           ? "Refreshing official SEC Form 4 signals and price observations..."
           : commandLabel === "copy_refresh_13f"
@@ -140,6 +157,7 @@ function createStockGuruRefreshManager(options = {}) {
   async function execute(stockRoot, runOptions = {}) {
     const includeSecForm4 = runOptions.includeSecForm4 !== false;
     const includeSec13f = runOptions.includeSec13f !== false;
+    const includeResearch = runOptions.includeResearch !== false;
     const runId = `stock-refresh-${Date.now()}`;
     status = {
       id: runId,
@@ -175,6 +193,16 @@ function createStockGuruRefreshManager(options = {}) {
         "--max-symbols", "80",
         "--rotate-count", "40",
       ], "evaluate", workspace.stockRoot));
+
+      const researchSymbols = includeResearch ? researchTickers(workspace.stockRoot, fsImpl) : [];
+      if (includeResearch && researchSymbols.length) {
+        results.push(await runCommand(workspace.executable, ["research", "--tickers", researchSymbols.join(","), "--news-limit", "3"], "research", workspace.stockRoot));
+      } else {
+        const reason = includeResearch
+          ? "Structured company/news research deferred because the evaluator produced no eligible candidate symbols."
+          : "Structured company/news research deferred until its independent bounded cadence.";
+        status.commands.push({ name: "research", status: "skipped", startedAt: nowIso(), completedAt: nowIso(), detail: reason });
+      }
 
       const secIdentityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
       const secEntries = enabledSecWatchlistEntries(workspace.stockRoot, fsImpl, "sec_form4");
@@ -228,9 +256,9 @@ function createStockGuruRefreshManager(options = {}) {
     }
   }
 
-  function refresh({ stockRoot, includeSecForm4 = true, includeSec13f = true } = {}) {
+  function refresh({ stockRoot, includeSecForm4 = true, includeSec13f = true, includeResearch = true } = {}) {
     if (activePromise) return activePromise;
-    activePromise = execute(stockRoot, { includeSecForm4, includeSec13f }).finally(() => {
+    activePromise = execute(stockRoot, { includeSecForm4, includeSec13f, includeResearch }).finally(() => {
       activePromise = null;
     });
     return activePromise;
@@ -246,5 +274,6 @@ module.exports = {
   cleanOutput,
   createStockGuruRefreshManager,
   enabledSecWatchlistEntries,
+  researchTickers,
   validateWorkspace,
 };

@@ -4,8 +4,21 @@ const SETTINGS_KEY = "stock_telegram_notifications_v1";
 const TOKEN_PROVIDER = "stock_guru_telegram_bot_token";
 const CHAT_PROVIDER = "stock_guru_telegram_chat_id";
 const APPROVAL_ACTION = "enable_stock_trade_telegram_notifications";
-const ALLOWED_EVENT_TYPES = ["qualified_trade_proposal", "verified_broker_order", "operator_test"];
+const ALLOWED_EVENT_TYPES = [
+  "qualified_trade_proposal",
+  "verified_broker_order",
+  "operator_test",
+  "risk_alert",
+  "source_failure",
+  "broker_failure",
+  "order_rejected",
+  "order_cancelled",
+  "overnight_report",
+  "morning_report",
+  "system_health",
+];
 const MAX_RECENT = 12;
+const CONTROL_COMMANDS = ["status", "portfolio", "positions", "opportunities", "pending", "research", "overnight", "morning", "mirror", "sources", "risk", "health", "help", "symbol"];
 
 function isoNow(nowFn) {
   return nowFn().toISOString();
@@ -75,14 +88,28 @@ function formatQualifiedProposalMessage(proposal = {}, draft = {}, approval = {}
   const side = String(proposal.side || draft.side || "").toUpperCase() === "SELL" ? "SELL" : "BUY";
   const dollars = Number(draft.cappedDollars || draft.requestedDollars || proposal.requestedDollars || 0);
   const source = proposal.traderName || proposal.research?.sourceLabel || draft.sourceType || "Stock Guru research";
+  const scores = proposal.scores || {};
+  const research = proposal.research || {};
+  const outlook = proposal.outlook || {};
+  const scoreLine = [
+    Number.isFinite(Number(scores.ai)) ? `AI ${Math.round(Number(scores.ai))}` : null,
+    Number.isFinite(Number(scores.technical)) ? `TECH ${Math.round(Number(scores.technical))}` : null,
+    Number.isFinite(Number(scores.mirror)) ? `MIRROR ${Math.round(Number(scores.mirror))}` : null,
+    Number.isFinite(Number(scores.risk)) ? `RISK ${Math.round(Number(scores.risk))}` : null,
+  ].filter(Boolean).join(" · ");
   return [
-    `Argentum ${side} proposal ready`,
+    `ARGENTUM ${side} PROPOSAL`,
     `${String(proposal.symbol || draft.symbol || "UNKNOWN").toUpperCase()} · up to $${dollars.toFixed(2)}`,
+    scoreLine || null,
+    Number.isFinite(Number(proposal.referencePrice)) ? `Reference $${Number(proposal.referencePrice).toFixed(2)}` : null,
+    research.entryZone ? `Entry ${research.entryZone}` : null,
+    Number.isFinite(Number(outlook.stopPrice)) ? `Risk level $${Number(outlook.stopPrice).toFixed(2)}` : null,
+    research.mainReason ? `Evidence: ${String(research.mainReason).slice(0, 220)}` : null,
     `Research: ${String(source).replaceAll("_", " ")}`,
     "Human Gate is waiting. No broker review or order has occurred.",
     `Request: ••••${String(approval.id || "").slice(-4)}`,
     new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(at),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function createStockTelegramNotifier(options = {}) {
@@ -94,7 +121,55 @@ function createStockTelegramNotifier(options = {}) {
   const getSecret = options.getSecret || (() => "");
   const setSecret = options.setSecret || (() => ({}));
   const deleteSecret = options.deleteSecret || (() => ({}));
+  const reserveEvent = options.reserveEvent || (() => ({ id: "", duplicate: false }));
+  const completeEvent = options.completeEvent || (() => {});
+  const commandContext = options.commandContext || (async () => ({ text: "Command data is unavailable." }));
+  const approvalAction = options.approvalAction || (async () => ({ text: "Human Gate action is unavailable." }));
+  const watchAction = options.watchAction || (async () => ({ text: "Watch action is unavailable." }));
   const active = new Map();
+  const inboundActivity = new Map();
+
+  function allowedIds(value) {
+    return new Set(String(value || "").split(/[\s,]+/).map((item) => item.trim()).filter(Boolean));
+  }
+
+  function inboundAuthorization(update = {}) {
+    const message = update.message || update.callback_query?.message || {};
+    const from = update.callback_query?.from || update.message?.from || {};
+    const chatId = String(message.chat?.id || "");
+    const userId = String(from.id || "");
+    const configured = credentials();
+    const allowedChats = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_CHAT_IDS || configured.chatId);
+    const allowedUsers = allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS);
+    const reasons = [];
+    if (!chatId || !allowedChats.has(chatId)) reasons.push("Telegram chat is not authorized.");
+    if (!userId || !allowedUsers.has(userId)) reasons.push("Telegram user is not authorized.");
+    return { authorized: reasons.length === 0, reasons, chatId, userId, messageId: String(message.message_id || "") };
+  }
+
+  function verifyWebhookSecret(value) {
+    const expected = String(environment.STOCK_GURU_TELEGRAM_WEBHOOK_SECRET || "").trim();
+    if (!expected || !value) return false;
+    const left = Buffer.from(String(value));
+    const right = Buffer.from(expected);
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  }
+
+  function inboundRateLimit(userId) {
+    const now = nowFn().getTime();
+    const windowMs = 60_000;
+    const maximum = Math.max(3, Math.min(120, Number(environment.STOCK_GURU_TELEGRAM_RATE_LIMIT_PER_MINUTE) || 20));
+    const recent = (inboundActivity.get(userId) || []).filter((timestamp) => now - timestamp < windowMs);
+    if (recent.length >= maximum) return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((windowMs - (now - recent[0])) / 1_000)) };
+    recent.push(now);
+    inboundActivity.set(userId, recent);
+    if (inboundActivity.size > 250) {
+      for (const [key, values] of inboundActivity) {
+        if (!values.some((timestamp) => now - timestamp < windowMs)) inboundActivity.delete(key);
+      }
+    }
+    return { allowed: true, remaining: maximum - recent.length };
+  }
 
   function credentials() {
     const token = String(environment.STOCK_GURU_TELEGRAM_BOT_TOKEN || getSecret(TOKEN_PROVIDER) || "").trim();
@@ -126,7 +201,9 @@ function createStockTelegramNotifier(options = {}) {
       lastSentAt: settings.lastSentAt,
       lastError: settings.lastError,
       recent: settings.recent.slice(0, 6),
-      allowedEvents: ["Qualified BUY or SELL proposal", "Broker-confirmed buy or sell", "Operator-requested test"],
+      allowedEvents: ["Trade approvals", "Broker-confirmed orders", "Risk and source failures", "Night and morning reports", "System health", "Operator test"],
+      controlReady: Boolean(token && chatId && environment.STOCK_GURU_TELEGRAM_WEBHOOK_SECRET && allowedIds(environment.STOCK_GURU_TELEGRAM_ALLOWED_USER_IDS).size),
+      commands: CONTROL_COMMANDS.map((command) => `/${command}`),
       security: "Credentials remain server-side in Mac Keychain or environment variables.",
     };
   }
@@ -187,7 +264,20 @@ function createStockTelegramNotifier(options = {}) {
     return { settings, status: publicStatus(approvals) };
   }
 
-  async function deliver({ eventId, kind, text }, approvals = []) {
+  async function telegramRequest(method, payload) {
+    const { token } = credentials();
+    const response = await fetchImpl(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok === false) throw new Error(`Telegram returned status ${response.status}.`);
+    return result;
+  }
+
+  async function deliver({ eventId, kind, text, replyMarkup = null, chatId: requestedChatId = "" }, approvals = []) {
     if (active.has(eventId)) return active.get(eventId);
     const task = (async () => {
       const status = publicStatus(approvals);
@@ -196,14 +286,12 @@ function createStockTelegramNotifier(options = {}) {
       if (settings.deliveredEventIds.includes(eventId)) return { sent: false, state: "duplicate", reason: "This event was already delivered." };
       const { token, chatId } = credentials();
       try {
-        const response = await fetchImpl(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
-          signal: AbortSignal.timeout(12_000),
+        const result = await telegramRequest("sendMessage", {
+          chat_id: requestedChatId || chatId,
+          text,
+          disable_web_page_preview: true,
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || result.ok === false) throw new Error(`Telegram returned status ${response.status}.`);
         const sentAt = isoNow(nowFn);
         writeSettings({
           ...settings,
@@ -244,7 +332,25 @@ function createStockTelegramNotifier(options = {}) {
       return { sent: false, state: "ineligible", reason: "A fresh exact draft and pending Human Gate request are required before notification." };
     }
     const eventId = `qualified-proposal:${secretHash(`${proposal.fingerprint}:${approval.id}`).slice(0, 24)}`;
-    return deliver({ eventId, kind: "qualified_trade_proposal", text: formatQualifiedProposalMessage(proposal, draft, approval, nowFn()) }, approvals);
+    const proposalId = String(proposal.id || proposal.fingerprint || "").slice(0, 48);
+    return deliver({
+      eventId,
+      kind: "qualified_trade_proposal",
+      text: formatQualifiedProposalMessage(proposal, draft, approval, nowFn()),
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            { text: `APPROVE ${String(proposal.side || draft.side || "TRADE").toUpperCase()}`, callback_data: `hg:a:${approval.id}` },
+            { text: "DECLINE", callback_data: `hg:d:${approval.id}` },
+          ],
+          [
+            { text: "WATCH", callback_data: `wt:${proposalId}` },
+            { text: "RESEARCH", callback_data: `rs:${String(proposal.symbol || draft.symbol || "").toUpperCase()}` },
+            { text: "WHY?", callback_data: `wh:${proposalId}` },
+          ],
+        ],
+      },
+    }, approvals);
   }
 
   async function sendTest(approvals = []) {
@@ -256,16 +362,126 @@ function createStockTelegramNotifier(options = {}) {
     }, approvals);
   }
 
+  async function notifySystemEvent(event = {}, approvals = []) {
+    const kind = String(event.kind || "");
+    if (!ALLOWED_EVENT_TYPES.includes(kind) || ["qualified_trade_proposal", "verified_broker_order", "operator_test"].includes(kind)) {
+      return { sent: false, state: "ineligible", reason: "This event type is not in the approved Telegram notification scope." };
+    }
+    return deliver({
+      eventId: String(event.eventId || `${kind}:${secretHash(event.text).slice(0, 24)}`),
+      kind,
+      text: shortMessage(event.text),
+      replyMarkup: event.replyMarkup || null,
+    }, approvals);
+  }
+
+  async function sendCommandResponse(text, chatId, eventId, approvals = [], replyMarkup = null) {
+    return deliver({ eventId, kind: "telegram_command_response", text: shortMessage(text), chatId, replyMarkup }, approvals);
+  }
+
+  function shortMessage(value) {
+    return String(value || "No data available.").slice(0, 3900);
+  }
+
+  function parseCommand(value) {
+    const text = String(value || "").trim();
+    if (!text.startsWith("/")) return null;
+    const [head, ...args] = text.split(/\s+/);
+    const command = head.slice(1).split("@")[0].toLowerCase();
+    return CONTROL_COMMANDS.includes(command) ? { command, args } : { command: "help", args: [] };
+  }
+
+  async function processUpdate(update = {}, input = {}) {
+    if (!verifyWebhookSecret(input.webhookSecret)) {
+      return { accepted: false, status: "unauthorized_webhook", httpStatus: 403 };
+    }
+    const authorization = inboundAuthorization(update);
+    const updateId = String(update.update_id ?? "");
+    const callback = update.callback_query || null;
+    const callbackData = String(callback?.data || "");
+    const idempotencyKey = callback ? `callback:${String(callback.id || updateId)}:${callbackData}` : `update:${updateId}`;
+    const reservation = reserveEvent({
+      updateId,
+      idempotencyKey,
+      eventType: callback ? "telegram.callback" : "telegram.command",
+      actorId: authorization.userId,
+      chatId: authorization.chatId,
+      messageId: authorization.messageId,
+      data: { callbackData, text: String(update.message?.text || "").slice(0, 200) },
+    });
+    if (reservation.duplicate) return { accepted: true, status: "duplicate", duplicate: true };
+    if (!authorization.authorized) {
+      completeEvent(reservation.id, { status: "unauthorized", error: authorization.reasons.join(" ") });
+      return { accepted: false, status: "unauthorized_actor", httpStatus: 403 };
+    }
+    const rate = inboundRateLimit(authorization.userId);
+    if (!rate.allowed) {
+      completeEvent(reservation.id, { status: "rate_limited", error: `Retry after ${rate.retryAfterSeconds} seconds.` });
+      return { accepted: false, status: "rate_limited", httpStatus: 429, retryAfterSeconds: rate.retryAfterSeconds };
+    }
+    const approvals = Array.isArray(input.approvals) ? input.approvals : [];
+    try {
+      let response;
+      if (callback) {
+        const [namespace, action, ...rest] = callbackData.split(":");
+        const targetId = rest.join(":");
+        if (namespace === "hg" && action === "a") {
+          response = {
+            text: `FINAL CONFIRMATION\nRequest ••••${targetId.slice(-4)}\nArgentum will run the same Human Gate and fresh broker/risk checks used by the web app. Confirming does not bypass any blocker.`,
+            toast: "Final confirmation required",
+            replyMarkup: {
+              inline_keyboard: [[
+                { text: "CONFIRM LIVE ORDER", callback_data: `hg:c:${targetId}` },
+                { text: "CANCEL", callback_data: `hg:x:${targetId}` },
+              ]],
+            },
+          };
+        } else if (namespace === "hg" && ["c", "d"].includes(action)) {
+          response = await approvalAction({
+            approvalId: targetId,
+            decision: action === "c" ? "approve" : "reject",
+            actorType: "TELEGRAM",
+            actorId: authorization.userId,
+            chatId: authorization.chatId,
+            messageId: authorization.messageId,
+            idempotencyKey,
+          });
+        } else if (namespace === "hg" && action === "x") {
+          response = { text: `Cancelled. Request ••••${targetId.slice(-4)} remains pending in Human Gate.`, toast: "Cancelled" };
+        } else if (namespace === "wt") {
+          response = await watchAction({ proposalId: [action, ...rest].filter(Boolean).join(":"), actorId: authorization.userId, idempotencyKey });
+        } else if (["rs", "wh"].includes(namespace)) {
+          response = await commandContext({ command: namespace === "rs" ? "research" : "why", args: [[action, ...rest].filter(Boolean).join(":")], actorId: authorization.userId });
+        } else {
+          response = { text: "This Telegram action is no longer valid. Refresh pending proposals." };
+        }
+        await telegramRequest("answerCallbackQuery", { callback_query_id: callback.id, text: shortMessage(response?.toast || response?.text || "Processed").slice(0, 180), show_alert: false }).catch(() => null);
+      } else {
+        const parsed = parseCommand(update.message?.text);
+        response = await commandContext({ command: parsed?.command || "help", args: parsed?.args || [], actorId: authorization.userId });
+      }
+      const delivery = await sendCommandResponse(response?.text || response || "Processed.", authorization.chatId, `telegram-response:${idempotencyKey}`, approvals, response?.replyMarkup || null);
+      completeEvent(reservation.id, { status: delivery.sent ? "processed" : delivery.state || "failed", error: delivery.sent ? "" : delivery.reason, data: { deliveryState: delivery.state } });
+      return { accepted: true, status: delivery.sent ? "processed" : delivery.state, delivery };
+    } catch (error) {
+      completeEvent(reservation.id, { status: "failed", error: cleanError(error) });
+      return { accepted: true, status: "failed", error: cleanError(error) };
+    }
+  }
+
   return {
     approvalScope,
     configure,
     disable,
     enable,
     notifyQualifiedProposal,
+    notifySystemEvent,
     notifyVerifiedTrade,
+    processUpdate,
     publicStatus,
     removeConfiguration,
     sendTest,
+    verifyWebhookSecret,
   };
 }
 
@@ -273,6 +489,7 @@ module.exports = {
   ALLOWED_EVENT_TYPES,
   APPROVAL_ACTION,
   CHAT_PROVIDER,
+  CONTROL_COMMANDS,
   SETTINGS_KEY,
   TOKEN_PROVIDER,
   approvalAuthorizes,

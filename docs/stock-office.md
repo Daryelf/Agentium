@@ -2,6 +2,14 @@
 
 Stock Office is a guarded bridge from Argentum into the local Stock Guru workspace and Robinhood's official Trading MCP boundary. It supports research, source freshness, outcome learning, masked broker snapshots, bounded buy/sell drafts, and exact Human Gate review. It is not an autonomous or bypass trading UI.
 
+## Intelligence Command Center
+
+Stock Office now separates continuous research from live execution. Research remains active while Argentum is running across pre-market, regular, after-hours, overnight, and weekend sessions. Live placement remains disabled in `paper` mode and every live order requires a fresh, exact, one-use Human Gate decision even when `STOCK_GURU_EXECUTION_MODE=live` is deliberately configured.
+
+The durable command-center state lives in the existing local SQLite database. It records research runs and snapshots, opportunity history and evidence, overnight and morning reports, trade proposals and approval decisions, mirror sources/events/consensus, Telegram command/update idempotency, risk decisions, broker-order audit entries, worker heartbeats, and a correlated system-event stream. Browser values are derived from those records, current Stock Guru artifacts, or the official broker snapshot; unavailable values remain unavailable instead of becoming zero or demo data.
+
+The Overview is operational: account/capital, current positions, ranked opportunities, workers, report availability, proposals awaiting review, freshness, and system health. Deeper narrative is opened in the Details/Why/Research/Evidence drawer. The Mirror page exposes source status, disclosure delay, event history, multi-source consensus, and explicit **Follow** and **Mirror** controls. A source cannot create a copy-entry proposal until both controls are enabled; they default off for live mirroring. Risk-reducing exits are still evaluated from verified owned positions.
+
 ## Copy Trader Mirror Lab
 
 Mirror Lab turns attributable public-trade signals into bounded paper candidates. It does not assume that a public disclosure is timely enough to copy. Any candidate that later becomes an exact broker draft must still pass fresh Robinhood account/quote checks, risk limits, Human Gate, one-use dispatch, and Robinhood review.
@@ -93,7 +101,7 @@ Paper results are not live results and do not guarantee future performance. Rese
 
 ### Always-on market intelligence scheduler
 
-`services/stock-intelligence-scheduler.js` keeps the evaluator and copy plan current while Argentum is open, even when the Stock Office page is not visible. Its restart-safe state is stored with mode `0600` in the local Argentum application-support directory. The default cadence is every 5 minutes during weekdays from 8am through 6pm Eastern and every four hours during quiet windows. Live Robinhood display data uses a separate five-second connector cache. Official Form 4 attempts are limited to hourly and delayed Form 13F research attempts to daily.
+`services/stock-intelligence-scheduler.js` keeps the evaluator, bounded online research, and copy plan current while Argentum is open, even when the Stock Office page is not visible. Its restart-safe state is stored with mode `0600` in the local Argentum application-support directory. The session-aware defaults are: regular market 5 minutes, pre-market 10 minutes, after-hours 15 minutes, overnight 60 minutes, and weekend research 240 minutes. Live Robinhood display data uses a separate five-second connector cache. Official Form 4 attempts are limited to hourly, delayed Form 13F research attempts to daily, and structured news/profile context to every 30 minutes.
 
 SEC jobs remain blocked until `STOCK_GURU_SEC_USER_AGENT` contains a real app or organization name plus monitored contact email. The scheduler never invents that identity. It runs the existing bounded evaluator/mirror refresh manager, records status and history, and then asks the separate paper-shadow engine to consume any refreshed local evidence. It has no Robinhood import, broker tool, order draft, approval, or money-movement authority.
 
@@ -101,7 +109,9 @@ After a successful regular-market cycle, a separate supervised review coordinato
 
 Approving an exact stock-order request from the Human Gate bubble runs Robinhood review, stops on warnings or changed evidence, places at most once, and independently reconciles the broker order. It is never recurring authority.
 
-Optional cadence environment variables are `STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES`, `STOCK_GURU_AUTO_REFRESH_QUIET_MINUTES`, `STOCK_GURU_AUTO_FORM4_MINUTES`, `STOCK_GURU_AUTO_13F_MINUTES`, and `STOCK_GURU_AUTO_REFRESH_STARTUP_DELAY_MS`. Set `STOCK_GURU_AUTO_REFRESH_DISABLED=1` to keep only manual refreshes.
+Optional cadence environment variables are `STOCK_GURU_AUTO_REFRESH_ACTIVE_MINUTES`, `STOCK_GURU_AUTO_REFRESH_PREMARKET_MINUTES`, `STOCK_GURU_AUTO_REFRESH_AFTER_HOURS_MINUTES`, `STOCK_GURU_AUTO_REFRESH_OVERNIGHT_MINUTES`, `STOCK_GURU_AUTO_REFRESH_WEEKEND_MINUTES`, `STOCK_GURU_AUTO_FORM4_MINUTES`, `STOCK_GURU_AUTO_13F_MINUTES`, `STOCK_GURU_AUTO_NEWS_MINUTES`, and `STOCK_GURU_AUTO_REFRESH_STARTUP_DELAY_MS`. Set `STOCK_GURU_AUTO_REFRESH_DISABLED=1` to keep only manual refreshes.
+
+The night cycle persists an overnight report from the accumulated evaluator, price, source, filing, news-context, mirror, portfolio, and risk evidence. The morning cycle produces a separate report only during the pre-market window and re-ranks current candidates; it does not assume an overnight thesis remains valid. Both reports are records, not generated placeholder prose.
 
 ## Workspace
 
@@ -114,6 +124,7 @@ STOCK_GURU_PATH=/absolute/path/to/stocks
 The connector currently reads these local files when present:
 
 - `reports/evaluations.json`
+- `reports/research.json`
 - `config/universe.txt`
 - `config/settings.json`
 - `data/broker_status.json`
@@ -143,7 +154,10 @@ All routes require the existing Argentum session.
 - `GET /api/stock-office/sources`
 - `GET /api/stock-office/activity`
 - `GET /api/stock-office/mirror`
+- `POST /api/stock-office/mirror/sources/:sourceId`
 - `POST /api/stock-office/mirror/:candidateId/human-gate`
+- `GET /api/stock-office/intelligence`
+- `GET /api/stock-office/events` (authenticated server-sent event stream)
 - `GET /api/stock-office/broker-control`
 - `POST /api/stock-office/shadow/reset`
 - `POST /api/stock-office/broker-connect/human-gate`
@@ -164,6 +178,7 @@ All routes require the existing Argentum session.
 - `POST /api/stock-office/sync`
 - `GET /api/stock-office/refresh-status`
 - `GET /api/stock-office/permissions`
+- `POST /api/stock-office/notifications/telegram/webhook` (secret-header and numeric allowlist required)
 
 `POST /api/stock-office/sync` runs the bounded local refresh pipeline: evaluator, optional official SEC Form 4 and Form 13F intake when deliberately configured, mirror plan, and evidence ledger. It does not call Robinhood or place an order.
 
@@ -178,6 +193,15 @@ All routes require the existing Argentum session.
 - Redaction: suspicious secret-like tokens and account numbers are masked before responses.
 - Rate limiting: Stock Office routes have simple per-client action buckets.
 - Provenance: records include source labels and file freshness status.
+- Explicit execution mode: `paper` is the default and prevents broker placement. `live` changes only that outer boundary; it does not bypass any broker, risk, freshness, exact-envelope, or Human Gate check.
+- Telegram control: inbound updates require the webhook secret plus allowed numeric user and chat IDs. Update IDs and callback IDs are stored for idempotency and actions are rate-limited.
+- Event traceability: research, opportunity, source, risk, approval, Telegram, and broker-order events carry correlation metadata and are persisted before being streamed to the UI.
+
+## Telegram remote control
+
+Supported commands are `/status`, `/portfolio`, `/positions`, `/opportunities`, `/pending`, `/research SYMBOL`, `/overnight`, `/morning`, `/mirror`, `/sources`, `/risk`, `/health`, `/symbol SYMBOL`, and `/help`.
+
+A proposal alert contains compact evidence and action buttons. **Approve** does not execute; it creates the second confirmation step. Only **Confirm live order** can enter the same server-side exact-order service used by the desktop Human Gate. The service rechecks the approval, expiry, draft fingerprint, execution envelope, account identity, quote, holdings/buying power, limits, source state, and Robinhood review before a single placement attempt. Duplicate updates/callbacks return the stored result. Decline, watch, research, why, cancel, rejection, partial-fill, fill, and reconciliation states are recorded rather than inferred from Telegram UI state.
 
 ## UI Behavior
 

@@ -5,10 +5,12 @@ from zoneinfo import ZoneInfo
 
 from stock_guru.research import (
     EquityResearch,
+    NewsHeadline,
     fetch_alpha_vantage_today_headlines,
     fetch_fmp_today_headlines,
     headline_from_news_item,
     title_from_news_item,
+    write_research_json,
     write_research_report,
 )
 
@@ -116,3 +118,21 @@ def test_write_research_report_includes_profile_and_headlines(tmp_path) -> None:
     assert "Apple Inc." in content
     assert "$3.00T" in content
     assert "Apple headline" in content
+
+
+def test_write_research_json_preserves_source_time_and_url_without_fake_sentiment(tmp_path) -> None:
+    path = tmp_path / "research.json"
+    published = datetime(2026, 6, 9, 10, 44, tzinfo=ZoneInfo("America/New_York"))
+    item = EquityResearch(
+        ticker="NET",
+        company_name="Cloudflare, Inc.",
+        news_items=(
+            NewsHeadline(title="Cloudflare updates guidance", publisher="Reuters", published_at=published, link="https://example.com/net"),
+        ),
+    )
+    write_research_json([item], path=path, generated_at=datetime(2026, 6, 9, 15, 0, tzinfo=ZoneInfo("America/New_York")))
+    payload = __import__("json").loads(path.read_text())
+    assert payload["directional_news_scoring"] is False
+    assert payload["tickers"][0]["news"][0]["publisher"] == "Reuters"
+    assert payload["tickers"][0]["news"][0]["url"] == "https://example.com/net"
+    assert payload["tickers"][0]["news"][0]["published_at"] == published.isoformat()

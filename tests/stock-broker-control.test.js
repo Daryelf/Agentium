@@ -224,6 +224,45 @@ test("paper-ready copy candidate becomes a source-bound guarded order draft", ()
   assert.match(overCap.blockers.join(" "), /source-specific copy cap/i);
 });
 
+test("order review expiry uses the configured Human Gate window", () => {
+  const draft = buildTradeDraft(
+    { symbol: "NET", side: "BUY", requestedDollars: 10 },
+    snapshot(),
+    { now: "2026-08-10T17:00:00.000Z", approvalTtlMinutes: 15 },
+  );
+
+  assert.equal(draft.expiresAt, "2026-08-10T17:15:00.000Z");
+});
+
+test("copy-entry planner requires an explicitly followed and mirror-enabled source", () => {
+  const candidate = {
+    id: "candidate-net",
+    fingerprint: "d".repeat(64),
+    sourceId: "sec_form4",
+    traderName: "Named reporting person",
+    assetType: "equity",
+    symbol: "NET",
+    side: "BUY",
+    status: "paper_ready",
+    humanGateEligible: true,
+    currentPrice: 100,
+    rankingScore: 0.95,
+    mirrorNotionalDollars: 5,
+  };
+  const base = snapshot({ mirror: { stale: false, candidates: [candidate] } });
+  const disabled = buildCopyPortfolioPlan({
+    ...base,
+    intelligence: { mirror: { sources: [{ id: "sec_form4", following: true, mirrorEnabled: false }] } },
+  }, { now: "2026-08-10T17:00:00.000Z" });
+  const enabled = buildCopyPortfolioPlan({
+    ...base,
+    intelligence: { mirror: { sources: [{ id: "sec_form4", following: true, mirrorEnabled: true }] } },
+  }, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(disabled.proposals.some((proposal) => proposal.kind === "copy_entry"), false);
+  assert.equal(enabled.proposals.some((proposal) => proposal.kind === "copy_entry"), true);
+});
+
 test("stale broker data fails closed before a BUY reaches Human Gate", () => {
   const current = snapshot({
     broker: { ...snapshot().broker, updatedAt: "2026-08-10T10:00:00.000Z" },

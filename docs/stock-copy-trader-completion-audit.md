@@ -28,7 +28,7 @@ The command-center upgrade adds the following without granting new trading autho
 | Requirement | Authoritative evidence | Current result |
 | --- | --- | --- |
 | Official Robinhood connection | `services/robinhood-mcp-client.js`; PKCE/DCR/SSE tests; installed app runtime | Implemented. The installed 2026-08-14 runtime displayed a verified live Agentic-account read with portfolio value, buying power/cash, one position, and zero open orders. No order endpoint was invoked. |
-| Dedicated account isolation | Agentic-account selection, identity hash, account-change refusal, exact reconciliation tests | Implemented and deterministically tested. Real-account proof pending OAuth. |
+| Dedicated account isolation | Agentic-account selection, identity hash, account-change refusal, exact reconciliation tests | Implemented and deterministically tested. The installed runtime also returned the verified dedicated Agentic account; no account mutation was attempted. |
 | Operator-allocated capital | Human Gate request plus `/api/stock-office/guardrails/apply`; ignored local active policy | Implemented. An approval no longer remains an inert proposal: the operator must explicitly apply the exact unused fingerprint. |
 | Whole-portfolio deployment limit | Live position market values plus pending BUY notionals vs principal and maximum deployed | Implemented and tested. Unknown position or pending-order value blocks new entries. |
 | Loss and activity locks | Official current-day P&L and full current-day order history vs approved limits | Implemented and tested. Missing evidence blocks new entries. |

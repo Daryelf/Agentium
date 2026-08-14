@@ -146,7 +146,7 @@ The connector currently reads these local files when present:
 
 ## API Routes
 
-All routes require the existing Argentum session.
+Interactive routes require the existing Argentum session. The Telegram webhook is the one deliberate exception: it is reachable without a browser session and fails closed unless the secret header and numeric user/chat allowlists all match.
 
 - `GET /api/stock-office/overview`
 - `GET /api/stock-office/records`
@@ -238,7 +238,7 @@ Applying limits does not fund the account, move money, modify Robinhood settings
 
 ### Continuous portfolio planner
 
-The broker-control poll refreshes the official read-only account at most once per minute while OAuth is connected. The planner then:
+The broker-control display can poll every second while OAuth is connected, but the official connector cache limits external Robinhood reads to at most once every five seconds. The planner then:
 
 - prices every owned position, counts pending BUY commitments, and refuses new entries if any notional is unknown;
 - requires official current-day P&L and order history before it can verify daily-loss and daily-trade locks;

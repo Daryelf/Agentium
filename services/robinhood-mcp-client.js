@@ -201,25 +201,55 @@ function normalizePortfolio(payload, account = {}) {
   };
 }
 
-function normalizeQuotes(payload) {
+function normalizeQuoteDetails(payload) {
   const ranked = {};
+  const previousRanked = {};
   const quoteFields = [
     ["mark_price", 4],
     ["last_trade_price", 3],
     ["last_price", 2],
     ["price", 1],
   ];
-  for (const object of walkObjects(payload)) {
-    const symbol = String(directRecordValue(object, ["symbol", "ticker"]) || "").trim().toUpperCase();
-    if (!symbol) continue;
-    for (const [field, rank] of quoteFields) {
-      const price = finiteNumber(directRecordValue(object, [field]), null);
-      if (price === null || (ranked[symbol] && ranked[symbol].rank >= rank)) continue;
-      ranked[symbol] = { price, rank };
-      break;
+  const visit = (value, parentKey = "") => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, parentKey));
+      return;
     }
-  }
-  return Object.fromEntries(Object.entries(ranked).map(([symbol, value]) => [symbol, value.price]));
+    const object = value;
+    const symbol = String(directRecordValue(object, ["symbol", "ticker"]) || "").trim().toUpperCase();
+    if (symbol) {
+      for (const [field, rank] of quoteFields) {
+        const price = finiteNumber(directRecordValue(object, [field]), null);
+        if (price === null || (ranked[symbol] && ranked[symbol].rank >= rank)) continue;
+        ranked[symbol] = { price, rank };
+        break;
+      }
+      const adjustedPrevious = finiteNumber(directRecordValue(object, ["adjusted_previous_close"]), null);
+      const previous = finiteNumber(directRecordValue(object, ["previous_close"]), null);
+      const closePrice = /close/i.test(parentKey) ? finiteNumber(directRecordValue(object, ["price", "close_price"]), null) : null;
+      const previousPrice = adjustedPrevious ?? previous ?? closePrice;
+      const previousRank = adjustedPrevious !== null ? 3 : previous !== null ? 2 : closePrice !== null ? 1 : 0;
+      if (previousPrice !== null && (!previousRanked[symbol] || previousRanked[symbol].rank < previousRank)) {
+        previousRanked[symbol] = {
+          price: previousPrice,
+          rank: previousRank,
+          date: String(directRecordValue(object, ["previous_close_date", "date"]) || "").slice(0, 40),
+        };
+      }
+    }
+    for (const [key, nested] of Object.entries(object)) visit(nested, key);
+  };
+  visit(payload);
+  return Object.fromEntries([...new Set([...Object.keys(ranked), ...Object.keys(previousRanked)])].map((symbol) => [symbol, {
+    price: ranked[symbol]?.price ?? null,
+    previousClose: previousRanked[symbol]?.price ?? null,
+    previousCloseDate: previousRanked[symbol]?.date || "",
+  }]));
+}
+
+function normalizeQuotes(payload) {
+  return Object.fromEntries(Object.entries(normalizeQuoteDetails(payload)).map(([symbol, value]) => [symbol, value.price]));
 }
 
 function maskAccount(value) {
@@ -264,18 +294,57 @@ function normalizePositions(payload, quotesBySymbol = {}) {
     const quantity = finiteNumber(firstValue(objects, ["quantity", "shares", "total_quantity"]), null);
     if (!symbol || quantity === null || quantity <= 0 || seen.has(symbol)) continue;
     seen.add(symbol);
-    const currentPrice = finiteNumber(firstValue(objects, ["current_price", "price", "mark_price", "last_trade_price"]), quotesBySymbol[symbol] ?? null);
+    const quote = typeof quotesBySymbol[symbol] === "number" ? { price: quotesBySymbol[symbol] } : quotesBySymbol[symbol] || {};
+    const currentPrice = finiteNumber(quote.price, finiteNumber(firstValue(objects, ["current_price", "price", "mark_price", "last_trade_price"]), null));
+    const previousClose = finiteNumber(quote.previousClose, finiteNumber(firstValue(objects, ["adjusted_previous_close", "previous_close"]), null));
+    const averageBuyPrice = finiteNumber(firstValue(objects, ["average_buy_price", "average_price", "cost_basis_price"]), null);
+    const reportedUnrealizedPnl = finiteNumber(firstValue(objects, ["unrealized_pnl", "unrealized_gain_loss"]), null);
+    const reportedUnrealizedPnlPct = finiteNumber(firstValue(objects, ["unrealized_pnl_pct", "unrealized_gain_loss_percent"]), null);
+    const unrealizedPnl = reportedUnrealizedPnl ?? (currentPrice !== null && averageBuyPrice !== null ? (currentPrice - averageBuyPrice) * quantity : null);
+    const unrealizedPnlPct = reportedUnrealizedPnlPct ?? (currentPrice !== null && averageBuyPrice > 0 ? ((currentPrice - averageBuyPrice) / averageBuyPrice) * 100 : null);
     positions.push({
       symbol,
       quantity,
       sharesAvailableForSells: finiteNumber(firstValue(objects, ["shares_available_for_sells", "quantity_available", "available_quantity"]), quantity),
-      averageBuyPrice: finiteNumber(firstValue(objects, ["average_buy_price", "average_price", "cost_basis_price"]), null),
+      averageBuyPrice,
       currentPrice,
-      unrealizedPnl: finiteNumber(firstValue(objects, ["unrealized_pnl", "unrealized_gain_loss"]), null),
-      unrealizedPnlPct: finiteNumber(firstValue(objects, ["unrealized_pnl_pct", "unrealized_gain_loss_percent"]), null),
+      previousClose,
+      previousCloseDate: String(quote.previousCloseDate || "").slice(0, 40),
+      dayPnlDollars: currentPrice !== null && previousClose !== null ? (currentPrice - previousClose) * quantity : null,
+      dayPnlPct: currentPrice !== null && previousClose > 0 ? ((currentPrice - previousClose) / previousClose) * 100 : null,
+      unrealizedPnl,
+      unrealizedPnlPct,
     });
   }
   return positions.slice(0, 100);
+}
+
+function nyMarketDateKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function derivedEquityDayPnl({ portfolioPayload, portfolio, positions, orders, at = new Date() }) {
+  const nonEquityKeys = ["options_value", "crypto_value", "futures_value", "event_contracts_value", "mutual_funds_value", "fixed_income_value"];
+  const nonEquityValues = nonEquityKeys.map((key) => portfolioMoney(portfolioPayload, [key]));
+  if (nonEquityValues.some((value) => value === null || Math.abs(value) >= 0.005)) return null;
+  const currentDay = nyMarketDateKey(at);
+  const orderDates = orders.map((order) => nyMarketDateKey(order.createdAt));
+  if (orderDates.some((date) => !date || date === currentDay)) return null;
+  if (positions.some((position) => !Number.isFinite(position.currentPrice) || !Number.isFinite(position.previousClose) || !Number.isFinite(position.quantity))) return null;
+  const dollars = positions.reduce((sum, position) => sum + (position.currentPrice - position.previousClose) * position.quantity, 0);
+  const previousAccountValue = Number.isFinite(portfolio.accountValue) ? portfolio.accountValue - dollars : null;
+  return {
+    dollars: Math.round(dollars * 1_000_000) / 1_000_000,
+    pct: previousAccountValue > 0 ? dollars / previousAccountValue : null,
+    source: "official_equity_previous_close",
+  };
 }
 
 function normalizeOrders(payload) {
@@ -608,11 +677,19 @@ function createRobinhoodMcpClient(options = {}) {
           throw new Error("Robinhood get_equity_quotes does not expose a supported symbol or symbols argument.");
         }
       }
-      const quotesBySymbol = normalizeQuotes(quotesPayload);
-      const positions = normalizePositions(positionsPayload, quotesBySymbol);
+      const quoteDetailsBySymbol = normalizeQuoteDetails(quotesPayload);
+      const positions = normalizePositions(positionsPayload, quoteDetailsBySymbol);
       const orders = normalizeOrders(ordersPayload);
       const accountObjects = walkObjects(account.raw);
       const portfolio = normalizePortfolio(portfolioPayload, account.raw);
+      const derivedDayPnl = portfolio.dayPnlDollars === null
+        ? derivedEquityDayPnl({ portfolioPayload, portfolio, positions, orders, at: now() })
+        : null;
+      const dayPnlDollars = portfolio.dayPnlDollars ?? derivedDayPnl?.dollars ?? null;
+      const dayPnlPct = portfolio.dayPnlPct ?? derivedDayPnl?.pct ?? null;
+      const positionUnrealized = positions.every((position) => Number.isFinite(position.unrealizedPnl))
+        ? positions.reduce((sum, position) => sum + position.unrealizedPnl, 0)
+        : null;
       brokerSnapshot = {
         configured: true,
         account: maskAccount(account.accountNumber || account.accountId),
@@ -625,8 +702,10 @@ function createRobinhoodMcpClient(options = {}) {
         buyingPower: portfolio.buyingPower === null ? null : `$${portfolio.buyingPower.toFixed(2)}`,
         pendingDeposits: portfolio.pendingDeposits,
         unsettledFunds: portfolio.unsettledFunds,
-        dayPnlDollars: portfolio.dayPnlDollars,
-        dayPnlPct: portfolio.dayPnlPct,
+        dayPnlDollars,
+        dayPnlPct,
+        dayPnlSource: portfolio.dayPnlDollars !== null ? "official_portfolio" : derivedDayPnl?.source || "unavailable",
+        unrealizedPnlDollars: positionUnrealized,
         positions,
         openOrders: orders.filter((order) => !["filled", "cancelled", "canceled", "rejected", "failed", "expired"].includes(order.state)),
         orders,
@@ -687,6 +766,8 @@ function createRobinhoodMcpClient(options = {}) {
       orders: [],
       dayPnlDollars: null,
       dayPnlPct: null,
+      dayPnlSource: "unavailable",
+      unrealizedPnlDollars: null,
       connector: {
         ...registrationStatus(),
         oauthAuthenticated: Boolean(current?.accessToken),
@@ -835,6 +916,7 @@ module.exports = {
   normalizeOrders,
   normalizePortfolio,
   normalizePositions,
+  normalizeQuoteDetails,
   normalizeQuotes,
   parseMcpPayload,
   toolResultValue,

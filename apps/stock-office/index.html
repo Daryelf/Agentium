@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260814-3" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260814-4" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260814-3" defer></script>
+    <script src="./stock-office.js?v=20260814-4" defer></script>
   </head>
   <body>
     <div class="stock-shell">
@@ -14,8 +14,8 @@
         <a class="stock-mark" href="/" aria-label="Back to Argentum">A</a>
         <nav class="stock-nav">
           <button class="active" type="button" data-stock-nav="overview" aria-current="page"><i>⌂</i><span>Overview</span></button>
-          <button type="button" data-stock-nav="portfolio"><i>◫</i><span>Simulation</span></button>
           <button type="button" data-stock-nav="mirror"><i>⌁</i><span>Research</span></button>
+          <button class="nav-child" type="button" data-stock-nav="portfolio"><i>◫</i><span>Simulation</span></button>
           <button type="button" data-stock-nav="markets"><i>⌁</i><span>Markets</span></button>
           <button type="button" data-stock-nav="trade"><i>↗</i><span>Trade desk</span></button>
           <button type="button" data-stock-nav="sources"><i>◎</i><span>Sources</span></button>
@@ -51,7 +51,7 @@
               <small class="overview-live-clock"><i aria-hidden="true"></i><span id="overviewLiveClock">Updating every second</span></small>
             </div>
             <div id="overviewAccountTape" class="overview-account-tape"></div>
-            <button class="quiet-button" type="button" data-open-stock-view="trade">Trade desk</button>
+            <button class="quiet-button" type="button" data-quick-order>New order</button>
           </section>
           <section class="overview-operations-board">
             <div class="overview-operations-head">
@@ -110,24 +110,33 @@
         </section>
 
         <section class="stock-view" data-stock-view="portfolio" hidden>
-          <article class="panel shadow-portfolio">
-            <div class="panel-head compact">
-              <div><p class="eyebrow">Testing only</p><h2>Simulation and learning</h2></div>
-              <span id="shadowPortfolioStatus">Starting paper engine</span>
+          <section class="simulation-console">
+            <header class="simulation-head">
+              <div><span>RESEARCH / SIMULATION</span><h2>Market testing lab</h2><p>Real research inputs, isolated simulated cash, persisted outcomes.</p></div>
+              <div><strong id="shadowPortfolioStatus">Starting simulation</strong><small id="simulationCycle">Waiting for first cycle</small></div>
+            </header>
+            <div id="shadowPortfolioMetrics" class="simulation-metrics"></div>
+            <div class="simulation-workspace">
+              <section class="simulation-candidate-board">
+                <div class="simulation-section-head"><div><span>IDEAS UNDER TEST</span><h3>Current candidates</h3></div><strong id="simulationCandidateCount">0 available</strong></div>
+                <div id="simulationCandidates" class="simulation-candidates"></div>
+                <p id="shadowPortfolioFeedback" class="broker-feedback" aria-live="polite"></p>
+              </section>
+              <aside class="simulation-scoreboard">
+                <div class="simulation-section-head"><div><span>MEASURED ONLY</span><h3>Accuracy</h3></div></div>
+                <div id="shadowLearning" class="shadow-list"></div>
+                <form id="shadowResetForm" class="shadow-reset-form">
+                  <label>Starting cash <input id="shadowStartingCash" type="number" min="1" max="1000000" step="1" required /></label>
+                  <button type="submit">Reset simulation</button>
+                  <small>Simulation only. No Robinhood call.</small>
+                </form>
+              </aside>
             </div>
-            <div id="shadowPortfolioMetrics" class="portfolio-capital-metrics"></div>
-            <div class="shadow-grid">
-              <section><div class="subpanel-head"><div><p class="eyebrow">Open positions</p><h3 id="shadowPositionTitle">0 positions</h3></div></div><div id="shadowPositions" class="shadow-list"></div></section>
-              <section><div class="subpanel-head"><div><p class="eyebrow">Decisions</p><h3>Latest actions</h3></div></div><div id="shadowDecisions" class="shadow-list"></div></section>
-              <section><div class="subpanel-head"><div><p class="eyebrow">Outcomes</p><h3>Paper learning</h3></div></div><div id="shadowLearning" class="shadow-list"></div></section>
+            <div class="simulation-ledger-grid">
+              <section><div class="simulation-section-head"><div><span>OPEN TESTS</span><h3 id="shadowPositionTitle">0 positions</h3></div></div><div id="shadowPositions" class="shadow-list"></div></section>
+              <section><div class="simulation-section-head"><div><span>AUDIT LEDGER</span><h3>Latest decisions</h3></div></div><div id="shadowDecisions" class="shadow-list"></div></section>
             </div>
-            <form id="shadowResetForm" class="shadow-reset-form">
-              <label>Starting cash <input id="shadowStartingCash" type="number" min="1" max="1000000" step="1" required /></label>
-              <button type="submit">Reset simulation</button>
-              <small>Paper ledger only. No Robinhood call or money movement.</small>
-            </form>
-            <p id="shadowPortfolioFeedback" class="broker-feedback" aria-live="polite"></p>
-          </article>
+          </section>
         </section>
 
         <section class="stock-view" data-stock-view="mirror" hidden>
@@ -283,6 +292,17 @@
             <div class="intelligence-detail"><div id="intelligenceMessage" class="intelligence-message" aria-live="polite"></div><div id="intelligenceHistory" class="intelligence-history"></div></div>
             <small class="intelligence-boundary">Research and paper simulation only. This loop cannot place orders.</small>
           </article>
+          <article class="panel sec-setup-panel">
+            <div class="panel-head compact"><div><p class="eyebrow">Official filings</p><h2>SEC request identity</h2></div><span id="secSetupStatus" class="status-pill muted">Checking</span></div>
+            <div class="sec-setup-layout">
+              <div><strong id="secSetupTitle">SEC intake needs setup</strong><span id="secSetupSummary">Add a monitored contact identity for official Form 4 and 13F requests.</span></div>
+              <form id="secIdentityForm">
+                <label>Organization/name + monitored email<input id="secIdentity" type="text" maxlength="240" autocomplete="off" placeholder="Argentum Stock Office you@example.com" required /></label>
+                <button type="submit">Save SEC contact</button>
+              </form>
+              <small id="secSetupFeedback" aria-live="polite">Saved server-side; never returned to the browser. SEC.gov receives it only on bounded filing requests.</small>
+            </div>
+          </article>
           <section class="panel source-panel"><div class="panel-head compact"><div><p class="eyebrow">Data sources</p><h2 id="sourceTitle">Checking sources</h2></div><span id="sourceBadge" class="status-pill muted">Read only</span></div><div id="sourceList" class="source-list"></div></section>
         </section>
 
@@ -303,6 +323,19 @@
         <header><div><span id="drawerKicker">INTELLIGENCE</span><h2 id="drawerTitle">Details</h2></div><button value="close" aria-label="Close details">×</button></header>
         <div id="drawerTabs" class="intelligence-drawer-tabs"></div>
         <div id="drawerContent" class="intelligence-drawer-content"></div>
+      </form>
+    </dialog>
+    <dialog id="quickOrderDialog" class="quick-order-dialog">
+      <form id="quickOrderForm" class="quick-order-shell">
+        <header><div><span>ONE-STEP HUMAN GATE</span><h2>New real order</h2></div><button type="button" data-close-quick-order aria-label="Close order">×</button></header>
+        <p>Enter the order once. Argentum runs live checks and, only if they pass, sends the exact order to Human Gate.</p>
+        <div class="quick-order-fields">
+          <label>Symbol<input id="quickOrderSymbol" type="text" maxlength="12" placeholder="AAPL" autocomplete="off" required /></label>
+          <label>Side<select id="quickOrderSide"><option value="BUY">Buy</option><option value="SELL">Sell owned shares</option></select></label>
+          <label>Dollars<input id="quickOrderDollars" type="number" min="1" max="1000000" step="0.01" required /></label>
+        </div>
+        <button type="submit">Run checks &amp; send to Human Gate</button>
+        <small id="quickOrderFeedback" aria-live="polite">No broker order occurs from this window.</small>
       </form>
     </dialog>
     <script src="/human-gate-bubble.js?v=20260812-2"></script>

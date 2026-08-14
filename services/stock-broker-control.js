@@ -353,6 +353,7 @@ function brokerControlOverview(snapshot = {}, options = {}) {
     pendingDepositsDollars: broker.pendingDeposits === null || broker.pendingDeposits === undefined ? null : moneyNumber(broker.pendingDeposits),
     dayPnlDollars: broker.dayPnlDollars === null || broker.dayPnlDollars === undefined ? null : moneyNumber(broker.dayPnlDollars),
     dayPnlPct: finiteNumber(broker.dayPnlPct, null),
+    dayPnlSource: String(broker.dayPnlSource || "unavailable"),
     realizedPnlDollars: broker.realizedPnlDollars === null || broker.realizedPnlDollars === undefined ? null : moneyNumber(broker.realizedPnlDollars),
     unrealizedPnlDollars: broker.unrealizedPnlDollars === null || broker.unrealizedPnlDollars === undefined ? null : moneyNumber(broker.unrealizedPnlDollars),
     positions: Array.isArray(broker.positions) ? broker.positions : [],

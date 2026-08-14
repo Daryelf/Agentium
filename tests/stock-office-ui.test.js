@@ -72,10 +72,12 @@ test("Stock Office UI keeps broker actions compact while preserving guarded orde
   assert.match(script, /\["Stocks"/);
   assert.match(script, /\["Pending"/);
   assert.match(script, /\["Unsettled"/);
-  assert.match(html, /Simulation and learning/);
-  assert.match(html, /Paper ledger only/);
+  assert.match(html, /Market testing lab/);
+  assert.match(html, /Real research inputs, isolated simulated cash/);
   assert.match(script, /shadowPortfolio/);
   assert.match(script, /\/api\/stock-office\/shadow\/reset/);
+  assert.match(script, /data-simulation-test/);
+  assert.match(script, /\/paper-test/);
   assert.match(script, /No Robinhood call or money movement occurred/);
   assert.match(html, /Market data freshness/);
   assert.match(html, /This loop cannot place orders/);
@@ -124,11 +126,12 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
   assert.match(script, /data-proposal-approve/);
   assert.doesNotMatch(script, /data-proposal-paper/);
-  assert.doesNotMatch(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/paper-test/);
-  assert.match(script, /Finish live setup/);
+  const overviewRenderer = script.match(/function renderTradeProposals\(\)[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(overviewRenderer, /paper-test|data-simulation-test/);
+  assert.match(script, /New real order/);
   assert.match(script, /REAL ORDERS/);
   assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
-  assert.match(script, /No real order is ready/);
+  assert.match(script, /No real order passes every check yet/);
   assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
   assert.match(script, /data-proposal-decline/);
   assert.match(script, /expandedProposalResearch: new Set\(\)/);
@@ -139,6 +142,10 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /No profit date can be estimated reliably/);
   assert.match(styles, /\.company-logo/);
   assert.match(styles, /\.overview-proposal-list/);
+  assert.match(html, /id="quickOrderDialog"/);
+  assert.match(script, /Run checks & send to Human Gate/);
+  assert.match(html, /id="secIdentityForm"/);
+  assert.match(script, /sources\/sec-identity/);
 });
 
 test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {

@@ -13,6 +13,7 @@ const {
   detectCodexRobinhoodRegistration,
   identifyAgenticAccount,
   normalizePortfolio,
+  normalizeQuoteDetails,
   normalizeQuotes,
   parseMcpPayload,
 } = require("../services/robinhood-mcp-client");
@@ -110,7 +111,13 @@ function fakeRobinhood(options = {}) {
         data: {
           total_value: "67.82407991",
           equity_value: "17.82407991",
+          options_value: String(options.optionsValue || 0),
+          futures_value: "0",
+          event_contracts_value: "0",
+          crypto_value: "0",
           cash: "50",
+          mutual_funds_value: "0",
+          fixed_income_value: "0",
           pending_deposits: "0",
           buying_power: { buying_power: "50.0000", unleveraged_buying_power: "50.0000" },
         },
@@ -118,12 +125,12 @@ function fakeRobinhood(options = {}) {
       return mcpResult(body.id, toolResult({ portfolio_value: "100.00", buying_power: "50.00", cash: "50.00", day_pnl: "1.25", day_pnl_pct: "0.0125" }));
     }
     if (name === "get_equity_positions") return mcpResult(body.id, toolResult({ positions: options.positions || [{ symbol: "AAPL", quantity: "1", shares_available_for_sells: "1", current_price: "100" }] }));
-    if (name === "get_equity_orders") return mcpResult(body.id, toolResult({ orders: placed ? [{ order_id: "rh-order-1", ref_id: "one-use-ref", symbol: "AAPL", side: "buy", state: "queued", dollar_amount: "5.00" }] : [] }));
+    if (name === "get_equity_orders") return mcpResult(body.id, toolResult({ orders: placed ? [{ order_id: "rh-order-1", ref_id: "one-use-ref", symbol: "AAPL", side: "buy", state: "queued", dollar_amount: "5.00" }] : options.orders || [] }));
     if (name === "get_equity_quotes") {
       if (options.officialQuoteShape) return mcpResult(body.id, toolResult({
         data: {
           results: args.symbols.map((symbol) => ({
-            quote: { symbol, last_trade_price: "142.22", bid_price: "142.20", ask_price: "142.24" },
+            quote: { symbol, last_trade_price: "142.22", adjusted_previous_close: "146.15", previous_close_date: "2026-08-09", bid_price: "142.20", ask_price: "142.24" },
             close: { symbol, price: "146.15" },
           })),
         },
@@ -176,9 +183,13 @@ test("official nested portfolio dollars and live quotes normalize without fallin
     dayPnlPct: null,
   });
   assert.deepEqual(normalizeQuotes({ data: { results: [{
-    quote: { symbol: "SPCX", last_trade_price: "142.22" },
+    quote: { symbol: "SPCX", last_trade_price: "142.22", adjusted_previous_close: "146.15", previous_close_date: "2026-08-09" },
     close: { symbol: "SPCX", price: "146.15" },
   }] } }), { SPCX: 142.22 });
+  assert.deepEqual(normalizeQuoteDetails({ data: { results: [{
+    quote: { symbol: "SPCX", last_trade_price: "142.22", adjusted_previous_close: "146.15", previous_close_date: "2026-08-09" },
+    close: { symbol: "SPCX", price: "146.15" },
+  }] } }), { SPCX: { price: 142.22, previousClose: 146.15, previousCloseDate: "2026-08-09" } });
 });
 
 test("Robinhood PKCE OAuth, Agentic account reads, and exact order reconciliation work without exposing tokens", async (t) => {
@@ -303,6 +314,49 @@ test("live broker snapshot exposes every official account balance and prefers th
   assert.equal(snapshot.equityValue, 17.82407991);
   assert.equal(snapshot.pendingDeposits, 0);
   assert.equal(snapshot.positions[0].currentPrice, 142.22);
+  assert.equal(snapshot.positions[0].previousClose, 146.15);
+  assert.ok(Math.abs(snapshot.dayPnlDollars - ((142.22 - 146.15) * 0.125619)) < 0.000001);
+  assert.equal(snapshot.dayPnlSource, "official_equity_previous_close");
+  assert.ok(snapshot.dayPnlPct < 0);
+});
+
+test("derived equity P&L fails closed when the account has non-equity exposure", async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-mixed-assets-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let stored = null;
+  const tokenStore = { ready: () => true, load: () => stored, save: (value) => { stored = structuredClone(value); }, clear: () => { stored = null; } };
+  const fake = fakeRobinhood({
+    officialPortfolioShape: true,
+    officialQuoteShape: true,
+    optionsValue: 4.5,
+    positions: [{ symbol: "SPCX", quantity: "0.125619", shares_available_for_sells: "0.125619" }],
+  });
+  const client = createRobinhoodMcpClient({ dataDir, tokenStore, fetchImpl: fake.fetchImpl, now: () => new Date("2026-08-10T17:00:00.000Z") });
+  const started = await client.beginAuthorization({ redirectUri: "http://127.0.0.1:5173/api/stock-office/robinhood/oauth/callback", approvalId: "approval-connect" });
+  await client.completeAuthorization({ state: new URL(started.authorizationUrl).searchParams.get("state"), code: "oauth-code" });
+  const snapshot = await client.refreshBrokerSnapshot();
+  assert.equal(snapshot.dayPnlDollars, null);
+  assert.equal(snapshot.dayPnlPct, null);
+  assert.equal(snapshot.dayPnlSource, "unavailable");
+});
+
+test("derived equity P&L fails closed when order history has an unknown trade date", async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-robinhood-unknown-order-date-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let stored = null;
+  const tokenStore = { ready: () => true, load: () => stored, save: (value) => { stored = structuredClone(value); }, clear: () => { stored = null; } };
+  const fake = fakeRobinhood({
+    officialPortfolioShape: true,
+    officialQuoteShape: true,
+    orders: [{ order_id: "history-1", symbol: "SPCX", state: "filled" }],
+    positions: [{ symbol: "SPCX", quantity: "0.125619", shares_available_for_sells: "0.125619" }],
+  });
+  const client = createRobinhoodMcpClient({ dataDir, tokenStore, fetchImpl: fake.fetchImpl, now: () => new Date("2026-08-10T17:00:00.000Z") });
+  const started = await client.beginAuthorization({ redirectUri: "http://127.0.0.1:5173/api/stock-office/robinhood/oauth/callback", approvalId: "approval-connect" });
+  await client.completeAuthorization({ state: new URL(started.authorizationUrl).searchParams.get("state"), code: "oauth-code" });
+  const snapshot = await client.refreshBrokerSnapshot();
+  assert.equal(snapshot.dayPnlDollars, null);
+  assert.equal(snapshot.dayPnlSource, "unavailable");
 });
 
 test("live quote drift stops before Robinhood review or placement", async (t) => {

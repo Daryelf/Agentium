@@ -67,6 +67,23 @@ test("market-hours research defaults to a five-minute cadence", () => {
   assert.equal(scheduler.start().activeCadenceMinutes, 5);
 });
 
+test("SEC identity can be enabled at runtime without restarting the scheduler", () => {
+  const environment = {};
+  const scheduler = createStockIntelligenceScheduler({
+    refreshManager: { refresh: async () => successResult(), getStatus: () => ({}) },
+    environment,
+    now: createClock().now,
+    setTimeoutImpl: createTimers().setTimeoutImpl,
+    clearTimeoutImpl: () => {},
+    allowInTests: true,
+  });
+  assert.equal(scheduler.getStatus().secIdentityConfigured, false);
+  environment.STOCK_GURU_SEC_USER_AGENT = "Argentum Stock Office ops@example.com";
+  const refreshed = scheduler.refreshConfiguration();
+  assert.equal(refreshed.secIdentityConfigured, true);
+  assert.deepEqual(refreshed.blockers, []);
+});
+
 test("automatic refresh persists restart-safe status and has no broker authority", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-intelligence-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

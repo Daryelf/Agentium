@@ -319,6 +319,16 @@ function createStockIntelligenceScheduler(options = {}) {
     return publicStatus();
   }
 
+  function refreshConfiguration() {
+    const identityConfigured = Boolean(String(environment.STOCK_GURU_SEC_USER_AGENT || "").trim());
+    status.secIdentityConfigured = identityConfigured;
+    status.blockers = identityConfigured
+      ? []
+      : ["Automatic SEC intake needs STOCK_GURU_SEC_USER_AGENT with a monitored contact identity."];
+    persist();
+    return publicStatus();
+  }
+
   function start() {
     stopped = false;
     if (!status.enabled || (testRuntime && !allowInTests)) return publicStatus();
@@ -343,6 +353,7 @@ function createStockIntelligenceScheduler(options = {}) {
   return {
     getStatus: publicStatus,
     recordManualRefresh,
+    refreshConfiguration,
     runNow,
     start,
     stop,

@@ -3,6 +3,7 @@ const state = {
   records: [],
   selectedTicker: null,
   sources: [],
+  secSetup: null,
   activity: [],
   messages: [],
   mirror: null,
@@ -77,6 +78,7 @@ function setStockView(requestedView, options = {}) {
   $("#viewTitle").textContent = title;
   $("#syncButton").hidden = view === "trade";
   renderExecutionModePill();
+  if (view === "portfolio") renderShadowPortfolio();
   if (options.updateHash !== false) history.replaceState(null, "", `#${view}`);
   if (options.scroll !== false) $(".stock-main").scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -291,7 +293,8 @@ function renderOverviewDashboard() {
   const accountBand = $("#overviewAccountBand");
   accountBand.dataset.status = control.authenticationVerified ? "live" : "offline";
   $("#overviewEquity").textContent = formatMoney(equity);
-  $("#overviewAccountMeta").textContent = `Official Robinhood total · ${positions.length} position${positions.length === 1 ? "" : "s"} · ${control.snapshotUpdatedAt ? formatTime(control.snapshotUpdatedAt) : "awaiting snapshot"}`;
+  const dayPnlProvenance = control.dayPnlSource === "official_equity_previous_close" ? " · P&L from official previous close" : "";
+  $("#overviewAccountMeta").textContent = `Official Robinhood total · ${positions.length} position${positions.length === 1 ? "" : "s"} · ${control.snapshotUpdatedAt ? formatTime(control.snapshotUpdatedAt) : "awaiting snapshot"}${dayPnlProvenance}`;
   $("#overviewAccountTape").innerHTML = [
     ["Buying power", buyingPower === null ? "—" : formatMoney(buyingPower), ""],
     ["Cash", cash === null ? "—" : formatMoney(cash), ""],
@@ -428,7 +431,7 @@ function renderTradeProposals() {
     <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
       <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : `${researchCandidates.length} still in research`)}</strong></span>
     </div>
-    <button class="secondary" type="button" data-live-readiness>${escapeHtml(executionLive && accountVerified ? "Open trade desk" : "Finish live setup")}</button>`;
+    <button class="secondary" type="button" data-quick-order>${escapeHtml(executionLive && accountVerified ? "New real order" : "Check new order")}</button>`;
   $("#overviewProposalList").innerHTML = visible.length
     ? visible.map((proposal) => {
         const research = proposal.research || {};
@@ -483,7 +486,7 @@ function renderTradeProposals() {
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row overview-live-empty"><strong>No real order is ready</strong><span>${escapeHtml(researchCandidates.length ? `${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still being evaluated in Research.` : "Research is continuing until a BUY or SELL passes every live check.")}</span><button type="button" data-live-readiness>Open live setup</button></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No real order passes every check yet</strong><span>${escapeHtml(researchCandidates.length ? `${researchCandidates.length} candidate${researchCandidates.length === 1 ? " is" : "s are"} still being evaluated. Open Simulation to test them without a broker call.` : "Research is continuing until a BUY or SELL passes every live check.")}</span><button type="button" data-quick-order>Enter a real order</button><button class="secondary" type="button" data-open-stock-view="portfolio">Open Simulation</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {
@@ -586,12 +589,17 @@ function renderShadowPortfolio() {
   const positions = portfolio.positions || [];
   const decisions = [...(portfolio.decisions || [])].reverse().slice(0, 8);
   const learning = portfolio.learning || {};
+  const scheduler = state.intelligenceScheduler || {};
+  const proposals = (state.portfolioPlan?.proposals || []).filter((proposal) => proposal.side === "BUY").slice(0, 12);
   const status = $("#shadowPortfolioStatus");
   const running = portfolio.mode === "paper_shadow_only" && portfolio.initialCashDollars > 0;
   status.textContent = running
     ? `Paper only · ${portfolio.lastCycleAt ? formatTime(portfolio.lastCycleAt) : "first cycle pending"}`
     : "Set paper starting cash";
   status.className = running ? "ready-copy" : "danger-copy";
+  $("#simulationCycle").textContent = scheduler.running
+    ? `Research running · ${String(scheduler.currentStage || "scanning").replaceAll("_", " ")}`
+    : `Last marked ${portfolio.lastCycleAt ? formatTime(portfolio.lastCycleAt) : "pending"} · next research ${scheduler.nextRunAt ? formatTime(scheduler.nextRunAt) : "scheduled"}`;
   $("#shadowPortfolioMetrics").innerHTML = [
     ["Paper equity", formatMoney(portfolio.equityDollars), `started ${formatMoney(portfolio.initialCashDollars)}`],
     ["Paper cash", formatMoney(portfolio.cashDollars), `${formatMoney(portfolio.deployedDollars)} simulated deployment`],
@@ -600,6 +608,24 @@ function renderShadowPortfolio() {
     ["Paper drawdown", formatPercent(portfolio.currentDrawdownPct || 0), `maximum ${formatPercent(portfolio.maxDrawdownPct || 0)}`],
     ["Closed outcomes", learning.closedTrades || 0, learning.hitRate === null || learning.hitRate === undefined ? "no closed sample yet" : `${formatPercent(learning.hitRate)} hit rate`],
   ].map(([label, value, hint]) => metricCard(label, value, hint)).join("");
+  $("#simulationCandidateCount").textContent = `${proposals.filter((proposal) => proposal.paperTest?.eligible).length} testable`;
+  $("#simulationCandidates").innerHTML = proposals.length
+    ? proposals.map((proposal) => {
+        const paperTest = proposal.paperTest || {};
+        const research = proposal.research || {};
+        const alreadyHeld = positions.some((position) => position.symbol === proposal.symbol);
+        const statusLabel = alreadyHeld ? "Running" : paperTest.eligible ? "Ready" : "Waiting";
+        return `<article class="simulation-candidate" data-status="${escapeHtml(paperTest.eligible ? "ready" : alreadyHeld ? "running" : "blocked")}">
+          <div class="simulation-company">${logoMarkup(proposal.symbol)}<span><strong>${escapeHtml(proposal.symbol)}</strong><small>${escapeHtml(portfolioKindLabel(proposal.kind))}</small></span></div>
+          <div class="simulation-score"><small>Score</small><strong>${escapeHtml(research.score ?? proposal.scores?.ai ?? "—")}</strong></div>
+          <div class="simulation-thesis"><strong>${escapeHtml(research.setupType || research.mainReason || "Research candidate")}</strong><small>${escapeHtml(research.mainRisk || "Rechecked every cycle")}</small></div>
+          <div class="simulation-notional"><small>Simulated</small><strong>${escapeHtml(formatMoney(paperTest.requestedDollars ?? proposal.requestedDollars))}</strong></div>
+          <div class="simulation-action"><span>${escapeHtml(statusLabel)}</span>${paperTest.eligible
+            ? `<button type="button" data-simulation-test="${escapeHtml(proposal.id)}">Simulate now</button>`
+            : `<small>${escapeHtml(alreadyHeld ? "Position is already being measured." : paperTest.reason || "Waiting for eligible research.")}</small>`}</div>
+        </article>`;
+      }).join("")
+    : `<div class="empty-state"><p>No current BUY research candidate is available. The simulation ledger remains active and will use the next persisted cycle.</p></div>`;
   $("#shadowPositionTitle").textContent = `${positions.length} position${positions.length === 1 ? "" : "s"}`;
   $("#shadowPositions").innerHTML = positions.length
     ? positions.map((position) => `
@@ -620,15 +646,22 @@ function renderShadowPortfolio() {
       `).join("")
     : `<div class="empty-state"><p>No paper decision has been recorded yet.</p></div>`;
   const profiles = learning.profiles || [];
-  $("#shadowLearning").innerHTML = learning.closedTrades
-    ? profiles.slice(0, 6).map((profile) => `
+  $("#shadowLearning").innerHTML = `
+    <div class="simulation-accuracy-grid">
+      <span><small>Closed</small><strong>${escapeHtml(learning.closedTrades || 0)}</strong></span>
+      <span><small>Hit rate</small><strong>${learning.hitRate === null || learning.hitRate === undefined ? "—" : escapeHtml(formatPercent(learning.hitRate))}</strong></span>
+      <span><small>Expectancy</small><strong>${learning.expectancyDollars === null || learning.expectancyDollars === undefined ? "—" : escapeHtml(formatMoney(learning.expectancyDollars))}</strong></span>
+      <span><small>Realized</small><strong>${escapeHtml(formatMoney(learning.totalRealizedPnlDollars || 0))}</strong></span>
+    </div>
+    ${learning.closedTrades
+      ? profiles.slice(0, 6).map((profile) => `
         <article class="shadow-row learning">
           <div><strong>${escapeHtml(profile.label)}</strong><span>${profile.trades} closed paper trade${profile.trades === 1 ? "" : "s"}</span></div>
           <div><b>${escapeHtml(formatMoney(profile.totalPnlDollars))}</b><small>${profile.hitRate === null ? "no hit rate" : escapeHtml(formatPercent(profile.hitRate))}</small></div>
           <div><b>${escapeHtml(formatMoney(profile.expectancyDollars))}</b><small>paper expectancy</small></div>
         </article>
       `).join("")
-    : `<div class="empty-state"><p>Learning starts after a simulated position closes. Small samples are evidence, not a promise of future profit.</p></div>`;
+      : `<div class="simulation-sample-warning"><strong>Accuracy not available yet</strong><span>A hit rate appears only after simulated positions close. No result is invented from open trades.</span></div>`}`;
   const startingCash = $("#shadowStartingCash");
   if (!startingCash.dataset.loaded && portfolio.initialCashDollars > 0) {
     startingCash.value = portfolio.initialCashDollars;
@@ -809,6 +842,7 @@ function renderBrokerControl() {
     ["Buying power", control.buyingPowerDollars === null || control.buyingPowerDollars === undefined ? "—" : formatMoney(control.buyingPowerDollars)],
     ["Cash", control.cashDollars === null || control.cashDollars === undefined ? "—" : formatMoney(control.cashDollars)],
     ["Account value", control.accountValueDollars === null || control.accountValueDollars === undefined ? "—" : formatMoney(control.accountValueDollars)],
+    [control.dayPnlSource === "official_equity_previous_close" ? "Today P&L · quotes" : "Today P&L", control.dayPnlDollars === null || control.dayPnlDollars === undefined ? "—" : formatMoney(control.dayPnlDollars)],
     ["Positions", control.positions?.length || 0],
     ["Open orders", control.openOrderCount || 0],
   ].map(([label, value]) => `<span class="trade-account-stat"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
@@ -1181,11 +1215,41 @@ function renderRecordDetail(record, safety) {
 }
 
 function renderSources() {
-  const sourceHealth = state.overview?.sourceHealth || {};
-  $("#sourceTitle").textContent = sourceHealth.status || "Source health";
-  $("#sourceBadge").textContent = sourceHealth.ready ? `${sourceHealth.ready} ready` : "No sources";
+  const secSetup = state.secSetup || {};
+  const scheduler = state.intelligenceScheduler || {};
+  const operationalIds = new Set([
+    "evaluations",
+    "research_context",
+    "universe",
+    "copy_trader_config",
+    "copy_trader_watchlist",
+    "copy_import_status",
+    "sec_13f_import_status",
+    "copy_trader_plan",
+    "copy_knowledge",
+  ]);
+  const operational = state.sources.filter((source) => operationalIds.has(source.id)).map((source) => {
+    if (["copy_import_status", "sec_13f_import_status"].includes(source.id) && !secSetup.configured) {
+      return { ...source, status: "setup required", summary: "Add the SEC request identity above; this is not a missing app file." };
+    }
+    if (["copy_import_status", "sec_13f_import_status"].includes(source.id) && source.status === "missing") {
+      return { ...source, status: "scheduled", summary: `Configured. The next bounded ${source.id === "copy_import_status" ? "Form 4" : "13F"} cycle will create this dataset.` };
+    }
+    return source;
+  });
+  operational.unshift({
+    id: "robinhood_live",
+    label: "Robinhood Agentic account",
+    status: state.brokerControl?.authenticationVerified ? "live" : "refresh required",
+    summary: state.brokerControl?.authenticationVerified
+      ? `Official account snapshot · ${state.brokerControl.snapshotUpdatedAt ? formatTime(state.brokerControl.snapshotUpdatedAt) : "current session"}`
+      : "Refresh the official connection before using account values.",
+  });
+  const readyCount = operational.filter((source) => ["ready", "configured", "live", "scheduled"].includes(source.status)).length;
+  $("#sourceTitle").textContent = "Operational inputs";
+  $("#sourceBadge").textContent = `${readyCount}/${operational.length} ready`;
   $("#sourceList").innerHTML =
-    state.sources
+    operational
       .map(
         (source) => `
           <article class="source-row">
@@ -1198,6 +1262,13 @@ function renderSources() {
         `,
       )
       .join("") || `<div class="empty-state"><p>No source files are mounted yet.</p></div>`;
+  $("#secSetupStatus").textContent = secSetup.configured ? "Configured" : "Setup required";
+  $("#secSetupStatus").className = `status-pill ${secSetup.configured ? "ready" : "warning"}`;
+  $("#secSetupTitle").textContent = secSetup.configured ? "Official filing intake enabled" : "Form 4 and 13F need a contact";
+  $("#secSetupSummary").textContent = secSetup.configured
+    ? `Form 4 ${formatCadence(scheduler.form4CadenceMinutes)} · 13F ${formatCadence(scheduler.form13fCadenceMinutes)} · next bounded research cycle`
+    : "SEC.gov requires an organization/name and a monitored email for automated filing requests.";
+  $("#secIdentityForm").querySelector("button").textContent = secSetup.configured ? "Update SEC contact" : "Save SEC contact";
 }
 
 function renderActivity() {
@@ -1257,6 +1328,7 @@ async function loadApp() {
     state.records = records.records || [];
     state.recordTotal = Number(records.total || 0);
     state.sources = sources.sources || [];
+    state.secSetup = sources.secSetup || null;
     state.activity = [...(activity.syncRuns || []), ...(activity.activity || []), ...(activity.assistantRuns || [])].sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     state.messages = chat.messages || [];
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
@@ -1421,6 +1493,98 @@ async function approveOverviewProposal(proposalId) {
     feedback.textContent = `Proposal stopped safely: ${error.message}`;
     button.disabled = false;
     button.textContent = "Send to Human Gate";
+  }
+}
+
+function openQuickOrder(symbol = "", side = "BUY", dollars = null) {
+  const dialog = $("#quickOrderDialog");
+  $("#quickOrderSymbol").value = String(symbol || "").toUpperCase();
+  $("#quickOrderSide").value = side === "SELL" ? "SELL" : "BUY";
+  if (Number.isFinite(Number(dollars)) && Number(dollars) > 0) $("#quickOrderDollars").value = Number(dollars).toFixed(2);
+  else if (!$("#quickOrderDollars").value) $("#quickOrderDollars").value = Number(state.brokerControl?.guardrails?.maxOrderDollars || 5).toFixed(2);
+  $("#quickOrderFeedback").textContent = "No broker order occurs from this window.";
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+async function submitQuickOrder(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const feedback = $("#quickOrderFeedback");
+  button.disabled = true;
+  button.textContent = "Running live checks…";
+  feedback.textContent = "Checking current Robinhood state, price, limits, and duplicate orders…";
+  try {
+    const drafted = await api("/api/stock-office/orders/draft", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol: $("#quickOrderSymbol").value,
+        side: $("#quickOrderSide").value,
+        requestedDollars: Number($("#quickOrderDollars").value),
+      }),
+    });
+    state.tradeDrafts = [drafted.draft, ...state.tradeDrafts.filter((item) => item.id !== drafted.draft.id)];
+    state.brokerControl = drafted.brokerControl || state.brokerControl;
+    if (drafted.draft.status !== "ready_for_broker_review") {
+      throw new Error(drafted.draft.blockers?.[0] || "The order did not pass current live checks.");
+    }
+    button.textContent = "Creating Human Gate request…";
+    const gated = await api(`/api/stock-office/orders/${encodeURIComponent(drafted.draft.id)}/human-gate`, { method: "POST", body: "{}" });
+    if (gated.draft) state.tradeDrafts = [gated.draft, ...state.tradeDrafts.filter((item) => item.id !== gated.draft.id)];
+    feedback.textContent = `${drafted.draft.side} ${drafted.draft.symbol} is in Human Gate. No broker review or order occurred.`;
+    window.dispatchEvent(new CustomEvent("argentum:approval-created", { detail: { officeId: "stock-office" } }));
+    renderBrokerControl();
+  } catch (error) {
+    feedback.textContent = `Stopped safely: ${error.message}`;
+    button.disabled = false;
+    button.textContent = "Run checks & send to Human Gate";
+  }
+}
+
+async function testSimulationProposal(proposalId) {
+  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
+  const button = $(`[data-simulation-test="${CSS.escape(proposalId)}"]`);
+  const feedback = $("#shadowPortfolioFeedback");
+  if (!proposal || !button) return;
+  button.disabled = true;
+  button.textContent = "Simulating…";
+  feedback.textContent = `Recording an isolated ${proposal.symbol} simulation with current research inputs…`;
+  try {
+    const payload = await api(`/api/stock-office/proposals/${encodeURIComponent(proposalId)}/paper-test`, { method: "POST", body: "{}" });
+    state.shadowPortfolio = payload.shadowPortfolio || state.shadowPortfolio;
+    state.portfolioPlan = payload.portfolioPlan || state.portfolioPlan;
+    renderShadowPortfolio();
+    feedback.textContent = `${proposal.symbol} entered the simulation ledger. Robinhood was not called.`;
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
+    button.textContent = "Simulate now";
+  }
+}
+
+async function configureSecIdentity(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  const feedback = $("#secSetupFeedback");
+  button.disabled = true;
+  button.textContent = "Saving locally…";
+  feedback.textContent = "Validating the monitored SEC contact identity…";
+  try {
+    const payload = await api("/api/stock-office/sources/sec-identity", {
+      method: "POST",
+      body: JSON.stringify({ identity: $("#secIdentity").value }),
+    });
+    state.secSetup = payload.secSetup;
+    state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
+    $("#secIdentity").value = "";
+    renderSources();
+    renderIntelligenceMonitor();
+    feedback.textContent = "Saved server-side. Official Form 4 and 13F intake will run on its bounded cadence; no trade occurred.";
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = state.secSetup?.configured ? "Update SEC contact" : "Save SEC contact";
   }
 }
 
@@ -2030,7 +2194,11 @@ document.addEventListener("click", (event) => {
   if (proposalDecline && !proposalDecline.disabled) declineOverviewProposal(proposalDecline.dataset.proposalDecline);
   const proposalDetails = event.target.closest("[data-proposal-drawer]");
   if (proposalDetails) proposalDrawer(proposalDetails.dataset.proposalDrawer);
-  if (event.target.closest("[data-live-readiness]")) setStockView("trade");
+  if (event.target.closest("[data-live-readiness]")) openQuickOrder();
+  if (event.target.closest("[data-quick-order]")) openQuickOrder();
+  if (event.target.closest("[data-close-quick-order]")) $("#quickOrderDialog").close();
+  const simulationTest = event.target.closest("[data-simulation-test]");
+  if (simulationTest && !simulationTest.disabled) testSimulationProposal(simulationTest.dataset.simulationTest);
   const opportunityDetails = event.target.closest("[data-opportunity-drawer]");
   if (opportunityDetails) opportunityDrawer(opportunityDetails.dataset.opportunityDrawer);
   const workerDetails = event.target.closest("[data-worker-drawer]");
@@ -2049,6 +2217,8 @@ $("#guardrailForm").addEventListener("submit", requestGuardrails);
 $("#applyGuardrails").addEventListener("click", applyApprovedGuardrails);
 $("#orderDraftForm").addEventListener("submit", buildOrderDraft);
 $("#shadowResetForm").addEventListener("submit", resetShadowPortfolio);
+$("#quickOrderForm").addEventListener("submit", submitQuickOrder);
+$("#secIdentityForm").addEventListener("submit", configureSecIdentity);
 $("#telegramConfigForm").addEventListener("submit", configureTelegram);
 
 $("#applyFilters").addEventListener("click", applyFilters);

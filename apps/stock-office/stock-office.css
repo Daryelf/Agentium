@@ -2193,6 +2193,260 @@ select {
   .limit-primary, .limit-advanced, .limit-actions { grid-template-columns: 1fr; }
 }
 
+/* Research hierarchy and persisted simulation lab. */
+.stock-nav button.nav-child {
+  width: calc(100% - 12px);
+  margin-left: 12px;
+  grid-template-columns: 27px minmax(0, 1fr);
+  min-height: 36px;
+  border-left-color: rgba(34, 211, 238, 0.22);
+}
+
+.stock-nav button.nav-child i {
+  font-size: 0.72rem;
+}
+
+.stock-nav button.nav-child span {
+  font-size: 0.67rem;
+}
+
+.simulation-console {
+  display: grid;
+  gap: 10px;
+}
+
+.simulation-head,
+.simulation-candidate-board,
+.simulation-scoreboard,
+.simulation-ledger-grid > section {
+  border: 1px solid rgba(125, 211, 252, 0.15);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(8, 22, 42, 0.84), rgba(3, 8, 22, 0.9));
+}
+
+.simulation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 17px;
+  background:
+    radial-gradient(circle at 0 0, rgba(34, 211, 238, 0.14), transparent 44%),
+    linear-gradient(115deg, rgba(8, 47, 73, 0.42), rgba(8, 11, 31, 0.86));
+}
+
+.simulation-head span,
+.simulation-section-head span {
+  display: block;
+  color: #71839b;
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.simulation-head h2,
+.simulation-section-head h3 {
+  margin: 3px 0 0;
+}
+
+.simulation-head p {
+  margin: 5px 0 0;
+  color: #8fa1b9;
+  font-size: 0.67rem;
+}
+
+.simulation-head > div:last-child {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+}
+
+.simulation-head > div:last-child strong { color: #bbf7d0; font-size: 0.72rem; }
+.simulation-head > div:last-child small { color: #8192aa; font-size: 0.59rem; }
+
+.simulation-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.simulation-metrics .metric-card {
+  min-height: 76px;
+  padding: 11px;
+  border-radius: 12px;
+  background: rgba(5, 13, 29, 0.72);
+}
+
+.simulation-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(270px, 0.62fr);
+  gap: 10px;
+}
+
+.simulation-candidate-board,
+.simulation-scoreboard,
+.simulation-ledger-grid > section { padding: 13px; }
+
+.simulation-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.1);
+}
+
+.simulation-section-head > strong {
+  color: #67e8f9;
+  font-size: 0.65rem;
+}
+
+.simulation-candidates { display: grid; }
+
+.simulation-candidate {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) 55px minmax(190px, 1.45fr) 82px minmax(150px, 0.85fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 2px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+}
+
+.simulation-candidate:last-child { border-bottom: 0; }
+.simulation-candidate[data-status="ready"] { background: linear-gradient(90deg, rgba(6, 78, 59, 0.1), transparent 58%); }
+
+.simulation-company { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.simulation-company .company-logo { width: 28px; height: 28px; }
+.simulation-company span,
+.simulation-company strong,
+.simulation-company small,
+.simulation-thesis strong,
+.simulation-thesis small,
+.simulation-score small,
+.simulation-score strong,
+.simulation-notional small,
+.simulation-notional strong { display: block; min-width: 0; }
+.simulation-company strong { font-size: 0.75rem; }
+.simulation-company small,
+.simulation-thesis small,
+.simulation-score small,
+.simulation-notional small { margin-top: 3px; color: #71839b; font-size: 0.55rem; }
+.simulation-score strong,
+.simulation-notional strong { margin-top: 3px; font-size: 0.75rem; }
+.simulation-thesis strong { overflow: hidden; color: #dbeafe; font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+.simulation-action { display: grid; gap: 5px; justify-items: stretch; }
+.simulation-action > span { color: #a7f3d0; font-size: 0.55rem; font-weight: 950; text-transform: uppercase; }
+.simulation-action > small { color: #7d8ca2; font-size: 0.54rem; line-height: 1.3; }
+.simulation-action button { min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 0.58rem; }
+
+.simulation-accuracy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 11px 0;
+}
+
+.simulation-accuracy-grid span {
+  padding: 9px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.48);
+}
+
+.simulation-accuracy-grid small,
+.simulation-accuracy-grid strong { display: block; }
+.simulation-accuracy-grid small { color: #71839b; font-size: 0.53rem; text-transform: uppercase; }
+.simulation-accuracy-grid strong { margin-top: 4px; font-size: 0.82rem; }
+
+.simulation-sample-warning {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid rgba(251, 191, 36, 0.16);
+  border-radius: 10px;
+  background: rgba(69, 26, 3, 0.16);
+}
+.simulation-sample-warning strong { color: #fde68a; font-size: 0.65rem; }
+.simulation-sample-warning span { color: #9d8c72; font-size: 0.56rem; line-height: 1.35; }
+
+.simulation-scoreboard .shadow-reset-form {
+  grid-template-columns: 1fr;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(125, 211, 252, 0.1);
+}
+
+.simulation-ledger-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+/* SEC setup reports an actionable state instead of a fake missing-file error. */
+.sec-setup-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(380px, 1.2fr);
+  gap: 12px 18px;
+  align-items: end;
+}
+.sec-setup-layout > div { display: grid; gap: 4px; }
+.sec-setup-layout > div strong { font-size: 0.76rem; }
+.sec-setup-layout > div span,
+.sec-setup-layout > small { color: #8496ae; font-size: 0.61rem; }
+.sec-setup-layout > small { grid-column: 1 / -1; }
+#secIdentityForm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+#secIdentityForm label { display: grid; gap: 5px; color: #8192aa; font-size: 0.57rem; font-weight: 900; text-transform: uppercase; }
+#secIdentityForm input { min-height: 38px; border: 1px solid rgba(125, 211, 252, 0.18); border-radius: 10px; padding: 0 10px; color: #f8fafc; background: rgba(2, 6, 23, 0.74); }
+#secIdentityForm button { min-height: 38px; }
+.tag.setup_required,
+.tag.refresh_required { color: #fde68a; border-color: rgba(251, 191, 36, 0.25); background: rgba(69, 26, 3, 0.3); }
+.tag.scheduled { color: #bae6fd; border-color: rgba(56, 189, 248, 0.22); background: rgba(8, 47, 73, 0.3); }
+.tag.live { color: #bbf7d0; border-color: rgba(52, 211, 153, 0.24); background: rgba(5, 46, 22, 0.3); }
+
+/* Manual orders can be drafted and sent to Human Gate without navigating away. */
+.quick-order-dialog {
+  width: min(620px, calc(100vw - 24px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 18px;
+  color: #f8fafc;
+  background: #050b18;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.72);
+}
+.quick-order-dialog::backdrop { background: rgba(0, 3, 12, 0.78); backdrop-filter: blur(5px); }
+.quick-order-shell { display: grid; gap: 14px; padding: 17px; }
+.quick-order-shell header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.quick-order-shell header span { color: #67e8f9; font-size: 0.55rem; font-weight: 950; letter-spacing: 0.08em; }
+.quick-order-shell header h2 { margin: 3px 0 0; font-size: 1.15rem; }
+.quick-order-shell header button { width: 32px; min-height: 32px; padding: 0; border-radius: 9px; background: rgba(15, 23, 42, 0.72); }
+.quick-order-shell > p { margin: 0; color: #91a2b8; font-size: 0.68rem; }
+.quick-order-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.quick-order-fields label { display: grid; gap: 5px; color: #8192aa; font-size: 0.58rem; font-weight: 900; text-transform: uppercase; }
+.quick-order-fields input,
+.quick-order-fields select { min-height: 40px; width: 100%; border: 1px solid rgba(125, 211, 252, 0.18); border-radius: 10px; padding: 0 10px; color: #f8fafc; background: rgba(2, 6, 23, 0.78); }
+.quick-order-shell > small { color: #7f90a8; font-size: 0.61rem; }
+
+@media (max-width: 1100px) {
+  .simulation-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .simulation-workspace { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .stock-nav button.nav-child { width: auto; margin-left: 0; }
+  .simulation-head { align-items: flex-start; }
+  .simulation-head > div:last-child { text-align: left; }
+  .simulation-candidate { grid-template-columns: minmax(100px, 1fr) 50px 80px; }
+  .simulation-thesis,
+  .simulation-action { grid-column: 1 / -1; }
+  .simulation-ledger-grid,
+  .sec-setup-layout { grid-template-columns: 1fr; }
+  .sec-setup-layout > small { grid-column: auto; }
+  #secIdentityForm { grid-template-columns: 1fr; }
+  .quick-order-fields { grid-template-columns: 1fr; }
+}
+
 /* Overview: one account command surface, not a wall of metric cards. */
 .stock-view[data-stock-view="overview"] {
   gap: 10px;

@@ -101,6 +101,7 @@ const ENV_AI_MODE = process.env.AI_MODE || "";
 const ENV_AI_MONTHLY_LIMIT_USD = process.env.AI_MONTHLY_LIMIT_USD || "";
 const ENV_OPENAI_TEST_BUDGET_USD = process.env.OPENAI_TEST_BUDGET_USD || "";
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
+hydrateStockSecIdentity();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
 const REMEMBER_SESSION_TTL_MS = boundedDurationMs(process.env.REMEMBER_SESSION_TTL_MS, 30 * DAY_MS, 30 * DAY_MS);
@@ -497,6 +498,36 @@ function writeStockTelegramSettings(key, value) {
   }
   fs.mkdirSync(path.dirname(STOCK_TELEGRAM_SETTINGS_FILE), { recursive: true });
   fs.writeFileSync(STOCK_TELEGRAM_SETTINGS_FILE, `${JSON.stringify({ ...store, [key]: value }, null, 2)}\n`, { mode: 0o600 });
+}
+
+function normalizeStockSecIdentity(value) {
+  const identity = String(value || "").trim().replace(/\s+/g, " ").slice(0, 240);
+  const email = identity.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
+  const label = email ? identity.replace(email, "").trim().replace(/[-|,;]+$/, "").trim() : "";
+  if (!email || label.length < 2) {
+    throw guardedError("Enter an organization or operator name plus a monitored email, for example: Argentum Stock Office ops@example.com.", 400);
+  }
+  return identity;
+}
+
+function hydrateStockSecIdentity() {
+  if (process.env.STOCK_GURU_SEC_USER_AGENT) return;
+  try {
+    const stored = readStockTelegramSettings("secUserAgent", "");
+    if (stored) process.env.STOCK_GURU_SEC_USER_AGENT = normalizeStockSecIdentity(stored);
+  } catch {
+    // Invalid old values leave automated SEC intake safely disabled.
+  }
+}
+
+function stockSecSetupPayload() {
+  const configured = Boolean(String(process.env.STOCK_GURU_SEC_USER_AGENT || "").trim());
+  return {
+    configured,
+    status: configured ? "ready" : "setup_required",
+    storage: configured ? "server_only_local_file" : "not_configured",
+    transmittedTo: "SEC.gov automated filing requests only",
+  };
 }
 
 function readPersistentSessionSecret() {
@@ -6276,8 +6307,34 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         sources: snapshot.sources,
         sourceHealth: snapshot.sourceHealth,
+        secSetup: stockSecSetupPayload(),
         threatModel: snapshot.threatModel,
         workspace: snapshot.workspace,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/sources/sec-identity") {
+    try {
+      enforceStockOfficeRateLimit(req, "sec-identity", 6, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      const payload = await readBody(req);
+      const identity = normalizeStockSecIdentity(payload.identity);
+      writeStockTelegramSettings("secUserAgent", identity);
+      process.env.STOCK_GURU_SEC_USER_AGENT = identity;
+      const intelligenceScheduler = stockIntelligenceScheduler.refreshConfiguration();
+      const state = readState();
+      audit(state, "Stock Office SEC contact configured", "A monitored SEC request identity was saved server-side. The value was not returned to the browser; the next bounded SEC research cycle may transmit it to SEC.gov.");
+      writeState(state);
+      sendJson(res, 200, {
+        secSetup: stockSecSetupPayload(),
+        intelligenceScheduler,
+        externalRequestMade: false,
+        liveOrderPlaced: false,
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);

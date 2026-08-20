@@ -228,30 +228,46 @@ const fallbackState = {
 let state = fallbackState;
 let activeMemoryLayer = "working";
 let cycleTimer = null;
+let activeWorkspaceView = "floor";
 let apiAvailable = false;
 let automationTelemetryMessages = ["Agent 101 is waiting for bounded work."];
 let automationTelemetryIndex = 0;
 let stockOfficeOverview = null;
+let stockOfficeBroker = null;
 let stockOfficeRecords = { records: [], page: 1, pageSize: 12, total: 0, totalPages: 1 };
 let stockOfficeSelectedTicker = "";
 let stockOfficeLoading = false;
 let stockOfficeError = "";
+let clippingOfficeOverview = null;
+let clippingOfficeLoading = false;
+let clippingOfficeError = "";
+let clippingOfficeRefreshTimer = null;
+let printShopOfficeOverview = null;
+let printShopOfficeLoading = false;
+let printShopOfficeError = "";
 let stockOfficeFilters = {
   q: "",
   status: "all",
   sort: "score_desc",
 };
+let appHydrated = false;
+let secondaryDataLoading = false;
+let habitatModulesRendered = false;
+let latestBrainHealth = null;
+let latestBrainContext = null;
 
 const avatar = document.querySelector("#depoAvatar");
-const progress = document.querySelector("#missionProgress");
 const cycleStatus = document.querySelector("#cycleStatus");
 const missionTitle = document.querySelector("#missionTitle");
 const missionCopy = document.querySelector("#missionCopy");
 const confidenceChip = document.querySelector("#confidenceChip");
 const taskStage = document.querySelector("#taskStage");
+const taskStageDetail = document.querySelector("#taskStageDetail");
 const riskLevel = document.querySelector("#riskLevel");
 const pauseBtn = document.querySelector("#pauseBtn");
-const runCycleBtn = document.querySelector("#runCycleBtn");
+const openSupervisorFromFloorBtn = document.querySelector("#openSupervisorFromFloorBtn");
+const workspaceViewTitle = document.querySelector("#workspaceViewTitle");
+const workspaceViewDescription = document.querySelector("#workspaceViewDescription");
 const notificationBtn = document.querySelector("#notificationBtn");
 const notificationPanel = document.querySelector("#notificationPanel");
 const notificationList = document.querySelector("#notificationList");
@@ -269,6 +285,17 @@ const settingsNavButtons = document.querySelectorAll("[data-settings-target]");
 const settingsTitleHeading = document.querySelector(".settings-title h3");
 const settingsTitleCopy = document.querySelector(".settings-title p");
 const settingsBreadcrumbCurrent = document.querySelector(".settings-breadcrumb strong");
+const businessProfileForm = document.querySelector("#businessProfileForm");
+const businessCompanyName = document.querySelector("#businessCompanyName");
+const businessTypeInput = document.querySelector("#businessTypeInput");
+const businessStageInput = document.querySelector("#businessStageInput");
+const businessTimeZoneInput = document.querySelector("#businessTimeZoneInput");
+const businessMissionInput = document.querySelector("#businessMissionInput");
+const businessPrimaryGoalInput = document.querySelector("#businessPrimaryGoalInput");
+const businessKpiInput = document.querySelector("#businessKpiInput");
+const businessReadinessChip = document.querySelector("#businessReadinessChip");
+const businessReadinessSummary = document.querySelector("#businessReadinessSummary");
+const businessReadinessGrid = document.querySelector("#businessReadinessGrid");
 const capabilityList = document.querySelector("#capabilityList");
 const approvalList = document.querySelector("#approvalList");
 const queueCount = document.querySelector("#queueCount");
@@ -399,6 +426,43 @@ const aiProviderKeyForm = document.querySelector("#aiProviderKeyForm");
 const aiKeyProviderSelect = document.querySelector("#aiKeyProviderSelect");
 const aiKeyInput = document.querySelector("#aiKeyInput");
 const aiKeyStatus = document.querySelector("#aiKeyStatus");
+const localSecretForm = document.querySelector("#localSecretForm");
+const localSecretValue = document.querySelector("#localSecretValue");
+const localSecretStatus = document.querySelector("#localSecretStatus");
+const localRuntimeMode = document.querySelector("#localRuntimeMode");
+const localRuntimeHost = document.querySelector("#localRuntimeHost");
+const localDatabaseStatus = document.querySelector("#localDatabaseStatus");
+const localWorkspaceCount = document.querySelector("#localWorkspaceCount");
+const localWorkspaceStatus = document.querySelector("#localWorkspaceStatus");
+const localWorkspaceList = document.querySelector("#localWorkspaceList");
+const pickLocalWorkspaceBtn = document.querySelector("#pickLocalWorkspaceBtn");
+const obsidianVaultStatusChip = document.querySelector("#obsidianVaultStatusChip");
+const obsidianVaultStatus = document.querySelector("#obsidianVaultStatus");
+const obsidianDailyCount = document.querySelector("#obsidianDailyCount");
+const obsidianBusinessCount = document.querySelector("#obsidianBusinessCount");
+const obsidianAgentCount = document.querySelector("#obsidianAgentCount");
+const obsidianSkillCount = document.querySelector("#obsidianSkillCount");
+const obsidianWorkflowCount = document.querySelector("#obsidianWorkflowCount");
+const obsidianSearchForm = document.querySelector("#obsidianSearchForm");
+const obsidianSearchInput = document.querySelector("#obsidianSearchInput");
+const obsidianSearchResults = document.querySelector("#obsidianSearchResults");
+const obsidianVaultForm = document.querySelector("#obsidianVaultForm");
+const obsidianVaultPathInput = document.querySelector("#obsidianVaultPathInput");
+const obsidianVaultPathStatus = document.querySelector("#obsidianVaultPathStatus");
+const pickObsidianVaultBtn = document.querySelector("#pickObsidianVaultBtn");
+const brainHealthStatusChip = document.querySelector("#brainHealthStatusChip");
+const brainHealthGrid = document.querySelector("#brainHealthGrid");
+const brainContextList = document.querySelector("#brainContextList");
+const brainExcludedList = document.querySelector("#brainExcludedList");
+const brainContextMeta = document.querySelector("#brainContextMeta");
+const brainExcludedMeta = document.querySelector("#brainExcludedMeta");
+const brainActionStatus = document.querySelector("#brainActionStatus");
+const brainBackupStatusChip = document.querySelector("#brainBackupStatusChip");
+const brainBackupVaultPath = document.querySelector("#brainBackupVaultPath");
+const brainBackupDatabasePath = document.querySelector("#brainBackupDatabasePath");
+const brainBackupLatest = document.querySelector("#brainBackupLatest");
+const brainBackupVerified = document.querySelector("#brainBackupVerified");
+const brainBackupStatus = document.querySelector("#brainBackupStatus");
 const aiProviderTestBtn = document.querySelector("#aiProviderTestBtn");
 const aiProviderRemoveKeyBtn = document.querySelector("#aiProviderRemoveKeyBtn");
 const aiProviderTestResult = document.querySelector("#aiProviderTestResult");
@@ -407,6 +471,7 @@ const agentReadinessGrid = document.querySelector("#agentReadinessGrid");
 const agentRosterList = document.querySelector("#agentRosterList");
 const habitatModules = document.querySelector("#habitatModules");
 const habitatRoutes = document.querySelector("#habitatRoutes");
+const officeAgentTransit = document.querySelector("#officeAgentTransit");
 const stationArtwork = document.querySelector("#stationArtwork");
 const miniMapNodes = document.querySelector("#miniMapNodes");
 const moduleInfoCard = document.querySelector("#moduleInfoCard");
@@ -414,6 +479,13 @@ if (moduleInfoCard && moduleInfoCard.parentElement !== document.body) {
   document.body.appendChild(moduleInfoCard);
 }
 const mapViewMode = document.querySelector("#mapViewMode");
+const controlFloorDashboard = document.querySelector("#controlFloorDashboard");
+const controlFloorLiveRegion = document.querySelector("#controlFloorLiveRegion");
+const controlFloorSummary = document.querySelector("#controlFloorSummary");
+const controlFloorDataSource = document.querySelector("#controlFloorDataSource");
+const controlFloorRefreshBtn = document.querySelector("#controlFloorRefreshBtn");
+const controlFloorTopRefresh = document.querySelector("#controlFloorTopRefresh");
+const controlFloorTopStatus = document.querySelector("#controlFloorTopStatus");
 const scanBtn = document.querySelector("#scanBtn");
 const systemClockNodes = document.querySelectorAll("[data-system-clock]");
 const systemDateNodes = document.querySelectorAll("[data-system-date]");
@@ -429,6 +501,20 @@ const sidebarAgentChatTitle = document.querySelector("#sidebarAgentChatTitle");
 const sidebarAgentChatStatus = document.querySelector("#sidebarAgentChatStatus");
 const openAgentChatBtn = document.querySelector("#openAgentChatBtn");
 const newAgentChatBtn = document.querySelector("#newAgentChatBtn");
+const appShell = document.querySelector(".app-shell");
+const projectInfrastructureOpenBtn = document.querySelector("#projectInfrastructureOpenBtn");
+const projectInfrastructureTopBtn = document.querySelector("#projectInfrastructureTopBtn");
+const sidebarWorkflowStatus = document.querySelector("#sidebarWorkflowStatus");
+const projectInfrastructureOverlay = document.querySelector("#projectInfrastructureOverlay");
+const projectInfrastructureDialog = document.querySelector("#projectInfrastructureDialog");
+const projectInfrastructureSource = document.querySelector("#projectInfrastructureSource");
+const projectInfrastructureStatus = document.querySelector("#projectInfrastructureStatus");
+const projectInfrastructureBody = document.querySelector("#projectInfrastructureBody");
+const projectInfrastructureUpdated = document.querySelector("#projectInfrastructureUpdated");
+const projectInfrastructureRefreshBtn = document.querySelector("#projectInfrastructureRefreshBtn");
+const projectInfrastructureCloseBtn = document.querySelector("#projectInfrastructureCloseBtn");
+const projectInfrastructureAgentBtn = document.querySelector("#projectInfrastructureAgentBtn");
+const projectInfrastructureGateBtn = document.querySelector("#projectInfrastructureGateBtn");
 const agentChatWorkspace = document.querySelector("#agentChatWorkspace");
 const agentChatNewThreadBtn = document.querySelector("#agentChatNewThreadBtn");
 const agentChatSearchInput = document.querySelector("#agentChatSearchInput");
@@ -445,9 +531,18 @@ const agentChatQuickPrompts = document.querySelector("#agentChatQuickPrompts");
 const agentChatComposer = document.querySelector("#agentChatComposer");
 const agentChatComposerInput = document.querySelector("#agentChatComposerInput");
 const agentChatSendBtn = document.querySelector("#agentChatSendBtn");
-const agentChatRunStatus = document.querySelector("#agentChatRunStatus");
-const agentChatRunDetail = document.querySelector("#agentChatRunDetail");
-const agentChatApprovalStatus = document.querySelector("#agentChatApprovalStatus");
+const agentMissionCockpit = document.querySelector("#agentMissionCockpit");
+const agentMissionConnection = document.querySelector("#agentMissionConnection");
+const agentMissionSelect = document.querySelector("#agentMissionSelect");
+const agentMissionRail = document.querySelector("#agentMissionRail");
+const agentOutputPreview = document.querySelector("#agentOutputPreview");
+const agentOutputPreviewTitle = document.querySelector("#agentOutputPreviewTitle");
+const agentOutputPreviewMeta = document.querySelector("#agentOutputPreviewMeta");
+const agentOutputPreviewImage = document.querySelector("#agentOutputPreviewImage");
+const agentOutputPreviewContent = document.querySelector("#agentOutputPreviewContent");
+const agentOutputPreviewRaw = document.querySelector("#agentOutputPreviewRaw");
+const agentOutputDownloadAll = document.querySelector("#agentOutputDownloadAll");
+const agentOutputPreviewClose = document.querySelector("#agentOutputPreviewClose");
 const sidebarStatusRows = [
   {
     label: document.querySelector("#sidebarStatusLabelA"),
@@ -479,6 +574,7 @@ const depoWorkflowStages = [
   "stock-office",
   "etsy-office",
   "essentrx-office",
+  "print-shop-office",
 ];
 
 const depoWorkflowStageLabels = {
@@ -487,6 +583,7 @@ const depoWorkflowStageLabels = {
   "stock-office": "Stock Office",
   "etsy-office": "Etsy Store Office",
   "essentrx-office": "Essentrx Office",
+  "print-shop-office": "Print Shop Office",
   "human-gate": "Human Gate",
   "memory-vault": "Memory Office",
   "output-bench": "Output Desk",
@@ -589,7 +686,7 @@ const habitatFloorRooms = [
     size: { w: 19, h: 22 },
     purpose: "Home base for the first supervised Argentum agent.",
     depoRole: "Agent 101 is the master agent. Every office reports here before any risky action moves forward.",
-    connections: ["clips-office", "stock-office", "etsy-office", "essentrx-office", "human-gate"],
+    connections: ["clips-office", "stock-office", "etsy-office", "essentrx-office", "print-shop-office", "human-gate"],
     riskNote: "External actions remain locked.",
     recentActivity: ["Agent 101 initialized.", "Business offices report here.", "Draft-only mode loaded."],
   },
@@ -604,7 +701,7 @@ const habitatFloorRooms = [
     visual: "clipboard",
     icon: "clipboard",
     color: "#38BDF8",
-    position: { x: 23, y: 23 },
+    position: { x: 18, y: 23 },
     size: { w: 29, h: 28 },
     purpose: "Plans clips, short videos, hooks, scripts, edits, and posting packages for review.",
     depoRole: "Clips work reports to Agent 101 before anything can be posted.",
@@ -623,7 +720,7 @@ const habitatFloorRooms = [
     visual: "lab",
     icon: "research",
     color: "#22D3EE",
-    position: { x: 77, y: 23 },
+    position: { x: 82, y: 23 },
     size: { w: 29, h: 28 },
     purpose: "Tracks stock research, watch notes, risk labels, and draft-only market briefs.",
     depoRole: "Stock work reports to Agent 101. Agent 101 cannot place trades or move money.",
@@ -642,7 +739,7 @@ const habitatFloorRooms = [
     visual: "verify",
     icon: "shield",
     color: "#A78BFA",
-    position: { x: 23, y: 76 },
+    position: { x: 18, y: 76 },
     size: { w: 29, h: 28 },
     purpose: "Builds Etsy product ideas, POD briefs, listing drafts, SEO notes, and approval packages.",
     depoRole: "Etsy work reports to Agent 101. Listing publishing and checkout changes are locked.",
@@ -661,13 +758,32 @@ const habitatFloorRooms = [
     visual: "studio",
     icon: "pen",
     color: "#60A5FA",
-    position: { x: 77, y: 76 },
+    position: { x: 82, y: 76 },
     size: { w: 29, h: 28 },
     purpose: "Prepares Essentrx business work: product notes, admin ideas, customer-safe drafts, and packaging plans.",
     depoRole: "Essentrx work reports to Agent 101 before customer contact, store edits, or campaign actions.",
     connections: ["depo-habitat"],
     riskNote: "Customer contact, publishing, checkout, and account changes require approval.",
     recentActivity: ["Essentrx office ready.", "Customer contact locked.", "Draft packages only."],
+  },
+  {
+    id: "print-shop-office",
+    title: "Print Shop Office",
+    name: "Print Shop Office",
+    subtitle: "Product Research Lab",
+    metric: "Sourced leads",
+    status: "Local",
+    type: "commerce",
+    visual: "shop",
+    icon: "printer",
+    color: "#F59E0B",
+    position: { x: 50, y: 12.5 },
+    size: { w: 29, h: 24 },
+    purpose: "Finds source-backed product hypotheses, promotes operator-selected leads into measured A1 Mini design projects, and creates versioned local STL files only for supported templates.",
+    depoRole: "Agent 101 owns the Product Research Lab workflow. External research, printing, spending, customer contact, and publishing require Human Gate.",
+    connections: ["depo-habitat"],
+    riskNote: "Generated geometry is not a slicer result or production approval. External research and commerce remain Human Gate actions.",
+    recentActivity: ["Authenticated Product Research Lab mounted locally.", "A1 Mini constraints recorded.", "Slicer and physical printer not connected."],
   },
   {
     id: "memory-vault",
@@ -740,7 +856,7 @@ const habitatFloorRooms = [
     visual: "gate",
     icon: "lock",
     color: "#F43F5E",
-    position: { x: 50, y: 86 },
+    position: { x: 50, y: 87 },
     size: { w: 28, h: 18 },
     purpose: "Blocks risky actions until the operator approves.",
     depoRole: "Agent 101 packages work for human review.",
@@ -771,6 +887,10 @@ const roomActionModel = {
     allowedActions: ["draft brand operations", "prepare product notes", "organize admin ideas", "package customer-safe drafts"],
     blockedActions: ["change checkout", "contact customers", "deploy campaigns"],
   },
+  "print-shop-office": {
+    allowedActions: ["check measured printer fit", "plan separate single-color parts", "generate supported template STL files", "verify hashes and basic mesh properties", "request external research approval"],
+    blockedActions: ["invent demand or cost", "start a physical print", "buy supplies", "send customer emails", "publish products", "charge customers"],
+  },
   "memory-vault": {
     allowedActions: ["store internal notes", "retrieve project memory", "organize context", "label sensitive data"],
     blockedActions: ["store secrets", "expose private memory", "overwrite audit history"],
@@ -797,6 +917,7 @@ const roomQuickActions = {
   "stock-office": ["Save note", "Run check", "Package for approval"],
   "etsy-office": ["Draft workflow", "Package for approval", "Save note"],
   "essentrx-office": ["Draft workflow", "Package for approval", "Save note"],
+  "print-shop-office": ["Open Print Shop", "Research trending products", "View print queue"],
   "human-gate": ["View pending approvals", "Approve local test", "Reject"],
   "output-bench": ["View output", "Send to Log"],
   "memory-vault": ["Save note", "View memory"],
@@ -1323,6 +1444,64 @@ const roomProfiles = {
 
 const habitatFloorRoomById = Object.fromEntries(habitatFloorRooms.map((room) => [room.id, room]));
 
+const officeAgentDestinations = Object.freeze({
+  "clips-office": { door: { x: 31.5, y: 42 }, inside: { x: 27.5, y: 36 } },
+  "stock-office": { door: { x: 68.5, y: 42 }, inside: { x: 72.5, y: 36 } },
+  "etsy-office": { door: { x: 31.5, y: 58 }, inside: { x: 27.5, y: 64 } },
+  "essentrx-office": { door: { x: 68.5, y: 58 }, inside: { x: 72.5, y: 64 } },
+  "print-shop-office": { door: { x: 50, y: 25 }, inside: { x: 50, y: 17 } },
+  "human-gate": { door: { x: 50, y: 75 }, inside: { x: 50, y: 83 } },
+});
+
+let officeAgentTransitAnimation = null;
+let officeAgentInfoTimer = null;
+
+function animateOfficeAgentTransit(roomKey) {
+  if (!officeAgentTransit || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return false;
+  const resolved = resolveRoomKey(roomKey);
+  const destination = officeAgentDestinations[resolved];
+  if (!destination) return false;
+  const midpoint = {
+    x: 50 + (destination.door.x - 50) * 0.48,
+    y: 50 + (destination.door.y - 50) * 0.48,
+  };
+
+  officeAgentTransitAnimation?.cancel();
+  officeAgentTransit.dataset.destination = resolved;
+  officeAgentTransitAnimation = officeAgentTransit.animate([
+    { left: "50%", top: "50%", opacity: 0, transform: "translate(-50%, -50%) scale(0.82)" },
+    { left: "50%", top: "50%", opacity: 1, transform: "translate(-50%, -50%) scale(1)", offset: 0.12 },
+    { left: `${midpoint.x}%`, top: `${midpoint.y}%`, opacity: 1, transform: "translate(-50%, -50%) scale(1)", offset: 0.48 },
+    { left: `${destination.door.x}%`, top: `${destination.door.y}%`, opacity: 1, transform: "translate(-50%, -50%) scale(0.94)", offset: 0.78 },
+    { left: `${destination.inside.x}%`, top: `${destination.inside.y}%`, opacity: 0, transform: "translate(-50%, -50%) scale(0.72)" },
+  ], {
+    duration: 2500,
+    easing: "cubic-bezier(0.34, 0.02, 0.22, 1)",
+    fill: "none",
+  });
+  return true;
+}
+
+function openOfficeAfterTransit(roomKey) {
+  const resolved = resolveRoomKey(roomKey);
+  window.clearTimeout(officeAgentInfoTimer);
+  const animated = animateOfficeAgentTransit(resolved);
+  if (!animated) {
+    openModuleInfoCard(resolved);
+    return;
+  }
+  officeAgentInfoTimer = window.setTimeout(() => {
+    if (resolveRoomKey(selectedRoomKey) === resolved) openModuleInfoCard(resolved);
+  }, 2200);
+}
+
+function startOfficeAgentPresence() {
+  // Keep the Control Floor idle when no one is interacting with it. The agent
+  // still walks to an office when that office is opened, but a decorative loop
+  // no longer wakes Electron's renderer and GPU every few seconds.
+  officeAgentTransitAnimation?.cancel();
+}
+
 habitatFloorRooms.forEach((room) => {
   roomProfiles[room.id] = {
     ...(roomProfiles[room.id] || {}),
@@ -1367,6 +1546,7 @@ const moduleRoutes = [
   { from: "depo-habitat", to: "stock-office", kind: "spoke" },
   { from: "depo-habitat", to: "etsy-office", kind: "spoke" },
   { from: "depo-habitat", to: "essentrx-office", kind: "spoke" },
+  { from: "depo-habitat", to: "print-shop-office", kind: "spoke" },
   { from: "depo-habitat", to: "human-gate", kind: "approval" },
 ];
 
@@ -1575,6 +1755,10 @@ function updateHabitatRoomRuntimeFromState() {
   const stockCount = keywordCount(businessItems, ["stock", "market", "watch", "trade", "ticker"]);
   const etsyCount = keywordCount(businessItems, ["etsy", "pod", "print-on-demand", "listing", "store"]);
   const essentrxCount = keywordCount(businessItems, ["essentrx", "scent", "fragrance", "quiz", "admin"]);
+  const measuredInfrastructureNodes = new Map((projectInfrastructurePayload?.nodes || []).map((node) => [node.id, node]));
+  const measuredClips = measuredInfrastructureNodes.get("office:clips-office");
+  const measuredStock = measuredInfrastructureNodes.get("office:stock-office");
+  const measuredPrintShop = measuredInfrastructureNodes.get("office:print-shop-office");
 
   syncRoomRuntime("depo-habitat", {
     subtitle: "Master agent",
@@ -1587,22 +1771,33 @@ function updateHabitatRoomRuntimeFromState() {
     ],
   });
   syncRoomRuntime("clips-office", {
-    subtitle: clipsCount ? "Clip work active" : "Video planning",
-    metric: clipsCount ? pluralize(clipsCount, "item") : "Ready",
-    status: clipsCount ? "Drafting" : "Ready",
+    subtitle: measuredClips?.lifecycle === "running" ? "Automation active" : measuredClips?.lifecycle === "waiting_approval" ? "Review waiting" : clipsCount ? "Clip work active" : "Video planning",
+    metric: measuredClips ? pluralize(Number(measuredClips.counts?.candidates || 0), "candidate") : clipsCount ? pluralize(clipsCount, "item") : "Not measured",
+    status: measuredClips?.availability === "online" ? measuredClips.lifecycle === "waiting_approval" ? "Approval" : "Live" : measuredClips?.availability === "degraded" ? "Degraded" : clipsCount ? "Drafting" : "Unmeasured",
     runtimeActivity: [
-      `${pluralize(clipsCount, "clip-related item")} in local state.`,
-      activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} can feed clip work.` : "No active clip backlog.",
+      measuredClips ? `${pluralize(Number(measuredClips.counts?.candidates || 0), "candidate")} measured in Clipping Office.` : `${pluralize(clipsCount, "clip-related item")} in central state.`,
+      measuredClips?.warning || (activeTasks.length || localDepoTasks.length ? `${pluralize(activeTasks.length + localDepoTasks.length, "active task")} can feed clip work.` : "Runtime status not measured."),
       "Posting remains approval-gated.",
     ],
   });
   syncRoomRuntime("stock-office", {
-    subtitle: stockCount ? "Market notes" : "Watch desk",
-    metric: stockCount ? pluralize(stockCount, "item") : "Guarded",
-    status: stockCount ? "Research" : "Ready",
+    subtitle: measuredStock?.freshness === "stale" ? "Sources stale" : stockCount ? "Market notes" : "Watch desk",
+    metric: measuredStock
+      ? pluralize(Number(measuredStock.counts?.trackedRecords || measuredStock.counts?.records || 0), "record")
+      : stockCount
+        ? pluralize(stockCount, "item")
+        : "Not measured",
+    status: measuredStock?.availability === "degraded" ? "Degraded" : measuredStock?.availability === "online" ? "Read only" : stockCount ? "Research" : "Unmeasured",
     runtimeActivity: [
-      `${pluralize(stockCount, "stock-related item")} in local state.`,
-      `${pluralize(verificationCount, "risk check")} available before decisions.`,
+      measuredStock
+        ? `${pluralize(
+          Number(measuredStock.counts?.trackedRecords || measuredStock.counts?.records || 0),
+          "Stock Office record",
+        )} measured.`
+        : `${pluralize(stockCount, "stock-related item")} in central state.`,
+      measuredStock?.counts?.activeResearch
+        ? `${pluralize(Number(measuredStock.counts.activeResearch), "active research cycle")} running.`
+        : measuredStock?.warning || `${pluralize(verificationCount, "risk check")} available before decisions.`,
       "Trades and money movement are locked.",
     ],
   });
@@ -1618,12 +1813,22 @@ function updateHabitatRoomRuntimeFromState() {
   });
   syncRoomRuntime("essentrx-office", {
     subtitle: essentrxCount ? "Brand work active" : "Brand ops",
-    metric: essentrxCount ? pluralize(essentrxCount, "item") : "Connected",
+    metric: essentrxCount ? pluralize(essentrxCount, "item") : "Local surface",
     status: essentrxCount ? "Drafting" : "Ready",
     runtimeActivity: [
       `${pluralize(essentrxCount, "Essentrx item")} in local state.`,
       "Customer-facing changes require approval.",
       "Agent 101 owns final review.",
+    ],
+  });
+  syncRoomRuntime("print-shop-office", {
+    subtitle: "Product Research Lab",
+    metric: measuredPrintShop?.availability === "online" ? pluralize(Number(measuredPrintShop.counts?.opportunities || 0), "sourced lead") : measuredPrintShop?.availability === "offline" ? "Unavailable" : "Not measured",
+    status: measuredPrintShop?.availability === "online" ? measuredPrintShop.lifecycle === "waiting_approval" ? "Approval" : "Live" : measuredPrintShop?.availability === "offline" ? "Offline" : "Unmeasured",
+    runtimeActivity: [
+      measuredPrintShop?.availability === "online" ? "Authenticated Product Research Lab is mounted inside Argentum." : measuredPrintShop?.warning || "Product Research Lab status has not been measured.",
+      measuredPrintShop?.counts ? `${pluralize(Number(measuredPrintShop.counts.opportunities || 0), "sourced lead")}, ${pluralize(Number(measuredPrintShop.counts.products || 0), "design project")}, ${pluralize(Number(measuredPrintShop.counts.artifacts || 0), "STL artifact")}.` : "Persisted research records unavailable.",
+      "Slicer, physical printer, spending, publishing, and customer contact remain unconnected or gated.",
     ],
   });
   syncRoomRuntime("memory-vault", {
@@ -1786,11 +1991,22 @@ let selectedAgentKey = null;
 let depoChatMessages = [];
 let agent101ChatThreads = [];
 let agent101ChatSending = false;
-let agent101RunProgress = null;
-let agent101RunProgressTimer = null;
+let agent101Missions = [];
+let activeAgent101MissionId = (() => {
+  try {
+    return localStorage.getItem("agent101ActiveMission") || "";
+  } catch {
+    return "";
+  }
+})();
+let agent101MissionSource = null;
+let agent101MissionStreamId = "";
+let agent101MissionRefreshTimer = null;
+let agent101MissionActionPending = false;
 let agentChatWorkspaceOpen = false;
 let agentChatSearchQuery = "";
 let agentChatAutoScroll = true;
+let agentSupervisorOfficeDraft = "";
 let agentChatDrafts = (() => {
   try {
     return JSON.parse(localStorage.getItem("agent101ChatDrafts") || "{}") || {};
@@ -1843,7 +2059,7 @@ function normalizeClientAgentMessage(message = {}, threadId = "", fallbackRoom =
     : message.speaker === "operator"
       ? "user"
       : "agent";
-  const status = ["queued", "sending", "sent", "thinking", "running", "waiting_approval", "complete", "failed", "cancelled", "error"].includes(message.status)
+  const status = ["queued", "sending", "sent", "thinking", "running", "verifying", "recovering", "paused", "waiting_approval", "complete", "completed", "blocked", "failed", "cancelled", "error"].includes(message.status)
     ? message.status
     : role === "tool"
       ? "complete"
@@ -1909,7 +2125,7 @@ function normalizeClientAgentThread(thread = {}, fallbackRoom = "depo-habitat") 
     lastMessage: String(thread.lastMessagePreview || thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work.").slice(0, 140),
     lastMessagePreview: String(thread.lastMessagePreview || thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work.").slice(0, 140),
     archived: Boolean(thread.archived),
-    status: ["idle", "thinking", "running", "waiting_approval", "complete", "error"].includes(thread.status) ? thread.status : "idle",
+    status: ["idle", "queued", "thinking", "running", "verifying", "recovering", "paused", "waiting_approval", "complete", "completed", "blocked", "failed", "cancelled", "error"].includes(thread.status) ? thread.status : "idle",
     activeTaskId: thread.activeTaskId || null,
     activeRunId: thread.activeRunId || null,
     activeApprovalId: thread.activeApprovalId || null,
@@ -2125,6 +2341,20 @@ let aiProviderSettings = {
 let aiProviderNotice = "";
 let agent101ToolStatus = null;
 let sidebarSystemStatus = null;
+let businessProfileState = null;
+let projectInfrastructurePayload = null;
+let projectInfrastructureLoading = false;
+let projectInfrastructureError = "";
+let projectInfrastructureSelectedNodeId = "agent:agent-101";
+let projectInfrastructureReturnFocus = null;
+let projectInfrastructureViewState = {
+  mode: "overview",
+  officeId: "",
+  stageId: "",
+  itemId: "",
+  returnOfficeId: "",
+  overviewScrollTop: 0,
+};
 
 const settingsSectionGroups = {
   "settings-access": ["settings-access", "settings-overview"],
@@ -2138,6 +2368,7 @@ const settingsSectionGroups = {
     "settings-ai-provider-safety",
     "settings-ai-provider-results",
   ],
+  "settings-business-profile": ["settings-business-profile"],
   "settings-sessions": ["settings-sessions"],
   "settings-audit": ["settings-audit"],
   "settings-preferences": ["settings-preferences"],
@@ -2204,6 +2435,85 @@ function renderOpenStockOfficeModal() {
   positionModuleInfoCard("stock-office");
 }
 
+function clippingOfficeModalIsOpen() {
+  return Boolean(moduleInfoCard && !moduleInfoCard.hidden && moduleInfoCard.dataset.station === "clips-office");
+}
+
+function renderOpenClippingOfficeModal() {
+  if (!clippingOfficeModalIsOpen()) return;
+  const scroller = moduleInfoCard.querySelector(".clipops-scroll");
+  const scrollTop = scroller?.scrollTop || 0;
+  moduleInfoCard.innerHTML = moduleInfoMarkup("clips-office");
+  positionModuleInfoCard("clips-office");
+  window.requestAnimationFrame(() => {
+    const nextScroller = moduleInfoCard.querySelector(".clipops-scroll");
+    if (nextScroller) nextScroller.scrollTop = scrollTop;
+  });
+}
+
+async function loadClippingOfficeOverview(options = {}) {
+  if (!apiAvailable || clippingOfficeLoading) return;
+  if (!options.force && clippingOfficeOverview) return;
+  clippingOfficeLoading = true;
+  clippingOfficeError = "";
+  renderOpenClippingOfficeModal();
+  try {
+    clippingOfficeOverview = await api("/api/clipping-office/overview");
+  } catch (error) {
+    clippingOfficeError = error.message || "Clipping Office telemetry is unavailable.";
+  } finally {
+    clippingOfficeLoading = false;
+    updateHabitatRoomRuntimeFromState();
+    refreshHabitatModuleLabels();
+    renderOpenClippingOfficeModal();
+  }
+}
+
+function printShopOfficeModalIsOpen() {
+  return Boolean(moduleInfoCard && !moduleInfoCard.hidden && moduleInfoCard.dataset.station === "print-shop-office");
+}
+
+function renderOpenPrintShopOfficeModal() {
+  if (!printShopOfficeModalIsOpen()) return;
+  const scroller = moduleInfoCard.querySelector(".printshop-scroll");
+  const scrollTop = scroller?.scrollTop || 0;
+  moduleInfoCard.innerHTML = moduleInfoMarkup("print-shop-office");
+  positionModuleInfoCard("print-shop-office");
+  window.requestAnimationFrame(() => {
+    const nextScroller = moduleInfoCard.querySelector(".printshop-scroll");
+    if (nextScroller) nextScroller.scrollTop = scrollTop;
+  });
+}
+
+async function loadPrintShopOfficeOverview(options = {}) {
+  if (!apiAvailable || printShopOfficeLoading) return;
+  if (!options.force && printShopOfficeOverview) return;
+  printShopOfficeLoading = true;
+  printShopOfficeError = "";
+  renderOpenPrintShopOfficeModal();
+  try {
+    printShopOfficeOverview = await api("/api/print-shop/workspace");
+  } catch (error) {
+    printShopOfficeError = error.message || "Print Shop Product Lab is unavailable.";
+  } finally {
+    printShopOfficeLoading = false;
+    renderOpenPrintShopOfficeModal();
+  }
+}
+
+function startClippingOfficeOverviewPolling() {
+  window.clearInterval(clippingOfficeRefreshTimer);
+  clippingOfficeRefreshTimer = window.setInterval(() => {
+    if (!clippingOfficeModalIsOpen()) return;
+    loadClippingOfficeOverview({ force: true });
+  }, 15_000);
+}
+
+function stopClippingOfficeOverviewPolling() {
+  window.clearInterval(clippingOfficeRefreshTimer);
+  clippingOfficeRefreshTimer = null;
+}
+
 async function loadStockOfficeData(options = {}) {
   if (!apiAvailable || stockOfficeLoading) return;
   const force = Boolean(options.force);
@@ -2213,12 +2523,14 @@ async function loadStockOfficeData(options = {}) {
   renderOpenStockOfficeModal();
   try {
     const query = stockOfficeQueryString(options);
-    const [overview, records] = await Promise.all([
+    const [overview, records, broker] = await Promise.all([
       api("/api/stock-office/overview"),
       api(`/api/stock-office/records?${query}`),
+      api("/api/stock-office/broker-control").catch(() => null),
     ]);
     stockOfficeOverview = overview;
     stockOfficeRecords = records;
+    stockOfficeBroker = broker || stockOfficeBroker;
     if (!stockOfficeSelectedTicker) {
       stockOfficeSelectedTicker = records.records?.[0]?.ticker || overview.topRecords?.[0]?.ticker || "";
     }
@@ -2253,9 +2565,13 @@ async function syncStockOffice() {
   stockOfficeError = "";
   renderOpenStockOfficeModal();
   try {
-    const payload = await postJson("/api/stock-office/sync", {});
+    const [payload, broker] = await Promise.all([
+      postJson("/api/stock-office/sync", {}),
+      api("/api/stock-office/broker-control").catch(() => null),
+    ]);
     stockOfficeOverview = payload.overview;
     stockOfficeRecords = payload.records;
+    stockOfficeBroker = broker || stockOfficeBroker;
     if (!stockOfficeSelectedTicker) stockOfficeSelectedTicker = payload.records?.records?.[0]?.ticker || "";
   } catch (error) {
     stockOfficeError = error.message || "Stock Office sync could not complete.";
@@ -2299,11 +2615,31 @@ async function loadState() {
     syncAgent101Threads(state.agent101ChatThreads || []);
     apiAvailable = false;
   }
-  await loadAiProviderSettings();
-  await loadAgent101ToolStatus();
-  await loadSidebarSystemStatus();
   render();
   applyMapView(false);
+  appHydrated = true;
+  refreshSecondaryData({ includeObsidian: false });
+}
+
+async function refreshSecondaryData(options = {}) {
+  if (secondaryDataLoading) return;
+  secondaryDataLoading = true;
+  const includeObsidian = Boolean(options.includeObsidian);
+  try {
+    await Promise.allSettled([
+      loadAiProviderSettings(),
+      loadAgent101ToolStatus(),
+      loadBusinessProfileSettings(),
+      loadLocalRuntimeSettings(),
+      loadSidebarSystemStatus(),
+      loadClippingOfficeOverview(),
+      loadProjectInfrastructure(),
+      includeObsidian ? loadObsidianStatus() : Promise.resolve(),
+    ]);
+    renderSidebarSystemStatus();
+  } finally {
+    secondaryDataLoading = false;
+  }
 }
 
 async function mutate(path) {
@@ -2324,28 +2660,25 @@ function depoStageLabel(stageId) {
   return depoWorkflowStageLabels[stageId] || moduleDisplayName(stageId);
 }
 
-function depoStageProgress(agent = depoAgent) {
-  const index = agent.workflowStages.indexOf(agent.currentStage);
-  if (index < 0) return 0;
-  return Math.round(((index + 1) / agent.workflowStages.length) * 100);
-}
-
 function renderDepoOrbitState(agent = depoAgent) {
   const homeRoom = roomProfiles[agent.room] || roomProfiles["depo-habitat"];
+  const workflow = controlFloorWorkflowSnapshot();
   if (avatar && homeRoom?.position) {
     avatar.style.setProperty("--agent-x", `${homeRoom.position.x}%`);
     avatar.style.setProperty("--agent-y", `${homeRoom.position.y}%`);
   }
-  if (progress) progress.style.width = `${depoStageProgress(agent)}%`;
   const stageLabel = depoStageLabel(agent.currentStage);
   if (cycleStatus) cycleStatus.textContent = state.mission.paused ? `Paused at ${stageLabel}` : `At ${stageLabel}`;
   if (missionTitle) missionTitle.textContent = `${agent.name} is ${agent.status.toLowerCase()}`;
   if (missionCopy) missionCopy.textContent = agent.currentTask;
   if (confidenceChip) confidenceChip.textContent = agent.mode;
-  if (taskStage) taskStage.textContent = `Stage: ${stageLabel}`;
-  if (riskLevel) riskLevel.textContent = `Risk: ${agent.riskMode}`;
+  if (taskStage) taskStage.textContent = workflow.officeName || stageLabel;
+  if (taskStageDetail) taskStageDetail.textContent = workflow.taskDetail;
+  if (riskLevel) riskLevel.textContent = workflow.pendingCount
+    ? `${pluralize(workflow.pendingCount, "decision")} waiting`
+    : "Clear · approval-gated";
   if (agentCoreName) agentCoreName.textContent = `Agent ${agent.number}`;
-  if (agentCoreRole) agentCoreRole.textContent = "Superior Agent";
+  if (agentCoreRole) agentCoreRole.textContent = "Supervising operations";
 }
 
 function setStep() {
@@ -2513,6 +2846,7 @@ function moduleIconMarkup(id) {
     "logistics-node": '<svg viewBox="0 0 24 24"><path d="M3 6h12v10H3z"/><path d="M15 10h4l2 3v3h-6"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>',
     "workflow-pipeline": '<svg viewBox="0 0 24 24"><path d="M10 7h4a5 5 0 0 1 0 10h-4"/><path d="M14 7h-4a5 5 0 0 0 0 10h4"/><path d="M8 12h8"/></svg>',
     "content-engine": '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"/></svg>',
+    "print-shop-office": '<svg viewBox="0 0 24 24"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3h12v6"/><path d="M6 14h12v7H6z"/><path d="M9 18h6"/></svg>',
   };
   return icons[id] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg>';
 }
@@ -3426,8 +3760,29 @@ function floorCorridorMarkup() {
 }
 
 // HabitatRoom layer
+function refreshHabitatModuleLabels() {
+  if (!habitatModules) return;
+  habitatMapModules.forEach((room) => {
+    const station = habitatModules.querySelector(`.station[data-station="${CSS.escape(room.id)}"]`);
+    if (!station) return;
+    station.setAttribute("aria-label", room.title);
+    station.title = room.title;
+    station.classList.toggle("long-title", room.title.length > 15);
+    const title = station.querySelector(".module-copy strong");
+    const subtitle = station.querySelector(".module-copy small");
+    const metric = station.querySelector(".module-copy em");
+    if (title) title.textContent = room.title;
+    if (subtitle) subtitle.textContent = room.subtitle;
+    if (metric) metric.textContent = room.metric;
+  });
+}
+
 function renderHabitatModules() {
   if (!habitatModules) return;
+  if (habitatModulesRendered) {
+    refreshHabitatModuleLabels();
+    return;
+  }
   const related = selectedRoomKey || selectedAgentKey ? connectedModuleSet(selectedAgentKey ? agentProfiles[selectedAgentKey]?.room : selectedRoomKey) : new Set();
   const corridorLayer = `<div class="floor-corridors" aria-hidden="true">${floorCorridorMarkup()}</div>`;
   const roomLayer = habitatMapModules
@@ -3463,108 +3818,954 @@ function renderHabitatModules() {
     })
     .join("");
   habitatModules.innerHTML = `${corridorLayer}${roomLayer}`;
+  habitatModulesRendered = true;
+  refreshHabitatModuleLabels();
 }
 
-// OrbitMiniMap
+// CurrentWorkRoute
+function controlFloorWorkflowRoomFromRecord(record = {}) {
+  const explicitRoom = String(record.roomId || record.officeId || "").trim();
+  if (explicitRoom) {
+    const resolved = resolveRoomKey(explicitRoom);
+    if (depoWorkflowStages.includes(resolved)) return resolved;
+  }
+
+  const workflowId = String(record.workflowId || "");
+  if (workflowId === "workflow-clips-office") return "clips-office";
+  if (workflowId === "workflow-stock-watch") return "stock-office";
+  if (workflowId === "workflow-pod-lab") return "etsy-office";
+  if (workflowId === "workflow-agent-factory") return "depo-habitat";
+
+  const text = `${record.title || ""} ${record.summary || ""} ${record.operatorText || ""} ${record.intent || ""}`.toLowerCase();
+  if (/clip|video|reel|tiktok|short/.test(text)) return "clips-office";
+  if (/stock|market|ticker|trade|watchlist/.test(text)) return "stock-office";
+  if (/etsy|pod|print.on.demand|listing/.test(text)) return "etsy-office";
+  if (/essentrx|scent|fragrance|brand/.test(text)) return "essentrx-office";
+  if (/print shop|3d print|product research/.test(text)) return "print-shop-office";
+  return "depo-habitat";
+}
+
+function controlFloorTaskIsActive(task = {}) {
+  const status = String(task.status || task.stage || "queued").toLowerCase().replaceAll(" ", "_");
+  return !["done", "completed", "approved", "blocked", "cancelled", "canceled", "archived"].includes(status);
+}
+
+function controlFloorWorkflowSnapshot() {
+  const runtime = officeRuntimeSnapshot();
+  const selected = selectedAgentKey
+    ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room)
+    : selectedRoomKey
+      ? resolveRoomKey(selectedRoomKey)
+      : "";
+  const selectedOffice = depoWorkflowStages.includes(selected) ? selected : "";
+  const tasks = [...runtime.tasks, ...runtime.localTasks]
+    .filter(controlFloorTaskIsActive)
+    .sort((left, right) => {
+      const rightTime = new Date(right.updatedAt || right.createdAt || 0).getTime() || 0;
+      const leftTime = new Date(left.updatedAt || left.createdAt || 0).getTime() || 0;
+      return rightTime - leftTime;
+    });
+  const focusTask = (selectedOffice && tasks.find((task) => controlFloorWorkflowRoomFromRecord(task) === selectedOffice)) || tasks[0] || null;
+  const roomId = selectedOffice || (focusTask ? controlFloorWorkflowRoomFromRecord(focusTask) : resolveRoomKey(depoAgent.currentStage));
+  const officeName = depoStageLabel(roomId);
+  const taskId = String(focusTask?.id || "");
+  const workflowId = String(focusTask?.workflowId || "");
+  const matchesFocus = (record = {}) => {
+    if (taskId && String(record.taskId || "") === taskId) return true;
+    if (workflowId && String(record.workflowId || "") === workflowId) return true;
+    return controlFloorWorkflowRoomFromRecord(record) === roomId;
+  };
+  const artifacts = runtime.artifacts.filter(matchesFocus);
+  const pending = roomId === "depo-habitat"
+    ? runtime.pending
+    : runtime.pending.filter((approval) => {
+      if (taskId && String(approval.taskId || "") === taskId) return true;
+      if (workflowId && String(approval.workflowId || "") === workflowId) return true;
+      return approvalReturnRoom(approval) === roomId;
+    });
+  const evidenceCount = focusTask
+    ? (Array.isArray(focusTask.evidence) ? focusTask.evidence.length : 0) + artifactEvidenceCount(artifacts)
+    : roomId === "depo-habitat"
+      ? runtime.evidenceCount
+      : artifactEvidenceCount(artifacts);
+  const taskTitle = String(focusTask?.title || focusTask?.operatorText || "Waiting for a bounded task");
+  const taskStatus = focusTask ? statusLabel(focusTask.status || focusTask.stage || "Active") : "Waiting";
+  const taskDetail = focusTask
+    ? taskTitle
+    : selectedOffice
+      ? `${officeName} is selected. No active task is assigned here.`
+      : "Waiting for a bounded task.";
+  const routeSummary = focusTask
+    ? `${taskStatus} · ${pluralize(evidenceCount, "evidence note")} · ${pluralize(artifacts.length, "saved output")}`
+    : taskDetail;
+
+  return {
+    roomId,
+    officeName,
+    focusTask,
+    taskTitle,
+    taskStatus,
+    taskDetail,
+    routeSummary,
+    evidenceCount,
+    artifactCount: artifacts.length,
+    pendingCount: pending.length,
+    totalPendingCount: runtime.pending.length,
+    queuedCount: runtime.queuedWork.length,
+  };
+}
+
+function controlFloorWorkflowStepMarkup({ id, index, label, value, state, view = "", room = "", current = false }) {
+  const target = view ? ` data-workflow-view="${escapeHtml(view)}"` : room ? ` data-workflow-room="${escapeHtml(room)}"` : "";
+  return `
+    <button class="workflow-map-step is-${escapeHtml(state)}" type="button" data-workflow-stage="${escapeHtml(id)}" data-state="${escapeHtml(state)}"${target}${current ? ' aria-current="step"' : ""} aria-label="${escapeHtml(`${label}: ${value}`)}">
+      <i aria-hidden="true">${escapeHtml(String(index).padStart(2, "0"))}</i>
+      <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(value)}</small></span>
+    </button>
+  `;
+}
+
 function renderMiniMap() {
   if (!miniMapNodes) return;
-  const hasSelection = Boolean(selectedRoomKey || selectedAgentKey);
-  const selected = selectedAgentKey ? resolveRoomKey(agentProfiles[selectedAgentKey]?.room) : resolveRoomKey(selectedRoomKey);
-  const related = hasSelection ? connectedModuleSet(selected) : new Set();
-  const selectedCore = selected === "depo-habitat";
-  const miniPoint = (room) => ({ x: room.position.x, y: room.position.y });
-  const curvePath = (source, target, index, bendScale = 0.09) => {
-    const start = miniPoint(source);
-    const end = miniPoint(target);
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const distance = Math.hypot(dx, dy) || 1;
-    const normalX = -dy / distance;
-    const normalY = dx / distance;
-    const bend = (index % 2 === 0 ? 1 : -1) * clamp(distance * bendScale, 2.5, 7);
-    const c1x = start.x + dx * 0.34 + normalX * bend;
-    const c1y = start.y + dy * 0.34 + normalY * bend;
-    const c2x = start.x + dx * 0.66 + normalX * bend;
-    const c2y = start.y + dy * 0.66 + normalY * bend;
-    return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
-  };
-  const core = roomProfiles["depo-habitat"];
-  const coreSpokes = habitatMapModules
-    .map((room, index) => {
-      const active = !hasSelection || selectedCore || selected === room.id || related.has(room.id);
-      return `<path class="mini-core-spoke ${active ? "active" : "dim"}" d="${curvePath(core, room, index, 0.04)}"></path>`;
-    })
-    .join("");
-  const routeLines = moduleRoutes
-    .map((route, index) => {
-      const { from, to, kind } = routeEndpoints(route);
-      const source = moduleProfile(from);
-      const target = moduleProfile(to);
-      const active = routeIsActive(route);
-      const approval = kind === "approval" || from === "human-gate" || to === "human-gate";
-      return `<path class="mini-route ${approval ? "approval" : ""} ${active ? "active" : "dim"}" d="${curvePath(source, target, index)}"></path>`;
-    })
-    .join("");
-  const dots = habitatMapModules
-    .map((room) => {
-      const isSelected = hasSelection && selected === room.id;
-      const isRelated = hasSelection && related.has(room.id);
-      return `<g class="mini-node ${isSelected ? "selected" : ""} ${isRelated ? "related" : ""}" style="--module-color: ${escapeHtml(room.color)}">
-        <circle class="mini-node-halo" cx="${room.position.x}" cy="${room.position.y}" r="4.4"></circle>
-        <circle class="mini-node-dot" cx="${room.position.x}" cy="${room.position.y}" r="2"></circle>
-      </g>`;
-    })
-    .join("");
-  const platforms = habitatMapModules
-    .map((room) => {
-      const isSelected = hasSelection && selected === room.id;
-      const isRelated = hasSelection && related.has(room.id);
-      return `<g class="mini-platform ${isSelected ? "selected" : ""} ${isRelated ? "related" : ""}" style="--module-color: ${escapeHtml(room.color)}" transform="translate(${room.position.x} ${room.position.y})">
-        <ellipse class="mini-platform-glow" cx="0" cy="1.6" rx="8.2" ry="4.6"></ellipse>
-        <ellipse class="mini-platform-shell" cx="0" cy="0" rx="6.3" ry="3.2"></ellipse>
-        <ellipse class="mini-platform-ring" cx="0" cy="-0.2" rx="4.4" ry="2"></ellipse>
-        <circle class="mini-platform-core" cx="0" cy="-0.2" r="1.25"></circle>
-      </g>`;
-    })
-    .join("");
+  const snapshot = controlFloorWorkflowSnapshot();
+  const currentStage = snapshot.focusTask ? "office" : "supervisor";
+  const steps = [
+    { id: "supervisor", index: 1, label: "Supervisor", value: "Agent 101", state: currentStage === "supervisor" ? "current" : "complete", view: "depo", current: currentStage === "supervisor" },
+    { id: "office", index: 2, label: "Office", value: snapshot.officeName, state: currentStage === "office" ? "current" : "ready", room: snapshot.roomId, current: currentStage === "office" },
+    { id: "evidence", index: 3, label: "Evidence", value: snapshot.evidenceCount ? pluralize(snapshot.evidenceCount, "note") : "Not recorded", state: snapshot.evidenceCount ? "complete" : "waiting", view: "memory" },
+    { id: "gate", index: 4, label: "Human Gate", value: snapshot.pendingCount ? `${snapshot.pendingCount} waiting` : "Clear", state: snapshot.pendingCount ? "attention" : "clear", view: "approval" },
+    { id: "output", index: 5, label: "Output", value: snapshot.artifactCount ? pluralize(snapshot.artifactCount, "file") : "Not prepared", state: snapshot.artifactCount ? "complete" : "waiting", view: "outputs" },
+  ];
+
   miniMapNodes.innerHTML = `
-    <svg class="mini-map-radar" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <defs>
-        <radialGradient id="miniCoreGlow" cx="50%" cy="43%" r="42%">
-          <stop offset="0%" stop-color="rgba(248, 250, 252, 0.95)" />
-          <stop offset="32%" stop-color="rgba(34, 211, 238, 0.74)" />
-          <stop offset="78%" stop-color="rgba(139, 92, 246, 0.18)" />
-          <stop offset="100%" stop-color="rgba(34, 211, 238, 0)" />
-        </radialGradient>
-        <linearGradient id="miniRouteGradient" x1="8%" y1="18%" x2="92%" y2="82%">
-          <stop offset="0%" stop-color="rgba(34, 211, 238, 0.1)" />
-          <stop offset="46%" stop-color="rgba(125, 211, 252, 0.85)" />
-          <stop offset="100%" stop-color="rgba(167, 139, 250, 0.74)" />
-        </linearGradient>
-      </defs>
-      <g class="mini-starfield">
-        <circle cx="13" cy="16" r="0.45"></circle>
-        <circle cx="28" cy="11" r="0.35"></circle>
-        <circle cx="74" cy="15" r="0.5"></circle>
-        <circle cx="90" cy="34" r="0.4"></circle>
-        <circle cx="8" cy="76" r="0.4"></circle>
-        <circle cx="41" cy="88" r="0.34"></circle>
-        <circle cx="83" cy="84" r="0.42"></circle>
-      </g>
-      <ellipse class="mini-orbit orbit-a" cx="50" cy="47" rx="37" ry="20"></ellipse>
-      <ellipse class="mini-orbit orbit-b" cx="50" cy="47" rx="47" ry="28"></ellipse>
-      <ellipse class="mini-orbit orbit-c" cx="50" cy="47" rx="24" ry="12"></ellipse>
-      <ellipse class="mini-orbit orbit-d" cx="50" cy="47" rx="18" ry="8"></ellipse>
-      <line class="mini-crosshair" x1="50" y1="7" x2="50" y2="93"></line>
-      <line class="mini-crosshair" x1="6" y1="47" x2="94" y2="47"></line>
-      <g class="mini-core-spokes">${coreSpokes}</g>
-      <g class="mini-routes">${routeLines}</g>
-      <circle class="mini-core-glow" cx="${core.position.x}" cy="${core.position.y}" r="10"></circle>
-      <circle class="mini-core-node ${selectedCore ? "selected" : ""}" cx="${core.position.x}" cy="${core.position.y}" r="3.4"></circle>
-      <g class="mini-platforms">${platforms}</g>
-      <g class="mini-nodes">${dots}</g>
-    </svg>
+    <section class="workflow-map" data-current-office="${escapeHtml(snapshot.roomId)}">
+      <header class="workflow-map-header">
+        <div><span>Current work route</span><strong>${escapeHtml(snapshot.taskTitle)}</strong></div>
+        <em data-state="${escapeHtml(snapshot.focusTask ? "active" : "waiting")}"><i aria-hidden="true"></i>${escapeHtml(snapshot.taskStatus)}</em>
+      </header>
+      <p class="workflow-map-context"><strong>${escapeHtml(snapshot.officeName)}</strong><span>${escapeHtml(snapshot.routeSummary)}</span></p>
+      <div class="workflow-map-rail" role="list" aria-label="Supervisor work route">
+        ${steps.map(controlFloorWorkflowStepMarkup).join("")}
+      </div>
+      <footer class="workflow-map-footer">
+        <span>${escapeHtml(String(snapshot.queuedCount))} queued</span>
+        <span>${escapeHtml(String(snapshot.totalPendingCount))} gate decision${snapshot.totalPendingCount === 1 ? "" : "s"}</span>
+        <strong><i aria-hidden="true"></i>External actions locked</strong>
+      </footer>
+    </section>
   `;
+  miniMapNodes.querySelectorAll("[data-workflow-view], [data-workflow-room]").forEach((button) => {
+    button.addEventListener("click", activateWorkflowRouteFromEvent);
+  });
+}
+
+const PROJECT_INFRASTRUCTURE_NODE_LABELS = {
+  waiting_approval: "Approval waiting",
+  running: "Active flow",
+  verifying: "Verifying",
+  completed: "Output recorded",
+  failed: "Needs attention",
+  blocked: "Blocked",
+  idle: "Idle",
+};
+
+function projectInfrastructureFallbackPayload() {
+  const offices = habitatFloorRooms
+    .filter((room) => room.visible !== false && !["depo-habitat", "human-gate"].includes(room.id))
+    .map((room) => ({
+      id: `office:${room.id}`,
+      kind: "office",
+      label: room.name || room.title,
+      description: room.purpose,
+      lifecycle: "idle",
+      availability: "unknown",
+      authority: room.id === "stock-office" ? "locked" : "approval_required",
+      freshness: "unknown",
+      evidenceLevel: "declared",
+      observedAt: null,
+      source: { system: "local-office-contract", recordId: room.id },
+      refs: { officeId: room.id, workflowId: workflowForOffice(room.id) },
+      counts: {},
+      route: room.externalUrl || `/apps/${room.id}/`,
+      allowedWork: room.allowedActions || [],
+      blockedWork: room.blockedActions || [],
+      outputs: [],
+      warning: "Runtime status has not been measured.",
+    }));
+  const supportNodes = [
+    ["workspace:argentum", "project", "Project workspace", "Approved source boundary"],
+    ["agent:agent-101", "agent", "Agent 101", "Supervised founder-operator"],
+    ["agent:agent-202", "agent", "Agent 202", "Print Shop-local agent · bridge not measured"],
+    ["gate:human", "approval", "Human Gate", "Approval domains not measured"],
+    ["output:local", "output", "Saved Outputs", "Output stores not measured"],
+    ["memory:local", "memory", "Local Memory", "Memory state not measured"],
+  ].map(([id, kind, label, description]) => ({
+    id,
+    kind,
+    label,
+    description,
+    lifecycle: id === "agent:agent-202" ? "blocked" : "idle",
+    availability: "unknown",
+    authority: id === "gate:human" ? "locked" : id === "agent:agent-101" || id === "memory:local" || id === "output:local" ? "internal_only" : "approval_required",
+    freshness: "unknown",
+    evidenceLevel: "declared",
+    observedAt: null,
+    source: { system: "local-interface-contract", recordId: id },
+    refs: {},
+    counts: {},
+  }));
+  const edges = offices.flatMap((office) => [
+    {
+      id: `edge:agent101:${office.refs.officeId}`,
+      from: "agent:agent-101",
+      to: office.id,
+      relation: "routes_to",
+      basis: "declared_contract",
+      flow: "idle",
+      authority: "internal_only",
+      evidence: [{ source: "local-office-contract", recordId: office.refs.officeId, field: "workflowId", observedAt: null }],
+    },
+    {
+      id: `edge:${office.refs.officeId}:gate`,
+      from: office.id,
+      to: "gate:human",
+      relation: "risk_gated_by",
+      basis: "declared_policy",
+      flow: "enforced",
+      authority: "approval_required",
+      evidence: [{ source: "local-office-contract", recordId: office.refs.officeId, field: "blockedWork", observedAt: null }],
+    },
+    {
+      id: `edge:${office.refs.officeId}:output`,
+      from: office.id,
+      to: "output:local",
+      relation: "produces",
+      basis: "declared_contract",
+      flow: "idle",
+      authority: "internal_only",
+      evidence: [{ source: "local-office-contract", recordId: office.refs.officeId, field: "outputs", observedAt: null }],
+    },
+  ]);
+  return {
+    schemaVersion: 1,
+    snapshotId: "contract-only",
+    generatedAt: null,
+    partial: true,
+    sources: [{ id: "live-runtime", kind: "local_service", status: "unavailable", freshness: "unknown", warning: "Start the authenticated local runtime to measure project infrastructure." }],
+    summary: {
+      registeredOffices: offices.length,
+      activeMissions: null,
+      activeTasks: null,
+      activeRuns: null,
+      activeOffices: null,
+      outputsReady: null,
+      approvalsPending: null,
+      connectorsVerified: null,
+      sourcesDegraded: 1,
+      unlinkedRecords: null,
+    },
+    workspace: {
+      root: "",
+      mode: "not_measured",
+      readPolicy: "Runtime workspace policy is not available in static preview.",
+      writePolicy: "Source writes remain unavailable until the supervised workspace and Human Gate are measured.",
+      immutableFiles: [],
+      pendingProposals: null,
+      recentProposals: null,
+      outputRoot: "",
+      safety: "supervised_human_gate",
+      workerCount: null,
+    },
+    approvalDomains: {},
+    nodes: [...supportNodes, ...offices],
+    edges,
+    warnings: ["Runtime not measured. Dotted routes below are declared architecture, not proof of an active connection."],
+    unlinked: {},
+  };
+}
+
+function projectInfrastructureSnapshot() {
+  if (!projectInfrastructurePayload || !Array.isArray(projectInfrastructurePayload.nodes) || !Array.isArray(projectInfrastructurePayload.edges)) return null;
+  return {
+    ...projectInfrastructurePayload,
+    summary: projectInfrastructurePayload.summary || {},
+    workspace: projectInfrastructurePayload.workspace || {},
+    approvalDomains: projectInfrastructurePayload.approvalDomains || {},
+    sources: Array.isArray(projectInfrastructurePayload.sources) ? projectInfrastructurePayload.sources : [],
+    warnings: Array.isArray(projectInfrastructurePayload.warnings) ? projectInfrastructurePayload.warnings : [],
+  };
+}
+
+function projectInfrastructureMeasuredValue(value, suffix = "") {
+  return Number.isFinite(Number(value)) && value !== null && value !== "" ? `${Number(value).toLocaleString()}${suffix}` : "—";
+}
+
+function projectInfrastructureMeasuredSum(...values) {
+  if (!values.length || values.some((value) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)))) return null;
+  return values.reduce((total, value) => total + Number(value), 0);
+}
+
+function projectInfrastructureNodeById(snapshot, nodeId) {
+  return snapshot.nodes.find((node) => node.id === nodeId) || null;
+}
+
+function projectInfrastructureNodePresentation(node = {}) {
+  if (node.availability === "offline") return { state: "offline", label: "Offline" };
+  if (node.availability === "degraded") return { state: "degraded", label: node.freshness === "stale" ? "Degraded · stale" : "Degraded" };
+  if (node.lifecycle === "waiting_approval") return { state: "attention", label: "Approval waiting" };
+  if (node.lifecycle === "running") return { state: "active", label: "Active flow" };
+  if (node.lifecycle === "failed") return { state: "danger", label: "Needs attention" };
+  if (node.lifecycle === "blocked") return { state: "blocked", label: "Blocked" };
+  if (node.evidenceLevel === "declared") return { state: "declared", label: "Route defined" };
+  if (node.lifecycle === "completed") return { state: "recorded", label: "Output recorded" };
+  if (node.availability === "online") return { state: "available", label: "Available" };
+  return { state: "unknown", label: PROJECT_INFRASTRUCTURE_NODE_LABELS[node.lifecycle] || "Not measured" };
+}
+
+function projectInfrastructureEvidenceLabel(value = "") {
+  const labels = {
+    measured: "Measured source",
+    recorded: "Persisted record",
+    declared: "Declared contract",
+    explicit_record: "Explicit record link",
+    verified_test: "Verified test",
+    reachable_service: "Reachable service",
+    declared_contract: "Declared route",
+    declared_policy: "Declared safety policy",
+    measured_workspace: "Measured workspace",
+  };
+  return labels[value] || String(value || "Unknown").replaceAll("_", " ");
+}
+
+function projectInfrastructureOfficeCode(label = "Office") {
+  return String(label)
+    .replace(/office/gi, "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "OF";
+}
+
+function projectInfrastructureCountRows(node = {}) {
+  const counts = node.counts || {};
+  const stockTrackedRecords = Number.isFinite(Number(counts.trackedRecords)) ? counts.trackedRecords : counts.records;
+  const stockActiveResearch = Number.isFinite(Number(counts.activeResearch)) ? counts.activeResearch : projectInfrastructureMeasuredSum(counts.activeTasks, counts.activeMissions, counts.activeRuns);
+  const rows = node.refs?.officeId === "clips-office"
+    ? [["Tasks", counts.tasks], ["Candidates", counts.candidates], ["Outputs", projectInfrastructureMeasuredSum(counts.outputs, counts.officeOutputs)], ["Gate", projectInfrastructureMeasuredSum(counts.approvalsPending, counts.officeApprovalsPending)]]
+    : node.refs?.officeId === "stock-office"
+      ? [["Tracked", stockTrackedRecords], ["Active research", stockActiveResearch], ["Outputs", counts.outputs], ["Stale", counts.staleSources]]
+      : node.refs?.officeId === "print-shop-office"
+        ? [["Products", counts.products], ["Orders", counts.orders], ["Print jobs", counts.printJobs], ["Gate", counts.approvalsPending]]
+        : [["Tasks", counts.tasks], ["Active", projectInfrastructureMeasuredSum(counts.activeTasks, counts.activeMissions, counts.activeRuns)], ["Outputs", counts.outputs], ["Gate", counts.approvalsPending]];
+  return rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(projectInfrastructureMeasuredValue(value))}</dd></div>`).join("");
+}
+
+function projectInfrastructureOfficeMarkup(node, edge) {
+  const presentation = projectInfrastructureNodePresentation(node);
+  const linkLabel = edge?.basis === "explicit_record" ? "Recorded link" : edge?.basis === "reachable_service" ? "Reachable service" : "Declared route";
+  return `
+    <button class="project-infrastructure-office" type="button" data-infrastructure-node="${escapeHtml(node.id)}" data-state="${escapeHtml(presentation.state)}" data-edge-basis="${escapeHtml(edge?.basis || "declared_contract")}" aria-label="Inspect ${escapeHtml(node.label)} infrastructure">
+      <span class="project-infrastructure-office-link" aria-hidden="true"></span>
+      <header>
+        <i aria-hidden="true">${escapeHtml(projectInfrastructureOfficeCode(node.label))}</i>
+        <span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.description || node.refs?.workflowId || "Registered office")}</small></span>
+        <em data-state="${escapeHtml(presentation.state)}"><b aria-hidden="true"></b>${escapeHtml(presentation.label)}</em>
+      </header>
+      <dl>${projectInfrastructureCountRows(node)}</dl>
+      <footer><span>${escapeHtml(linkLabel)}</span><strong>${escapeHtml(node.freshness || "unknown")}</strong></footer>
+    </button>
+  `;
+}
+
+function projectInfrastructureCompactNodeMarkup(node, label) {
+  const presentation = projectInfrastructureNodePresentation(node);
+  const primaryCount = node.kind === "approval"
+    ? projectInfrastructureMeasuredValue(node.counts?.pending)
+    : node.kind === "output"
+      ? projectInfrastructureMeasuredValue(node.counts?.total)
+      : node.kind === "memory"
+        ? projectInfrastructureMeasuredValue(node.counts?.notes)
+        : node.kind === "project"
+          ? projectInfrastructureMeasuredValue(node.counts?.pendingProposals)
+          : "—";
+  return `
+    <button class="project-infrastructure-compact-node" type="button" data-infrastructure-node="${escapeHtml(node.id)}" data-state="${escapeHtml(presentation.state)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(node.label)}</strong>
+      <small>${escapeHtml(presentation.label)} · ${escapeHtml(primaryCount)}</small>
+    </button>
+  `;
+}
+
+function projectInfrastructureConnectorMarkup(node) {
+  const state = node.connectorState || "unknown";
+  return `
+    <button type="button" class="project-infrastructure-connector" data-infrastructure-node="${escapeHtml(node.id)}" data-state="${escapeHtml(state)}">
+      <span><i aria-hidden="true"></i><strong>${escapeHtml(node.label)}</strong></span>
+      <em>${escapeHtml(node.connectorLabel || "Unavailable")}</em>
+    </button>
+  `;
+}
+
+function projectInfrastructureDimensionMarkup(label, value, state = "") {
+  return `<div><dt>${escapeHtml(label)}</dt><dd${state ? ` data-state="${escapeHtml(state)}"` : ""}>${escapeHtml(value)}</dd></div>`;
+}
+
+function projectInfrastructureListMarkup(items = [], fallback = "None recorded") {
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  return `<ul>${(safeItems.length ? safeItems : [fallback]).slice(0, 8).map((item) => `<li>${escapeHtml(typeof item === "string" ? item : item.path || item.label || item.id || "Recorded item")}</li>`).join("")}</ul>`;
+}
+
+function projectInfrastructureInspectorMarkup(snapshot, node) {
+  const presentation = projectInfrastructureNodePresentation(node);
+  const incoming = snapshot.edges.filter((edge) => edge.to === node.id);
+  const outgoing = snapshot.edges.filter((edge) => edge.from === node.id);
+  const officeContract = node.kind === "office";
+  const workspace = snapshot.workspace || {};
+  const approvalDomains = Object.values(snapshot.approvalDomains || {});
+  const connectorNode = node.kind === "connector";
+  const detailLists = officeContract
+    ? `
+      <section class="project-infrastructure-boundaries">
+        <div><h4>Agent 101 can do</h4>${projectInfrastructureListMarkup(node.allowedWork, "No allowed-work contract recorded")}</div>
+        <div><h4>Human Gate boundary</h4>${projectInfrastructureListMarkup(node.blockedWork, "No blocked-work contract recorded")}</div>
+        <div><h4>Expected outputs</h4>${projectInfrastructureListMarkup(node.outputs, "No output contract recorded")}</div>
+      </section>
+    `
+    : node.kind === "approval"
+      ? `<section class="project-infrastructure-domain-list"><h4>Separate approval domains</h4>${approvalDomains.length ? approvalDomains.map((domain) => `<div><span>${escapeHtml(domain.label)}</span><strong>${escapeHtml(projectInfrastructureMeasuredValue(domain.pending))} pending</strong></div>`).join("") : `<p>Approval domains are not measured.</p>`}</section>`
+      : connectorNode
+        ? `<section class="project-infrastructure-domain-list"><h4>Connection truth</h4><div><span>Verified</span><strong>${node.connected === true ? "Yes" : "No"}</strong></div><div><span>Configured</span><strong>${node.configured === true ? "Yes" : "No"}</strong></div><div><span>Missing configuration</span><strong>${escapeHtml(projectInfrastructureMeasuredValue(node.missingConfigurationCount))}</strong></div></section>`
+        : "";
+  const warning = node.warning ? `<p class="project-infrastructure-warning"><i aria-hidden="true">!</i>${escapeHtml(node.warning)}</p>` : "";
+  return `
+    <section class="project-infrastructure-selection" data-kind="${escapeHtml(node.kind)}">
+      <header>
+        <div><span>${escapeHtml(node.kind)}</span><h3>${escapeHtml(node.label)}</h3><p>${escapeHtml(node.description || "Measured project infrastructure node")}</p></div>
+        <em data-state="${escapeHtml(presentation.state)}"><i aria-hidden="true"></i>${escapeHtml(presentation.label)}</em>
+      </header>
+      ${warning}
+      <dl class="project-infrastructure-dimensions">
+        ${projectInfrastructureDimensionMarkup("Lifecycle", PROJECT_INFRASTRUCTURE_NODE_LABELS[node.lifecycle] || String(node.lifecycle || "Unknown").replaceAll("_", " "), node.lifecycle)}
+        ${projectInfrastructureDimensionMarkup("Availability", String(node.availability || "Unknown").replaceAll("_", " "), node.availability)}
+        ${projectInfrastructureDimensionMarkup("Freshness", String(node.freshness || "Unknown").replaceAll("_", " "), node.freshness)}
+        ${projectInfrastructureDimensionMarkup("Evidence", projectInfrastructureEvidenceLabel(node.evidenceLevel), node.evidenceLevel)}
+        ${projectInfrastructureDimensionMarkup("Authority", String(node.authority || "Unknown").replaceAll("_", " "), node.authority)}
+        ${projectInfrastructureDimensionMarkup("Source", node.source?.system || "Not measured")}
+      </dl>
+      <section class="project-infrastructure-proof">
+        <h4>Connection proof</h4>
+        ${[...incoming, ...outgoing].length ? [...incoming, ...outgoing].slice(0, 8).map((edge) => `
+          <article data-basis="${escapeHtml(edge.basis)}">
+            <i aria-hidden="true"></i>
+            <div><strong>${escapeHtml(String(edge.relation || "connection").replaceAll("_", " "))}</strong><span>${escapeHtml(projectInfrastructureEvidenceLabel(edge.basis))} · ${escapeHtml(String(edge.flow || "idle").replaceAll("_", " "))}</span></div>
+          </article>
+        `).join("") : `<p>No verified connection record is available.</p>`}
+      </section>
+      ${detailLists}
+      ${officeContract ? `<button class="project-infrastructure-inspect-office" type="button" data-infrastructure-office="${escapeHtml(node.refs?.officeId || "")}">Inspect office on Control Floor</button>` : ""}
+    </section>
+    <section class="project-infrastructure-workspace">
+      <header><span>Project workspace</span><strong>${escapeHtml(workspace.mode === "supervised_project_workspace" ? "Supervised" : "Not measured")}</strong></header>
+      <code>${escapeHtml(workspace.root || "Runtime workspace path unavailable")}</code>
+      <dl>
+        <div><dt>Mission workers</dt><dd>${escapeHtml(projectInfrastructureMeasuredValue(workspace.workerCount))}</dd></div>
+        <div><dt>Edits waiting</dt><dd>${escapeHtml(projectInfrastructureMeasuredValue(workspace.pendingProposals?.length))}</dd></div>
+        <div><dt>Output root</dt><dd>${escapeHtml(workspace.outputRoot || "Not measured")}</dd></div>
+      </dl>
+      <details><summary>Read boundary</summary><p>${escapeHtml(workspace.readPolicy || "Not measured")}</p></details>
+      <details><summary>Write boundary</summary><p>${escapeHtml(workspace.writePolicy || "Not measured")}</p></details>
+    </section>
+  `;
+}
+
+function projectWorkflowOfficeNodes(snapshot) {
+  return snapshot.nodes.filter((node) => node.kind === "office" && node.refs?.officeId);
+}
+
+function projectWorkflowOfficeNode(snapshot, officeId) {
+  return projectWorkflowOfficeNodes(snapshot).find((node) => node.refs.officeId === officeId) || null;
+}
+
+function projectWorkflowTotal(workflow = {}) {
+  const stages = Array.isArray(workflow.stages) ? workflow.stages : [];
+  if (!workflow.measured || !stages.length || stages.some((stage) => stage.count === null || stage.count === undefined)) return null;
+  return stages.reduce((sum, stage) => sum + Number(stage.count || 0), 0);
+}
+
+function projectWorkflowTimestamp(value) {
+  const parsed = Date.parse(value || "");
+  if (!Number.isFinite(parsed)) return "";
+  const date = new Date(parsed);
+  const sameDay = new Date().toDateString() === date.toDateString();
+  return new Intl.DateTimeFormat([], sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function projectWorkflowStatus(node = {}) {
+  const workflow = node.workflow || {};
+  if (!workflow.measured) return { state: "unavailable", label: "Not measured" };
+  if (node.lifecycle === "waiting_approval") return { state: "attention", label: "Approval waiting" };
+  if (workflow.current?.state === "attention") return { state: "attention", label: "Needs attention" };
+  if (node.lifecycle === "running" || workflow.current) return { state: "active", label: "Running" };
+  if (node.availability === "offline") return { state: "unavailable", label: "Offline" };
+  if (node.availability === "surface_only") return { state: "quiet", label: "Local surface" };
+  const total = projectWorkflowTotal(workflow);
+  if (Number(total) > 0 || workflow.stages?.some((stage) => stage.items?.length)) return { state: "recorded", label: "Recorded" };
+  return { state: "quiet", label: "No recorded work" };
+}
+
+function projectWorkflowStagePreviewMarkup(workflow = {}) {
+  if (!workflow.measured || !Array.isArray(workflow.stages)) return "";
+  const total = projectWorkflowTotal(workflow);
+  if (total === 0 && !workflow.stages.some((stage) => stage.items?.length)) return "";
+  const knownCounts = workflow.stages.map((stage) => Number(stage.count)).filter(Number.isFinite);
+  const maximum = Math.max(1, ...knownCounts);
+  return `
+    <div class="project-workflow-mini-stages" style="--stage-count:${escapeHtml(workflow.stages.length)}" aria-label="Recorded workflow stages">
+      ${workflow.stages.map((stage) => {
+        const value = Number.isFinite(Number(stage.count)) ? Number(stage.count) : null;
+        const height = value === null ? 12 : Math.max(12, Math.round((value / maximum) * 100));
+        return `<i data-state="${escapeHtml(stage.state || "recorded")}" style="--stage-fill:${height}%" title="${escapeHtml(`${stage.label}: ${value === null ? "not fully measured" : value}`)}"></i>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function projectWorkflowOfficeCardMarkup(node) {
+  const workflow = node.workflow || {};
+  const status = projectWorkflowStatus(node);
+  const total = projectWorkflowTotal(workflow);
+  const activeStage = workflow.stages?.find((stage) => stage.id === workflow.activeStageId);
+  const recordedSample = workflow.stages?.reduce((sum, stage) => sum + (stage.items?.length || 0), 0) || 0;
+  const volume = total !== null
+    ? total === 0 ? status.label : `${projectInfrastructureMeasuredValue(total)} recorded`
+    : recordedSample
+      ? `${projectInfrastructureMeasuredValue(recordedSample)} visible records`
+      : status.label;
+  const subtitle = activeStage ? `${activeStage.label} · ${volume}` : volume === status.label ? "" : volume;
+  return `
+    <button
+      class="project-workflow-office-card"
+      type="button"
+      data-infrastructure-office-focus="${escapeHtml(node.refs.officeId)}"
+      data-state="${escapeHtml(status.state)}"
+      aria-expanded="false"
+      aria-controls="projectWorkflowOfficeRegion"
+    >
+      <span class="project-workflow-office-icon" aria-hidden="true">${escapeHtml(projectInfrastructureOfficeCode(node.label))}</span>
+      <span class="project-workflow-office-copy">
+        <span><strong>${escapeHtml(node.label)}</strong><em data-state="${escapeHtml(status.state)}"><i aria-hidden="true"></i>${escapeHtml(status.label)}</em></span>
+        ${subtitle ? `<small>${escapeHtml(subtitle)}</small>` : ""}
+        ${projectWorkflowStagePreviewMarkup(workflow)}
+      </span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+  `;
+}
+
+function projectInfrastructureOverviewMarkup(snapshot) {
+  const officeNodes = projectWorkflowOfficeNodes(snapshot);
+  const summary = snapshot.summary || {};
+  const workValues = [summary.activeMissions, summary.activeTasks, summary.activeRuns];
+  const activeWork = workValues.every((value) => value === null || value === undefined)
+    ? null
+    : workValues.reduce((sum, value) => sum + Number(value || 0), 0);
+  const facts = [
+    ["Active offices", summary.activeOffices],
+    ["Agent 101 work", activeWork],
+    ["Human Gate", summary.approvalsPending],
+    ["Saved outputs", summary.outputsReady],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+  const recorded = officeNodes.filter((node) => {
+    const status = projectWorkflowStatus(node);
+    return ["active", "attention", "recorded"].includes(status.state);
+  });
+  const quiet = officeNodes.filter((node) => !recorded.includes(node));
+  const sourceWarnings = snapshot.sources.filter((source) => ["unavailable", "degraded"].includes(source.status));
+  const measurementNotes = [...new Set([
+    ...sourceWarnings.map((source) => source.warning).filter(Boolean),
+    ...snapshot.warnings,
+  ])];
+  return `
+    <section class="project-workflow-overview" aria-label="Measured project workflow">
+      <div class="project-workflow-routebar" aria-label="Supervised project route">
+        <div data-tone="agent"><span>01</span><p><small>Operator</small><strong>Agent 101</strong></p></div>
+        <i aria-hidden="true"></i>
+        <div data-tone="office"><span>${escapeHtml(projectInfrastructureMeasuredValue(officeNodes.length))}</span><p><small>Workspaces</small><strong>Offices</strong></p></div>
+        <i aria-hidden="true"></i>
+        <div data-tone="gate"><span>${escapeHtml(projectInfrastructureMeasuredValue(summary.approvalsPending))}</span><p><small>Safety</small><strong>Human Gate</strong></p></div>
+        <i aria-hidden="true"></i>
+        <div data-tone="output"><span>${escapeHtml(projectInfrastructureMeasuredValue(summary.outputsReady))}</span><p><small>Delivery</small><strong>Outputs</strong></p></div>
+      </div>
+      ${facts.length ? `<div class="project-workflow-facts">${facts.map(([label, value]) => `<div><strong>${escapeHtml(projectInfrastructureMeasuredValue(value))}</strong><span>${escapeHtml(label)}</span></div>`).join("")}</div>` : ""}
+      <section class="project-workflow-office-section">
+        <header><div><h3>Recorded workflows</h3><p>Select an office to inspect its pipeline.</p></div><span>${escapeHtml(projectInfrastructureMeasuredValue(recorded.length))}</span></header>
+        <div class="project-workflow-office-grid">
+          ${recorded.length ? recorded.map(projectWorkflowOfficeCardMarkup).join("") : `<p class="project-workflow-inline-empty">No office has recorded work in this snapshot.</p>`}
+        </div>
+      </section>
+      ${quiet.length ? `
+        <section class="project-workflow-office-section is-quiet">
+          <header><div><h3>Registered offices</h3><p>No measured activity in this snapshot.</p></div><span>${escapeHtml(projectInfrastructureMeasuredValue(quiet.length))}</span></header>
+          <div class="project-workflow-office-grid">${quiet.map(projectWorkflowOfficeCardMarkup).join("")}</div>
+        </section>
+      ` : ""}
+      ${measurementNotes.length ? `
+        <details class="project-workflow-evidence">
+          <summary>Measurement notes <span>${escapeHtml(projectInfrastructureMeasuredValue(measurementNotes.length))}</span></summary>
+          <div>${measurementNotes.slice(0, 8).map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</div>
+        </details>
+      ` : ""}
+    </section>
+  `;
+}
+
+function projectWorkflowMediaUrl(value = "") {
+  const url = String(value || "").trim();
+  return /^(https?:\/\/|\/)/i.test(url) ? url : "";
+}
+
+function projectWorkflowItemMarkup(item, selected) {
+  const thumbnailUrl = projectWorkflowMediaUrl(item.media?.thumbnailUrl);
+  const metricParts = [];
+  if (item.metrics?.quality !== null && item.metrics?.quality !== undefined) metricParts.push(`${Number(item.metrics.quality)} quality`);
+  if (item.metrics?.durationSeconds !== null && item.metrics?.durationSeconds !== undefined) metricParts.push(`${Number(item.metrics.durationSeconds)}s`);
+  if (item.metrics?.score !== null && item.metrics?.score !== undefined) metricParts.push(`score ${item.metrics.score}`);
+  if (item.metrics?.confidence) metricParts.push(String(item.metrics.confidence));
+  const timestamp = projectWorkflowTimestamp(item.updatedAt);
+  return `
+    <button class="project-workflow-item" type="button" data-infrastructure-item="${escapeHtml(item.id)}" data-state="${escapeHtml(item.state || "recorded")}" aria-pressed="${selected ? "true" : "false"}">
+      ${thumbnailUrl ? `<img src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy">` : `<span class="project-workflow-item-mark" aria-hidden="true"></span>`}
+      <span class="project-workflow-item-copy">
+        <strong>${escapeHtml(item.title || item.id)}</strong>
+        ${(item.meta || metricParts.length) ? `<small>${escapeHtml([item.meta, ...metricParts].filter(Boolean).join(" · "))}</small>` : ""}
+      </span>
+      <span class="project-workflow-item-state">
+        ${item.status ? `<em>${escapeHtml(String(item.status).replaceAll("_", " "))}</em>` : ""}
+        ${timestamp ? `<time datetime="${escapeHtml(item.updatedAt)}">${escapeHtml(timestamp)}</time>` : ""}
+      </span>
+    </button>
+  `;
+}
+
+function projectWorkflowOperationMarkup(workflow = {}) {
+  const operation = workflow.operation;
+  if (!operation) return "";
+  const status = operation.workerStatus || operation.status;
+  const progress = operation.progress;
+  return `
+    <section class="project-workflow-current" data-state="${escapeHtml(String(status || "recorded").toLowerCase())}">
+      <header><span>Current operation</span>${status ? `<strong><i aria-hidden="true"></i>${escapeHtml(String(status).replaceAll("_", " "))}</strong>` : ""}</header>
+      ${operation.stage ? `<h4>${escapeHtml(operation.stage)}</h4>` : ""}
+      ${operation.detail ? `<p>${escapeHtml(operation.detail)}</p>` : ""}
+      ${progress !== null && progress !== undefined ? `
+        <div class="project-workflow-progress" role="progressbar" aria-label="Operation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${escapeHtml(progress)}">
+          <i style="--progress:${escapeHtml(progress)}%"></i><span>${escapeHtml(Math.round(progress))}%</span>
+        </div>
+      ` : ""}
+      ${operation.recordId ? `<code>${escapeHtml(operation.recordId)}</code>` : ""}
+      ${operation.lastFailure?.message ? `
+        <details class="project-workflow-failure">
+          <summary>Last recorded failure${operation.lastFailure.at ? ` · ${escapeHtml(projectWorkflowTimestamp(operation.lastFailure.at))}` : ""}</summary>
+          <p>${escapeHtml(operation.lastFailure.message)}</p>
+        </details>
+      ` : ""}
+    </section>
+  `;
+}
+
+function projectWorkflowSelectedItemMarkup(item) {
+  if (!item) return "";
+  const timestamp = projectWorkflowTimestamp(item.updatedAt);
+  const details = [
+    ["Status", item.status ? String(item.status).replaceAll("_", " ") : ""],
+    ["Type", item.recordType],
+    ["Updated", timestamp],
+  ].filter(([, value]) => value);
+  return `
+    <section class="project-workflow-record-detail">
+      <header><span>Selected record</span><button type="button" data-infrastructure-clear-item aria-label="Close selected record">×</button></header>
+      <h4>${escapeHtml(item.title || item.id)}</h4>
+      ${item.meta ? `<p>${escapeHtml(item.meta)}</p>` : ""}
+      ${details.length ? `<dl>${details.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : ""}
+      <code>${escapeHtml(item.id)}</code>
+    </section>
+  `;
+}
+
+function projectInfrastructureOfficeWorkflowMarkup(snapshot, node) {
+  const workflow = node.workflow || { measured: false, stages: [] };
+  const officeNodes = projectWorkflowOfficeNodes(snapshot);
+  const status = projectWorkflowStatus(node);
+  if (!workflow.measured) {
+    return `
+      <section class="project-workflow-focus" id="projectWorkflowOfficeRegion" role="region" aria-labelledby="projectWorkflowOfficeTitle">
+        <header class="project-workflow-focus-head">
+          <button class="project-workflow-back" type="button" data-infrastructure-back><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Project</button>
+          <div><span>${escapeHtml(projectInfrastructureOfficeCode(node.label))}</span><p><small>Office workflow</small><h3 id="projectWorkflowOfficeTitle" tabindex="-1">${escapeHtml(node.label)}</h3></p></div>
+          <em data-state="unavailable"><i aria-hidden="true"></i>Not measured</em>
+        </header>
+        <div class="project-infrastructure-empty is-inline">
+          <span aria-hidden="true">${escapeHtml(projectInfrastructureOfficeCode(node.label))}</span>
+          <h3>No recorded workflow is available</h3>
+          <p>${escapeHtml(node.warning || "This office did not return a measurable local workflow.")}</p>
+          <button type="button" data-infrastructure-open-office="${escapeHtml(node.refs.officeId)}">Open on Control Floor</button>
+        </div>
+      </section>
+    `;
+  }
+  const stages = Array.isArray(workflow.stages) ? workflow.stages : [];
+  const selectedStage = stages.find((stage) => stage.id === projectInfrastructureViewState.stageId) || stages[0] || { id: "", label: "Workflow", count: 0, items: [] };
+  const selectedItem = selectedStage.items?.find((item) => item.id === projectInfrastructureViewState.itemId) || null;
+  const observedAt = projectWorkflowTimestamp(workflow.observedAt || node.observedAt);
+  const countLabel = selectedStage.count === null || selectedStage.count === undefined
+    ? selectedStage.items?.length ? `${selectedStage.items.length} recorded items visible` : "Count unavailable"
+    : `${projectInfrastructureMeasuredValue(selectedStage.count)} recorded`;
+  const asideMarkup = `${projectWorkflowOperationMarkup(workflow)}${projectWorkflowSelectedItemMarkup(selectedItem)}`;
+  return `
+    <section class="project-workflow-focus" id="projectWorkflowOfficeRegion" role="region" aria-labelledby="projectWorkflowOfficeTitle">
+      <header class="project-workflow-focus-head">
+        <button class="project-workflow-back" type="button" data-infrastructure-back><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Project</button>
+        <div><span>${escapeHtml(projectInfrastructureOfficeCode(node.label))}</span><p><small>Office workflow</small><h3 id="projectWorkflowOfficeTitle" tabindex="-1">${escapeHtml(node.label)}</h3></p></div>
+        <div class="project-workflow-focus-actions">
+          <em data-state="${escapeHtml(status.state)}"><i aria-hidden="true"></i>${escapeHtml(status.label)}</em>
+          <button type="button" data-infrastructure-open-office="${escapeHtml(node.refs.officeId)}">Open on floor</button>
+        </div>
+      </header>
+      <nav class="project-workflow-office-switcher" aria-label="Switch office workflow">
+        ${officeNodes.map((office) => `<button type="button" data-infrastructure-office-focus="${escapeHtml(office.refs.officeId)}" aria-current="${office.refs.officeId === node.refs.officeId ? "page" : "false"}">${escapeHtml(office.label)}</button>`).join("")}
+      </nav>
+      <div class="project-workflow-stage-rail" style="--workflow-stage-count:${escapeHtml(stages.length || 1)}" role="tablist" aria-label="${escapeHtml(node.label)} stages">
+        ${stages.map((stage) => {
+          const selected = stage.id === selectedStage.id;
+          return `
+            <button type="button" role="tab" id="projectWorkflowTab-${escapeHtml(stage.id)}" aria-selected="${selected ? "true" : "false"}" aria-controls="projectWorkflowStagePanel" tabindex="${selected ? "0" : "-1"}" data-infrastructure-stage="${escapeHtml(stage.id)}" data-state="${escapeHtml(stage.state || "recorded")}">
+              <span>${escapeHtml(stage.sampled ? "sample" : projectInfrastructureMeasuredValue(stage.count))}</span><strong>${escapeHtml(stage.label)}</strong><i aria-hidden="true"></i>
+            </button>
+          `;
+        }).join("")}
+      </div>
+      <div class="project-workflow-focus-grid${asideMarkup ? " has-aside" : ""}">
+        <section class="project-workflow-items" id="projectWorkflowStagePanel" role="tabpanel" aria-labelledby="projectWorkflowTab-${escapeHtml(selectedStage.id)}">
+          <header><div><span>${escapeHtml(selectedStage.label)}</span><strong>${escapeHtml(countLabel)}</strong></div>${selectedStage.hasMore ? `<em>Showing latest ${escapeHtml(selectedStage.items.length)}</em>` : ""}</header>
+          <div>
+            ${selectedStage.items?.length
+              ? selectedStage.items.map((item) => projectWorkflowItemMarkup(item, item.id === selectedItem?.id)).join("")
+              : `<p class="project-workflow-stage-empty">No recorded items in this stage.</p>`}
+          </div>
+        </section>
+        ${asideMarkup ? `<aside class="project-workflow-focus-aside">${asideMarkup}</aside>` : ""}
+      </div>
+      <details class="project-workflow-evidence is-office">
+        <summary>Evidence <span>${escapeHtml(workflow.source || node.source?.system || "local state")}${observedAt ? ` · ${escapeHtml(observedAt)}` : ""}</span></summary>
+        <div>
+          <p>${escapeHtml(workflow.complete === false ? "The source projection was size-limited; visible records are real, but complete stage totals are not claimed." : "Stage totals and records come from the measured local source shown above.")}</p>
+          ${node.warning ? `<p>${escapeHtml(node.warning)}</p>` : ""}
+        </div>
+      </details>
+    </section>
+  `;
+}
+
+function projectInfrastructureUnavailableMarkup() {
+  if (projectInfrastructureLoading) {
+    return `<div class="project-infrastructure-loading is-centered" aria-label="Reading live workflow"><span></span><span></span><span></span></div>`;
+  }
+  return `
+    <section class="project-infrastructure-empty" role="status">
+      <span aria-hidden="true">↗</span>
+      <h3>Live workflow unavailable</h3>
+      <p>${escapeHtml(projectInfrastructureError || "The authenticated local runtime has not returned a workflow snapshot.")}</p>
+      <button type="button" data-infrastructure-retry>Retry measurement</button>
+    </section>
+  `;
+}
+
+function projectInfrastructureGraphMarkup(snapshot) {
+  if (projectInfrastructureViewState.mode === "office") {
+    const officeNode = projectWorkflowOfficeNode(snapshot, projectInfrastructureViewState.officeId);
+    if (officeNode) return projectInfrastructureOfficeWorkflowMarkup(snapshot, officeNode);
+  }
+  return projectInfrastructureOverviewMarkup(snapshot);
+}
+
+function projectInfrastructureReconcileViewState(snapshot) {
+  if (!snapshot || projectInfrastructureViewState.mode !== "office") return;
+  const officeNode = projectWorkflowOfficeNode(snapshot, projectInfrastructureViewState.officeId);
+  if (!officeNode) {
+    projectInfrastructureViewState = { mode: "overview", officeId: "", stageId: "", itemId: "", returnOfficeId: "", overviewScrollTop: 0 };
+    return;
+  }
+  const stages = Array.isArray(officeNode.workflow?.stages) ? officeNode.workflow.stages : [];
+  if (!stages.some((stage) => stage.id === projectInfrastructureViewState.stageId)) {
+    const nextStage = stages.find((stage) => stage.id === officeNode.workflow?.activeStageId)
+      || stages.find((stage) => Number(stage.count) > 0 || stage.items?.length)
+      || stages[0];
+    projectInfrastructureViewState.stageId = nextStage?.id || "";
+    projectInfrastructureViewState.itemId = "";
+  }
+  const selectedStage = stages.find((stage) => stage.id === projectInfrastructureViewState.stageId);
+  if (!selectedStage?.items?.some((item) => item.id === projectInfrastructureViewState.itemId)) {
+    projectInfrastructureViewState.itemId = "";
+  }
+}
+
+function renderProjectInfrastructure() {
+  if (!projectInfrastructureBody) return;
+  const snapshot = projectInfrastructureSnapshot();
+  const summary = snapshot?.summary || {};
+  const isMeasured = Boolean(snapshot);
+  projectInfrastructureReconcileViewState(snapshot);
+  const focusedOffice = snapshot && projectInfrastructureViewState.mode === "office"
+    ? projectWorkflowOfficeNode(snapshot, projectInfrastructureViewState.officeId)
+    : null;
+  const title = document.querySelector("#projectInfrastructureTitle");
+  const description = document.querySelector("#projectInfrastructureSummary");
+  projectInfrastructureDialog?.classList.toggle("is-office-focus", Boolean(focusedOffice));
+  if (title) title.textContent = focusedOffice ? `${focusedOffice.label} workflow` : "Workflow";
+  if (description) description.textContent = focusedOffice
+    ? "Measured stages and recorded work from this office."
+    : "Open an office to inspect its recorded pipeline and current work.";
+  if (sidebarWorkflowStatus) {
+    sidebarWorkflowStatus.textContent = projectInfrastructureLoading
+      ? "Reading live state"
+      : isMeasured
+        ? summary.approvalsPending !== null && summary.approvalsPending !== undefined
+          ? `${projectInfrastructureMeasuredValue(summary.activeOffices)} active · ${projectInfrastructureMeasuredValue(summary.approvalsPending)} gates`
+          : `${projectInfrastructureMeasuredValue(summary.activeOffices)} active`
+        : "Runtime not measured";
+  }
+  [projectInfrastructureOpenBtn, projectInfrastructureTopBtn].forEach((button) => {
+    if (button) button.setAttribute("aria-expanded", projectInfrastructureOverlay && !projectInfrastructureOverlay.hidden ? "true" : "false");
+  });
+  if (projectInfrastructureSource) {
+    const sourceState = projectInfrastructureLoading ? "loading" : !isMeasured ? "unavailable" : projectInfrastructureError || snapshot.partial ? "partial" : "measured";
+    projectInfrastructureSource.dataset.state = sourceState;
+    projectInfrastructureSource.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(
+      projectInfrastructureLoading
+        ? "Reading live sources"
+        : !isMeasured
+          ? "Runtime not measured"
+          : projectInfrastructureError
+            ? "Last measured snapshot"
+            : snapshot.partial
+              ? `${projectInfrastructureMeasuredValue(summary.sourcesDegraded)} sources need attention`
+              : "Measured locally",
+    )}`;
+  }
+  if (projectInfrastructureStatus) {
+    const statusMessage = projectInfrastructureLoading
+      ? isMeasured ? "Refreshing measured workflow data." : "Reading the supervised project workspace and local runtime sources."
+      : projectInfrastructureError
+        ? projectInfrastructureError
+        : snapshot?.partial
+          ? "Infrastructure measured with explicit warnings. No unavailable source is shown as connected."
+          : "Infrastructure snapshot measured successfully.";
+    projectInfrastructureStatus.textContent = statusMessage;
+    projectInfrastructureStatus.hidden = !projectInfrastructureLoading && (!projectInfrastructureError || !isMeasured);
+  }
+  if (projectInfrastructureUpdated) {
+    projectInfrastructureUpdated.textContent = snapshot?.generatedAt
+      ? `Measured ${formatChatTime(snapshot.generatedAt)} · ${snapshot.snapshotId}`
+      : "No measured workflow snapshot";
+  }
+  projectInfrastructureAgentBtn?.toggleAttribute("hidden", Boolean(focusedOffice));
+  projectInfrastructureGateBtn?.toggleAttribute("hidden", Boolean(focusedOffice));
+  projectInfrastructureRefreshBtn?.toggleAttribute("disabled", projectInfrastructureLoading);
+  projectInfrastructureBody.innerHTML = snapshot
+    ? projectInfrastructureGraphMarkup(snapshot)
+    : projectInfrastructureUnavailableMarkup();
+  if (projectInfrastructureDialog) projectInfrastructureDialog.scrollTop = 0;
+}
+
+async function loadProjectInfrastructure(options = {}) {
+  if (projectInfrastructureLoading) return projectInfrastructurePayload;
+  if (!apiAvailable) {
+    projectInfrastructureError = "Live project infrastructure is unavailable in static preview. Start or reconnect the authenticated local runtime to measure it.";
+    renderProjectInfrastructure();
+    return null;
+  }
+  projectInfrastructureLoading = true;
+  projectInfrastructureError = "";
+  renderProjectInfrastructure();
+  try {
+    const payload = await api("/api/control-floor/infrastructure", { cache: options.force ? "no-store" : "default" });
+    if (!payload || payload.schemaVersion !== 1 || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
+      throw new Error("Infrastructure endpoint returned an invalid snapshot.");
+    }
+    projectInfrastructurePayload = payload;
+    if (!projectInfrastructureNodeById(payload, projectInfrastructureSelectedNodeId)) projectInfrastructureSelectedNodeId = "agent:agent-101";
+    return payload;
+  } catch (error) {
+    projectInfrastructureError = error.message || "Project infrastructure could not be measured.";
+    return null;
+  } finally {
+    projectInfrastructureLoading = false;
+    renderShellData();
+    renderProjectInfrastructure();
+  }
+}
+
+function projectInfrastructureFocusableElements() {
+  if (!projectInfrastructureDialog) return [];
+  return [...projectInfrastructureDialog.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
+}
+
+function setProjectInfrastructureOpen(open, options = {}) {
+  if (!projectInfrastructureOverlay || !projectInfrastructureDialog) return;
+  const shouldOpen = Boolean(open);
+  if (shouldOpen && projectInfrastructureOverlay.hidden) {
+    projectInfrastructureReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : projectInfrastructureOpenBtn;
+  }
+  projectInfrastructureOverlay.hidden = !shouldOpen;
+  projectInfrastructureOverlay.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+  if (appShell) appShell.inert = shouldOpen;
+  document.body.classList.toggle("project-infrastructure-open", shouldOpen);
+  [projectInfrastructureOpenBtn, projectInfrastructureTopBtn].forEach((button) => button?.setAttribute("aria-expanded", shouldOpen ? "true" : "false"));
+  if (shouldOpen) {
+    renderProjectInfrastructure();
+    requestAnimationFrame(() => (projectInfrastructureCloseBtn || projectInfrastructureDialog).focus({ preventScroll: true }));
+    loadProjectInfrastructure({ force: options.force !== false });
+    return;
+  }
+  const returnFocus = projectInfrastructureReturnFocus;
+  projectInfrastructureReturnFocus = null;
+  if (options.restoreFocus !== false && returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus({ preventScroll: true }));
+}
+
+function handleProjectInfrastructureKeydown(event) {
+  if (!projectInfrastructureOverlay || projectInfrastructureOverlay.hidden) return false;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    setProjectInfrastructureOpen(false);
+    return true;
+  }
+  if (event.key !== "Tab") return false;
+  const focusable = projectInfrastructureFocusableElements();
+  if (!focusable.length) {
+    event.preventDefault();
+    projectInfrastructureDialog?.focus({ preventScroll: true });
+    return true;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
 }
 
 function moduleDisplayName(moduleId) {
@@ -3794,12 +4995,29 @@ function businessOfficeProfile(roomKey) {
       primaryAction: "Refresh Stock Office",
       secondaryAction: "Ask Stock Office",
     },
+    "print-shop-office": {
+      title: "Business Office: 3D Print Shop",
+      badge: "Product Lab",
+      officeType: "A1 Mini Product Engineering",
+      status: "Local supervised",
+      priority: "High",
+      appUrl: "/apps/print-shop-office/",
+      goal: "Turn measured product concepts into honest Bambu Lab A1 Mini feasibility records, deliberate single-color or multipart plans, and versioned local geometry without inventing market, slicer, or prototype evidence.",
+      willDo: ["Check the 176 mm planning envelope", "Enforce the current one-color process", "Propose deliberate multipart work", "Generate supported parametric STL files", "Hash and validate local artifacts"],
+      needsAccess: ["Operator measurements", "Saved A1 Mini profile", "Approved local output path", "Human Gate for external research"],
+      blocked: ["Call research providers without approval", "Claim generated means printable", "Guess filament grams or print time", "Start a physical print", "Buy, publish, charge, or contact customers"],
+      steps: ["Record concept", "Check feasibility", "Generate geometry", "Run exact slice", "Calibrate and prototype", "Human production decision"],
+      tools: ["A1 Mini constraint engine", "Multipart planner", "Deterministic STL generator", "Artifact hash validation", "Human Gate"],
+      primaryAction: "Open Print Shop",
+      secondaryAction: "Research trending products",
+    },
     "etsy-office": {
       title: "Business Office: Etsy Store",
       badge: "Business",
       officeType: "Store Planning",
       status: "Draft only",
       priority: "High",
+      appUrl: "/apps/etsy-office/",
       goal: "Prepare Etsy/POD product ideas, listings, SEO, and store packages for Agent 101 review.",
       willDo: ["Draft product ideas", "Prepare listing copy", "Organize POD evidence", "Create SEO notes", "Package store changes"],
       needsAccess: ["Product ideas", "POD research", "Listing drafts", "Approval queue"],
@@ -3815,6 +5033,7 @@ function businessOfficeProfile(roomKey) {
       officeType: "Brand Operations",
       status: "Connected",
       priority: "High",
+      appUrl: "/apps/essentrx-office/",
       goal: "Prepare Essentrx brand, product, admin, and customer-safe work while Agent 101 keeps external actions gated.",
       willDo: ["Draft product notes", "Prepare admin ideas", "Organize scent/business context", "Package customer-safe copy", "Create review bundles"],
       needsAccess: ["Essentrx context", "Product notes", "Admin notes", "Approval queue"],
@@ -4110,89 +5329,700 @@ function scrollSidebarAgentChatToLatest(force = false) {
   }
 }
 
-function inferAgent101RunPreviewSteps(goal = "") {
-  const text = String(goal || "").toLowerCase();
-  const clippingGoal = includesAny(text, [
-    "practice stream",
-    "clip",
-    "candidate",
-    "capcut",
-    "posting draft",
-    "watch cycle",
-    "run it",
-    "go ahead",
-  ]);
-  if (!clippingGoal) {
-    return [
-      "Read your message",
-      "Check the safety boundary",
-      "Draft the answer",
-      "Save the thread",
-    ];
-  }
-  return [
-    "Read your goal",
-    "Confirm safe internal mode",
-    "Add demo streamers",
-    "Run watch cycle",
-    "Create clip candidates",
-    "Score the best moments",
-    "Build top 3 packages",
-    "Create CapCut briefs",
-    "Draft posting packages",
-    "Send risky posting step to Human Gate",
-    "Save artifacts and logs",
-  ];
+const AGENT101_MISSION_TERMINAL = new Set(["completed", "failed", "cancelled", "blocked"]);
+const AGENT101_MISSION_ACTIVE = new Set(["queued", "running", "verifying", "recovering", "waiting_approval", "paused"]);
+
+function missionStatus(value = "queued") {
+  const normalized = String(value || "queued").trim().toLowerCase().replaceAll(" ", "_");
+  return normalized || "queued";
 }
 
-function startAgent101RunProgress(goal = "") {
-  if (agent101RunProgressTimer) {
-    window.clearInterval(agent101RunProgressTimer);
-    agent101RunProgressTimer = null;
-  }
-  agent101RunProgress = {
-    goal: String(goal || "").trim(),
-    steps: inferAgent101RunPreviewSteps(goal),
-    startedAt: Date.now(),
+function missionTimestamp(value, fallback = new Date().toISOString()) {
+  return value && !Number.isNaN(Date.parse(value)) ? value : fallback;
+}
+
+function normalizeAgent101Mission(raw = {}) {
+  const existing = agent101Missions.find((mission) => mission.id === raw.id) || {};
+  const merged = { ...existing, ...raw };
+  const id = String(merged.id || merged.missionId || "").trim();
+  if (!id) return null;
+  const status = missionStatus(merged.status || "queued");
+  const events = Array.isArray(merged.events) ? merged.events : [];
+  const checkpoints = Array.isArray(merged.checkpoints) ? merged.checkpoints : [];
+  const outputFiles = Array.isArray(merged.outputFiles)
+    ? merged.outputFiles
+    : Array.isArray(merged.outputs)
+      ? merged.outputs
+      : [];
+  return {
+    ...merged,
+    id,
+    sessionId: String(merged.sessionId || merged.session_id || ""),
+    threadId: String(merged.threadId || merged.thread_id || ""),
+    title: String(merged.title || merged.goal || "Agent 101 mission").trim().slice(0, 180),
+    goal: String(merged.goal || merged.message || "").trim(),
+    status,
+    stage: String(merged.stage || merged.currentStage || merged.current_step || status).trim(),
+    progress: merged.progress !== null && merged.progress !== undefined && Number.isFinite(Number(merged.progress))
+      ? Math.max(0, Math.min(100, Number(merged.progress)))
+      : null,
+    events: events.slice(-500),
+    checkpoints: checkpoints.slice(-100),
+    outputFiles: outputFiles.slice(0, 500),
+    createdAt: missionTimestamp(merged.createdAt || merged.created_at),
+    updatedAt: missionTimestamp(merged.updatedAt || merged.updated_at, merged.createdAt || new Date().toISOString()),
+    terminal: typeof merged.terminal === "boolean" ? merged.terminal : AGENT101_MISSION_TERMINAL.has(status),
+    active: typeof merged.active === "boolean" ? merged.active : AGENT101_MISSION_ACTIVE.has(status),
   };
-  agent101RunProgressTimer = window.setInterval(() => renderSidebarAgentChat(), 1400);
-  renderSidebarAgentChat();
 }
 
-function stopAgent101RunProgress() {
-  if (agent101RunProgressTimer) {
-    window.clearInterval(agent101RunProgressTimer);
-    agent101RunProgressTimer = null;
+function upsertAgent101Mission(raw = {}) {
+  const mission = normalizeAgent101Mission(raw);
+  if (!mission) return null;
+  const index = agent101Missions.findIndex((item) => item.id === mission.id);
+  if (index >= 0) agent101Missions[index] = mission;
+  else agent101Missions.push(mission);
+  agent101Missions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  agent101Missions = agent101Missions.slice(0, 200);
+  return mission;
+}
+
+function missionFromApiPayload(payload = {}) {
+  if (payload?.mission && typeof payload.mission === "object") return payload.mission;
+  if (payload?.data?.mission && typeof payload.data.mission === "object") return payload.data.mission;
+  if (payload?.response?.mission && typeof payload.response.mission === "object") return payload.response.mission;
+  if (payload?.id && (payload.status || payload.goal || payload.events)) return payload;
+  return null;
+}
+
+function missionsForThread(thread = currentAgentChatThread()) {
+  if (!thread?.id) return [];
+  return agent101Missions.filter((mission) => mission.threadId && mission.threadId === thread.id);
+}
+
+function missionForThread(thread = currentAgentChatThread()) {
+  const linked = missionsForThread(thread);
+  return linked.find((mission) => mission.id === activeAgent101MissionId) || linked[0] || null;
+}
+
+function activeAgent101Mission() {
+  return agent101Missions.find((mission) => mission.id === activeAgent101MissionId) || missionForThread() || agent101Missions[0] || null;
+}
+
+function persistActiveAgent101Mission() {
+  try {
+    if (activeAgent101MissionId) localStorage.setItem("agent101ActiveMission", activeAgent101MissionId);
+    else localStorage.removeItem("agent101ActiveMission");
+  } catch {
+    // Mission state remains available from the server when local storage is unavailable.
   }
-  agent101RunProgress = null;
 }
 
-function agent101RunProgressMarkup() {
-  if (!agent101RunProgress) return "";
-  const steps = agent101RunProgress.steps || [];
-  const elapsedSeconds = Math.max(1, Math.floor((Date.now() - agent101RunProgress.startedAt) / 1000));
-  const currentIndex = Math.min(steps.length - 1, Math.floor(elapsedSeconds / 2.4));
-  const progress = Math.min(94, Math.round(((currentIndex + 1) / Math.max(steps.length, 1)) * 100));
+function setAgent101MissionConnection(label, stateValue = "idle") {
+  if (!agentMissionConnection) return;
+  agentMissionConnection.textContent = label;
+  agentMissionConnection.dataset.state = stateValue;
+}
+
+function setActiveAgent101Mission(missionId, options = {}) {
+  const id = String(missionId || "");
+  if (id && !agent101Missions.some((mission) => mission.id === id)) return;
+  activeAgent101MissionId = id;
+  persistActiveAgent101Mission();
+  if (options.connect !== false && id) connectAgent101MissionStream(id);
+  renderAgentChatWorkspace();
+}
+
+async function loadAgent101Missions(options = {}) {
+  if (!apiAvailable) return agent101Missions;
+  try {
+    const payload = await api("/api/agent101/missions");
+    const missions = Array.isArray(payload) ? payload : Array.isArray(payload?.missions) ? payload.missions : [];
+    agent101Missions = missions
+      .map((raw) => normalizeAgent101Mission(raw))
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 200);
+    if (!activeAgent101MissionId || !agent101Missions.some((mission) => mission.id === activeAgent101MissionId)) {
+      const related = missionForThread();
+      activeAgent101MissionId = related?.id || "";
+      persistActiveAgent101Mission();
+    }
+    if (!activeAgent101MissionId) {
+      agent101MissionSource?.close();
+      agent101MissionSource = null;
+      agent101MissionStreamId = "";
+      setAgent101MissionConnection("Ready", "idle");
+    }
+    if (activeAgent101MissionId && options.connect !== false) connectAgent101MissionStream(activeAgent101MissionId);
+    if (activeAgent101MissionId && options.detail !== false) {
+      await refreshAgent101Mission(activeAgent101MissionId, { quiet: true });
+    }
+    renderAgentChatWorkspace();
+    renderOpenAgent101SupervisorOffice();
+    return agent101Missions;
+  } catch (error) {
+    if (!options.quiet) aiProviderNotice = error.message;
+    setAgent101MissionConnection("Unavailable", "error");
+    renderAgentChatWorkspace();
+    renderOpenAgent101SupervisorOffice();
+    return agent101Missions;
+  }
+}
+
+async function refreshAgent101Mission(missionId, options = {}) {
+  const id = String(missionId || "");
+  if (!id || !apiAvailable) return null;
+  try {
+    const payload = await api(`/api/agent101/missions/${encodeURIComponent(id)}`);
+    const mission = upsertAgent101Mission(missionFromApiPayload(payload) || payload);
+    if (mission?.terminal && agent101MissionStreamId === mission.id) {
+      agent101MissionSource?.close();
+      agent101MissionSource = null;
+      agent101MissionStreamId = "";
+      setAgent101MissionConnection("Saved", "complete");
+    }
+    renderSidebarAgentChat();
+    return mission;
+  } catch (error) {
+    if (!options.quiet) aiProviderNotice = error.message;
+    return null;
+  }
+}
+
+function scheduleAgent101MissionRefresh(missionId) {
+  if (agent101MissionRefreshTimer) window.clearTimeout(agent101MissionRefreshTimer);
+  agent101MissionRefreshTimer = window.setTimeout(() => {
+    agent101MissionRefreshTimer = null;
+    refreshAgent101Mission(missionId, { quiet: true });
+  }, 180);
+}
+
+function applyAgent101MissionStreamPayload(payload = {}, missionId = activeAgent101MissionId) {
+  const rawMission = missionFromApiPayload(payload);
+  let mission = rawMission ? upsertAgent101Mission(rawMission) : agent101Missions.find((item) => item.id === missionId);
+  if (!mission) return;
+  const streamedEvent = payload?.event && typeof payload.event === "object"
+    ? payload.event
+    : payload?.type && payload?.message
+      ? payload
+      : null;
+  if (streamedEvent && !["connected", "heartbeat"].includes(streamedEvent.type)) {
+    const eventId = String(streamedEvent.id || `${streamedEvent.sequence || ""}-${streamedEvent.createdAt || ""}-${streamedEvent.type || "event"}`);
+    const known = new Set((mission.events || []).map((event) => String(event.id || `${event.sequence || ""}-${event.createdAt || ""}-${event.type || "event"}`)));
+    if (!known.has(eventId)) mission.events = [...(mission.events || []), streamedEvent].slice(-500);
+    mission.updatedAt = streamedEvent.createdAt || new Date().toISOString();
+    if (streamedEvent.details?.stage) mission.stage = String(streamedEvent.details.stage);
+    if (["approval_required", "mission_waiting_approval", "run_waiting_approval"].includes(streamedEvent.type)) {
+      loadState().catch((error) => addLocalAudit("Human Gate refresh unavailable", error.message));
+    }
+  }
+  if (payload?.status) {
+    mission.status = missionStatus(payload.status);
+    mission.terminal = AGENT101_MISSION_TERMINAL.has(mission.status);
+    mission.active = AGENT101_MISSION_ACTIVE.has(mission.status);
+  }
+  if (Number.isFinite(Number(payload?.progress))) mission.progress = Math.max(0, Math.min(100, Number(payload.progress)));
+  mission = upsertAgent101Mission(mission);
+  renderSidebarAgentChat();
+  scheduleAgent101MissionRefresh(mission.id);
+}
+
+function connectAgent101MissionStream(missionId) {
+  const id = String(missionId || "");
+  if (!id || typeof EventSource === "undefined") return;
+  const mission = agent101Missions.find((item) => item.id === id);
+  if (mission?.terminal) {
+    if (agent101MissionSource) agent101MissionSource.close();
+    agent101MissionSource = null;
+    agent101MissionStreamId = "";
+    setAgent101MissionConnection("Saved", "complete");
+    return;
+  }
+  if (agent101MissionSource && agent101MissionStreamId === id) return;
+  agent101MissionSource?.close();
+  agent101MissionSource = null;
+  agent101MissionStreamId = id;
+  setAgent101MissionConnection("Connecting", "connecting");
+  const source = new EventSource(`/api/agent101/missions/${encodeURIComponent(id)}/stream`);
+  agent101MissionSource = source;
+  const receive = (event) => {
+    if (!event?.data) return;
+    try {
+      applyAgent101MissionStreamPayload(JSON.parse(event.data), id);
+    } catch {
+      scheduleAgent101MissionRefresh(id);
+    }
+  };
+  source.onopen = () => setAgent101MissionConnection("Live", "live");
+  source.onmessage = receive;
+  [
+    "mission", "mission_update", "mission_event", "update", "progress", "event", "checkpoint", "status",
+    "mission_queued", "mission_running", "mission_verifying", "mission_waiting_approval", "mission_completed",
+    "mission_failed", "mission_cancelled", "mission_blocked", "mission_recovering", "project_edit_applied", "tool_started", "tool_completed", "complete", "done",
+    "run_started", "model_call", "tool_start", "tool_result", "tool_error", "approval_required",
+    "run_waiting_approval", "run_completed", "run_failed", "run_blocked",
+    "failed", "cancelled", "blocked", "heartbeat", "connected",
+  ].forEach((name) => {
+    source.addEventListener(name, receive);
+  });
+  source.onerror = () => {
+    setAgent101MissionConnection("Reconnecting", "connecting");
+    scheduleAgent101MissionRefresh(id);
+  };
+}
+
+async function acceptAgent101MissionPayload(payload = {}) {
+  const raw = missionFromApiPayload(payload);
+  const missionId = String(raw?.id || payload?.missionId || payload?.response?.missionId || "");
+  if (raw) upsertAgent101Mission(raw);
+  if (!missionId) return null;
+  activeAgent101MissionId = missionId;
+  persistActiveAgent101Mission();
+  const mission = raw ? normalizeAgent101Mission(raw) : await refreshAgent101Mission(missionId, { quiet: true });
+  connectAgent101MissionStream(missionId);
+  renderAgentChatWorkspace();
+  return mission;
+}
+
+function missionStatusLabel(status = "queued") {
+  return missionStatus(status).split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
+function displayItemText(value) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (!value || typeof value !== "object") return "";
+  return String(value.title || value.message || value.summary || value.text || value.label || value.url || value.path || JSON.stringify(value));
+}
+
+function normalizeDisplayItems(value) {
+  const items = Array.isArray(value) ? value : value === undefined || value === null || value === "" ? [] : [value];
+  return items.map((item) => ({ raw: item, text: displayItemText(item) })).filter((item) => item.text);
+}
+
+function missionStructuredItems(mission = {}, key) {
+  const values = [...normalizeDisplayItems(mission[key])];
+  (mission.events || []).forEach((event) => {
+    values.push(...normalizeDisplayItems(event?.details?.[key]));
+    values.push(...normalizeDisplayItems(event?.details?.output?.[key]));
+    values.push(...normalizeDisplayItems(event?.details?.result?.[key]));
+    values.push(...normalizeDisplayItems(event?.details?.data?.[key]));
+  });
+  const seen = new Set();
+  return values.filter((item) => {
+    const normalized = item.text.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  }).slice(-12);
+}
+
+function safeCitationHref(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function safeSameOriginApiHref(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate || candidate.startsWith("//") || candidate.startsWith("\\\\") || candidate.includes("\\")) return "";
+  try {
+    const url = new URL(candidate, window.location.origin);
+    const isApiPath = url.pathname === "/api"
+      || url.pathname.startsWith("/api/")
+      || url.pathname.startsWith("/apps/clipping-office/api/");
+    if (url.origin !== window.location.origin || url.username || url.password || !isApiPath) return "";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "";
+  }
+}
+
+function structuredListMarkup(title, items = [], variant = "") {
+  if (!items.length) return "";
   return `
-    <article class="sidebar-run-console" aria-label="Agent 101 run progress">
-      <div class="run-console-head">
-        <span>Agent 101 is working</span>
-        <em>${escapeHtml(`${elapsedSeconds}s`)}</em>
+    <section class="agent-mission-intel ${escapeHtml(variant)}">
+      <h5>${escapeHtml(title)}</h5>
+      <ul>${items.map((item) => `<li>${escapeHtml(item.text)}</li>`).join("")}</ul>
+    </section>
+  `;
+}
+
+function citationListMarkup(items = []) {
+  if (!items.length) return "";
+  return `
+    <section class="agent-mission-intel citations">
+      <h5>Sources</h5>
+      <ul>${items.map((item) => {
+        const raw = item.raw && typeof item.raw === "object" ? item.raw : {};
+        const href = safeCitationHref(raw.url || raw.href || (typeof item.raw === "string" ? item.raw : ""));
+        const label = raw.title || raw.label || item.text;
+        return `<li>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>` : escapeHtml(label)}</li>`;
+      }).join("")}</ul>
+    </section>
+  `;
+}
+
+function outputFileDetails(file, index = 0) {
+  if (typeof file === "string") {
+    return {
+      path: file,
+      label: file.split("/").at(-1) || file,
+      meta: "Saved · verification not recorded",
+      verified: false,
+    };
+  }
+  const path = String(file?.path || file?.relativePath || file?.file || "");
+  const label = String(file?.name || file?.title || path.split("/").at(-1) || `Output ${index + 1}`);
+  const bytes = Number(file?.bytes || file?.size || 0);
+  const verified = file?.verified === true;
+  const meta = [verified ? "Verified" : "Saved", file?.type || file?.kind, bytes ? `${Math.max(1, Math.round(bytes / 1024))} KB` : "", verified ? "" : "verification not recorded"].filter(Boolean).join(" · ");
+  return { path, label, meta, verified };
+}
+
+function missionOutputFileMarkup(file, mission = {}, index = 0) {
+  const details = outputFileDetails(file, index);
+  if (!details.path) return "";
+  return `
+    <article class="agent-mission-file">
+      <span aria-hidden="true">${/\.(png|jpe?g|webp|gif|svg)$/i.test(details.path) ? "IMG" : /\.(js|mjs|cjs|html|css|json|md)$/i.test(details.path) ? "CODE" : "FILE"}</span>
+      <div>
+        <strong title="${escapeHtml(details.path)}">${escapeHtml(details.label)}</strong>
+        <small>${escapeHtml(details.meta)}</small>
       </div>
-      <strong>${escapeHtml(steps[currentIndex] || "Running safe internal workflow")}</strong>
-      <div class="run-console-meter" style="--run-progress: ${progress}%"><i></i></div>
-      <ol>
-        ${steps
-          .slice(0, 7)
-          .map((step, index) => {
-            const status = index < currentIndex ? "done" : index === currentIndex ? "active" : "queued";
-            return `<li class="${status}"><span>${index + 1}</span>${escapeHtml(step)}</li>`;
-          })
-          .join("")}
-      </ol>
-      ${steps.length > 7 ? `<small>${escapeHtml(`${steps.length - 7} more save/package steps queued`)}</small>` : ""}
+      <button type="button" data-agent-output-file="${escapeHtml(details.path)}" data-agent-output-session="${escapeHtml(mission.sessionId || "")}" data-agent-output-verified="${details.verified ? "true" : "false"}">View</button>
     </article>
   `;
+}
+
+const AGENT101_SUPERVISOR_EVENT_NOISE = new Set([
+  "connected",
+  "heartbeat",
+  "checkpoint",
+  "model_call",
+  "mission_update",
+]);
+
+function meaningfulAgent101MissionEvents(mission = {}, limit = 5) {
+  const seen = new Set();
+  const events = [];
+  for (const event of [...(mission.events || [])].reverse()) {
+    const type = missionStatus(event?.type || "event");
+    if (AGENT101_SUPERVISOR_EVENT_NOISE.has(type)) continue;
+    const message = String(event?.message || event?.summary || event?.details?.message || "").trim();
+    if (!message) continue;
+    const fingerprint = message.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    events.push({ ...event, type, message });
+  }
+  return events.slice(0, Math.max(1, limit)).reverse();
+}
+
+function agent101SupervisorEventLabel(event = {}) {
+  const type = missionStatus(event.type || "event");
+  if (type.includes("approval") || type.includes("waiting")) return "Needs your decision";
+  if (type.includes("verify")) return "Checking the work";
+  if (type.includes("tool_start") || type.includes("tool_started") || type.includes("run_started")) return "Working now";
+  if (type.includes("tool_result") || type.includes("tool_completed") || type.includes("project_edit_applied")) return "Step finished";
+  if (type.includes("complete") || type.includes("done")) return "Task finished";
+  if (type.includes("fail") || type.includes("error") || type.includes("block")) return "Needs attention";
+  if (type.includes("recover")) return "Resuming saved work";
+  return "Supervisor update";
+}
+
+function agent101SupervisorPosition(mission = {}) {
+  const latest = meaningfulAgent101MissionEvents(mission, 1)[0] || mission.latestEvent || null;
+  const status = missionStatus(mission.status || "queued");
+  const statusCopy = {
+    queued: ["Queued to start", "Your task is saved and waiting for the worker."],
+    verifying: ["Checking the work", "Agent 101 is validating the result before calling it finished."],
+    waiting_approval: ["Waiting for your decision", "The task is paused at an exact Human Gate request."],
+    recovering: ["Resuming saved work", "Agent 101 is continuing from durable state."],
+    paused: ["Paused", "The task is saved and can be resumed when its requirements are clear."],
+    completed: ["Finished", "The requested work finished and its output was saved."],
+    failed: ["Stopped with an error", mission.error || "Review the latest update before retrying."],
+    blocked: ["Blocked", mission.error || mission.blockedReason || "Agent 101 cannot continue without a revised task or decision."],
+    cancelled: ["Stopped", "The task was cancelled and no further work is running."],
+  }[status];
+  if (statusCopy) return { label: statusCopy[0], detail: statusCopy[1], event: latest };
+  if (latest) return {
+    label: agent101SupervisorEventLabel(latest),
+    detail: latest.message,
+    event: latest,
+  };
+  return {
+    label: mission.stage ? missionStatusLabel(mission.stage) : "Starting",
+    detail: "Agent 101 is opening the saved task and preparing the first concrete step.",
+    event: null,
+  };
+}
+
+function linkedAgent101MissionApprovals(mission = {}) {
+  if (!mission?.id) return [];
+  const approvalIds = new Set(Array.isArray(mission.approvalIds) ? mission.approvalIds : []);
+  return pendingApprovals().filter((approval) => approval.missionId === mission.id || approvalIds.has(approval.id));
+}
+
+function agent101SupervisorApprovalMarkup(approval = {}, compact = false) {
+  const scope = approval.exactScope || approval.action || approval.evidence || "Review the exact requested step before Agent 101 continues.";
+  return `
+    <article class="agent-supervisor-validation-card ${compact ? "compact" : ""}">
+      <div><span>Decision required</span><em>${escapeHtml(approval.riskLevel || approval.risk || "review")}</em></div>
+      <strong>${escapeHtml(approval.title || "Validate this step")}</strong>
+      <p>${escapeHtml(scope)}</p>
+      <div class="agent-supervisor-validation-actions">
+        <button type="button" data-chat-approval-action="approve" data-approval-id="${escapeHtml(approval.id)}">Approve step</button>
+        <button type="button" data-chat-approval-action="revise" data-approval-id="${escapeHtml(approval.id)}">Change it</button>
+        <button type="button" data-chat-approval-action="block" data-approval-id="${escapeHtml(approval.id)}">Decline</button>
+      </div>
+    </article>
+  `;
+}
+
+function agent101SupervisorUpdatesMarkup(mission = {}, limit = 4) {
+  const updates = meaningfulAgent101MissionEvents(mission, limit);
+  if (!updates.length) {
+    return `<p class="agent-supervisor-empty-update">The task is saved. The first meaningful work update will appear here.</p>`;
+  }
+  return updates.map((event, index) => `
+    <article class="agent-supervisor-message ${index === updates.length - 1 ? "latest" : ""}">
+      <span aria-hidden="true">A101</span>
+      <div>
+        <header><strong>${escapeHtml(agent101SupervisorEventLabel(event))}</strong><time>${escapeHtml(agentChatThreadTime(event.createdAt || event.at || mission.updatedAt))}</time></header>
+        <p>${escapeHtml(event.message)}</p>
+      </div>
+    </article>
+  `).join("");
+}
+
+function missionResumeBlockedReason(mission = {}) {
+  if (mission.status === "blocked") {
+    return String(mission.blockedReason || "This mission is blocked. Review the worker report or start a revised mission.");
+  }
+  if (!["paused", "waiting_approval", "recovering"].includes(mission.status) || mission.resumable === true) return "";
+  const approvals = mission.approvalSummary || {};
+  if (Number(approvals.blocked || 0) > 0) return "A linked Human Gate request was blocked. Start a revised request before continuing.";
+  if (Number(approvals.needsRevision || 0) > 0) return "A linked Human Gate request needs revision before this mission can continue.";
+  if (Number(approvals.pending || 0) > 0) return "Approve every exact Human Gate request before continuing.";
+  return String(mission.blockedReason || "This saved mission is not currently resumable.");
+}
+
+function agentMissionRailMarkup(mission) {
+  if (!mission) {
+    return `<div class="agent-mission-empty"><strong>No task in this conversation</strong><p>Give Agent 101 a concrete task in the chat. This supervisor will show its real current activity and ask only when your decision is required.</p></div>`;
+  }
+  const position = agent101SupervisorPosition(mission);
+  const outputs = mission.outputFiles || [];
+  const unknowns = missionStructuredItems(mission, "unknowns");
+  const conflicts = missionStructuredItems(mission, "conflicts");
+  const approvals = linkedAgent101MissionApprovals(mission);
+  const canCancel = !mission.terminal
+    && mission.status !== "cancelled"
+    && mission.cancelable !== false
+    && mission.cancellable !== false;
+  const canResume = ["paused", "waiting_approval", "recovering"].includes(mission.status) && mission.resumable === true;
+  const resumeBlockedReason = missionResumeBlockedReason(mission);
+  return `
+    <section class="agent-supervisor-task" data-agent-supervisor="task">
+      <div class="agent-supervisor-task-top">
+        <span>Your task</span>
+        <span class="agent-mission-status ${escapeHtml(mission.status)}">${escapeHtml(missionStatusLabel(mission.status))}</span>
+      </div>
+      <h4>${escapeHtml(mission.title || mission.goal)}</h4>
+      ${mission.goal && mission.goal !== mission.title ? `<p class="agent-supervisor-goal">${escapeHtml(mission.goal)}</p>` : ""}
+      <div class="agent-supervisor-position" aria-live="polite" aria-atomic="true">
+        <span><i aria-hidden="true"></i>Where I am now</span>
+        <strong>${escapeHtml(position.label)}</strong>
+        <p>${escapeHtml(position.detail)}</p>
+        <time>Saved ${escapeHtml(agentChatThreadTime(mission.updatedAt))}</time>
+      </div>
+      <div class="agent-mission-controls">
+        ${canResume ? `<button type="button" data-agent-mission-action="resume" data-agent-mission-id="${escapeHtml(mission.id)}" ${agent101MissionActionPending ? "disabled" : ""}>${agent101MissionActionPending ? "Saving..." : "Resume task"}</button>` : ""}
+        ${canCancel ? `<button type="button" data-agent-mission-action="cancel" data-agent-mission-id="${escapeHtml(mission.id)}" ${agent101MissionActionPending ? "disabled" : ""}>${agent101MissionActionPending ? "Saving..." : "Stop task"}</button>` : ""}
+      </div>
+      ${resumeBlockedReason ? `<p class="agent-mission-control-note">${escapeHtml(resumeBlockedReason)}</p>` : ""}
+    </section>
+    <section class="agent-supervisor-feed" data-agent-supervisor="updates" aria-label="Supervisor updates">
+      <header><span>Supervisor updates</span><em>${mission.active ? "Live" : "Saved"}</em></header>
+      ${agent101SupervisorUpdatesMarkup(mission, 4)}
+    </section>
+    <section class="agent-supervisor-validation ${approvals.length || unknowns.length || conflicts.length ? "needs-attention" : "clear"}" data-agent-supervisor="validation">
+      <header><span>Needs you</span><em>${approvals.length || unknowns.length || conflicts.length ? "Review" : "Clear"}</em></header>
+      ${approvals.map((approval) => agent101SupervisorApprovalMarkup(approval, true)).join("")}
+      ${unknowns.length ? `<div class="agent-supervisor-question"><strong>I need your answer</strong><ul>${unknowns.slice(0, 4).map((item) => `<li>${escapeHtml(item.text)}</li>`).join("")}</ul><small>Reply in the conversation so I can continue with the right assumptions.</small></div>` : ""}
+      ${conflicts.length ? `<div class="agent-supervisor-question conflict"><strong>I found a conflict</strong><ul>${conflicts.slice(0, 3).map((item) => `<li>${escapeHtml(item.text)}</li>`).join("")}</ul></div>` : ""}
+      ${!approvals.length && !unknowns.length && !conflicts.length ? `<p class="agent-supervisor-clear"><i aria-hidden="true">✓</i>Nothing needs your decision. I am continuing inside the approved local scope.</p>` : ""}
+    </section>
+    ${outputs.length ? `
+      <section class="agent-supervisor-deliverables" data-agent-supervisor="deliverables">
+        <header><span>What I made</span><em>${escapeHtml(pluralize(outputs.length, "file"))}</em></header>
+        <div class="agent-mission-files">${outputs.slice(-3).map((file, index) => missionOutputFileMarkup(file, mission, index)).join("")}</div>
+      </section>
+    ` : ""}
+    ${mission.error ? `<div class="agent-mission-error"><strong>What stopped me</strong><p>${escapeHtml(mission.error)}</p></div>` : ""}
+    ${mission.actionError ? `<div class="agent-mission-error agent-mission-action-error" role="alert"><strong>Control action failed</strong><p>${escapeHtml(mission.actionError)}</p></div>` : ""}
+  `;
+}
+
+function captureAgent101MissionRailState(missionId = "") {
+  if (!agentMissionRail || agentMissionRail.dataset.missionId !== String(missionId || "")) return null;
+  const activeElement = document.activeElement;
+  let focus = null;
+  if (activeElement && agentMissionRail.contains(activeElement)) {
+    if (activeElement.matches("[data-agent-mission-action]")) {
+      focus = { type: "action", value: activeElement.dataset.agentMissionAction || "" };
+    } else if (activeElement.matches("[data-agent-output-file]")) {
+      focus = { type: "output", value: activeElement.dataset.agentOutputFile || "" };
+    } else {
+      const section = activeElement.closest("[data-agent-mission-section]");
+      if (section && activeElement.matches("summary")) focus = { type: "section", value: section.dataset.agentMissionSection || "" };
+    }
+  }
+  return {
+    details: new Map(Array.from(agentMissionRail.querySelectorAll("[data-agent-mission-section]")).map((section) => [section.dataset.agentMissionSection, section.open])),
+    focus,
+    scrollTop: agentMissionRail.scrollTop,
+  };
+}
+
+function restoreAgent101MissionRailState(state) {
+  if (!agentMissionRail || !state) return;
+  agentMissionRail.querySelectorAll("[data-agent-mission-section]").forEach((section) => {
+    if (state.details.has(section.dataset.agentMissionSection)) section.open = state.details.get(section.dataset.agentMissionSection);
+  });
+  agentMissionRail.scrollTop = state.scrollTop;
+  if (!state.focus) return;
+  let target = null;
+  if (state.focus.type === "action") {
+    target = Array.from(agentMissionRail.querySelectorAll("[data-agent-mission-action]")).find((element) => element.dataset.agentMissionAction === state.focus.value);
+  } else if (state.focus.type === "output") {
+    target = Array.from(agentMissionRail.querySelectorAll("[data-agent-output-file]")).find((element) => element.dataset.agentOutputFile === state.focus.value);
+  } else if (state.focus.type === "section") {
+    target = Array.from(agentMissionRail.querySelectorAll("[data-agent-mission-section]")).find((element) => element.dataset.agentMissionSection === state.focus.value)?.querySelector("summary");
+  }
+  target?.focus({ preventScroll: true });
+}
+
+function renderAgent101MissionCockpit() {
+  if (!agentMissionRail || !agentMissionSelect) return;
+  const threadMissions = missionsForThread(currentAgentChatThread());
+  const selectedMission = missionForThread(currentAgentChatThread());
+  if (selectedMission && selectedMission.id !== activeAgent101MissionId) {
+    activeAgent101MissionId = selectedMission.id;
+    persistActiveAgent101Mission();
+  }
+  const railState = captureAgent101MissionRailState(selectedMission?.id || "");
+  agentMissionSelect.innerHTML = threadMissions.length
+    ? threadMissions.map((mission) => `<option value="${escapeHtml(mission.id)}" ${mission.id === selectedMission?.id ? "selected" : ""}>${escapeHtml(`${missionStatusLabel(mission.status)} · ${mission.title}`)}</option>`).join("")
+    : `<option value="">No task in this chat</option>`;
+  agentMissionSelect.disabled = !threadMissions.length;
+  agentMissionRail.innerHTML = agentMissionRailMarkup(selectedMission);
+  agentMissionRail.dataset.missionId = selectedMission?.id || "";
+  restoreAgent101MissionRailState(railState);
+  agentMissionCockpit?.classList.toggle("has-active-mission", Boolean(selectedMission));
+}
+
+async function performAgent101MissionAction(action, missionId) {
+  if (!apiAvailable || agent101MissionActionPending) return;
+  const id = String(missionId || activeAgent101MissionId || "");
+  if (!id || !["cancel", "resume"].includes(action)) return;
+  const targetMission = agent101Missions.find((item) => item.id === id);
+  if (action === "resume" && (!targetMission || targetMission.resumable !== true || !["paused", "waiting_approval", "recovering"].includes(targetMission.status))) {
+    if (targetMission) targetMission.actionError = missionResumeBlockedReason(targetMission) || "This mission cannot be resumed from its current state.";
+    renderAgentChatWorkspace();
+    return;
+  }
+  if (action === "cancel" && (!targetMission || targetMission.terminal || targetMission.cancelable === false || targetMission.cancellable === false)) return;
+  agent101MissionActionPending = true;
+  renderAgentChatWorkspace();
+  try {
+    const payload = await postJson(`/api/agent101/missions/${encodeURIComponent(id)}/${action}`, {});
+    targetMission.actionError = "";
+    const mission = upsertAgent101Mission(missionFromApiPayload(payload) || payload);
+    if (mission) mission.actionError = "";
+    if (action === "resume") connectAgent101MissionStream(id);
+    if (mission?.terminal && action === "cancel") setAgent101MissionConnection("Saved", "complete");
+    await refreshAgent101Mission(id, { quiet: true });
+  } catch (error) {
+    aiProviderNotice = error.message;
+    const mission = agent101Missions.find((item) => item.id === id);
+    if (mission) mission.actionError = error.message;
+  } finally {
+    agent101MissionActionPending = false;
+    renderAgentChatWorkspace();
+  }
+}
+
+function setAgentOutputPreviewOpen(open) {
+  if (!agentOutputPreview) return;
+  agentOutputPreview.hidden = !open;
+  agentOutputPreview.setAttribute("aria-hidden", open ? "false" : "true");
+  document.body.classList.toggle("agent-output-open", open);
+}
+
+async function openAgent101OutputFile(path, sessionId = "", verificationRecorded = false) {
+  const filePath = String(path || "");
+  if (!filePath) return;
+  const endpoint = `/apps/clipping-office/api/agent101/files?path=${encodeURIComponent(filePath)}`;
+  if (agentOutputPreviewTitle) agentOutputPreviewTitle.textContent = filePath.split("/").at(-1) || "Mission file";
+  if (agentOutputPreviewMeta) agentOutputPreviewMeta.textContent = `${filePath} · ${verificationRecorded ? "verification recorded" : "saved; verification not recorded"}`;
+  if (agentOutputPreviewContent) {
+    agentOutputPreviewContent.hidden = false;
+    agentOutputPreviewContent.dataset.binary = "false";
+    agentOutputPreviewContent.textContent = "Loading saved output record...";
+  }
+  if (agentOutputPreviewImage) {
+    agentOutputPreviewImage.hidden = true;
+    agentOutputPreviewImage.removeAttribute("src");
+  }
+  if (agentOutputPreviewRaw) {
+    agentOutputPreviewRaw.href = `${endpoint}&raw=1`;
+    agentOutputPreviewRaw.setAttribute("download", "");
+    agentOutputPreviewRaw.textContent = "Download original file";
+  }
+  if (agentOutputDownloadAll) {
+    agentOutputDownloadAll.hidden = !sessionId;
+    agentOutputDownloadAll.href = sessionId ? `/apps/clipping-office/api/agent101/sessions/${encodeURIComponent(sessionId)}/download` : "#";
+    agentOutputDownloadAll.textContent = "Download mission output manifest (JSON)";
+  }
+  setAgentOutputPreviewOpen(true);
+  try {
+    const payload = await api(endpoint);
+    const binary = payload?.binary === true;
+    const extension = filePath.split("?")[0].split(".").at(-1)?.toLowerCase() || "";
+    const previewableImage = binary && ["png", "jpg", "jpeg", "gif", "webp"].includes(extension);
+    const sizeBytes = Math.max(0, Number(payload?.sizeBytes || payload?.bytesRead || 0));
+    const sizeLabel = sizeBytes ? `${new Intl.NumberFormat().format(sizeBytes)} bytes` : "size unavailable";
+    const verificationLabel = verificationRecorded ? "Verification recorded" : "Saved; verification not recorded";
+    if (agentOutputPreviewMeta) {
+      agentOutputPreviewMeta.textContent = `${payload?.path || filePath} · ${binary ? "binary" : "text"} · ${sizeLabel} · ${verificationLabel}`;
+    }
+    if (agentOutputPreviewContent) {
+      agentOutputPreviewContent.dataset.binary = binary ? "true" : "false";
+      if (binary) {
+        agentOutputPreviewContent.hidden = previewableImage;
+        agentOutputPreviewContent.textContent = `Binary output saved\n\n${payload?.path || filePath}\n${sizeLabel}\n\nUse Download original file to retrieve the saved bytes.`;
+      } else {
+        const content = typeof payload?.content === "string" ? payload.content : JSON.stringify(payload, null, 2);
+        const truncatedNote = payload?.truncated ? "\n\n[Preview truncated by the output API.]" : "";
+        agentOutputPreviewContent.textContent = `${content || "This saved text file is empty."}${truncatedNote}`;
+      }
+    }
+    if (previewableImage && agentOutputPreviewImage) {
+      agentOutputPreviewImage.src = `${endpoint}&raw=1&inline=1`;
+      agentOutputPreviewImage.hidden = false;
+    }
+  } catch (error) {
+    if (agentOutputPreviewMeta) agentOutputPreviewMeta.textContent = `${filePath} · read unavailable`;
+    if (agentOutputPreviewContent) {
+      agentOutputPreviewContent.dataset.binary = "false";
+      agentOutputPreviewContent.textContent = `Could not read this saved output: ${error.message}`;
+    }
+  }
 }
 
 function sidebarAgentChatMessageMarkup(message = {}) {
@@ -4251,8 +6081,9 @@ function renderSidebarAgentChat() {
     : `<article class="sidebar-chat-empty"><strong>Ready.</strong><p>Open the full Agent 101 workspace to start or continue a saved command thread.</p></article>`;
   if (sidebarAgentChatStatus) {
     let chatStatus = "Saved";
-    if (agent101RunProgress) {
-      chatStatus = "Working";
+    const mission = missionForThread(thread);
+    if (mission?.active) {
+      chatStatus = missionStatusLabel(mission.status);
     } else if (agent101ChatSending) {
       chatStatus = "Thinking";
     } else if (approvals.length) {
@@ -4264,6 +6095,7 @@ function renderSidebarAgentChat() {
   }
   requestAnimationFrame(() => scrollSidebarAgentChatToLatest(true));
   renderAgentChatWorkspace();
+  renderOpenAgent101SupervisorOffice();
 }
 
 function persistAgentChatDrafts() {
@@ -4303,9 +6135,11 @@ function agentChatThreadTime(value) {
 }
 
 function agentChatStatusText(thread = {}) {
+  const mission = missionForThread(thread);
+  if (mission?.active) return missionStatusLabel(mission.status);
   if (agent101ChatSending && thread.id === currentAgentChatThread().id) return "Running";
   if (thread.status === "waiting_approval") return "Waiting approval";
-  if (thread.status === "running") return "Running";
+  if (["queued", "running", "verifying", "recovering", "paused", "blocked", "failed", "cancelled"].includes(thread.status)) return missionStatusLabel(thread.status);
   if (thread.status === "thinking") return "Thinking";
   if (thread.status === "error") return "Needs retry";
   return "Saved";
@@ -4340,7 +6174,7 @@ function agentChatThreadListMarkup() {
 }
 
 function agentChatMessageMeta(message = {}) {
-  const status = message.status === "failed" || message.status === "error" ? "Failed" : message.status === "running" ? "Running" : message.status === "waiting_approval" ? "Waiting approval" : "Saved";
+  const status = message.status === "failed" || message.status === "error" ? "Failed" : ["queued", "running", "verifying", "recovering", "paused", "blocked", "cancelled"].includes(message.status) ? missionStatusLabel(message.status) : message.status === "waiting_approval" ? "Waiting approval" : "Saved";
   return `${formatChatTime(message.createdAt)}${status ? ` · ${status}` : ""}`;
 }
 
@@ -4348,6 +6182,8 @@ function agentChatApprovalMessageMarkup(message = {}) {
   const approvalId = message.metadata?.approvalId || "";
   const status = message.status || "waiting_approval";
   const isPending = status === "waiting_approval" || status === "running";
+  const rawPreviewEndpoint = String(message.metadata?.details?.previewEndpoint || "");
+  const previewEndpoint = safeSameOriginApiHref(rawPreviewEndpoint);
   return `
     <article class="agent-chat-message approval" data-message-id="${escapeHtml(message.id)}">
       <div class="agent-chat-approval-card">
@@ -4357,6 +6193,7 @@ function agentChatApprovalMessageMarkup(message = {}) {
         </div>
         <strong>${escapeHtml(message.content)}</strong>
         <p>Linked request: ${escapeHtml(approvalId || "approval package")}</p>
+        ${previewEndpoint ? `<a class="agent-chat-approval-preview" href="${escapeHtml(previewEndpoint)}" target="_blank" rel="noopener">Inspect exact source proposal</a>` : ""}
         ${
           isPending && approvalId
             ? `<div class="agent-chat-approval-actions">
@@ -4369,6 +6206,70 @@ function agentChatApprovalMessageMarkup(message = {}) {
       </div>
     </article>
   `;
+}
+
+function prettyAgentValue(value, limit = 12000) {
+  if (typeof value === "string") return value.slice(0, limit);
+  try {
+    return JSON.stringify(value, null, 2).slice(0, limit);
+  } catch {
+    return String(value ?? "").slice(0, limit);
+  }
+}
+
+function agentChatStructuredMarkup(message = {}) {
+  const metadata = message.metadata || {};
+  const knowledge = metadata.knowledge && typeof metadata.knowledge === "object" ? metadata.knowledge : {};
+  const evidence = normalizeDisplayItems(metadata.evidence || metadata.verifiedEvidence || knowledge.evidence);
+  const unknowns = normalizeDisplayItems(metadata.unknowns || metadata.openQuestions || knowledge.unknowns);
+  const conflicts = normalizeDisplayItems(metadata.conflicts || metadata.warnings || knowledge.conflicts);
+  const citations = [...normalizeDisplayItems(metadata.citations || knowledge.citations), ...normalizeDisplayItems(metadata.sources || knowledge.sources)]
+    .filter((item, index, list) => list.findIndex((candidate) => candidate.text === item.text) === index);
+  if (!evidence.length && !unknowns.length && !conflicts.length && !citations.length) return "";
+  return `
+    <details class="agent-chat-structured" open>
+      <summary>Decision context</summary>
+      ${structuredListMarkup("Evidence", evidence, "evidence")}
+      ${structuredListMarkup("Unknowns", unknowns, "unknowns")}
+      ${structuredListMarkup("Conflicts", conflicts, "conflicts")}
+      ${citationListMarkup(citations)}
+    </details>
+  `;
+}
+
+function agentChatToolDetailsMarkup(message = {}) {
+  const metadata = message.metadata || {};
+  const toolCall = metadata.toolCall && typeof metadata.toolCall === "object" ? metadata.toolCall : {};
+  const input = metadata.input ?? metadata.arguments ?? toolCall.input ?? toolCall.arguments;
+  const output = metadata.output ?? metadata.result ?? toolCall.output ?? toolCall.result ?? (message.role === "tool" ? metadata.details : undefined);
+  const duration = Number(metadata.durationMs ?? toolCall.durationMs ?? 0);
+  if (message.role !== "tool" && input === undefined && output === undefined) return "";
+  return `
+    <details class="agent-chat-tool-details">
+      <summary>
+        <span>Inspect tool call</span>
+        <em>${escapeHtml(duration ? `${duration} ms` : message.status === "failed" || message.status === "error" ? "Failed" : "Recorded")}</em>
+      </summary>
+      ${input !== undefined ? `<label>Input</label><pre>${escapeHtml(prettyAgentValue(input))}</pre>` : ""}
+      ${output !== undefined ? `<label>Output</label><pre>${escapeHtml(prettyAgentValue(output))}</pre>` : ""}
+    </details>
+  `;
+}
+
+function agentChatOutputFilesMarkup(message = {}) {
+  const metadata = message.metadata || {};
+  const files = Array.isArray(metadata.outputFiles)
+    ? metadata.outputFiles
+    : Array.isArray(metadata.files)
+      ? metadata.files
+      : Array.isArray(metadata.artifacts) && metadata.artifacts.some((artifact) => typeof artifact === "object" && (artifact.path || artifact.relativePath))
+        ? metadata.artifacts
+        : [];
+  if (!files.length) return "";
+  const mission = {
+    sessionId: metadata.sessionId || activeAgent101Mission()?.sessionId || "",
+  };
+  return `<div class="agent-chat-output-files">${files.slice(0, 12).map((file, index) => missionOutputFileMarkup(file, mission, index)).join("")}</div>`;
 }
 
 function agentChatWorkspaceMessageMarkup(message = {}) {
@@ -4385,6 +6286,9 @@ function agentChatWorkspaceMessageMarkup(message = {}) {
           <time>${escapeHtml(agentChatMessageMeta(message))}</time>
         </div>
         <p>${escapeHtml(message.content)}</p>
+        ${agentChatToolDetailsMarkup(message)}
+        ${agentChatStructuredMarkup(message)}
+        ${agentChatOutputFilesMarkup(message)}
         ${
           artifacts.length
             ? `<div class="agent-chat-artifacts">${escapeHtml(pluralize(artifacts.length, "artifact"))} created</div>`
@@ -4414,29 +6318,20 @@ function renderAgentChatWorkspace() {
   }
   if (agentChatQuickPrompts) {
     const prompts = [
-      "Find 5 practice streams and make clip candidates",
-      "Run demo clipping workflow",
-      "Package top clips",
-      "Create CapCut briefs",
-      "Create posting drafts",
-      "Send drafts to Human Gate",
-      "What can you do?",
-      "What is blocked?",
+      "Create a complete business blueprint from this idea",
+      "Build and verify the first working website version",
+      "Inspect this project and propose a safe UI upgrade",
+      "Research the market and show evidence and unknowns",
+      "Resume the latest mission",
+      "What is waiting at Human Gate?",
     ];
     agentChatQuickPrompts.innerHTML = prompts.map((prompt) => `<button type="button" data-agent-workspace-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`).join("");
   }
   if (agentChatComposerInput && document.activeElement !== agentChatComposerInput) {
     agentChatComposerInput.value = agentChatDrafts[thread.id] || "";
   }
-  const approvals = pendingApprovals();
-  if (agentChatRunStatus) agentChatRunStatus.textContent = agent101ChatSending ? "Agent 101 is working" : agentChatStatusText(thread);
-  if (agentChatRunDetail) {
-    agentChatRunDetail.textContent = agent101ChatSending
-      ? "Running the saved command against the backend. This thread will stay open when it returns."
-      : thread.lastMessage || "Ready for a safe internal workflow.";
-  }
-  if (agentChatApprovalStatus) agentChatApprovalStatus.textContent = approvals.length ? pluralize(approvals.length, "pending approval") : "Clear";
   if (agentChatSendBtn) agentChatSendBtn.disabled = agent101ChatSending;
+  renderAgent101MissionCockpit();
 }
 
 function setAgentChatWorkspaceOpen(open) {
@@ -4447,10 +6342,26 @@ function setAgentChatWorkspaceOpen(open) {
   document.body.classList.toggle("agent-chat-open", agentChatWorkspaceOpen);
   if (agentChatWorkspaceOpen) {
     renderAgentChatWorkspace();
+    loadAgent101Missions({ quiet: true }).catch(() => {});
     requestAnimationFrame(() => {
       scrollAgentChatWorkspaceToLatest(true);
       agentChatComposerInput?.focus({ preventScroll: true });
     });
+  }
+}
+
+function agent101RouteRequested() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("agent101") === "1" || window.location.hash === "#agent101";
+}
+
+function openMainAgent101FromRoute() {
+  if (!agent101RouteRequested()) return;
+  activateView("floor");
+  openAgent("depo");
+  setAgentChatWorkspaceOpen(true);
+  if (window.history?.replaceState) {
+    window.history.replaceState({}, "", window.location.pathname || "/");
   }
 }
 
@@ -4476,6 +6387,12 @@ async function selectAgentChatThread(threadId) {
   const thread = agent101ChatThreads.find((item) => item.id === threadId);
   if (!thread) return;
   setActiveAgent101Thread(mainAgentChatRoomId, thread.id);
+  const linkedMission = agent101Missions.find((mission) => mission.threadId === thread.id);
+  if (linkedMission) {
+    activeAgent101MissionId = linkedMission.id;
+    persistActiveAgent101Mission();
+    connectAgent101MissionStream(linkedMission.id);
+  }
   if (apiAvailable) {
     try {
       const payload = await api(`/api/agent101/chats/${encodeURIComponent(thread.id)}`);
@@ -4573,6 +6490,843 @@ function officeChatMarkup(card) {
       </div>
       <small>All commands now go through the single Agent 101 chat in the left sidebar. This keeps memory and Human Gate decisions in one place.</small>
     </section>
+  `;
+}
+
+function formatClippingOfficeBytes(value = 0) {
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(bytes >= 10 * 1024 ** 3 ? 0 : 1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function clippingOfficeRelativeTime(value = "") {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "No timestamp";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 10) return "Just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function controlFloorSafeImageUrl(value = "") {
+  const candidate = String(value || "").trim();
+  if (!candidate) return "";
+  if (candidate.startsWith("/")) return candidate;
+  try {
+    const parsed = new URL(candidate);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function controlFloorCompactNumber(value) {
+  const number = Math.max(0, Number(value || 0));
+  return new Intl.NumberFormat("en-US", {
+    notation: number >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: number >= 1000 ? 1 : 0,
+  }).format(number);
+}
+
+function controlFloorStatusLabel(status = "offline") {
+  return {
+    live: "Live",
+    idle: "Standing by",
+    syncing: "Syncing",
+    offline: "Offline",
+  }[String(status || "").toLowerCase()] || "Offline";
+}
+
+function controlFloorAutomationLabel(automation = {}) {
+  if (!automation.enabled) return "Paused";
+  const status = String(automation.status || "running").toLowerCase();
+  if (status === "scanning") return "Scanning";
+  if (status === "error") return "Needs attention";
+  return "Running";
+}
+
+function controlFloorStreamMarkup(watcher = {}) {
+  const imageUrl = controlFloorSafeImageUrl(watcher.thumbnailUrl);
+  const initials = String(watcher.streamerName || "Live stream")
+    .split(/\s+/)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  const bufferedSeconds = Math.max(0, Math.round(Number(watcher.bufferedSeconds || 0)));
+  const retentionSeconds = Math.max(1, Math.round(Number(watcher.retentionSeconds || 180)));
+  const bufferFill = Math.max(0, Math.min(100, Math.round((bufferedSeconds / retentionSeconds) * 100)));
+  const streamStatus = String(watcher.status || "watching").toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  const viewers = watcher.viewerCount == null ? "Viewers unavailable" : `${controlFloorCompactNumber(watcher.viewerCount)} watching`;
+  const title = String(watcher.streamTitle || watcher.stage || "Live media analysis");
+  const detail = [watcher.category, viewers].filter(Boolean).map(escapeHtml).join(" &middot; ");
+  return `
+    <article class="control-floor-stream">
+      <div class="control-floor-stream-media">
+        <span class="control-floor-stream-fallback" aria-hidden="true">${escapeHtml(initials)}</span>
+        ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="Live frame from ${escapeHtml(watcher.streamerName || "stream")}" loading="lazy" referrerpolicy="no-referrer" />` : ""}
+        <span class="control-floor-stream-state ${escapeHtml(streamStatus)}"><i></i>${escapeHtml(watcher.bufferRunning ? "Recording" : watcher.status || "Watching")}</span>
+        <span class="control-floor-stream-platform">${escapeHtml(String(watcher.platform || "live").toUpperCase())}</span>
+      </div>
+      <div class="control-floor-stream-copy">
+        <div><strong>${escapeHtml(watcher.streamerName || "Live stream")}</strong><span>${escapeHtml(String(watcher.messagesPerMinute || 0))}/m chat</span></div>
+        <p>${escapeHtml(title)}</p>
+        <small>${detail}</small>
+      </div>
+      <div class="control-floor-buffer" style="--buffer-fill:${bufferFill}%">
+        <span><b>${bufferedSeconds}s</b> of ${retentionSeconds}s retained</span>
+        <i><b></b></i>
+      </div>
+    </article>
+  `;
+}
+
+function controlFloorWorkflowMarkup(overview = {}) {
+  const workflow = Array.isArray(overview.workflow) ? overview.workflow : [];
+  const total = workflow.reduce((sum, stage) => sum + Math.max(0, Number(stage.count || 0)), 0);
+  return `
+    <section class="control-floor-workflow" aria-label="Measured production workflow">
+      <div class="control-floor-section-heading">
+        <div><span>Production workflow</span><h3>Every clip, by current stage</h3></div>
+        <small>${escapeHtml(String(total))} active workflow record${total === 1 ? "" : "s"}</small>
+      </div>
+      <div class="control-floor-workflow-rail">
+        ${workflow.map((stage, index) => {
+          const count = Math.max(0, Number(stage.count || 0));
+          const share = total ? Math.round((count / total) * 100) : 0;
+          return `
+            <article class="control-floor-stage ${escapeHtml(stage.id)}" style="--stage-share:${share}%">
+              <div class="control-floor-stage-top"><span>${index + 1}</span><strong>${escapeHtml(String(count))}</strong></div>
+              <h4>${escapeHtml(stage.label)}</h4>
+              <p>${escapeHtml(stage.detail)}</p>
+              <i><b></b></i>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function controlFloorQueueMarkup(overview = {}) {
+  const clips = Array.isArray(overview.recentClips) ? overview.recentClips.slice(0, 8) : [];
+  return `
+    <section class="control-floor-queue">
+      <div class="control-floor-section-heading">
+        <div><span>Production queue</span><h3>Recent clip work</h3></div>
+        <a href="/apps/clipping-office/#library">Open library</a>
+      </div>
+      <div class="control-floor-queue-table">
+        <div class="control-floor-queue-head"><span>Clip</span><span>Stage</span><span>Quality</span><span>Updated</span></div>
+        ${clips.length ? clips.map((clip) => {
+          const imageUrl = controlFloorSafeImageUrl(clip.thumbnailUrl);
+          const quality = Math.max(0, Math.min(100, Math.round(Number(clip.quality || 0))));
+          return `
+            <article class="control-floor-queue-row">
+              <div class="control-floor-clip-identity">
+                <span class="control-floor-clip-thumb"><b>${escapeHtml(String(clip.streamerName || "C").slice(0, 1).toUpperCase())}</b>${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : ""}</span>
+                <span><strong>${escapeHtml(clip.streamerName || "Creator")}</strong><small>${escapeHtml(clip.title || "Untitled clip")}</small></span>
+              </div>
+              <span class="control-floor-stage-pill ${escapeHtml(clip.stage)}">${escapeHtml(clippingOfficeStageLabel(clip.stage))}</span>
+              <span class="control-floor-quality" style="--quality:${quality}%"><b>${quality ? `${quality}%` : "Pending"}</b><i><em></em></i></span>
+              <time>${escapeHtml(clippingOfficeRelativeTime(clip.updatedAt))}</time>
+            </article>
+          `;
+        }).join("") : `<div class="control-floor-empty"><strong>No clips in production</strong><span>Discovery is monitoring for verified moments.</span></div>`}
+      </div>
+    </section>
+  `;
+}
+
+function controlFloorActivityMarkup(overview = {}) {
+  const events = Array.isArray(overview.activity) ? overview.activity.slice(0, 7) : [];
+  return `
+    <section class="control-floor-activity">
+      <div class="control-floor-section-heading">
+        <div><span>Office events</span><h3>Latest measured activity</h3></div>
+        <small>Auto refresh</small>
+      </div>
+      <div class="control-floor-activity-list">
+        ${events.length ? events.map((event) => `
+          <article>
+            <i class="${escapeHtml(String(event.type || "activity").replace(/[^a-z0-9_-]/gi, "-"))}"></i>
+            <div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail)}</p></div>
+            <time>${escapeHtml(clippingOfficeRelativeTime(event.createdAt))}</time>
+          </article>
+        `).join("") : `<div class="control-floor-empty"><strong>No recent events</strong><span>The office is standing by.</span></div>`}
+      </div>
+    </section>
+  `;
+}
+
+function controlFloorMemoryMarkup(memory = {}) {
+  const totalBytes = Math.max(1, Number(memory.totalBytes || 0));
+  const breakdown = Array.isArray(memory.breakdown) ? memory.breakdown : [];
+  return `
+    <section class="control-floor-resource-panel">
+      <div class="control-floor-section-heading">
+        <div><span>Mac resources</span><h3>Argentum memory</h3></div>
+        <small>${escapeHtml(memory.status || "Measured")}</small>
+      </div>
+      <div class="control-floor-memory-total">
+        <strong>${escapeHtml(formatClippingOfficeBytes(memory.totalBytes))}</strong>
+        <span>${escapeHtml(String(memory.processCount || 0))} processes</span>
+        <span>${escapeHtml(String(memory.percentOfSystem || 0))}% of Mac RAM</span>
+      </div>
+      <div class="control-floor-memory-bar" style="--memory-total:${Math.max(0, Math.min(100, Number(memory.percentOfSystem || 0)))}%"><i></i></div>
+      <div class="control-floor-memory-breakdown">
+        ${breakdown.map((item) => {
+          const share = Math.max(0, Math.min(100, Math.round((Number(item.bytes || 0) / totalBytes) * 100)));
+          return `<div style="--memory-share:${share}%"><span>${escapeHtml(item.label)}</span><i><b></b></i><strong>${escapeHtml(formatClippingOfficeBytes(item.bytes))}</strong></div>`;
+        }).join("")}
+      </div>
+      <p>System RAM in use: <strong>${escapeHtml(String(memory.systemUsedPercent || 0))}%</strong> of ${escapeHtml(formatClippingOfficeBytes(memory.systemTotalBytes))}</p>
+    </section>
+  `;
+}
+
+function controlFloorAutomationMarkup(overview = {}) {
+  const automation = overview.automation || {};
+  const processing = String(automation.workerStatus || "").toLowerCase() === "processing";
+  const progressValue = processing ? Math.max(0, Math.min(100, Math.round(Number(automation.workerProgress || 0)))) : 0;
+  const integrity = automation.sourceIntegrity || {};
+  const providerPages = automation.providerPages || {};
+  const pages = Object.entries(providerPages).map(([provider, count]) => `${provider} ${count}`).join(" / ");
+  return `
+    <section class="control-floor-automation-panel">
+      <div class="control-floor-section-heading">
+        <div><span>Automation</span><h3>${escapeHtml(controlFloorAutomationLabel(automation))}</h3></div>
+        <small class="${automation.enabled ? "active" : "paused"}"><i></i>${automation.enabled ? "Enabled" : "Paused"}</small>
+      </div>
+      <dl class="control-floor-automation-facts">
+        <div><dt>Focus</dt><dd>${escapeHtml(automation.focusLabel || "Not configured")}</dd></div>
+        <div><dt>Editor worker</dt><dd>${escapeHtml(automation.workerStatus || "Unavailable")}</dd></div>
+        <div><dt>Directory scan</dt><dd>${escapeHtml(controlFloorCompactNumber(automation.scannedStreams || 0))} streams</dd></div>
+        <div><dt>Matches</dt><dd>${escapeHtml(controlFloorCompactNumber(automation.matchedStreams || 0))}</dd></div>
+      </dl>
+      ${processing ? `<div class="control-floor-worker-progress" style="--worker-progress:${progressValue}%"><span><b>${escapeHtml(automation.workerStage || "Preparing clip")}</b><strong>${progressValue}%</strong></span><i><b></b></i><small>${escapeHtml(automation.workerDetail || "Background editor is working")}</small></div>` : `<div class="control-floor-worker-ready"><i></i><span><strong>${escapeHtml(automation.workerStage || automation.workerDetail || "Background editor is ready")}</strong><small>${escapeHtml(String(automation.workerStatus || "unavailable"))}</small></span></div>`}
+      <div class="control-floor-integrity ${escapeHtml(String(integrity.status || "verified").toLowerCase())}">
+        <span>Source integrity</span>
+        <strong>${escapeHtml(String(integrity.status || "verified"))}</strong>
+        <small>${Number(integrity.missingProductionSources || 0) ? `${escapeHtml(String(integrity.missingProductionSources))} older records excluded` : "No missing production sources"}</small>
+      </div>
+      <p class="control-floor-scan-note">${escapeHtml(pages || "No provider page count")}${automation.scanTruncated ? " &middot; configured scan cap reached" : ""}</p>
+    </section>
+  `;
+}
+
+function controlFloorOfficeDirectoryMarkup(overview = {}) {
+  const pendingApprovals = (state.approvals || []).filter((approval) => approval.status === "pending").length;
+  const status = overview.status || "offline";
+  return `
+    <section class="control-floor-office-directory">
+      <div class="control-floor-section-heading">
+        <div><span>Office registry</span><h3>Connected workspaces</h3></div>
+        <small>Live telemetry is shown only where available</small>
+      </div>
+      <div class="control-floor-office-list">
+        <a class="active" href="/apps/clipping-office/"><span class="control-floor-office-icon video">CO</span><span><strong>Clipping Office</strong><small>${escapeHtml(controlFloorStatusLabel(status))} telemetry</small></span><em><i></i>${escapeHtml(controlFloorStatusLabel(status))}</em></a>
+        <div><span class="control-floor-office-icon">SO</span><span><strong>Stock Office</strong><small>No live telemetry</small></span><em>Not connected</em></div>
+        <div><span class="control-floor-office-icon">ES</span><span><strong>Etsy Store Office</strong><small>No live telemetry</small></span><em>Not connected</em></div>
+        <div><span class="control-floor-office-icon">EX</span><span><strong>Essentrx Office</strong><small>No live telemetry</small></span><em>Not connected</em></div>
+        <div><span class="control-floor-office-icon gate">HG</span><span><strong>Human Gate</strong><small>External actions remain supervised</small></span><em>${pendingApprovals ? `${escapeHtml(String(pendingApprovals))} pending` : "Clear"}</em></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderControlFloorDashboard() {
+  if (!controlFloorDashboard || !controlFloorLiveRegion) return;
+  const overview = clippingOfficeOverview;
+  const status = clippingOfficeLoading && !overview ? "syncing" : overview?.status || "offline";
+  const statusLabel = controlFloorStatusLabel(status);
+  const updated = overview?.updatedAt ? clippingOfficeRelativeTime(overview.updatedAt) : "No state timestamp";
+  if (controlFloorTopStatus) {
+    controlFloorTopStatus.dataset.status = status;
+    controlFloorTopStatus.innerHTML = `<i></i>${escapeHtml(statusLabel)}`;
+  }
+  if (controlFloorRefreshBtn) controlFloorRefreshBtn.disabled = clippingOfficeLoading;
+  if (controlFloorTopRefresh) controlFloorTopRefresh.disabled = clippingOfficeLoading;
+  if (controlFloorSummary) {
+    controlFloorSummary.textContent = overview
+      ? `${overview.headline}. ${overview.summary}.`
+      : clippingOfficeError || "Connecting to the local office...";
+  }
+  if (controlFloorDataSource) {
+    controlFloorDataSource.textContent = overview
+      ? `${overview.dataQuality?.label || "Measured locally"} · updated ${updated}`
+      : "Waiting for measured data";
+  }
+  if (!overview) {
+    controlFloorLiveRegion.innerHTML = clippingOfficeError
+      ? `<div class="control-floor-error" role="alert"><strong>Clipping Office telemetry is unavailable</strong><span>${escapeHtml(clippingOfficeError)}</span><button type="button" data-control-floor-retry>Try again</button></div>`
+      : `<div class="control-floor-loading" role="status"><span></span><div><strong>Reading local operations</strong><small>Clipping Office state and macOS resources</small></div></div>`;
+    return;
+  }
+
+  const metrics = overview.metrics || {};
+  const memory = overview.memory || {};
+  const automation = overview.automation || {};
+  const dataQuality = overview.dataQuality || {};
+  const watchers = Array.isArray(overview.watchers) ? overview.watchers.slice(0, 4) : [];
+  const warningMessages = [];
+  if (!overview.available) warningMessages.push("The Clipping Office state file is unavailable.");
+  if (Number(dataQuality.missingSourceCandidates || 0)) warningMessages.push(`${dataQuality.missingSourceCandidates} missing-source record${Number(dataQuality.missingSourceCandidates) === 1 ? " was" : "s were"} excluded.`);
+  if (Number(dataQuality.staleActiveSessions || 0)) warningMessages.push(`${dataQuality.staleActiveSessions} stale watch session${Number(dataQuality.staleActiveSessions) === 1 ? " was" : "s were"} excluded.`);
+  if (automation.workerLastFailure?.error) warningMessages.push(`Last editor issue: ${automation.workerLastFailure.error}`);
+
+  controlFloorLiveRegion.innerHTML = `
+    ${warningMessages.length ? `<div class="control-floor-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5"/><path d="M12 18h.01"/></svg><span>${warningMessages.map(escapeHtml).join(" ")}</span></div>` : ""}
+    <section class="control-floor-command-band">
+      <div class="control-floor-office-title">
+        <span class="control-floor-office-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h11v10H4z"/><path d="m15 10 5-3v10l-5-3"/></svg></span>
+        <div><span>Primary office</span><h2>Clipping Office <em class="${escapeHtml(status)}"><i></i>${escapeHtml(statusLabel)}</em></h2><p>Focus: ${escapeHtml(automation.focusLabel || "Not configured")}</p></div>
+      </div>
+      <div class="control-floor-command-facts">
+        <div><span>Automation</span><strong>${escapeHtml(controlFloorAutomationLabel(automation))}</strong><small>${escapeHtml(automation.workerStatus || "Unavailable")} editor</small></div>
+        <div><span>Argentum RAM</span><strong>${escapeHtml(formatClippingOfficeBytes(memory.totalBytes))}</strong><small>${escapeHtml(String(memory.processCount || 0))} measured processes</small></div>
+        <div><span>Last state write</span><strong>${escapeHtml(updated)}</strong><small>${escapeHtml(dataQuality.source || "Clipping Office state")}</small></div>
+      </div>
+    </section>
+    <section class="control-floor-metrics" aria-label="Measured Clipping Office totals">
+      <div><span>Live monitors</span><strong>${escapeHtml(String(metrics.activeStreams || 0))}</strong><small>${escapeHtml(String(metrics.recordingStreams || 0))} recording</small></div>
+      <div><span>Discovery</span><strong>${escapeHtml(String(metrics.discovery || 0))}</strong><small>under review</small></div>
+      <div><span>Studio</span><strong>${escapeHtml(String(metrics.studio || 0))}</strong><small>being edited</small></div>
+      <div><span>Precheck</span><strong>${escapeHtml(String(metrics.precheck || 0))}</strong><small>awaiting validation</small></div>
+      <div><span>Product ready</span><strong>${escapeHtml(String(metrics.ready || 0))}</strong><small>${escapeHtml(String(metrics.localLibrary || 0))} saved locally</small></div>
+      <div><span>Live lookback</span><strong>${escapeHtml(String(metrics.averageBufferSeconds || 0))}s</strong><small>average retained</small></div>
+    </section>
+    ${controlFloorWorkflowMarkup(overview)}
+    <section class="control-floor-live-grid">
+      <div class="control-floor-streams-panel">
+        <div class="control-floor-section-heading">
+          <div><span>Live input</span><h3>Streams under watch</h3></div>
+          <small>${escapeHtml(String(metrics.recordingStreams || 0))} recording${Number(metrics.metadataOnlyStreams || 0) ? ` · ${escapeHtml(String(metrics.metadataOnlyStreams))} metadata-only` : ""}</small>
+        </div>
+        <div class="control-floor-stream-grid">
+          ${watchers.length ? watchers.map(controlFloorStreamMarkup).join("") : `<div class="control-floor-empty"><strong>No streams under watch</strong><span>Automation is standing by for a verified live source.</span></div>`}
+        </div>
+        ${Number(metrics.activeStreams || 0) > watchers.length ? `<a class="control-floor-more-streams" href="/apps/clipping-office/">View ${escapeHtml(String(Number(metrics.activeStreams) - watchers.length))} more active stream${Number(metrics.activeStreams) - watchers.length === 1 ? "" : "s"}</a>` : ""}
+      </div>
+      <aside class="control-floor-operations-column">
+        ${controlFloorAutomationMarkup(overview)}
+        ${controlFloorMemoryMarkup(memory)}
+      </aside>
+    </section>
+    <section class="control-floor-production-grid">
+      ${controlFloorQueueMarkup(overview)}
+      ${controlFloorActivityMarkup(overview)}
+    </section>
+    ${controlFloorOfficeDirectoryMarkup(overview)}
+  `;
+}
+
+function clippingOfficeStageLabel(stage = "discovery") {
+  return {
+    discovery: "Discovery",
+    studio: "Editing",
+    precheck: "Precheck",
+    ready: "Ready",
+  }[stage] || "Discovery";
+}
+
+function clippingOfficeLoadingMarkup() {
+  return `
+    <div class="clipops-loading" role="status">
+      <span></span><span></span><span></span>
+      <strong>Reading live office activity</strong>
+    </div>
+  `;
+}
+
+function clippingOfficeWorkflowMarkup(overview = {}) {
+  const workflow = Array.isArray(overview.workflow) ? overview.workflow : [];
+  const largest = Math.max(1, ...workflow.map((stage) => Number(stage.count || 0)));
+  return `
+    <section class="clipops-workflow" aria-label="Clipping workflow overview">
+      <div class="clipops-section-heading">
+        <div>
+          <span>Production flow</span>
+          <h4>Workflow overview</h4>
+        </div>
+        <em>${escapeHtml(String(overview.metrics?.capturedClips || 0))} clips tracked</em>
+      </div>
+      <div class="clipops-workflow-lanes">
+        ${workflow.map((stage, index) => {
+          const fill = Math.max(4, Math.round((Number(stage.count || 0) / largest) * 100));
+          return `
+            <article class="clipops-stage ${escapeHtml(stage.id)}" style="--stage-fill:${fill}%">
+              <div class="clipops-stage-index">${index + 1}</div>
+              <div class="clipops-stage-copy">
+                <span>${escapeHtml(stage.label)}</span>
+                <strong>${escapeHtml(String(stage.count || 0))}</strong>
+                <small>${escapeHtml(stage.detail)}</small>
+              </div>
+              <div class="clipops-stage-meter"><i></i></div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function clippingOfficeWatchersMarkup(overview = {}) {
+  const watchers = Array.isArray(overview.watchers) ? overview.watchers.slice(0, 6) : [];
+  return `
+    <section class="clipops-watchers">
+      <div class="clipops-section-heading">
+        <div>
+          <span>Live input</span>
+          <h4>Streams being viewed</h4>
+        </div>
+        <em>${escapeHtml(String(overview.metrics?.activeStreams || 0))} active</em>
+      </div>
+      <div class="clipops-watch-list">
+        ${watchers.length ? watchers.map((watcher) => {
+          const memoryFill = Math.max(0, Math.min(100, Math.round((Number(watcher.bufferedSeconds || 0) / Math.max(1, Number(watcher.retentionSeconds || 180))) * 100)));
+          const initials = String(watcher.streamerName || "LS").split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase();
+          return `
+            <article class="clipops-watch-row">
+              <span class="clipops-stream-avatar">${escapeHtml(initials)}</span>
+              <div class="clipops-stream-copy">
+                <div><strong>${escapeHtml(watcher.streamerName)}</strong><span>${escapeHtml(String(watcher.platform || "live").toUpperCase())}</span></div>
+                <p>${escapeHtml(watcher.stage || "Listening to live media")}</p>
+              </div>
+              <div class="clipops-stream-memory" style="--memory-fill:${memoryFill}%">
+                <div><span>Live memory</span><strong>${escapeHtml(String(Math.round(Number(watcher.bufferedSeconds || 0))))}s</strong></div>
+                <i><b></b></i>
+              </div>
+              <div class="clipops-stream-signal">
+                <span class="clipops-live-dot"></span>
+                <strong>${escapeHtml(String(watcher.messagesPerMinute || 0))}/m</strong>
+                <small>chat</small>
+              </div>
+            </article>
+          `;
+        }).join("") : `<div class="clipops-empty"><strong>No streams under watch</strong><span>The office is standing by.</span></div>`}
+      </div>
+    </section>
+  `;
+}
+
+function clippingOfficeClipsMarkup(overview = {}) {
+  const clips = Array.isArray(overview.recentClips) ? overview.recentClips.slice(0, 8) : [];
+  return `
+    <section class="clipops-clips">
+      <div class="clipops-section-heading">
+        <div>
+          <span>Production queue</span>
+          <h4>Clips moving through the office</h4>
+        </div>
+        <em>Live state</em>
+      </div>
+      <div class="clipops-clip-table">
+        <div class="clipops-table-head"><span>Clip</span><span>Stage</span><span>Quality</span><span>Updated</span></div>
+        ${clips.length ? clips.map((clip) => `
+          <article class="clipops-clip-row">
+            <div>
+              <strong>${escapeHtml(clip.streamerName)}</strong>
+              <span>${escapeHtml(clip.title)}</span>
+            </div>
+            <span class="clipops-stage-pill ${escapeHtml(clip.stage)}">${escapeHtml(clippingOfficeStageLabel(clip.stage))}</span>
+            <div class="clipops-quality" style="--quality:${Math.max(2, Number(clip.quality || 0))}%">
+              <strong>${clip.quality ? `${escapeHtml(String(clip.quality))}%` : "Pending"}</strong>
+              <i><b></b></i>
+            </div>
+            <time>${escapeHtml(clippingOfficeRelativeTime(clip.updatedAt))}</time>
+          </article>
+        `).join("") : `<div class="clipops-empty"><strong>No clips in the workflow</strong><span>Captured moments will appear here.</span></div>`}
+      </div>
+    </section>
+  `;
+}
+
+function clippingOfficeMemoryMarkup(overview = {}) {
+  const memory = overview.memory || {};
+  const breakdown = Array.isArray(memory.breakdown) ? memory.breakdown : [];
+  const total = Math.max(1, Number(memory.totalBytes || 0));
+  const systemPercent = Math.max(0, Math.min(100, Number(memory.percentOfSystem || 0)));
+  return `
+    <section class="clipops-memory">
+      <div class="clipops-section-heading">
+        <div>
+          <span>Mac resources</span>
+          <h4>Argentum memory</h4>
+        </div>
+        <em class="${String(memory.status || "").toLowerCase()}">${escapeHtml(memory.status || "Measured")}</em>
+      </div>
+      <div class="clipops-memory-summary">
+        <div class="clipops-memory-gauge" style="--ram-angle:${Math.max(8, systemPercent * 3.6)}deg">
+          <strong>${escapeHtml(formatClippingOfficeBytes(memory.totalBytes))}</strong>
+          <span>${escapeHtml(String(systemPercent))}% of Mac</span>
+        </div>
+        <div class="clipops-memory-facts">
+          <div><span>Processes</span><strong>${escapeHtml(String(memory.processCount || 0))}</strong></div>
+          <div><span>Mac memory</span><strong>${escapeHtml(formatClippingOfficeBytes(memory.systemTotalBytes))}</strong></div>
+          <div><span>Mac memory in use</span><strong>${escapeHtml(String(memory.systemUsedPercent || 0))}%</strong></div>
+        </div>
+      </div>
+      <div class="clipops-memory-breakdown">
+        ${breakdown.map((item) => {
+          const share = Math.max(2, Math.round((Number(item.bytes || 0) / total) * 100));
+          return `
+            <div style="--memory-share:${share}%">
+              <span>${escapeHtml(item.label)}</span>
+              <i><b></b></i>
+              <strong>${escapeHtml(formatClippingOfficeBytes(item.bytes))}</strong>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function clippingOfficeActivityMarkup(overview = {}) {
+  const activity = Array.isArray(overview.activity) ? overview.activity.slice(0, 7) : [];
+  return `
+    <section class="clipops-activity">
+      <div class="clipops-section-heading">
+        <div>
+          <span>Event stream</span>
+          <h4>What is happening now</h4>
+        </div>
+        <em>Auto refresh</em>
+      </div>
+      <div class="clipops-activity-list">
+        ${activity.length ? activity.map((entry) => `
+          <article>
+            <span class="clipops-event-mark ${escapeHtml(entry.type)}"></span>
+            <div><strong>${escapeHtml(entry.title)}</strong><p>${escapeHtml(entry.detail)}</p></div>
+            <time>${escapeHtml(clippingOfficeRelativeTime(entry.createdAt))}</time>
+          </article>
+        `).join("") : `<div class="clipops-empty"><strong>No recent office events</strong><span>Activity will appear as watchers and clips move.</span></div>`}
+      </div>
+    </section>
+  `;
+}
+
+function clippingOfficeMarkup(card) {
+  const profile = businessOfficeProfile(card.id);
+  const overview = clippingOfficeOverview;
+  const status = clippingOfficeLoading && !overview ? "syncing" : overview?.status || "offline";
+  const metrics = overview?.metrics || {};
+  const memory = overview?.memory || {};
+  const dataQuality = overview?.dataQuality || {};
+  const automation = overview?.automation || {};
+  const updated = overview?.updatedAt ? clippingOfficeRelativeTime(overview.updatedAt) : "Waiting for telemetry";
+  const sampled = overview?.sampledAt ? clippingOfficeRelativeTime(overview.sampledAt) : "not sampled";
+  return `
+    <div class="office-detail-panel clipping-operations-panel">
+      <div class="office-detail-header clipops-header">
+        <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+        <div class="office-header-copy">
+          <div class="clipops-title-line"><h3>${escapeHtml(profile.title)}</h3><span class="clipops-status ${escapeHtml(status)}"><i></i>${escapeHtml(status === "live" ? "Live operations" : status === "idle" ? "Standing by" : status === "syncing" ? "Syncing" : "Offline")}</span></div>
+          <p>Real-time capture, editing, review, and system performance</p>
+        </div>
+        <div class="office-header-actions">
+          <button class="clipops-refresh" type="button" data-clips-overview-refresh ${clippingOfficeLoading ? "disabled" : ""}>${clippingOfficeLoading ? "Syncing" : "Refresh"}</button>
+          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>
+          <button class="module-info-close" type="button" aria-label="Close office">&times;</button>
+        </div>
+      </div>
+      ${clippingOfficeError ? `<div class="clipops-error" role="alert">${escapeHtml(clippingOfficeError)}</div>` : ""}
+      ${!overview ? clippingOfficeLoadingMarkup() : `
+        <div class="clipops-scroll">
+          <section class="clipops-command-band">
+            <div class="clipops-command-copy">
+              <span><i></i> CURRENT ACTIVITY</span>
+              <h2>${escapeHtml(overview.headline)}</h2>
+              <p>${escapeHtml(overview.summary)}</p>
+              <div class="clipops-truth-row">
+                <b>${escapeHtml(dataQuality.label || "Measured data")}</b>
+                <b>0 estimates</b>
+                <b>Focus: ${escapeHtml(automation.focusLabel || "Not selected")}</b>
+                <b>Editor: ${escapeHtml(automation.workerStatus || "starting")}${automation.workerStatus === "processing" ? ` ${escapeHtml(String(Math.round(Number(automation.workerProgress || 0))))}%` : ""}</b>
+                ${Number(dataQuality.missingSourceCandidates || 0) ? `<b>${escapeHtml(String(dataQuality.missingSourceCandidates))} missing-source records excluded</b>` : ""}
+                ${Number(dataQuality.excludedPracticeCandidates || 0) ? `<b>${escapeHtml(String(dataQuality.excludedPracticeCandidates))} practice records excluded</b>` : ""}
+              </div>
+              <small>State updated ${escapeHtml(updated)} &middot; sampled ${escapeHtml(sampled)}${Number(dataQuality.excludedHistoricalCandidates || 0) ? ` &middot; ${escapeHtml(String(dataQuality.excludedHistoricalCandidates))} inactive historical records excluded` : ""}</small>
+            </div>
+            <div class="clipops-ram-readout">
+              <span>ARGENTUM RAM</span>
+              <strong>${escapeHtml(formatClippingOfficeBytes(memory.totalBytes))}</strong>
+              <small>${escapeHtml(String(memory.processCount || 0))} processes &middot; ${escapeHtml(String(memory.percentOfSystem || 0))}% of Mac memory &middot; measured RSS</small>
+            </div>
+          </section>
+          <div class="clipops-metrics">
+            <div><span>Live monitors</span><strong>${escapeHtml(String(metrics.activeStreams || 0))}</strong><small>${escapeHtml(String(metrics.recordingStreams || 0))} recording${Number(metrics.metadataOnlyStreams || 0) ? ` · ${escapeHtml(String(metrics.metadataOnlyStreams))} metadata-only` : ""}${Number(metrics.connectingStreams || 0) ? ` · ${escapeHtml(String(metrics.connectingStreams))} connecting` : ""}</small></div>
+            <div><span>Discovery</span><strong>${escapeHtml(String(metrics.discovery || 0))}</strong><small>moments in review</small></div>
+            <div><span>Studio</span><strong>${escapeHtml(String(metrics.studio || 0))}</strong><small>clips editing</small></div>
+            <div><span>Precheck</span><strong>${escapeHtml(String(metrics.precheck || 0))}</strong><small>awaiting validation</small></div>
+            <div><span>Product ready</span><strong>${escapeHtml(String(metrics.ready || 0))}</strong><small>verified clips</small></div>
+            <div><span>Live memory</span><strong>${escapeHtml(String(metrics.averageBufferSeconds || 0))}s</strong><small>average lookback</small></div>
+          </div>
+          ${clippingOfficeWorkflowMarkup(overview)}
+          <div class="clipops-dashboard-grid">
+            <div class="clipops-primary-column">
+              ${clippingOfficeWatchersMarkup(overview)}
+              ${clippingOfficeClipsMarkup(overview)}
+            </div>
+            <aside class="clipops-secondary-column">
+              ${clippingOfficeMemoryMarkup(overview)}
+              ${clippingOfficeActivityMarkup(overview)}
+            </aside>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function printShopStatusTone(status = "") {
+  if (["geometry_ready", "mesh_checks_passed", "preferred", "coarse_fit", "fits_current_process"].includes(status)) return "ready";
+  if (["review_required", "not_recommended", "blocked_by_current_process"].includes(status)) return "blocked";
+  return "attention";
+}
+
+function printShopMetricMarkup(label, value, hint) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong><small>${escapeHtml(hint)}</small></div>`;
+}
+
+function printShopCandidateMarkup(candidate = {}) {
+  const fit = candidate.assessment?.printerFit || {};
+  const bounds = candidate.requirements?.dimensionsMm || {};
+  const measured = [bounds.x, bounds.y, bounds.z].every((value) => Number.isFinite(Number(value)))
+    ? `${bounds.x} × ${bounds.y} × ${bounds.z} mm`
+    : "Measurements needed";
+  return `
+    <article class="printshop-candidate-row">
+      <span class="printshop-record-mark ${escapeHtml(printShopStatusTone(candidate.status))}" aria-hidden="true"></span>
+      <div>
+        <strong>${escapeHtml(candidate.title || "Product concept")}</strong>
+        <p>${escapeHtml(candidate.requirements?.templateName || "Custom CAD")} · ${escapeHtml(measured)}</p>
+      </div>
+      <div class="printshop-row-status"><b>${escapeHtml(String(candidate.assessment?.requirementsCoverage?.percent || 0))}% evidence</b><small>${escapeHtml(String(fit.status || "not checked").replaceAll("_", " "))}</small></div>
+    </article>
+  `;
+}
+
+function printShopArtifactMarkup(artifact = {}) {
+  const bounds = artifact.validation?.boundsMm || {};
+  return `
+    <article class="printshop-file-row">
+      <span>STL</span>
+      <div><strong>${escapeHtml(artifact.name || "Part")}</strong><p>${escapeHtml(`${bounds.x || "?"} × ${bounds.y || "?"} × ${bounds.z || "?"} mm`)} · ${escapeHtml(String(artifact.validation?.triangleCount || 0))} triangles</p></div>
+      <div><b>Mesh checked</b><small>Slice ${escapeHtml(String(artifact.validation?.slicerStatus || "not run").replaceAll("_", " "))}</small></div>
+    </article>
+  `;
+}
+
+function printShopOfficeMarkup(card) {
+  const profile = businessOfficeProfile(card.id);
+  const overview = printShopOfficeOverview;
+  const counts = overview?.counts || {};
+  const printer = overview?.printerProfile || {};
+  const candidates = Array.isArray(overview?.candidates) ? overview.candidates.slice(0, 5) : [];
+  const artifacts = Array.isArray(overview?.artifacts) ? overview.artifacts.slice(0, 4) : [];
+  const research = Array.isArray(overview?.researchRequests) ? overview.researchRequests.slice(0, 4) : [];
+  const buildVolume = printer.factorySpec?.buildVolumeMm || { x: 180, y: 180, z: 180 };
+  const planning = printer.engineeringPolicy?.designEnvelopeMm || { x: 176, y: 176, z: 176 };
+  return `
+    <div class="office-detail-panel printshop-operations-panel">
+      <header class="office-detail-header printshop-header">
+        <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+        <div class="office-header-copy">
+          <div class="printshop-title-line"><h3>${escapeHtml(profile.title)}</h3><span class="printshop-local-status"><i></i>Authenticated local app</span></div>
+          <p>Source-backed discovery, measured A1 Mini design work, and production evidence gates</p>
+        </div>
+        <div class="office-header-actions">
+          <button class="printshop-refresh" type="button" data-print-shop-refresh ${printShopOfficeLoading ? "disabled" : ""}>${printShopOfficeLoading ? "Refreshing" : "Refresh"}</button>
+          <a class="office-header-app-link" aria-label="View Print Shop app" href="${escapeHtml(profile.appUrl)}">View app</a>
+          <button class="module-info-close" type="button" aria-label="Close Print Shop Office">×</button>
+        </div>
+      </header>
+      ${printShopOfficeError ? `<div class="printshop-error" role="alert">${escapeHtml(printShopOfficeError)}</div>` : ""}
+      ${!overview ? `
+        <div class="printshop-loading"><span></span><span></span><span></span><p>${printShopOfficeLoading ? "Reading measured Product Lab state" : "Product Lab data has not loaded"}</p></div>
+      ` : `
+        <div class="printshop-scroll">
+          <section class="printshop-command-band">
+            <div>
+              <span class="printshop-kicker">YOUR MACHINE · YOUR CONSTRAINTS</span>
+              <h2>${escapeHtml(`${printer.manufacturer || "Bambu Lab"} ${printer.model || "A1 mini"}`)}</h2>
+              <p>One color at a time · ${escapeHtml(String(printer.operatingProfile?.installedNozzleMm || 0.4))} mm nozzle · PLA, PETG, and TPU preferred</p>
+            </div>
+            <div class="printshop-envelope-readout">
+              <span>PLANNING ENVELOPE</span>
+              <strong>${escapeHtml(`${planning.x} × ${planning.y} × ${planning.z}`)} <small>mm</small></strong>
+              <p>Factory volume ${escapeHtml(`${buildVolume.x} × ${buildVolume.y} × ${buildVolume.z}`)} mm · exact slice still required</p>
+            </div>
+          </section>
+          <section class="printshop-truth-strip">
+            ${printShopMetricMarkup("Research leads", counts.opportunities || 0, "source linked")}
+            ${printShopMetricMarkup("Design files", counts.stlArtifacts || 0, "hash verified")}
+            ${printShopMetricMarkup("Slicer accepted", counts.slicedArtifacts || 0, overview.truth?.slicerConnected ? "connected" : "not connected")}
+            ${printShopMetricMarkup("Prototype verified", counts.prototypeVerified || 0, "physical evidence")}
+            ${printShopMetricMarkup("Research gate", counts.pendingApprovals || 0, "pending approval")}
+          </section>
+          <section class="printshop-production-line" aria-label="Print Shop release gates">
+            ${[
+              ["Concept", counts.candidates > 0],
+              ["Geometry", counts.designJobs > 0],
+              ["Mesh check", counts.stlArtifacts > 0],
+              ["Exact slice", counts.slicedArtifacts > 0],
+              ["Prototype", counts.prototypeVerified > 0],
+              ["Production", false],
+            ].map(([label, complete], index) => `<div class="${complete ? "complete" : index === 0 && !counts.candidates ? "current" : ""}"><span>${index + 1}</span><strong>${escapeHtml(label)}</strong><small>${complete ? "Recorded" : "Pending"}</small></div>`).join("")}
+          </section>
+          <div class="printshop-dashboard-grid">
+            <section class="printshop-surface printshop-concepts">
+              <header><div><span>Product records</span><h4>Latest A1 Mini assessments</h4></div><a href="${escapeHtml(profile.appUrl)}">Open Product Lab</a></header>
+              <div>${candidates.length ? candidates.map(printShopCandidateMarkup).join("") : `<div class="printshop-empty"><strong>No product concepts yet</strong><span>Open the Product Lab and enter a measured idea.</span></div>`}</div>
+            </section>
+            <section class="printshop-surface printshop-machine-truth">
+              <header><div><span>Connection truth</span><h4>What is real right now</h4></div></header>
+              <div class="printshop-connection-list">
+                <div><span>Product Lab</span><strong class="yes">Connected</strong></div>
+                <div><span>Geometry generator</span><strong class="yes">Local</strong></div>
+                <div><span>Bambu slicer</span><strong>No connection</strong></div>
+                <div><span>Physical printer</span><strong>No connection</strong></div>
+                <div><span>Unit cost</span><strong>Unknown until slice</strong></div>
+              </div>
+              <p>${escapeHtml(overview.truth?.note || "Unknown values stay unknown.")}</p>
+            </section>
+            <section class="printshop-surface printshop-files">
+              <header><div><span>Output vault</span><h4>Versioned design files</h4></div><em>${escapeHtml(String(counts.stlArtifacts || 0))} STL</em></header>
+              <div>${artifacts.length ? artifacts.map(printShopArtifactMarkup).join("") : `<div class="printshop-empty"><strong>No generated files</strong><span>Unsupported or unmeasured ideas do not receive dummy STLs.</span></div>`}</div>
+            </section>
+            <section class="printshop-surface printshop-gate-queue">
+              <header><div><span>Human Gate</span><h4>External research</h4></div><em>Paid calls locked</em></header>
+              <div>${research.length ? research.map((request) => `<article><span></span><div><strong>${escapeHtml(request.query)}</strong><p>${escapeHtml(String(request.status || "pending").replaceAll("_", " "))} · no unsourced demand claims</p></div></article>`).join("") : `<div class="printshop-empty"><strong>No research requests</strong><span>External search runs only after an exact Human Gate decision.</span></div>`}</div>
+            </section>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function agent101SupervisorOfficeMessageMarkup(message = {}) {
+  const role = message.role === "user" ? "operator" : "agent";
+  const label = role === "operator" ? "You" : "Agent 101";
+  return `
+    <article class="supervisor-office-message ${role} ${escapeHtml(message.status || "")}">
+      <span class="supervisor-office-avatar" aria-hidden="true">${role === "operator" ? "You" : "A101"}</span>
+      <div>
+        <header><strong>${label}</strong><time>${escapeHtml(formatChatTime(message.createdAt))}</time></header>
+        <p>${escapeHtml(message.content || "")}</p>
+      </div>
+    </article>
+  `;
+}
+
+function agent101SupervisorOfficeConversationMarkup(thread = {}) {
+  const messages = (thread.messages || [])
+    .filter((message) => ["user", "agent", "assistant"].includes(message.role) && String(message.content || "").trim())
+    .slice(-12);
+  if (!messages.length) {
+    return `
+      <article class="supervisor-office-welcome">
+        <span aria-hidden="true">A101</span>
+        <div><strong>I am ready to supervise the work.</strong><p>Tell me the outcome you want. I will keep the task here, report the real current activity, and stop only when I need a decision from you.</p></div>
+      </article>
+    `;
+  }
+  return messages.map(agent101SupervisorOfficeMessageMarkup).join("");
+}
+
+function agent101SupervisorOfficeNeedsMarkup(mission = null) {
+  if (!mission) {
+    return `<p class="supervisor-office-clear"><i aria-hidden="true">✓</i>No task-specific decisions are waiting.</p>`;
+  }
+  const approvals = linkedAgent101MissionApprovals(mission);
+  const unknowns = missionStructuredItems(mission, "unknowns");
+  const conflicts = missionStructuredItems(mission, "conflicts");
+  if (!approvals.length && !unknowns.length && !conflicts.length) {
+    return `<p class="supervisor-office-clear"><i aria-hidden="true">✓</i>Nothing needs your decision. Agent 101 can keep working inside the approved scope.</p>`;
+  }
+  return `
+    ${approvals.map((approval) => agent101SupervisorApprovalMarkup(approval)).join("")}
+    ${unknowns.length ? `<div class="supervisor-office-question"><strong>Answer in the chat</strong><ul>${unknowns.slice(0, 5).map((item) => `<li>${escapeHtml(item.text)}</li>`).join("")}</ul></div>` : ""}
+    ${conflicts.length ? `<div class="supervisor-office-question conflict"><strong>Choose how I should resolve this</strong><ul>${conflicts.slice(0, 4).map((item) => `<li>${escapeHtml(item.text)}</li>`).join("")}</ul></div>` : ""}
+  `;
+}
+
+function agent101SupervisorOfficeMarkup(card) {
+  const thread = currentAgentChatThread();
+  const mission = missionForThread(thread);
+  const position = mission ? agent101SupervisorPosition(mission) : null;
+  const outputs = mission?.outputFiles || [];
+  const latestUserMessage = [...(thread.messages || [])].reverse().find((message) => message.role === "user" && String(message.content || "").trim());
+  const task = mission?.goal || "No active task in this conversation";
+  const latestRequest = latestUserMessage?.content ? String(latestUserMessage.content).slice(0, 220) : "";
+  const supervisorState = agent101ChatSending
+    ? "Reading your message"
+    : mission
+      ? position.label
+      : "Ready for your task";
+  const canCancel = mission && !mission.terminal && mission.cancelable !== false && mission.cancellable !== false;
+  const canResume = mission && ["paused", "waiting_approval", "recovering"].includes(mission.status) && mission.resumable === true;
+  return `
+    <div class="office-detail-panel agent-supervisor-office">
+      <header class="supervisor-office-header">
+        <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
+        <div>
+          <p>Your personal supervisor</p>
+          <h3>Agent 101</h3>
+          <span><i aria-hidden="true"></i>${escapeHtml(supervisorState)}</span>
+        </div>
+        <div class="supervisor-office-header-actions">
+          <button type="button" data-supervisor-open-chat>Open full chat</button>
+          <button class="module-info-close" type="button" aria-label="Close supervisor">×</button>
+        </div>
+      </header>
+      ${aiProviderNotice ? `<div class="agent-provider-notice">${escapeHtml(aiProviderNotice)} Using Local Demo fallback.</div>` : ""}
+      <div class="supervisor-office-layout">
+        <section class="supervisor-office-chat" aria-label="Agent 101 supervisor conversation">
+          <section class="supervisor-office-task-brief" data-agent-supervisor="task">
+            <span>The task you gave me</span>
+            <h2>${escapeHtml(task)}</h2>
+            ${mission ? `<small>Saved to this conversation · updated ${escapeHtml(agentChatThreadTime(mission.updatedAt))}</small>` : `<small>${latestRequest ? `Latest message: “${escapeHtml(latestRequest)}” · ` : ""}Assign a concrete build, research, or project task to start supervised work.</small>`}
+          </section>
+          <section class="supervisor-office-conversation" data-supervisor-conversation aria-label="Conversation with Agent 101">
+            ${agent101SupervisorOfficeConversationMarkup(thread)}
+          </section>
+          <form class="supervisor-office-composer" data-supervisor-composer>
+            <textarea name="message" rows="2" autocomplete="off" aria-label="Message Agent 101" placeholder="Tell Agent 101 what to do next, answer a question, or change the task...">${escapeHtml(agentSupervisorOfficeDraft)}</textarea>
+            <button type="submit" ${agent101ChatSending ? "disabled" : ""}>${agent101ChatSending ? "Working..." : "Send"}</button>
+          </form>
+        </section>
+        <aside class="supervisor-office-briefing">
+          <section class="supervisor-office-position" data-agent-supervisor="position" aria-live="polite" aria-atomic="true">
+            <div><span>Where I am now</span>${mission ? `<em>${escapeHtml(missionStatusLabel(mission.status))}</em>` : ""}</div>
+            <strong>${escapeHtml(position?.label || "Waiting for your task")}</strong>
+            <p>${escapeHtml(position?.detail || "Give me one outcome in the chat and I will keep the current work visible here.")}</p>
+            ${position?.event ? `<small>Latest saved update · ${escapeHtml(agentChatThreadTime(position.event.createdAt || mission.updatedAt))}</small>` : ""}
+            ${canResume || canCancel ? `<div class="supervisor-office-task-actions">
+              ${canResume ? `<button type="button" data-agent-mission-action="resume" data-agent-mission-id="${escapeHtml(mission.id)}">Resume task</button>` : ""}
+              ${canCancel ? `<button type="button" data-agent-mission-action="cancel" data-agent-mission-id="${escapeHtml(mission.id)}">Stop task</button>` : ""}
+            </div>` : ""}
+          </section>
+          <section class="supervisor-office-needs" data-agent-supervisor="validation">
+            <header><div><span>Needs you</span><h4>Decisions and validation</h4></div></header>
+            ${agent101SupervisorOfficeNeedsMarkup(mission)}
+          </section>
+          ${outputs.length ? `
+            <section class="supervisor-office-outputs" data-agent-supervisor="deliverables">
+              <header><span>What I made</span><em>${escapeHtml(pluralize(outputs.length, "file"))}</em></header>
+              <div>${outputs.slice(-4).map((file, index) => missionOutputFileMarkup(file, mission, index)).join("")}</div>
+            </section>
+          ` : ""}
+          ${mission?.error ? `<section class="supervisor-office-blocker"><span>What stopped me</span><p>${escapeHtml(mission.error)}</p></section>` : ""}
+        </aside>
+      </div>
+    </div>
   `;
 }
 
@@ -4753,24 +7507,51 @@ function stockMetricMarkup(label, value, hint = "") {
   `;
 }
 
+function stockNumericValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (Number.isFinite(Number(value))) return Number(value);
+  const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stockCurrency(value, fallback = "—") {
+  const number = stockNumericValue(value);
+  return number === null
+    ? fallback
+    : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(number);
+}
+
+function stockPositionValue(position = {}) {
+  const explicit = stockNumericValue(position.marketValueDollars ?? position.marketValue);
+  if (explicit !== null) return explicit;
+  const quantity = stockNumericValue(position.quantity ?? position.sharesAvailableForSells);
+  const price = stockNumericValue(position.currentPrice);
+  return quantity !== null && price !== null ? quantity * price : null;
+}
+
+function stockLiveSnapshot() {
+  const control = stockOfficeBroker?.brokerControl || {};
+  const capital = stockOfficeBroker?.portfolioPlan?.capital || control.capital || {};
+  const broker = stockOfficeOverview?.broker || {};
+  const positions = Array.isArray(control.positions) && control.positions.length ? control.positions : broker.positions || [];
+  const positionValue = positions.reduce((sum, position) => sum + (stockPositionValue(position) || 0), 0);
+  const buyingPower = stockNumericValue(control.buyingPowerDollars ?? broker.buyingPower) ?? 0;
+  const accountValue = stockNumericValue(broker.accountValue) ?? positionValue + buyingPower;
+  return { control, capital, broker, positions, positionValue, buyingPower, accountValue };
+}
+
 function stockOfficeAlertMarkup() {
-  const alerts = stockOfficeOverview?.alerts || [];
+  const { control, positions, buyingPower } = stockLiveSnapshot();
   if (stockOfficeError) {
     return `<div class="stock-office-alert bad"><strong>Stock Office error</strong><span>${escapeHtml(stockOfficeError)}</span></div>`;
   }
-  if (!alerts.length) {
-    return `<div class="stock-office-alert good"><strong>Read-only boundary active</strong><span>Stock Guru data is visible for review only. No trades or money movement exist in this office.</span></div>`;
+  if (!control.authenticationVerified) {
+    return `<div class="stock-office-alert warn"><strong>Robinhood needs attention</strong><span>${escapeHtml(stockStatusLabel(control.connectorStatus || "refresh"))}</span><em>Open Stock Office</em></div>`;
   }
-  return alerts
-    .map(
-      (alert) => `
-        <div class="stock-office-alert ${escapeHtml(alert.level === "error" ? "bad" : alert.level === "warning" ? "warn" : "good")}">
-          <strong>${escapeHtml(alert.title)}</strong>
-          <span>${escapeHtml(alert.body)}</span>
-        </div>
-      `,
-    )
-    .join("");
+  if (buyingPower <= 0) {
+    return `<div class="stock-office-alert warn"><strong>New buys paused</strong><span>${escapeHtml(stockCurrency(buyingPower))} settled buying power</span><em>Fund Robinhood, then refresh</em></div>`;
+  }
+  return `<div class="stock-office-alert good"><strong>Account ready</strong><span>${escapeHtml(pluralize(positions.length, "live position"))} · ${escapeHtml(String(control.openOrderCount || 0))} open orders</span><em>Human Gate on</em></div>`;
 }
 
 function selectedStockRecord() {
@@ -4781,7 +7562,7 @@ function selectedStockRecord() {
 function stockRecordsMarkup() {
   const rows = stockOfficeRecords.records || [];
   if (!rows.length) {
-    return `<div class="stock-empty-state"><strong>No Stock Guru records loaded</strong><p>Run the Stock Guru scanner/evaluator outside Argentum, then press Sync local files here.</p></div>`;
+    return `<div class="stock-empty-state"><strong>No Stock Guru records loaded</strong><p>Use Refresh data to run the local evaluator and load its guarded reports.</p></div>`;
   }
   return `
     <div class="stock-record-table" role="table" aria-label="Stock Guru evaluator records">
@@ -4851,7 +7632,7 @@ function stockSourcesMarkup() {
           <span>Source health</span>
           <h4>${escapeHtml(stockStatusLabel(stockOfficeOverview?.sourceHealth?.status || "partial"))}</h4>
         </div>
-        <button type="button" data-stock-action="sync">${stockOfficeLoading ? "Syncing..." : "Sync local files"}</button>
+        <button type="button" data-stock-action="sync">${stockOfficeLoading ? "Refreshing..." : "Refresh data"}</button>
       </div>
       <div class="stock-source-list">
         ${sources
@@ -4895,7 +7676,7 @@ function stockReadinessMarkup() {
           .map((item) => `<li>${escapeHtml(item)}</li>`)
           .join("")}
       </ul>
-      <small>No order, transfer, broker account, or trade-execution endpoint is exposed here.</small>
+      <small>Use View app for official Robinhood connection status and guarded order drafting. Deposits, transfers, and unattended live orders remain blocked.</small>
     </section>
   `;
 }
@@ -4907,10 +7688,10 @@ function stockChatMarkup() {
     <section class="stock-chat-card">
       <div class="stock-section-head">
         <div>
-          <span>Read-only assistant</span>
+          <span>Guarded assistant</span>
           <h4>Ask Stock Guru data</h4>
         </div>
-        <em>Research only</em>
+        <em>Research + mirror review</em>
       </div>
       <div class="stock-chat-log">
         ${
@@ -4930,7 +7711,7 @@ function stockChatMarkup() {
                   `,
                 )
                 .join("")
-            : `<article class="assistant"><strong>Stock Office</strong><p>Ask about top setups, readiness blockers, stale sources, or the masked broker snapshot.</p></article>`
+            : `<article class="assistant"><strong>Stock Office</strong><p>Ask about top setups, Mirror Lab decisions, disclosure delay, readiness blockers, or the masked broker snapshot.</p></article>`
         }
       </div>
       <div class="stock-chat-input">
@@ -4973,35 +7754,51 @@ function stockOfficeMarkup(card) {
   const profile = businessOfficeProfile(card.id);
   const metrics = stockOfficeOverview?.metrics || {};
   const sourceHealth = stockOfficeOverview?.sourceHealth || {};
-  const workspace = stockOfficeOverview?.workspace || {
-    title: "Stock Office",
-    description: profile.goal,
-    mode: "read_only_guarded",
-    safetyRule: "Research and analytics only. No broker actions are available.",
-  };
-  const metricCards = [
-    ["Records", metrics.trackedRecords ?? "—", `${metrics.validSetups ?? 0} valid setup(s)`],
-    ["Watchlist", metrics.watchlistCount ?? "—", "local universe"],
-    ["Rejected", metrics.rejectedRecords ?? "—", "risk filtered"],
-    ["Sources", sourceHealth.ready ?? "—", `${sourceHealth.stale ?? 0} stale · ${sourceHealth.error ?? 0} error`],
-    ["Buying power", metrics.buyingPower || "Unknown", "masked broker snapshot"],
-    ["Live auto", metrics.readyForLiveAuto ? "Ready source" : "Blocked", "Argentum remains read-only"],
-  ];
+  const { control, capital, positions, positionValue, buyingPower, accountValue } = stockLiveSnapshot();
+  const primaryPosition = positions[0] || null;
+  const primaryPositionValue = primaryPosition ? stockPositionValue(primaryPosition) : null;
+  const totalSources = Number(sourceHealth.total || 0);
+  const sourceScore = totalSources ? `${sourceHealth.ready || 0}/${totalSources}` : String(sourceHealth.ready ?? "—");
+  const dayPnl = capital.dayPnlDollars;
+  const positionQuantity = primaryPosition ? stockNumericValue(primaryPosition.quantity ?? primaryPosition.sharesAvailableForSells) : null;
   return `
     <div class="office-detail-panel stock-office-panel">
       <div class="office-detail-header">
         <span class="office-avatar" style="--module-color: ${escapeHtml(card.color)}" aria-hidden="true">${moduleIconMarkup(card.id)}</span>
         <div class="office-header-copy">
-          <h3>${escapeHtml(profile.title)}</h3>
-          <p>${escapeHtml(workspace.description)}</p>
+          <h3>Stock Office</h3>
+          <p>${escapeHtml(String(metrics.trackedRecords ?? 0))} stocks monitored · ${escapeHtml(pluralize(positions.length, "live position"))} · ${escapeHtml(control.authenticationVerified ? "Robinhood live" : "Robinhood needs refresh")}</p>
         </div>
         <div class="office-header-actions">
-          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">View app</a>
+          <a class="office-header-app-link" href="${escapeHtml(profile.appUrl)}">Open Stock Office</a>
           <button class="module-info-close" type="button" aria-label="Close office">×</button>
         </div>
       </div>
-      <div class="stock-office-status-row">
-        ${metricCards.map(([label, value, hint]) => stockMetricMarkup(label, value, hint)).join("")}
+      <section class="stock-office-account-summary">
+        <div class="stock-office-balance">
+          <span>Live portfolio</span>
+          <strong>${escapeHtml(stockCurrency(accountValue))}</strong>
+          <small>${escapeHtml(control.snapshotUpdatedAt ? `Updated ${clippingOfficeRelativeTime(control.snapshotUpdatedAt)}` : "Waiting for live account")}</small>
+        </div>
+        <div class="stock-office-account-tape">
+          <div><span>Buying power</span><strong>${escapeHtml(stockCurrency(buyingPower))}</strong></div>
+          <div><span>Invested</span><strong>${escapeHtml(stockCurrency(capital.deployedDollars ?? positionValue))}</strong></div>
+          <div><span>Day P&amp;L</span><strong class="${Number(dayPnl || 0) < 0 ? "bad" : Number(dayPnl || 0) > 0 ? "good" : ""}">${escapeHtml(dayPnl === null || dayPnl === undefined ? "—" : stockCurrency(dayPnl))}</strong></div>
+          <div><span>Open orders</span><strong>${escapeHtml(String(control.openOrderCount || 0))}</strong></div>
+        </div>
+        <div class="stock-office-live-holding">
+          <span>${primaryPosition ? "Largest position" : "Positions"}</span>
+          <strong>${escapeHtml(primaryPosition?.symbol || "None")}</strong>
+          <small>${primaryPosition ? `${positionQuantity === null ? "—" : positionQuantity.toFixed(4)} shares · ${stockCurrency(primaryPositionValue)}` : "No live holding"}</small>
+        </div>
+      </section>
+      <div class="stock-office-signal-strip">
+        <div><span>Setups</span><strong>${escapeHtml(String(metrics.validSetups ?? 0))}</strong></div>
+        <div><span>Watchlist</span><strong>${escapeHtml(String(metrics.watchlistCount ?? 0))}</strong></div>
+        <div><span>Rejected</span><strong>${escapeHtml(String(metrics.rejectedRecords ?? 0))}</strong></div>
+        <div><span>Sources</span><strong>${escapeHtml(sourceScore)}</strong></div>
+        <div><span>Stale</span><strong>${escapeHtml(String(sourceHealth.stale ?? 0))}</strong></div>
+        <div><span>Mirror</span><strong>${escapeHtml(String(metrics.mirrorSignals ?? 0))}</strong></div>
       </div>
       <div class="stock-office-alerts">${stockOfficeAlertMarkup()}</div>
       <div class="stock-office-toolbar">
@@ -5028,27 +7825,22 @@ function stockOfficeMarkup(card) {
               <span>Evaluator records</span>
               <h4>${escapeHtml(pluralize(stockOfficeRecords.total || stockOfficeRecords.records?.length || 0, "record"))}</h4>
             </div>
-            <em>${escapeHtml(workspace.mode || "read_only_guarded")}</em>
+            <em>${escapeHtml(`${metrics.validSetups || 0} setups`)}</em>
           </div>
           ${stockRecordsMarkup()}
         </section>
         ${stockRecordDetailMarkup()}
-        ${stockReadinessMarkup()}
-        ${stockSourcesMarkup()}
-        ${stockChatMarkup()}
-        ${stockActivityMarkup()}
       </div>
-      <section class="stock-threat-card">
-        <h4>Security boundary</h4>
-        <ul>${safeList(stockOfficeOverview?.threatModel || [workspace.safetyRule], [], 5).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-      </section>
     </div>
   `;
 }
 
 function moduleInfoMarkup(roomKey) {
   const card = moduleCardData(roomKey);
+  if (resolveRoomKey(roomKey) === "depo-habitat") return agent101SupervisorOfficeMarkup(card);
   if (resolveRoomKey(roomKey) === "stock-office") return stockOfficeMarkup(card);
+  if (resolveRoomKey(roomKey) === "clips-office") return clippingOfficeMarkup(card);
+  if (resolveRoomKey(roomKey) === "print-shop-office") return printShopOfficeMarkup(card);
   return businessOfficeMarkup(card);
 }
 
@@ -5073,11 +7865,42 @@ function restoreModuleInfoPageScroll() {
   window.scrollTo(moduleInfoLockedScroll.x, moduleInfoLockedScroll.y);
 }
 
+function renderOpenAgent101SupervisorOffice(options = {}) {
+  if (!moduleInfoCard || moduleInfoCard.hidden || moduleInfoCard.dataset.station !== "depo-habitat") return;
+  const conversation = moduleInfoCard.querySelector("[data-supervisor-conversation]");
+  const briefing = moduleInfoCard.querySelector(".supervisor-office-briefing");
+  const input = moduleInfoCard.querySelector("[data-supervisor-composer] textarea");
+  if (input) agentSupervisorOfficeDraft = input.value;
+  const conversationNearBottom = !conversation || conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 72;
+  const conversationScrollTop = conversation?.scrollTop || 0;
+  const briefingScrollTop = briefing?.scrollTop || 0;
+  const hadInputFocus = document.activeElement === input;
+  const selectionStart = input?.selectionStart;
+  const selectionEnd = input?.selectionEnd;
+  moduleInfoCard.innerHTML = agent101SupervisorOfficeMarkup(moduleCardData("depo-habitat"));
+  const nextConversation = moduleInfoCard.querySelector("[data-supervisor-conversation]");
+  const nextBriefing = moduleInfoCard.querySelector(".supervisor-office-briefing");
+  const nextInput = moduleInfoCard.querySelector("[data-supervisor-composer] textarea");
+  if (nextConversation) {
+    nextConversation.scrollTop = options.forceBottom || conversationNearBottom
+      ? nextConversation.scrollHeight
+      : conversationScrollTop;
+  }
+  if (nextBriefing) nextBriefing.scrollTop = briefingScrollTop;
+  if (hadInputFocus && nextInput) {
+    nextInput.focus({ preventScroll: true });
+    if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+      nextInput.setSelectionRange(selectionStart, selectionEnd);
+    }
+  }
+}
+
 function closeModuleInfoCard() {
   if (!moduleInfoCard) return;
+  stopClippingOfficeOverviewPolling();
   unlockModuleInfoPageScroll();
   moduleInfoCard.hidden = true;
-  moduleInfoCard.classList.remove("open", "office-detail-card");
+  moduleInfoCard.classList.remove("open", "office-detail-card", "clipping-office-card", "agent-supervisor-card");
   moduleInfoCard.innerHTML = "";
 }
 
@@ -5124,6 +7947,9 @@ function openModuleInfoCard(roomKey, options = {}) {
   moduleInfoCard.dataset.station = resolved;
   moduleInfoCard.hidden = false;
   moduleInfoCard.classList.add("office-detail-card");
+  moduleInfoCard.classList.toggle("clipping-office-card", resolved === "clips-office");
+  moduleInfoCard.classList.toggle("print-shop-card", resolved === "print-shop-office");
+  moduleInfoCard.classList.toggle("agent-supervisor-card", resolved === "depo-habitat");
   moduleInfoCard.classList.remove("open");
   if (canPreservePosition) {
     moduleInfoCard.style.setProperty("--card-left", previousLeft);
@@ -5132,11 +7958,31 @@ function openModuleInfoCard(roomKey, options = {}) {
   requestAnimationFrame(() => {
     if (!canPreservePosition) positionModuleInfoCard(resolved);
     moduleInfoCard.classList.add("open");
+    if (resolved === "depo-habitat") {
+      const conversation = moduleInfoCard.querySelector("[data-supervisor-conversation]");
+      if (conversation) conversation.scrollTop = conversation.scrollHeight;
+    }
   });
+  if (resolved === "depo-habitat") {
+    loadAgent101Missions({ quiet: true }).catch(() => {});
+  }
   if (resolved === "stock-office") {
     loadStockOfficeData({ force: !stockOfficeOverview }).catch((error) => {
       stockOfficeError = error.message;
       renderOpenStockOfficeModal();
+    });
+  }
+  if (resolved === "clips-office") {
+    loadClippingOfficeOverview({ force: true }).catch((error) => {
+      clippingOfficeError = error.message;
+      renderOpenClippingOfficeModal();
+    });
+    startClippingOfficeOverviewPolling();
+  }
+  if (resolved === "print-shop-office") {
+    loadPrintShopOfficeOverview({ force: true }).catch((error) => {
+      printShopOfficeError = error.message;
+      renderOpenPrintShopOfficeModal();
     });
   }
 }
@@ -5151,10 +7997,6 @@ function renderShellData() {
   updateHabitatRoomRuntimeFromState();
   renderAgentRoster();
   renderOrbitScene();
-  if (moduleInfoCard && !moduleInfoCard.hidden && selectedRoomKey) {
-    moduleInfoCard.innerHTML = moduleInfoMarkup(selectedRoomKey);
-    positionModuleInfoCard(selectedRoomKey);
-  }
   renderSidebarAgentChat();
 }
 
@@ -5477,7 +8319,7 @@ function renderProfileIdentity(user) {
   if (settingsCurrentUser) settingsCurrentUser.textContent = user?.username || "Signed-in user";
   if (settingsSessionMeta) {
     const host = window.location.hostname || "127.0.0.1";
-    settingsSessionMeta.textContent = `Browser session - ${host}`;
+    settingsSessionMeta.textContent = `App session - ${host}`;
   }
 }
 
@@ -5669,6 +8511,262 @@ async function loadAiProviderSettings() {
   renderAiProviderSettings();
 }
 
+function renderLocalWorkspaces(workspaces = []) {
+  if (localWorkspaceCount) localWorkspaceCount.textContent = `${workspaces.length} folder${workspaces.length === 1 ? "" : "s"}`;
+  if (!localWorkspaceList) return;
+  localWorkspaceList.innerHTML = "";
+  if (!workspaces.length) {
+    localWorkspaceList.innerHTML = `
+      <div>
+        <span class="settings-list-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4Z"/><path d="M8 10h8"/></svg></span>
+        <div><strong>No folders allowed</strong><p>Choose a folder before any local file workspace is available to agents.</p></div>
+        <em>Locked</em>
+      </div>`;
+    return;
+  }
+  workspaces.forEach((workspace) => {
+    const permissions = workspace.permissions || {};
+    const row = document.createElement("div");
+    row.innerHTML = `
+      <span class="settings-list-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v9H3Z"/></svg></span>
+      <div><strong>${escapeHtml(workspace.label || "Workspace")}</strong><p>${escapeHtml(workspace.folderPath || "")}</p></div>
+      <em>${permissions.write ? "Read/write" : "Read only"}</em>`;
+    localWorkspaceList.appendChild(row);
+  });
+}
+
+async function loadLocalRuntimeSettings() {
+  if (!apiAvailable) return;
+  try {
+    const status = await api("/api/local/status");
+    const runtime = status.runtime || status;
+    if (localRuntimeMode) localRuntimeMode.textContent = runtime?.appMode === "local" ? "Local" : "Cloud";
+    if (localRuntimeHost) localRuntimeHost.textContent = `${runtime?.backendHost || "unknown"}:${runtime?.backendPort || ""}`;
+    if (localDatabaseStatus) localDatabaseStatus.textContent = status.database?.available ? "Ready" : "Cloud mode";
+    if (localSecretStatus) {
+      localSecretStatus.textContent = status.secretStorage?.preferred
+        ? `Local secrets use ${status.secretStorage.preferred}.`
+        : "Local secure storage unavailable in cloud mode.";
+    }
+    if (runtime?.appMode !== "local") {
+      if (localWorkspaceStatus) localWorkspaceStatus.textContent = "Folder permissions are only available in the Mac desktop app.";
+      renderLocalWorkspaces([]);
+      return;
+    }
+    const workspacePayload = await api("/api/local/files/workspaces");
+    renderLocalWorkspaces(workspacePayload.workspaces || []);
+    if (localWorkspaceStatus) localWorkspaceStatus.textContent = "Only selected folders are available to local agents.";
+  } catch (error) {
+    if (localRuntimeMode) localRuntimeMode.textContent = "Cloud";
+    if (localDatabaseStatus) localDatabaseStatus.textContent = "Unavailable";
+    if (localWorkspaceStatus) localWorkspaceStatus.textContent = error.message;
+  }
+}
+
+function renderObsidianResults(results = []) {
+  if (!obsidianSearchResults) return;
+  obsidianSearchResults.innerHTML = results.length
+    ? results.map((note) => `
+      <div>
+        <span class="settings-list-icon" aria-hidden="true">${memoryIconMarkup("document")}</span>
+        <div>
+          <strong>${escapeHtml(note.title || note.path || "Vault note")}</strong>
+          <p>${escapeHtml(note.excerpt || note.snippet || note.path || "")}</p>
+        </div>
+        <em>${escapeHtml(note.path || "note")}</em>
+      </div>`).join("")
+    : `
+      <div>
+        <span class="settings-list-icon" aria-hidden="true">${memoryIconMarkup("search")}</span>
+        <div><strong>No vault results yet</strong><p>Search the Obsidian vault or initialize Argentum-Brain.</p></div>
+        <em>Ready</em>
+      </div>`;
+}
+
+function compactLocalPath(value) {
+  const text = String(value || "");
+  if (!text) return "None";
+  const parts = text.split(/[\\/]/).filter(Boolean);
+  return parts.length > 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : text;
+}
+
+function brainValue(value, fallback = "Unknown") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function renderBrainHealth(payload = {}) {
+  latestBrainHealth = payload;
+  const startup = payload.startup || {};
+  const vault = payload.vault || {};
+  const context = payload.context || {};
+  const conflicts = payload.conflicts || [];
+  const latestBackup = payload.backup?.latest || startup.lastBackup || "";
+  const status = startup.status || vault.status || "unavailable";
+  if (brainHealthStatusChip) {
+    brainHealthStatusChip.textContent = status === "ready" ? "Ready" : status;
+    brainHealthStatusChip.classList.toggle("danger-status", status !== "ready");
+  }
+  if (brainHealthGrid) {
+    const counts = vault.counts || {};
+    const indexed = counts.notes || vault.noteCount || 0;
+    const canonical = counts.canonical || vault.canonicalCount || 0;
+    brainHealthGrid.innerHTML = `
+      <div><small>Schema</small><strong>${escapeHtml(brainValue(startup.schemaVersion || vault.schemaVersion, "Missing"))}</strong><span>${escapeHtml(brainValue(startup.validationStatus || vault.validationStatus || vault.status, "Not connected"))}</span></div>
+      <div><small>Indexed</small><strong>${escapeHtml(indexed)}</strong><span>Search records</span></div>
+      <div><small>Canonical</small><strong>${escapeHtml(canonical)}</strong><span>Entities</span></div>
+      <div><small>Conflicts</small><strong>${escapeHtml(conflicts.length)}</strong><span>${conflicts.length ? "Needs review" : "Clear"}</span></div>
+      <div><small>Context</small><strong>${escapeHtml(context.contextHash ? context.contextHash.slice(0, 8) : "Not built")}</strong><span>${escapeHtml(context.tokenEstimate || 0)} tokens / ${escapeHtml(context.citationCount || 0)} citations</span></div>
+      <div><small>Backup</small><strong>${escapeHtml(compactLocalPath(latestBackup))}</strong><span>${latestBackup ? "Latest checkpoint" : "Create one before risky work"}</span></div>
+    `;
+  }
+  if (brainBackupStatusChip) {
+    brainBackupStatusChip.textContent = latestBackup ? "Backup found" : "No backup";
+    brainBackupStatusChip.classList.toggle("danger-status", !latestBackup);
+  }
+  if (brainBackupVaultPath) brainBackupVaultPath.textContent = compactLocalPath(startup.vaultPath || vault.vaultPath);
+  if (brainBackupDatabasePath) brainBackupDatabasePath.textContent = compactLocalPath(payload.database?.path);
+  if (brainBackupLatest) brainBackupLatest.textContent = compactLocalPath(latestBackup);
+  if (brainBackupVerified) brainBackupVerified.textContent = latestBackup ? "Run verify before restore" : "No checkpoint yet";
+}
+
+function renderBrainContext(context = null) {
+  latestBrainContext = context;
+  if (!context) {
+    if (brainContextMeta) brainContextMeta.textContent = "No context build yet";
+    if (brainExcludedMeta) brainExcludedMeta.textContent = "0 exclusions";
+    if (brainContextList) brainContextList.innerHTML = "";
+    if (brainExcludedList) brainExcludedList.innerHTML = "";
+    return;
+  }
+  const sections = [
+    ["governance", context.governance],
+    ["agent", context.agent ? [context.agent] : []],
+    ["business", context.business],
+    ["office", context.office],
+    ["project", context.project],
+    ["task", context.task],
+    ["approvals", context.approvals],
+    ["procedures", context.procedures],
+    ["memory", context.memory],
+    ["toolResults", context.toolResults],
+    ["conversation", context.conversation],
+  ];
+  const records = sections.flatMap(([section, items]) => (items || [])
+    .filter(Boolean)
+    .map((record) => ({ ...record, section })));
+  if (brainContextMeta) {
+    brainContextMeta.textContent = `${records.length} records / ${context.tokenEstimate || 0} tokens / ${String(context.contextHash || "").slice(0, 10)}`;
+  }
+  if (brainExcludedMeta) brainExcludedMeta.textContent = `${(context.excluded || []).length} exclusions`;
+  if (brainContextList) {
+    brainContextList.innerHTML = records.length
+      ? records.map((record) => `
+        <article class="brain-record ${record.canonicalPath ? "clickable" : ""}" data-brain-open-path="${escapeHtml(record.canonicalPath || "")}" title="${record.canonicalPath ? "Open source note" : ""}">
+          <div>
+            <strong>${escapeHtml(record.title || record.id || "Context record")}</strong>
+            <p>${escapeHtml(record.canonicalPath || record.id || "")}</p>
+          </div>
+          <span>${escapeHtml(record.section || record.type || "record")}</span>
+          <em>${escapeHtml(record.whyIncluded || "included")}</em>
+        </article>
+      `).join("")
+      : `<div class="empty-state compact-empty"><strong>No context records</strong><p>Run Build Context after the Brain connects.</p></div>`;
+  }
+  if (brainExcludedList) {
+    const excluded = context.excluded || [];
+    brainExcludedList.innerHTML = excluded.length
+      ? excluded.slice(0, 30).map((record) => `
+        <article class="brain-record excluded ${record.canonicalPath ? "clickable" : ""}" data-brain-open-path="${escapeHtml(record.canonicalPath || "")}" title="${record.canonicalPath ? "Open source note" : ""}">
+          <div>
+            <strong>${escapeHtml(record.title || record.record || "Excluded record")}</strong>
+            <p>${escapeHtml(record.canonicalPath || record.record || "")}</p>
+          </div>
+          <span>${escapeHtml(record.type || "record")}</span>
+          <em>${escapeHtml(record.reason || "excluded")}</em>
+        </article>
+      `).join("")
+      : `<div class="empty-state compact-empty"><strong>No exclusions</strong><p>Current context has no rejected, archived, duplicate, expired, or unrelated records.</p></div>`;
+  }
+}
+
+async function openBrainSourceNote(relPath) {
+  const pathValue = String(relPath || "").trim();
+  const vaultPath = obsidianVaultPathInput?.value || latestBrainHealth?.startup?.vaultPath || latestBrainHealth?.vault?.vaultPath || "";
+  if (!pathValue || !vaultPath) return;
+  const fullPath = `${vaultPath.replace(/\/+$/, "")}/${pathValue.replace(/^\/+/, "")}`;
+  try {
+    if (window.argentumDesktop?.openPath) {
+      await window.argentumDesktop.openPath(fullPath);
+    } else {
+      window.open(`file://${fullPath}`);
+    }
+    if (brainActionStatus) brainActionStatus.textContent = `Opened ${pathValue}.`;
+  } catch (error) {
+    if (brainActionStatus) brainActionStatus.textContent = error.message;
+  }
+}
+
+async function loadBrainHealth() {
+  if (!apiAvailable || !brainHealthGrid) return;
+  try {
+    const health = await api("/api/brain/health");
+    renderBrainHealth(health);
+    if (brainActionStatus) brainActionStatus.textContent = `Brain ready at ${compactLocalPath(health.startup?.vaultPath)}.`;
+    if (brainBackupStatus) brainBackupStatus.textContent = health.backup?.latest ? `Latest backup: ${health.backup.latest}` : "No backup found. Create one before risky memory work.";
+  } catch (error) {
+    if (brainHealthStatusChip) {
+      brainHealthStatusChip.textContent = "Unavailable";
+      brainHealthStatusChip.classList.add("danger-status");
+    }
+    if (brainActionStatus) brainActionStatus.textContent = error.message;
+    if (brainBackupStatus) brainBackupStatus.textContent = error.message;
+  }
+}
+
+function countObsidianType(results = [], prefix = "") {
+  return results.filter((item) => String(item.path || "").startsWith(prefix)).length;
+}
+
+async function loadObsidianStatus() {
+  if (!apiAvailable) return;
+  try {
+    const status = await api("/api/obsidian/status");
+    if (obsidianVaultStatusChip) {
+      obsidianVaultStatusChip.textContent = status.status || "Missing";
+      obsidianVaultStatusChip.classList.toggle("danger-status", !status.connected);
+    }
+    if (obsidianVaultStatus) obsidianVaultStatus.textContent = status.status || "Missing";
+    if (obsidianVaultPathInput) obsidianVaultPathInput.value = status.vaultPath || status.defaultVaultPath || "";
+    if (obsidianVaultPathStatus) {
+      const counts = status.counts || {};
+      obsidianVaultPathStatus.textContent = status.connected
+        ? `Healthy v${status.schemaVersion || "2.0.0"}: ${counts.canonical || status.canonicalCount || 0} canonical, ${counts.notes || status.noteCount || 0} notes`
+        : `${status.status}: ${status.vaultPath || status.defaultVaultPath || ""}`;
+    }
+    const [notes, entitiesPayload] = status.initialized
+      ? await Promise.all([
+        postJson("/api/obsidian/search", { query: "", limit: 50 }),
+        api("/api/obsidian/entities"),
+      ])
+      : [{ results: [] }, { entities: [] }];
+    const results = notes.results || [];
+    const entities = entitiesPayload.entities || [];
+    const countEntityType = (type) => entities.filter((entity) => entity.type === type).length;
+    if (obsidianDailyCount) obsidianDailyCount.textContent = String(countObsidianType(results, "90_Execution/Daily_Notes/"));
+    if (obsidianBusinessCount) obsidianBusinessCount.textContent = String(countEntityType("business"));
+    if (obsidianAgentCount) obsidianAgentCount.textContent = String(countEntityType("agent"));
+    if (obsidianSkillCount) obsidianSkillCount.textContent = String(countEntityType("skill"));
+    if (obsidianWorkflowCount) obsidianWorkflowCount.textContent = String(countEntityType("workflow"));
+    renderObsidianResults(results.slice(0, 6));
+    await loadBrainHealth();
+  } catch (error) {
+    if (obsidianVaultStatus) obsidianVaultStatus.textContent = "Unavailable";
+    if (obsidianVaultPathStatus) obsidianVaultPathStatus.textContent = error.message;
+    await loadBrainHealth();
+  }
+}
+
 function fallbackAgent101ToolStatus() {
   const connectors = [
     { id: "openai", label: "OpenAI", status: aiProviderSettings.connectionStatus || "not_configured", mode: aiProviderSettings.modeLabel || "Local Demo" },
@@ -5808,37 +8906,17 @@ async function loadAgent101ToolStatus() {
 }
 
 function fallbackSidebarStatus() {
-  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
-  const approvals = Array.isArray(state.approvals) ? state.approvals : [];
-  const artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
-  const memoryLayers = state.memory && typeof state.memory === "object" ? state.memory : {};
-  const memoryCount = Object.values(memoryLayers).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
-  const queued = tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
-  const pending = approvals.filter((approval) => approval.status === "pending").length;
-  const queue = queued + pending;
-  const workloadPercent = Math.min(100, queue * 18 + artifacts.length * 4);
-  const healthPercent = Math.max(35, 100 - workloadPercent);
-  const agentHealth = workloadPercent >= 78 ? "Overloaded" : workloadPercent >= 48 ? "Busy" : "Stable";
   return {
-    health: "Local systems operational",
-    agentHealth,
+    health: "Local runtime unavailable",
+    agentHealth: "Offline",
     agentMode: depoAgent.mode,
     metrics: [
-      { label: "Agent Health", value: agentHealth, percent: healthPercent },
-      { label: "Workload", value: workloadPercent >= 78 ? "Heavy" : workloadPercent >= 48 ? "Medium" : "Light", percent: workloadPercent },
-      { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
-      { label: "Safety Gate", value: pending ? `${pending} pending` : "On", percent: pending ? Math.min(100, 50 + pending * 12) : 100 },
+      { label: "Runtime", value: "Offline", percent: 0 },
+      { label: "Queued work", value: "Unavailable", percent: null },
+      { label: "Argentum RAM", value: "Unavailable", percent: null },
+      { label: "Human Gate", value: "Unavailable", percent: null },
     ],
-    chart: [
-      healthPercent,
-      Math.min(100, 28 + queued * 12),
-      Math.min(100, 30 + pending * 10),
-      Math.min(100, 26 + artifacts.length * 7),
-      Math.min(100, 34 + memoryCount * 3),
-      workloadPercent,
-      pending ? 68 : 90,
-      88,
-    ],
+    chart: [],
   };
 }
 
@@ -5865,12 +8943,17 @@ function renderSidebarSystemStatus() {
   const metrics = Array.isArray(status.metrics) ? status.metrics : [];
   sidebarStatusRows.forEach((row, index) => {
     const metric = metrics[index] || fallbackSidebarStatus().metrics[index];
-    if (row.label) row.label.textContent = metric.label;
+    const displayLabel = metric.label === "Argentum RAM" ? "Local memory" : metric.label;
+    if (row.label) row.label.textContent = displayLabel;
     if (row.value) row.value.textContent = metric.value;
-    if (row.bar) row.bar.style.setProperty("--bar", `${Math.max(0, Math.min(100, Number(metric.percent) || 0))}%`);
+    if (row.bar) {
+      row.bar.classList.toggle("unavailable", metric.percent == null);
+      row.bar.style.setProperty("--bar", `${Math.max(0, Math.min(100, Number(metric.percent) || 0))}%`);
+    }
   });
   if (sidebarMiniChart) {
-    const chart = Array.isArray(status.chart) && status.chart.length ? status.chart : fallbackSidebarStatus().chart;
+    const chart = Array.isArray(status.chart) ? status.chart : [];
+    sidebarMiniChart.classList.toggle("empty", !chart.length);
     sidebarMiniChart.innerHTML = chart.slice(-10).map((height) => `<i style="height: ${Math.max(8, Math.min(100, Number(height) || 8))}%"></i>`).join("");
   }
 }
@@ -5885,6 +8968,52 @@ function renderAiProviderTestResult(result, type = "info") {
     <strong>${escapeHtml(title)}</strong>
     <p>${escapeHtml(message)}</p>
   `;
+}
+
+function renderBusinessProfileSettings() {
+  const profile = businessProfileState?.profile || state.businessProfile || {};
+  const readiness = businessProfileState?.readiness || {};
+  if (businessCompanyName) businessCompanyName.value = profile.companyName || "";
+  if (businessTypeInput) businessTypeInput.value = profile.businessType || "";
+  if (businessStageInput) businessStageInput.value = profile.currentStage || "";
+  if (businessTimeZoneInput) businessTimeZoneInput.value = profile.timeZone || "America/New_York";
+  if (businessMissionInput) businessMissionInput.value = profile.mission || "";
+  if (businessPrimaryGoalInput) businessPrimaryGoalInput.value = (profile.goals || [])[0]?.title || "";
+  if (businessKpiInput) {
+    businessKpiInput.value = (profile.kpis || [])
+      .map((kpi) => kpi.label || kpi.title || kpi.id)
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(", ");
+  }
+  const score = Number.isFinite(Number(readiness.score)) ? Number(readiness.score) : 0;
+  if (businessReadinessChip) businessReadinessChip.textContent = `${score}% ready`;
+  if (businessReadinessSummary) {
+    const missing = Array.isArray(readiness.missing) ? readiness.missing : [];
+    businessReadinessSummary.textContent = missing.length
+      ? `Missing: ${missing.slice(0, 5).join(", ")}. Agent 101 will treat those areas as unknown.`
+      : "Core business context is ready for Agent 101's operating context.";
+  }
+  if (businessReadinessGrid) {
+    const checks = Array.isArray(readiness.checks) ? readiness.checks : [];
+    businessReadinessGrid.innerHTML = checks.length
+      ? checks.map((check) => `<span><b>${escapeHtml(check.label)}</b><em>${escapeHtml(check.status)}</em></span>`).join("")
+      : `<span><b>Profile</b><em>Loading</em></span>`;
+  }
+}
+
+async function loadBusinessProfileSettings() {
+  if (!apiAvailable) {
+    renderBusinessProfileSettings();
+    return;
+  }
+  try {
+    businessProfileState = await api("/api/business/profile");
+    state.businessProfile = businessProfileState.profile;
+  } catch (error) {
+    addLocalAudit("Business profile unavailable", error.message);
+  }
+  renderBusinessProfileSettings();
 }
 
 function renderCapabilities() {
@@ -6685,30 +9814,7 @@ function renderMemory() {
 
 function systemFeedEntries() {
   const auditEntries = Array.isArray(state.audit) ? state.audit : [];
-  const seededEntries = [
-    {
-      title: "Agent 101 activated",
-      body: "Agent 101 is active in draft-only mode with no revenue claimed.",
-    },
-    {
-      title: "First workflow waiting",
-      body: "Agent 101 is ready for one bounded task with evidence, draft output, and approval packaging.",
-    },
-    {
-      title: "Revenue cleared",
-      body: "The prototype is no longer showing invented earnings or mature-company counters.",
-    },
-    {
-      title: "External actions locked",
-      body: "Publishing, money movement, account changes, trades, customer contact, and new agents remain gated.",
-    },
-    {
-      title: "Human gate ready",
-      body: "Risky work must be packaged for the operator instead of executed automatically.",
-    },
-  ];
-
-  return [...auditEntries, ...seededEntries].slice(0, 12).map((entry, index) => ({
+  return auditEntries.slice(0, 12).map((entry, index) => ({
     title: entry.title || "System event",
     body: entry.body || "Event recorded in the local console.",
     createdAt: entry.createdAt || entry.timestamp || "",
@@ -6723,8 +9829,7 @@ function formatFeedTime(entry) {
       return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
   }
-  if (entry.index === 0) return "Just now";
-  return `${entry.index * 2}m ago`;
+  return "No timestamp";
 }
 
 function compactFeedTitle(title) {
@@ -6880,8 +9985,8 @@ function renderStatus() {
   pauseBtn.setAttribute("aria-label", paused ? "Resume Agent 101" : "Pause Agent 101");
   pauseBtn.title = paused ? "Resume Agent 101" : "Pause Agent 101";
   pauseBtn.innerHTML = paused
-    ? `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
-    : `<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>`;
+    ? `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>Resume</span>`
+    : `<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg><span>Pause</span>`;
 }
 
 function notificationItems() {
@@ -7128,26 +10233,37 @@ function renderKpis() {
 function render() {
   renderShellData();
   renderSidebarSystemStatus();
-  renderSidebarAgentChat();
   setStep();
   renderStatus();
   renderNotifications();
-  renderGovernance();
-  renderKpis();
-  renderOverviewTelemetry();
-  renderAgent();
-  renderCapabilities();
-  renderWorkflows();
-  renderTemplates();
-  renderAgent101ToolStatus();
-  renderTasks();
-  renderFunctions();
-  renderExecutions();
-  renderApprovals();
-  renderArtifacts();
-  renderMemory();
-  renderAudit();
-  renderInspector();
+  renderActiveWorkspaceView();
+  if (projectInfrastructureOverlay && !projectInfrastructureOverlay.hidden) renderProjectInfrastructure();
+}
+
+function renderActiveWorkspaceView() {
+  if (activeWorkspaceView === "floor") {
+    renderOverviewTelemetry();
+    renderInspector();
+    return;
+  }
+  if (activeWorkspaceView === "depo") {
+    renderGovernance();
+    renderKpis();
+    renderAgent();
+    renderCapabilities();
+    renderWorkflows();
+    renderTemplates();
+    renderAgent101ToolStatus();
+    renderTasks();
+    renderFunctions();
+    renderExecutions();
+    return;
+  }
+  if (activeWorkspaceView === "approval") renderApprovals();
+  else if (activeWorkspaceView === "outputs") renderArtifacts();
+  else if (activeWorkspaceView === "memory") renderMemory();
+  else if (activeWorkspaceView === "feed") renderAudit();
+  else if (activeWorkspaceView === "settings") renderAgent101ToolStatus();
 }
 
 function addLocalAudit(title, body) {
@@ -7220,7 +10336,7 @@ function setDepoWorkflowStage(stageId, context = "Run cycle") {
   depoAgent.actions = [`Moved to ${stageLabel}`, ...depoAgent.actions].slice(0, 8);
   addLocalAudit(`Agent 101 moved to ${stageLabel}`, `${context}. Human Gate remains required for external or risky actions.`);
   render();
-  openModuleInfoCard(resolved);
+  openOfficeAfterTransit(resolved);
 }
 
 function advanceDepoWorkflowStage(context = "Run cycle") {
@@ -7844,7 +10960,8 @@ async function submitDepoChat(roomKey, message) {
       });
       mergeAgent101ThreadPayload(payload);
       if (payload.thread?.id) setActiveAgent101Thread(resolved, payload.thread.id);
-      if (payload.run || payload.response?.task || payload.response?.artifact || payload.response?.approval || payload.response?.memory) {
+      await acceptAgent101MissionPayload(payload);
+      if (payload.mission || payload.missionId || payload.run || payload.response?.task || payload.response?.artifact || payload.response?.approval || payload.response?.memory) {
         await loadState();
         await loadAgent101ToolStatus();
       } else {
@@ -8068,6 +11185,20 @@ function processFirstPendingApproval(action) {
   openModuleInfoCard("human-gate");
 }
 
+function runAgentCycle() {
+  const nextStage = advanceDepoWorkflowStage("Run cycle");
+  return mutate("/api/cycle").then((changed) => {
+    if (changed) return;
+    state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
+    addLocalAudit("Cycle changed locally", `Agent 101 advanced to ${depoStageLabel(nextStage)}. Start the app with npm start to persist backend mission state.`);
+    render();
+  }).catch((error) => {
+    state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
+    addLocalAudit("Cycle changed locally", `${error.message}. Agent 101 command-floor stage remains ${depoStageLabel(nextStage)} locally.`);
+    render();
+  });
+}
+
 function handleModuleAction(action, stationId) {
   if (action === "Open workspace") {
     openWorkspace(stationId);
@@ -8076,7 +11207,7 @@ function handleModuleAction(action, stationId) {
   } else if (action === "View logs") {
     openSystemFeed();
   } else if (action === "Run cycle") {
-    runCycleBtn?.click();
+    runAgentCycle();
   } else if (action === "Run check") {
     recordSafeRoomAction("Run check", stationId);
   } else if (action === "Package for approval") {
@@ -8107,6 +11238,12 @@ function handleModuleAction(action, stationId) {
     processFirstPendingApproval("approve");
   } else if (action === "Reject") {
     processFirstPendingApproval("block");
+  } else if (action === "Open Print Shop") {
+    window.location.href = "/apps/print-shop-office/";
+  } else if (action === "Research trending products") {
+    window.location.href = "/apps/print-shop-office/#research";
+  } else if (action === "View print queue") {
+    window.location.href = "/apps/print-shop-office/#design-files";
   } else {
     recordSafeRoomAction(action, stationId);
   }
@@ -8131,21 +11268,55 @@ function startCycle() {
   }, 5200);
 }
 
+const workspaceViewCopy = {
+  floor: ["Control Floor", "Offices, active work, and approvals in one view."],
+  depo: ["Supervisor", "Assign work, follow progress, and answer exact decisions."],
+  approval: ["Human Gate", "Review every action that can publish, spend, contact, or change an account."],
+  outputs: ["Outputs", "Inspect saved deliverables and their verification state."],
+  memory: ["Memory", "Review the local context Agent 101 can use."],
+  feed: ["System feed", "Read the local event and safety record."],
+  settings: ["Settings", "Manage local access, providers, and runtime boundaries."],
+};
+
 function activateView(viewName) {
   const target = document.querySelector(`#view-${CSS.escape(viewName)}`);
   if (!target) return;
+  activeWorkspaceView = viewName;
   document.querySelectorAll(".nav-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.view === viewName);
+    const active = item.dataset.view === viewName;
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
+  const [title, description] = workspaceViewCopy[viewName] || workspaceViewCopy.floor;
+  if (workspaceViewTitle) workspaceViewTitle.textContent = title;
+  if (workspaceViewDescription) workspaceViewDescription.textContent = description;
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   target.classList.add("active");
+  renderActiveWorkspaceView();
+  if (viewName === "floor") {
+    loadClippingOfficeOverview({ force: Boolean(clippingOfficeOverview) });
+    stopClippingOfficeOverviewPolling();
+  } else if (!clippingOfficeModalIsOpen()) {
+    stopClippingOfficeOverviewPolling();
+  }
   if (viewName === "settings") {
     setActiveSettingsSection(activeSettingsTarget);
     loadAccessState();
     loadAiProviderSettings();
     loadAgent101ToolStatus();
+    loadBusinessProfileSettings();
+    loadLocalRuntimeSettings();
+    loadObsidianStatus();
   }
+  if (viewName === "memory") loadObsidianStatus();
 }
+
+window.openArgentumSettings = () => activateView("settings");
+window.openArgentumHumanGate = () => activateView("approval");
+window.addEventListener("argentum:approval-changed", () => {
+  loadState().catch((error) => addLocalAudit("Human Gate refresh unavailable", error.message));
+});
 
 async function createClipsBriefFromAgent() {
   const payload = {
@@ -8328,12 +11499,242 @@ function setActiveSettingsSection(targetId = "settings-access") {
 settingsNavButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveSettingsSection(button.dataset.settingsTarget);
+    if (button.dataset.settingsTarget === "settings-business-profile") loadBusinessProfileSettings();
+    if (button.dataset.settingsTarget === "settings-storage" || button.dataset.settingsTarget === "settings-api-keys") loadLocalRuntimeSettings();
   });
+});
+
+localSecretForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(localSecretForm);
+  try {
+    const result = await postJson("/api/local/secrets", {
+      provider: form.get("provider"),
+      value: form.get("value"),
+    });
+    if (localSecretValue) localSecretValue.value = "";
+    const reloadCopy = result.clippingOfficeReloaded ? " Clips Office connection settings refreshed." : "";
+    if (localSecretStatus) localSecretStatus.textContent = `${result.provider} saved to ${result.storage}.${reloadCopy}`;
+    showAccessMessage(`Local secret saved. The raw value was not returned to the browser.${reloadCopy}`, "success");
+  } catch (error) {
+    if (localSecretStatus) localSecretStatus.textContent = error.message;
+    showAccessMessage(error.message, "error");
+  }
+});
+
+pickLocalWorkspaceBtn?.addEventListener("click", async () => {
+  clearAccessMessage();
+  try {
+    let folderPath = "";
+    if (window.argentumDesktop?.pickFolder) {
+      folderPath = await window.argentumDesktop.pickFolder();
+    }
+    if (!folderPath) {
+      folderPath = window.prompt("Folder path to allow for Argentum OS agents:");
+    }
+    if (!folderPath) return;
+    await postJson("/api/local/files/workspaces", {
+      folderPath,
+      permissions: { read: true, write: false, delete: false },
+    });
+    await loadLocalRuntimeSettings();
+    showAccessMessage("Local folder added with read-only permission.", "success");
+  } catch (error) {
+    if (localWorkspaceStatus) localWorkspaceStatus.textContent = error.message;
+    showAccessMessage(error.message, "error");
+  }
+});
+
+pickObsidianVaultBtn?.addEventListener("click", async () => {
+  try {
+    let folderPath = "";
+    if (window.argentumDesktop?.pickFolder) folderPath = await window.argentumDesktop.pickFolder();
+    if (!folderPath) folderPath = window.prompt("Path to your Argentum-Brain Obsidian vault:");
+    if (!folderPath) return;
+    if (obsidianVaultPathInput) obsidianVaultPathInput.value = folderPath;
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+obsidianVaultForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  try {
+    await postJson("/api/obsidian/settings", { vaultPath: obsidianVaultPathInput?.value || "" });
+    await loadObsidianStatus();
+    showAccessMessage("Obsidian vault path saved.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
+});
+
+obsidianSearchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const payload = await postJson("/api/obsidian/search", { query: obsidianSearchInput?.value || "", limit: 20 });
+    renderObsidianResults(payload.results || []);
+  } catch (error) {
+    renderObsidianResults([]);
+    addLocalAudit("Obsidian search unavailable", error.message);
+  }
+});
+
+document.querySelectorAll("[data-obsidian-action]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const action = button.dataset.obsidianAction;
+    try {
+      if (action === "init") {
+        await postJson("/api/obsidian/init", { vaultPath: obsidianVaultPathInput?.value || "" });
+        await loadObsidianStatus();
+        showAccessMessage("Argentum-Brain vault initialized.", "success");
+      } else if (action === "daily") {
+        await postJson("/api/obsidian/daily-note", {
+          completed: "Argentum OS memory center connected to Obsidian.",
+          links: { business: "10_Businesses/Argentum/_Business", agent: "30_Agents/Agent_1010/_Agent", workflow: "50_Operations/Workflows/Human_Gate_Workflow" },
+        });
+        await loadObsidianStatus();
+      } else if (action === "skill" || action === "agent" || action === "business") {
+        const name = window.prompt(`Name for the new ${action} note:`);
+        if (!name) return;
+        await postJson("/api/obsidian/create", { type: action, name });
+        await loadObsidianStatus();
+      } else if (action === "open") {
+        const pathToOpen = obsidianVaultPathInput?.value || "";
+        if (pathToOpen && window.argentumDesktop?.openPath) {
+          await window.argentumDesktop.openPath(pathToOpen);
+        } else if (pathToOpen) {
+          window.open(`file://${pathToOpen}`);
+        }
+      }
+    } catch (error) {
+      showAccessMessage(error.message, "error");
+    }
+  });
+});
+
+document.querySelectorAll("[data-brain-action]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const action = button.dataset.brainAction;
+    try {
+      if (brainActionStatus) brainActionStatus.textContent = "Running Brain command...";
+      if (action === "verify") {
+        const result = await postJson("/api/brain/verify", {});
+        const report = result.report || {};
+        if (brainActionStatus) brainActionStatus.textContent = `Verification ${report.status || "complete"}: ${report.criticalCount || 0} critical issues.`;
+      } else if (action === "context") {
+        const result = await postJson("/api/brain/context/agent101", {
+          officeId: "office.clipping",
+          projectId: "project.clip_office_production",
+          includeTrace: true,
+        });
+        renderBrainContext(result.context);
+        if (brainActionStatus) brainActionStatus.textContent = `Context built: ${String(result.context?.contextHash || "").slice(0, 12)}.`;
+      } else if (action === "backup") {
+        const result = await postJson("/api/brain/backup", {});
+        const backup = result.backup || {};
+        if (brainActionStatus) brainActionStatus.textContent = `Backup created: ${backup.backupId || compactLocalPath(backup.backupPath)}.`;
+        if (brainBackupVerified) brainBackupVerified.textContent = backup.verified ? "Verified" : "Verification failed";
+      } else if (action === "dry-run") {
+        const result = await postJson("/api/brain/restore/dry-run", {});
+        const restore = result.restore || {};
+        if (brainActionStatus) brainActionStatus.textContent = `Restore dry-run complete: ${restore.liveFileCount || 0} live files checked.`;
+      }
+      await loadBrainHealth();
+    } catch (error) {
+      if (brainActionStatus) brainActionStatus.textContent = error.message;
+      showAccessMessage(error.message, "error");
+    }
+  });
+});
+
+document.querySelectorAll("[data-brain-backup-action]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const action = button.dataset.brainBackupAction;
+    try {
+      if (brainBackupStatus) brainBackupStatus.textContent = "Running backup command...";
+      if (action === "create") {
+        const result = await postJson("/api/brain/backup", {});
+        const backup = result.backup || {};
+        if (brainBackupStatus) brainBackupStatus.textContent = `Created ${backup.backupId || compactLocalPath(backup.backupPath)}.`;
+        if (brainBackupVerified) brainBackupVerified.textContent = backup.verified ? "Verified" : "Verification failed";
+      } else if (action === "verify") {
+        const result = await postJson("/api/brain/backup/verify", {});
+        const verification = result.verification || {};
+        if (brainBackupStatus) brainBackupStatus.textContent = verification.verified ? `Verified ${verification.backupId}.` : "Latest backup did not verify.";
+        if (brainBackupVerified) brainBackupVerified.textContent = verification.verified ? "Verified" : "Failed";
+      } else if (action === "dry-run") {
+        const result = await postJson("/api/brain/restore/dry-run", {});
+        const restore = result.restore || {};
+        if (brainBackupStatus) brainBackupStatus.textContent = `Dry-run complete: ${restore.liveFileCount || 0} live files, ${restore.backupFileCount || 0} backup files.`;
+      }
+      await loadBrainHealth();
+    } catch (error) {
+      if (brainBackupStatus) brainBackupStatus.textContent = error.message;
+      showAccessMessage(error.message, "error");
+    }
+  });
+});
+
+[brainContextList, brainExcludedList].forEach((list) => {
+  list?.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-brain-open-path]");
+    if (!row) return;
+    const sourcePath = row.getAttribute("data-brain-open-path");
+    if (sourcePath) openBrainSourceNote(sourcePath);
+  });
+});
+
+businessProfileForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearAccessMessage();
+  const form = new FormData(businessProfileForm);
+  const primaryGoal = String(form.get("primaryGoal") || "").trim();
+  const kpiLabels = String(form.get("kpis") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  const existing = businessProfileState?.profile || state.businessProfile || {};
+  const goals = primaryGoal
+    ? [{ id: existing.goals?.[0]?.id || `goal-${Date.now()}`, title: primaryGoal, status: "active" }, ...(existing.goals || []).slice(1)]
+    : existing.goals || [];
+  const kpis = kpiLabels.length
+    ? kpiLabels.map((label, index) => ({
+        id: existing.kpis?.[index]?.id || `kpi-${Date.now()}-${index}`,
+        label,
+        value: existing.kpis?.[index]?.value ?? 0,
+        target: existing.kpis?.[index]?.target ?? "track",
+      }))
+    : existing.kpis || [];
+  try {
+    businessProfileState = await api("/api/business/profile", {
+      method: "PUT",
+      body: JSON.stringify({
+        companyName: form.get("companyName"),
+        businessType: form.get("businessType"),
+        currentStage: form.get("currentStage"),
+        timeZone: form.get("timeZone"),
+        mission: form.get("mission"),
+        goals,
+        kpis,
+      }),
+    });
+    state.businessProfile = businessProfileState.profile;
+    renderBusinessProfileSettings();
+    showAccessMessage("Business profile saved. Agent 101 will use this verified local context.", "success");
+  } catch (error) {
+    showAccessMessage(error.message, "error");
+  }
 });
 
 securityScanBtn?.addEventListener("click", () => {
   loadAccessState();
   loadAiProviderSettings();
+  loadBusinessProfileSettings();
+  loadLocalRuntimeSettings();
+  loadObsidianStatus();
   showAccessMessage("Security scan complete. Password hashing, signed sessions, legacy-default blocking, and approval gates are active.", "success");
 });
 
@@ -8505,7 +11906,27 @@ function activateStationFromEvent(event) {
   const stationId = station.dataset.station || "argentum-core";
   selectedAgentKey = null;
   focusRoom(stationId, { scale: station.classList.contains("map-core") ? 1.38 : 1.72 });
-  openModuleInfoCard(stationId);
+  if (officeAgentDestinations[resolveRoomKey(stationId)]) {
+    openOfficeAfterTransit(stationId);
+  } else {
+    openModuleInfoCard(stationId);
+  }
+  return true;
+}
+
+function activateWorkflowRouteFromEvent(event) {
+  const target = event.target.closest("[data-workflow-view], [data-workflow-room]");
+  if (!target) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (target.dataset.workflowView) {
+    activateView(target.dataset.workflowView);
+    return true;
+  }
+  const roomId = resolveRoomKey(target.dataset.workflowRoom);
+  selectedAgentKey = null;
+  focusRoom(roomId, { scale: roomId === "depo-habitat" ? 1.38 : 1.6 });
+  openModuleInfoCard(roomId);
   return true;
 }
 
@@ -8534,6 +11955,15 @@ agentRosterList?.addEventListener("keydown", (event) => {
   if (!agentNode) return;
   event.preventDefault();
   openAgent(agentNode.dataset.agent);
+});
+
+[controlFloorRefreshBtn, controlFloorTopRefresh].forEach((button) => {
+  button?.addEventListener("click", () => loadClippingOfficeOverview({ force: true }));
+});
+
+controlFloorLiveRegion?.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-control-floor-retry]")) return;
+  loadClippingOfficeOverview({ force: true });
 });
 
 document.querySelectorAll(".user-profile-card, .admin-menu-item[data-agent]").forEach((agentNode) => {
@@ -8630,6 +12060,41 @@ moduleInfoCard?.addEventListener("click", async (event) => {
     return;
   }
   const stationId = moduleInfoCard.dataset.station || selectedRoomKey || "depo-habitat";
+  const openSupervisorChat = event.target.closest("[data-supervisor-open-chat]");
+  if (openSupervisorChat) {
+    closeModuleInfoCard();
+    setAgentChatWorkspaceOpen(true);
+    return;
+  }
+  const supervisorApproval = event.target.closest("[data-chat-approval-action]");
+  if (supervisorApproval) {
+    changeApprovalStatus(supervisorApproval.dataset.approvalId, supervisorApproval.dataset.chatApprovalAction, "Agent 101 supervisor");
+    return;
+  }
+  const supervisorMissionAction = event.target.closest("[data-agent-mission-action]");
+  if (supervisorMissionAction) {
+    performAgent101MissionAction(supervisorMissionAction.dataset.agentMissionAction, supervisorMissionAction.dataset.agentMissionId);
+    return;
+  }
+  const supervisorOutput = event.target.closest("[data-agent-output-file]");
+  if (supervisorOutput) {
+    openAgent101OutputFile(
+      supervisorOutput.dataset.agentOutputFile,
+      supervisorOutput.dataset.agentOutputSession,
+      supervisorOutput.dataset.agentOutputVerified === "true",
+    );
+    return;
+  }
+  const clipsOverviewRefresh = event.target.closest("[data-clips-overview-refresh]");
+  if (clipsOverviewRefresh) {
+    loadClippingOfficeOverview({ force: true });
+    return;
+  }
+  const printShopRefresh = event.target.closest("[data-print-shop-refresh]");
+  if (printShopRefresh) {
+    loadPrintShopOfficeOverview({ force: true });
+    return;
+  }
   const approvalButton = event.target.closest("[data-card-approval-action]");
   if (approvalButton) {
     changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.cardApprovalAction, "Human Gate card");
@@ -8687,7 +12152,31 @@ moduleInfoCard?.addEventListener("click", async (event) => {
   handleModuleAction(action, stationId);
 });
 
+moduleInfoCard?.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-supervisor-composer]");
+  if (!form) return;
+  event.preventDefault();
+  const input = form.querySelector("textarea[name='message']");
+  const message = String(input?.value || "").trim();
+  if (!message || agent101ChatSending) return;
+  agentSupervisorOfficeDraft = "";
+  if (input) input.value = "";
+  const button = form.querySelector("button[type='submit']");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Working...";
+  }
+  submitDepoChat(mainAgentChatRoomId, message).finally(() => {
+    renderOpenAgent101SupervisorOffice({ forceBottom: true });
+  });
+});
+
 moduleInfoCard?.addEventListener("keydown", (event) => {
+  if (event.target?.matches("[data-supervisor-composer] textarea") && event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    event.target.closest("form")?.requestSubmit();
+    return;
+  }
   if (event.key !== "Enter") return;
   if (event.target?.id === "stockOfficeSearch") {
     event.preventDefault();
@@ -8715,6 +12204,135 @@ moduleInfoCard?.addEventListener("keydown", (event) => {
 
 openAgentChatBtn?.addEventListener("click", () => setAgentChatWorkspaceOpen(true));
 sidebarAgentChatLog?.addEventListener("click", () => setAgentChatWorkspaceOpen(true));
+
+[projectInfrastructureOpenBtn, projectInfrastructureTopBtn].forEach((button) => {
+  button?.addEventListener("click", () => setProjectInfrastructureOpen(true, { force: true }));
+});
+projectInfrastructureCloseBtn?.addEventListener("click", () => setProjectInfrastructureOpen(false));
+projectInfrastructureRefreshBtn?.addEventListener("click", () => loadProjectInfrastructure({ force: true }));
+projectInfrastructureOverlay?.addEventListener("click", (event) => {
+  if (event.target === projectInfrastructureOverlay) setProjectInfrastructureOpen(false);
+});
+projectInfrastructureBody?.addEventListener("click", (event) => {
+  const retryButton = event.target.closest("[data-infrastructure-retry]");
+  if (retryButton) {
+    loadProjectInfrastructure({ force: true });
+    return;
+  }
+  const officeAction = event.target.closest("[data-infrastructure-open-office]");
+  if (officeAction) {
+    const snapshot = projectInfrastructureSnapshot();
+    const requestedOfficeId = String(officeAction.dataset.infrastructureOpenOffice || "");
+    const registeredOffice = snapshot ? projectWorkflowOfficeNode(snapshot, requestedOfficeId) : null;
+    if (!registeredOffice) return;
+    const officeId = resolveRoomKey(requestedOfficeId);
+    setProjectInfrastructureOpen(false, { restoreFocus: false });
+    activateView("floor");
+    selectedAgentKey = null;
+    focusRoom(officeId, { scale: officeId === "depo-habitat" ? 1.38 : 1.6 });
+    openModuleInfoCard(officeId);
+    return;
+  }
+  const backButton = event.target.closest("[data-infrastructure-back]");
+  if (backButton) {
+    const returnOfficeId = projectInfrastructureViewState.returnOfficeId || projectInfrastructureViewState.officeId;
+    const overviewScrollTop = projectInfrastructureViewState.overviewScrollTop || 0;
+    projectInfrastructureViewState = { mode: "overview", officeId: "", stageId: "", itemId: "", returnOfficeId, overviewScrollTop };
+    renderProjectInfrastructure();
+    requestAnimationFrame(() => {
+      projectInfrastructureBody.scrollTop = overviewScrollTop;
+      projectInfrastructureBody.querySelector(`[data-infrastructure-office-focus="${CSS.escape(returnOfficeId)}"]`)?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const officeFocus = event.target.closest("[data-infrastructure-office-focus]");
+  if (officeFocus) {
+    const snapshot = projectInfrastructureSnapshot();
+    const officeId = String(officeFocus.dataset.infrastructureOfficeFocus || "");
+    const officeNode = snapshot ? projectWorkflowOfficeNode(snapshot, officeId) : null;
+    if (!officeNode) return;
+    const stages = Array.isArray(officeNode.workflow?.stages) ? officeNode.workflow.stages : [];
+    const firstStage = stages.find((stage) => stage.id === officeNode.workflow?.activeStageId)
+      || stages.find((stage) => Number(stage.count) > 0 || stage.items?.length)
+      || stages[0];
+    projectInfrastructureViewState = {
+      mode: "office",
+      officeId,
+      stageId: firstStage?.id || "",
+      itemId: "",
+      returnOfficeId: projectInfrastructureViewState.mode === "overview" ? officeId : projectInfrastructureViewState.returnOfficeId || officeId,
+      overviewScrollTop: projectInfrastructureViewState.mode === "overview" ? projectInfrastructureBody.scrollTop : projectInfrastructureViewState.overviewScrollTop || 0,
+    };
+    renderProjectInfrastructure();
+    requestAnimationFrame(() => {
+      projectInfrastructureBody.scrollTop = 0;
+      projectInfrastructureBody.querySelector("#projectWorkflowOfficeTitle")?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const stageButton = event.target.closest("[data-infrastructure-stage]");
+  if (stageButton) {
+    projectInfrastructureViewState.stageId = String(stageButton.dataset.infrastructureStage || "");
+    projectInfrastructureViewState.itemId = "";
+    renderProjectInfrastructure();
+    requestAnimationFrame(() => {
+      projectInfrastructureBody.querySelector(`[data-infrastructure-stage="${CSS.escape(projectInfrastructureViewState.stageId)}"]`)?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  if (event.target.closest("[data-infrastructure-clear-item]")) {
+    projectInfrastructureViewState.itemId = "";
+    renderProjectInfrastructure();
+    return;
+  }
+  const itemButton = event.target.closest("[data-infrastructure-item]");
+  if (itemButton) {
+    const itemId = String(itemButton.dataset.infrastructureItem || "");
+    projectInfrastructureViewState.itemId = projectInfrastructureViewState.itemId === itemId ? "" : itemId;
+    renderProjectInfrastructure();
+    requestAnimationFrame(() => {
+      projectInfrastructureBody.querySelector(`[data-infrastructure-item="${CSS.escape(itemId)}"]`)?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  const nodeButton = event.target.closest("[data-infrastructure-node]");
+  if (!nodeButton) return;
+  projectInfrastructureSelectedNodeId = nodeButton.dataset.infrastructureNode;
+  renderProjectInfrastructure();
+  requestAnimationFrame(() => {
+    const nextButton = [...projectInfrastructureBody.querySelectorAll("[data-infrastructure-node]")]
+      .find((button) => button.dataset.infrastructureNode === projectInfrastructureSelectedNodeId);
+    nextButton?.focus({ preventScroll: true });
+  });
+});
+projectInfrastructureBody?.addEventListener("keydown", (event) => {
+  const stageButton = event.target.closest('[role="tab"][data-infrastructure-stage]');
+  if (!stageButton || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...projectInfrastructureBody.querySelectorAll('[role="tab"][data-infrastructure-stage]')];
+  if (!tabs.length) return;
+  event.preventDefault();
+  const currentIndex = Math.max(0, tabs.indexOf(stageButton));
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  const nextStageId = tabs[nextIndex].dataset.infrastructureStage;
+  projectInfrastructureViewState.stageId = nextStageId;
+  projectInfrastructureViewState.itemId = "";
+  renderProjectInfrastructure();
+  requestAnimationFrame(() => {
+    projectInfrastructureBody.querySelector(`[data-infrastructure-stage="${CSS.escape(nextStageId)}"]`)?.focus({ preventScroll: true });
+  });
+});
+projectInfrastructureAgentBtn?.addEventListener("click", () => {
+  setProjectInfrastructureOpen(false, { restoreFocus: false });
+  activateView("depo");
+});
+projectInfrastructureGateBtn?.addEventListener("click", () => {
+  setProjectInfrastructureOpen(false, { restoreFocus: false });
+  activateView("approval");
+});
 
 newAgentChatBtn?.addEventListener("click", async () => {
   try {
@@ -8761,6 +12379,32 @@ agentChatThreadList?.addEventListener("click", (event) => {
   selectAgentChatThread(threadButton.dataset.agentChatSelect);
 });
 
+agentMissionSelect?.addEventListener("change", () => {
+  setActiveAgent101Mission(agentMissionSelect.value);
+  refreshAgent101Mission(agentMissionSelect.value, { quiet: true });
+});
+
+agentMissionRail?.addEventListener("click", (event) => {
+  const approvalButton = event.target.closest("[data-chat-approval-action]");
+  if (approvalButton) {
+    changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.chatApprovalAction, "Agent 101 supervisor");
+    return;
+  }
+  const actionButton = event.target.closest("[data-agent-mission-action]");
+  if (actionButton) {
+    performAgent101MissionAction(actionButton.dataset.agentMissionAction, actionButton.dataset.agentMissionId);
+    return;
+  }
+  const outputButton = event.target.closest("[data-agent-output-file]");
+  if (outputButton) {
+    openAgent101OutputFile(
+      outputButton.dataset.agentOutputFile,
+      outputButton.dataset.agentOutputSession,
+      outputButton.dataset.agentOutputVerified === "true",
+    );
+  }
+});
+
 agentChatQuickPrompts?.addEventListener("click", (event) => {
   const promptButton = event.target.closest("[data-agent-workspace-prompt]");
   if (!promptButton || !agentChatComposerInput) return;
@@ -8769,9 +12413,23 @@ agentChatQuickPrompts?.addEventListener("click", (event) => {
 });
 
 agentChatMessages?.addEventListener("click", (event) => {
+  const outputButton = event.target.closest("[data-agent-output-file]");
+  if (outputButton) {
+    openAgent101OutputFile(
+      outputButton.dataset.agentOutputFile,
+      outputButton.dataset.agentOutputSession,
+      outputButton.dataset.agentOutputVerified === "true",
+    );
+    return;
+  }
   const approvalButton = event.target.closest("[data-chat-approval-action]");
   if (!approvalButton) return;
   changeApprovalStatus(approvalButton.dataset.approvalId, approvalButton.dataset.chatApprovalAction, "Agent 101 chat permission");
+});
+
+agentOutputPreviewClose?.addEventListener("click", () => setAgentOutputPreviewOpen(false));
+agentOutputPreview?.addEventListener("click", (event) => {
+  if (event.target === agentOutputPreview) setAgentOutputPreviewOpen(false);
 });
 
 agentChatMessages?.addEventListener("scroll", () => {
@@ -8815,16 +12473,64 @@ moduleInfoCard?.addEventListener("focusin", () => {
   window.setTimeout(restoreModuleInfoPageScroll, 80);
 });
 
-moduleInfoCard?.addEventListener("input", () => {
+moduleInfoCard?.addEventListener("input", (event) => {
+  if (event.target?.matches("[data-supervisor-composer] textarea")) {
+    agentSupervisorOfficeDraft = event.target.value;
+  }
   restoreModuleInfoPageScroll();
   window.requestAnimationFrame(restoreModuleInfoPageScroll);
 });
 
 document.addEventListener("keydown", (event) => {
+  if (handleProjectInfrastructureKeydown(event)) return;
+  if (event.key === "Escape" && agentOutputPreview && !agentOutputPreview.hidden) {
+    setAgentOutputPreviewOpen(false);
+    return;
+  }
   if (event.key === "Escape" && moduleInfoCard && !moduleInfoCard.hidden) {
     resetHabitatView();
   }
 });
+
+let stockOfficeLaunchInProgress = false;
+
+function stockOfficeLaunchScreenMarkup() {
+  return `
+    <div class="stock-office-launch-grid" aria-hidden="true"></div>
+    <div class="stock-office-launch-glow" aria-hidden="true"></div>
+    <section class="stock-office-launch-card">
+      <div class="stock-office-launch-brand"><b>A</b><span>ARGENTUM</span></div>
+      <p>STOCK OFFICE</p>
+      <h2>Opening your market workspace</h2>
+      <span>Preparing the office shell…</span>
+      <div class="stock-office-launch-meter" aria-hidden="true"><i></i></div>
+    </section>
+  `;
+}
+
+function launchStockOffice(href) {
+  if (stockOfficeLaunchInProgress) return;
+  stockOfficeLaunchInProgress = true;
+  const screen = document.createElement("div");
+  screen.className = "stock-office-launch-screen";
+  screen.setAttribute("role", "status");
+  screen.setAttribute("aria-live", "polite");
+  screen.setAttribute("aria-label", "Opening Stock Office");
+  screen.innerHTML = stockOfficeLaunchScreenMarkup();
+  document.body.append(screen);
+  requestAnimationFrame(() => {
+    screen.classList.add("visible");
+    window.setTimeout(() => window.location.assign(href), 90);
+  });
+}
+
+document.addEventListener("click", (event) => {
+  const link = event.target.closest('a[href^="/apps/stock-office/"]');
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  launchStockOffice(link.href);
+}, true);
 
 document.addEventListener("click", (event) => {
   if (!moduleInfoCard || moduleInfoCard.hidden) return;
@@ -8965,19 +12671,9 @@ pauseBtn.addEventListener("click", () => {
   });
 });
 
-runCycleBtn.addEventListener("click", (event) => {
+openSupervisorFromFloorBtn?.addEventListener("click", (event) => {
   event.stopPropagation();
-  const nextStage = advanceDepoWorkflowStage("Run cycle");
-  mutate("/api/cycle").then((changed) => {
-    if (changed) return;
-    state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", `Agent 101 advanced to ${depoStageLabel(nextStage)}. Start the app with npm start to persist backend mission state.`);
-    render();
-  }).catch((error) => {
-    state.mission.currentStep = (state.mission.currentStep + 1) % state.mission.steps.length;
-    addLocalAudit("Cycle changed locally", `${error.message}. Agent 101 command-floor stage remains ${depoStageLabel(nextStage)} locally.`);
-    render();
-  });
+  activateView("depo");
 });
 
 killSwitchBtn.addEventListener("click", () => {
@@ -9316,10 +13012,17 @@ functionList.addEventListener("click", (event) => {
 });
 
 loadState().then(() => {
-  activateView("floor");
+  const requestedView = new URLSearchParams(window.location.search).get("view");
+  activateView(Object.hasOwn(workspaceViewCopy, requestedView) ? requestedView : "floor");
+  openMainAgent101FromRoute();
   loadProfileIdentity();
+  startOfficeAgentPresence();
+  loadAgent101Missions({ quiet: true }).catch(() => {});
 });
 startCycle();
 updateSystemClock();
 setInterval(updateSystemClock, 1000);
 setInterval(rotateAutomationTelemetry, 3200);
+setInterval(() => {
+  if (agentChatWorkspaceOpen) loadAgent101Missions({ quiet: true, connect: true });
+}, 15000);

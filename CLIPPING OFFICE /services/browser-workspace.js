@@ -7,8 +7,8 @@ const DEFAULT_POLICIES = [
   { domain: "localhost", mode: "automated", actions: ["navigate", "screenshot", "read"], notes: "Local development only." },
   { domain: "127.0.0.1", mode: "automated", actions: ["navigate", "screenshot", "read"], notes: "Local development only." },
   { domain: "example.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Safe browser smoke-test target." },
-  { domain: "capcut.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "Manual edit handoff. Agent does not operate CapCut UI." },
-  { domain: "www.capcut.com", mode: "human_only", actions: ["navigate", "screenshot", "download"], notes: "Manual edit handoff. Agent does not operate CapCut UI." },
+  { domain: "capcut.com", mode: "supervised", actions: ["navigate", "click", "type", "file_upload", "drag", "screenshot", "read"], notes: "Agent 101 may operate the editor after Human Gate confirms login. Export, publish, account, and payment actions remain human-gated." },
+  { domain: "www.capcut.com", mode: "supervised", actions: ["navigate", "click", "type", "file_upload", "drag", "screenshot", "read"], notes: "Agent 101 may operate the editor after Human Gate confirms login. Export, publish, account, and payment actions remain human-gated." },
   { domain: "twitch.tv", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Login and account actions are blocked." },
   { domain: "www.twitch.tv", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Login and account actions are blocked." },
   { domain: "kick.com", mode: "read_only", actions: ["navigate", "screenshot", "read"], notes: "Research/check only. Login and account actions are blocked." },
@@ -91,6 +91,18 @@ function ensureBrowserState(state) {
   state.browser.uploadRequests ||= [];
   if (!Array.isArray(state.browser.policies) || state.browser.policies.length === 0) {
     state.browser.policies = DEFAULT_POLICIES.map((policy) => ({ ...policy, actions: [...policy.actions] }));
+  }
+  for (const policy of DEFAULT_POLICIES) {
+    const existing = state.browser.policies.find((item) => normalizeHost(item.domain) === normalizeHost(policy.domain));
+    if (!existing) {
+      state.browser.policies.push({ ...policy, actions: [...policy.actions] });
+      continue;
+    }
+    if (normalizeHost(policy.domain) === "capcut.com") {
+      existing.mode = policy.mode;
+      existing.actions = [...policy.actions];
+      existing.notes = policy.notes;
+    }
   }
   return state.browser;
 }
@@ -460,6 +472,55 @@ export function createBrowserWorkspace({ config, state, helpers }) {
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
     }
+  };
+
+  const selectorList = (selectors) => (
+    Array.isArray(selectors) ? selectors : String(selectors || "").split(",")
+  ).map((item) => safeText(item)).filter(Boolean);
+
+  const locatorFromCandidate = (page, selector) => {
+    const textMatch = selector.match(/^(.+):contains\((['"]?)(.+?)\2\)$/i);
+    if (textMatch) return page.locator(textMatch[1]).filter({ hasText: textMatch[3] }).first();
+    if (selector.startsWith("text=")) return page.getByText(selector.slice(5), { exact: false }).first();
+    if (selector.startsWith("role=")) {
+      const [, role = "button", name = ""] = selector.match(/^role=([^[]+)(?:\[name=(.+)\])?$/i) || [];
+      return page.getByRole(role, name ? { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") } : undefined).first();
+    }
+    return page.locator(selector).first();
+  };
+
+  const firstVisibleLocator = async (page, selectors, timeoutMs = 8000) => {
+    const candidates = selectorList(selectors);
+    if (!candidates.length) throw new Error("Selector is required.");
+    const perSelector = Math.max(600, Math.ceil(timeoutMs / candidates.length));
+    const errors = [];
+    for (const selector of candidates) {
+      const locator = locatorFromCandidate(page, selector);
+      try {
+        await locator.waitFor({ state: "visible", timeout: perSelector });
+        return { locator, selector };
+      } catch (error) {
+        errors.push(`${selector}: ${error.message}`);
+      }
+    }
+    throw new Error(`No visible selector matched. ${errors.slice(0, 3).join(" | ")}`);
+  };
+
+  const assertAgentActionAllowed = async (session, action, actor = "agent101") => {
+    if (session.status === "closed") throw new Error("Browser session is closed.");
+    if (session.controlMode === "paused") throw new Error("Browser session is paused.");
+    if (actor === "agent101" && session.controlMode !== "agent_assisted") {
+      throw new Error("Agent 101 does not currently control this browser session.");
+    }
+    const page = await pageForSession(session);
+    await updateSensitivity(session, page);
+    if (actor === "agent101" && session.privacyShield?.active) {
+      throw new Error("Sensitive page detected. Agent 101 is paused.");
+    }
+    const currentUrl = page.url() || session.currentUrl || config.capcutHandoffUrl;
+    const policy = policyForUrl(currentUrl, action, actor);
+    if (!policy.allowed) throw new Error(policy.reason || `${action} is blocked by browser policy.`);
+    return { page, policy };
   };
 
   return {
@@ -855,6 +916,82 @@ export function createBrowserWorkspace({ config, state, helpers }) {
           href: sanitizeUrl(link.href)
         }))
       };
+    },
+
+    async agentWaitFor(sessionId, selectors, { actor = "agent101", timeoutMs = 8000 } = {}) {
+      const session = findSession(sessionId);
+      const { page } = await assertAgentActionAllowed(session, "read", actor);
+      const matched = await firstVisibleLocator(page, selectors, timeoutMs);
+      await appendAction(session, "agent_wait_for", { actor, selector: matched.selector });
+      await persist();
+      return { session: publicSession(session), selector: matched.selector, status: "visible" };
+    },
+
+    async agentClick(sessionId, selectors, { actor = "agent101", timeoutMs = 8000 } = {}) {
+      const session = findSession(sessionId);
+      const { page } = await assertAgentActionAllowed(session, "click", actor);
+      const matched = await firstVisibleLocator(page, selectors, timeoutMs);
+      await matched.locator.click({ timeout: timeoutMs });
+      await updateSensitivity(session, page);
+      session.currentUrl = sanitizeUrl(page.url());
+      session.title = await page.title().catch(() => session.title);
+      session.updatedAt = now();
+      await appendAction(session, "agent_click", { actor, selector: matched.selector, url: session.currentUrl });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), selector: matched.selector, status: "clicked" };
+    },
+
+    async agentType(sessionId, selectors, text, { actor = "agent101", timeoutMs = 8000 } = {}) {
+      const session = findSession(sessionId);
+      const { page } = await assertAgentActionAllowed(session, "type", actor);
+      const matched = await firstVisibleLocator(page, selectors, timeoutMs);
+      await matched.locator.fill(String(text || ""), { timeout: timeoutMs });
+      await updateSensitivity(session, page);
+      session.currentUrl = sanitizeUrl(page.url());
+      session.title = await page.title().catch(() => session.title);
+      session.updatedAt = now();
+      await appendAction(session, "agent_type", { actor, selector: matched.selector, textLength: String(text || "").length });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), selector: matched.selector, status: "typed" };
+    },
+
+    async agentUploadFile(sessionId, selectors, filePath, { actor = "agent101", timeoutMs = 10000 } = {}) {
+      const session = findSession(sessionId);
+      const resolved = path.resolve(String(filePath || ""));
+      await fs.access(resolved);
+      const { page } = await assertAgentActionAllowed(session, "file_upload", actor);
+      const matched = await firstVisibleLocator(page, selectors || ["input[type='file']"], timeoutMs);
+      await matched.locator.setInputFiles(resolved, { timeout: timeoutMs });
+      await updateSensitivity(session, page);
+      session.currentUrl = sanitizeUrl(page.url());
+      session.title = await page.title().catch(() => session.title);
+      session.updatedAt = now();
+      await appendAction(session, "agent_file_upload", { actor, selector: matched.selector, filename: path.basename(resolved) });
+      await log("browser_file_upload", "Agent 101 uploaded a verified local media file into a supervised browser session", {
+        sessionId,
+        filename: path.basename(resolved)
+      });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), selector: matched.selector, filename: path.basename(resolved), status: "uploaded" };
+    },
+
+    async agentDrag(sessionId, fromSelectors, toSelectors, { actor = "agent101", timeoutMs = 8000 } = {}) {
+      const session = findSession(sessionId);
+      const { page } = await assertAgentActionAllowed(session, "drag", actor);
+      const from = await firstVisibleLocator(page, fromSelectors, timeoutMs);
+      const to = await firstVisibleLocator(page, toSelectors, timeoutMs);
+      await from.locator.dragTo(to.locator, { timeout: timeoutMs });
+      await updateSensitivity(session, page);
+      session.currentUrl = sanitizeUrl(page.url());
+      session.title = await page.title().catch(() => session.title);
+      session.updatedAt = now();
+      await appendAction(session, "agent_drag", { actor, from: from.selector, to: to.selector });
+      await persist();
+      emit(session.id, "session", publicSession(session));
+      return { session: publicSession(session), from: from.selector, to: to.selector, status: "dragged" };
     },
 
     async setControl(sessionId, mode, { actor = "operator" } = {}) {

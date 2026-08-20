@@ -928,6 +928,15 @@ export class CapCutController {
     this.macroStorage = new CapCutMacroStorage({ getDirectory: () => this.macroDir() });
   }
 
+  hasLiveTeachRecorder() {
+    return Boolean(
+      this.teachProcess
+      && !this.teachProcess.killed
+      && this.teachProcess.exitCode == null
+      && this.teachProcess.signalCode == null
+    );
+  }
+
   controlState() {
     this.state.capcutControl ||= {
       actions: [],
@@ -953,10 +962,10 @@ export class CapCutController {
       note: "CapCut can be parked in a fixed desktop area, but real automation still requires a visible CapCut window."
     };
     this.state.capcutControl.lastError ||= null;
-    if (this.state.capcutControl.teach?.recording && !this.teachProcess) {
+    if (this.state.capcutControl.teach?.recording && !this.hasLiveTeachRecorder()) {
       this.state.capcutControl.teach.recording = false;
       this.state.capcutControl.teach.status = "stopped";
-      this.state.capcutControl.teach.stopReason ||= "runtime_restarted";
+      this.state.capcutControl.teach.stopReason ||= this.teachProcess ? "recorder_not_running" : "runtime_restarted";
       this.state.capcutControl.teach.stoppedAt ||= now();
     }
     if (
@@ -2822,8 +2831,9 @@ CFRunLoopRun()
       // spurious recorder_exit_SIGTERM.
       if (this.teachProcess !== child) return;
       this.teachProcess = null;
-      const current = this.controlState().teach;
+      const current = this.state.capcutControl?.teach;
       if (!current) return;
+      if (session?.id && current.id !== session.id) return;
       if (current.recording) {
         current.recording = false;
         current.status = code === 0 ? "stopped" : "error";
@@ -2871,9 +2881,22 @@ CFRunLoopRun()
   async startTeachMode(name = "", options = {}) {
     const control = this.controlState();
     if (control.teach?.recording) {
-      const error = new Error("Teach Mode is already recording.");
-      error.statusCode = 409;
-      throw error;
+      if (this.hasLiveTeachRecorder()) {
+        const error = new Error("Teach Mode is already recording.");
+        error.statusCode = 409;
+        throw error;
+      }
+      control.teach.recording = false;
+      control.teach.status = "error";
+      control.teach.stopReason ||= "Previous recorder was not running. Start Recording recovered it.";
+      control.teach.stoppedAt ||= now();
+      control.teach.recorderMessages ||= [];
+      control.teach.recorderMessages.push({
+        type: "recovered",
+        message: "Cleared a stale recording session before starting a new one.",
+        createdAt: now()
+      });
+      await this.helpers.saveState?.();
     }
     const status = await this.focusCapCut();
     if (!status.accessibilityPermission) throw Object.assign(new Error("Accessibility permission is required for Teach Mode."), { statusCode: 409 });

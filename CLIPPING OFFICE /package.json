@@ -5,11 +5,18 @@
   "description": "Supervised streamer clipping workflow with rights gating, CapCut handoffs, and Human Gate approvals.",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "smoke": "node scripts/smoke-test.mjs"
+    "start": "bash start.sh",
+    "dev": "bash start.sh",
+    "smoke": "node scripts/smoke-test.mjs",
+    "smoke:agent101": "node scripts/agent101-smoke.mjs",
+    "smoke:capcut": "node scripts/capcut-agent-smoke.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "screenshot-desktop": "^1.15.4",
+    "@nut-tree-fork/nut-js": "^4.2.6"
   }
 }

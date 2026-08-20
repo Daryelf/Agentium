@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Confirmed!</title>
+  <link rel="stylesheet" href="/storefront/shop.css" />
+  <style>
+    .success-box {
+      max-width: 480px;
+      margin: 80px auto;
+      text-align: center;
+      padding: 40px 24px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.08);
+      border: 1px solid #e5e7eb;
+    }
+    .success-icon { font-size: 64px; margin-bottom: 20px; }
+    .success-title { font-size: 28px; font-weight: 800; color: #7c3aed; margin-bottom: 12px; }
+    .success-text { font-size: 16px; color: #666; line-height: 1.6; }
+    .success-id { font-family: monospace; background: #f3f4f6; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
+    .back-btn {
+      display: inline-block;
+      margin-top: 24px;
+      padding: 12px 28px;
+      background: #7c3aed;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .back-btn:hover { background: #a855f7; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <a class="shop-logo" href="/storefront/">🖨️ 3D Print Shop</a>
+    </div>
+  </header>
+
+  <div class="success-box">
+    <div class="success-icon">🎉</div>
+    <div class="success-title">Order Confirmed!</div>
+    <p class="success-text">
+      Thanks for your order! We'll start printing it right away and email you when it ships.
+    </p>
+    <div style="margin-top:16px">
+      <span class="success-id" id="session-id">Loading...</span>
+    </div>
+    <a class="back-btn" href="/storefront/">Shop More</a>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session_id');
+    document.getElementById('session-id').textContent = sessionId ? `Session: ${sessionId}` : 'Order received';
+  </script>
+</body>
+</html>

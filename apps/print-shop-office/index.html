@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Product Research Lab · Argentum</title>
+    <link rel="stylesheet" href="./print-shop.css" />
+    <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-1" />
+  </head>
+  <body>
+    <div class="lab-app">
+      <header class="command-bar">
+        <div class="command-left">
+          <a class="argentum-mark" href="/" aria-label="Back to Argentum Control Floor">A</a>
+          <div class="command-brand">
+            <span>Print Shop Office</span>
+            <strong>Product Research Lab</strong>
+          </div>
+        </div>
+        <div class="command-center">
+          <div class="agent-status">
+            <span class="agent-orb" aria-hidden="true">101</span>
+            <div><strong>Agent 101</strong><small>Evidence-first product discovery</small></div>
+          </div>
+          <p id="commandSummary">Ready to build a bounded research plan from your saved printer constraints.</p>
+        </div>
+        <div class="command-actions">
+          <span class="machine-chip" id="machineChip">A1 mini · 0.4 mm · 1 color</span>
+          <span class="provider-chip" id="providerChip"><i></i><span>Checking research</span></span>
+          <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh Product Research Lab">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M18.5 15.5A7 7 0 1 1 19 8l1 3"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <nav class="workflow-rail" id="workflowRail" aria-label="Product Lab workflow"></nav>
+
+      <main class="lab-main">
+        <section class="view-panel discover-view" data-view-panel="discover">
+          <div class="discovery-brief-card">
+            <div class="brief-copy">
+              <span class="section-kicker">Agent 101 discovery</span>
+              <h1>Find products worth investigating.</h1>
+              <p>Choose a problem space—not a product idea. Agent 101 will search current sources, isolate compact product hypotheses, and test only what the evidence and your A1 Mini profile can support.</p>
+              <div class="truth-line"><span></span>No trend theater. No guessed sales, profit, print time, or fit.</div>
+            </div>
+            <form id="discoveryForm" class="discovery-controls">
+              <label>
+                <span>Research lane</span>
+                <select name="laneId" id="laneInput" aria-describedby="laneObjective"></select>
+              </label>
+              <p id="laneObjective">Loading saved research lanes…</p>
+              <button class="primary-button" id="discoveryButton" type="submit" disabled>
+                <span>Build discovery sweep</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <small id="discoveryConnectionNote">Checking the server-side research connection.</small>
+            </form>
+          </div>
+
+          <section class="run-deck" aria-labelledby="runDeckTitle">
+            <header class="section-heading compact">
+              <div><span class="section-kicker">Research runs</span><h2 id="runDeckTitle">Measured activity</h2></div>
+              <button class="text-button" type="button" data-switch-view="evidence">Open evidence ledger</button>
+            </header>
+            <div class="run-strip" id="runStrip"></div>
+          </section>
+
+          <section class="opportunity-workspace" aria-labelledby="opportunityTitle">
+            <div class="opportunity-list-panel">
+              <header class="section-heading">
+                <div><span class="section-kicker">Source-backed leads</span><h2 id="opportunityTitle">Opportunity board</h2></div>
+                <div class="board-count" id="opportunityCount">0 active</div>
+              </header>
+              <div class="opportunity-grid" id="opportunityGrid"></div>
+            </div>
+            <aside class="opportunity-detail" id="opportunityDetail" aria-live="polite"></aside>
+          </section>
+        </section>
+
+        <section class="view-panel evidence-view" data-view-panel="evidence" hidden>
+          <header class="page-heading">
+            <div><span class="section-kicker">Evidence ledger</span><h1>What Agent 101 actually found</h1><p>Every row is a persisted external observation with its URL, provider, time, and content hash.</p></div>
+            <div class="page-actions"><select id="evidenceRunSelect" aria-label="Choose a discovery run"></select></div>
+          </header>
+          <div class="evidence-layout">
+            <section class="evidence-plan panel-surface" id="evidencePlan"></section>
+            <section class="source-ledger panel-surface" id="sourceLedger"></section>
+          </div>
+        </section>
+
+        <section class="view-panel shortlist-view" data-view-panel="shortlist" hidden>
+          <header class="page-heading">
+            <div><span class="section-kicker">Operator shortlist</span><h1>Ideas you chose to keep</h1><p>A shortlist is a decision to investigate—not proof that a product will sell or print.</p></div>
+          </header>
+          <div class="shortlist-grid" id="shortlistGrid"></div>
+        </section>
+
+        <section class="view-panel design-view" data-view-panel="design" hidden>
+          <header class="page-heading design-heading">
+            <div><span class="section-kicker">Measured design lab</span><h1>Turn one lead into a real print project</h1><p>Dimensions, use, material, and failure consequences are captured here before any geometry claim.</p></div>
+            <button class="secondary-button" id="newIdeaButton" type="button">Bring my own idea</button>
+          </header>
+          <div class="project-strip" id="candidateTabs" aria-label="Saved design projects"></div>
+          <div class="design-workspace">
+            <section class="design-editor panel-surface" id="designEditor">
+              <div class="design-empty" id="designEmpty">
+                <span aria-hidden="true">⌁</span>
+                <h2>No design project selected</h2>
+                <p>Promote a source-backed opportunity or open a manual idea. Nothing is pre-filled with guessed measurements.</p>
+                <button class="secondary-button" type="button" data-switch-view="discover">Browse opportunities</button>
+              </div>
+              <form id="productForm" class="product-form" hidden>
+                <div class="form-heading"><div><span class="section-kicker" id="formOrigin">Measured requirements</span><h2 id="formTitle">New product record</h2></div><span class="record-status" id="formStatus">Draft</span></div>
+                <input name="candidateId" type="hidden" />
+                <label class="field field-wide"><span>Product direction</span><input name="concept" required minlength="3" maxlength="240" /></label>
+                <label class="field"><span>Geometry route</span><select name="templateId"><option value="auto">Auto-match safe template</option><option value="storage_tray">Storage tray</option><option value="label_plate">Label plate</option><option value="spacer_block">Spacer or riser</option><option value="divider_set">Divider set</option><option value="custom">Custom CAD handoff</option></select></label>
+                <label class="field"><span>Body material</span><select name="material"><option value="">Choose after use review</option><option value="PLA">PLA</option><option value="PETG">PETG</option><option value="TPU">TPU</option><option value="PVA">PVA support</option><option value="ABS">ABS · not recommended</option><option value="ASA">ASA · not recommended</option><option value="PC">PC · not recommended</option><option value="PA">PA / Nylon · not recommended</option></select></label>
+                <fieldset class="dimension-fields field-wide"><legend>Measured outside size <small>millimeters</small></legend><label><span>Width X</span><input name="widthMm" type="number" min="0.1" max="2000" step="0.1" inputmode="decimal" placeholder="Required" /></label><label><span>Depth Y</span><input name="depthMm" type="number" min="0.1" max="2000" step="0.1" inputmode="decimal" placeholder="Required" /></label><label><span>Height Z</span><input name="heightMm" type="number" min="0.1" max="2000" step="0.1" inputmode="decimal" placeholder="Required" /></label></fieldset>
+                <label class="field"><span>Required colors</span><select name="colorCount"><option value="1">1 color</option><option value="2">2 colors</option><option value="3">3 colors</option><option value="4">4 colors</option></select></label>
+                <label class="field"><span>Quantity per set</span><input name="quantity" type="number" min="1" max="24" value="1" /></label>
+                <label class="check-field field-wide"><input name="separateColorParts" type="checkbox" /><span><strong>Colors can be separate pieces</strong><small>Plan individual one-color parts, then define an assembly seam.</small></span></label>
+                <label class="field field-wide"><span>What will it do, and what would failure mean?</span><textarea name="useCase" rows="3" maxlength="400"></textarea></label>
+                <label class="field"><span>Use environment</span><input name="environment" maxlength="240" placeholder="Indoor, heat, water, sunlight…" /></label>
+                <label class="field"><span>Load or force</span><input name="loadNotes" maxlength="240" placeholder="Decorative, light load, unknown…" /></label>
+                <div class="form-submit field-wide"><p>Geometry stays locked until required evidence is recorded.</p><button class="primary-button" type="submit">Save and analyze</button></div>
+              </form>
+            </section>
+            <aside class="assessment-panel panel-surface" id="candidateDetail" aria-live="polite"></aside>
+          </div>
+        </section>
+
+        <section class="view-panel files-view" data-view-panel="files" hidden>
+          <header class="page-heading">
+            <div><span class="section-kicker">Versioned output vault</span><h1>Design files and validation</h1><p>An STL here means geometry exists and passed local mesh checks. It does not mean a slicer or prototype accepted it.</p></div>
+            <span class="hash-chip">SHA-256 verified on download</span>
+          </header>
+          <div class="artifact-list" id="artifactList"></div>
+        </section>
+
+        <section class="view-panel settings-view" data-view-panel="settings" hidden>
+          <header class="page-heading"><div><span class="section-kicker">Lab configuration</span><h1>Production truth</h1><p>Manufacturer facts, operator configuration, external connections, and unknown production gates.</p></div></header>
+          <div class="settings-grid">
+            <section class="panel-surface" id="printerSettings"></section>
+            <section class="panel-surface" id="connectionTruth"></section>
+            <section class="panel-surface activity-panel"><header><span class="section-kicker">Local audit</span><h2>Recent recorded changes</h2></header><div id="activityList"></div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="approval-dialog" id="approvalDialog">
+      <div class="approval-dialog-shell">
+        <header><div><span class="section-kicker">Human Gate</span><h2>Research plan is waiting for your decision</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close approval details">×</button></header>
+        <div id="approvalDialogBody"></div>
+        <footer><a class="secondary-button link-button" href="/">Open Control Floor</a><button class="primary-button" type="button" data-close-dialog>Keep working here</button></footer>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="./print-shop.js" defer></script>
+    <script src="/human-gate-bubble.js?v=20260812-1"></script>
+  </body>
+</html>

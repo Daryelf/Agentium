@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Print Shop Office — Argentum OS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav id="sidebar">
+  <div id="sidebar-logo">
+    <div class="logo-title">🖨️ Print Shop</div>
+    <div class="logo-sub">Argentum OS · Agent 202</div>
+  </div>
+  <div id="nav">
+    <div class="nav-item active" data-view="dashboard">
+      <span class="nav-icon">📊</span> Dashboard
+    </div>
+    <div class="nav-item" data-view="orders">
+      <span class="nav-icon">📦</span> Orders
+      <span class="nav-badge hidden" id="badge-orders">0</span>
+    </div>
+    <div class="nav-item" data-view="products">
+      <span class="nav-icon">🛒</span> Products
+    </div>
+    <div class="nav-item" data-view="queue">
+      <span class="nav-icon">🖨️</span> Print Queue
+    </div>
+    <div class="nav-item" data-view="agent">
+      <span class="nav-icon">🤖</span> Agent 202
+      <span class="nav-badge hidden" id="badge-approvals">0</span>
+    </div>
+    <div class="nav-item" data-view="research">
+      <span class="nav-icon">🔍</span> Research
+    </div>
+    <div class="nav-item" data-view="storefront">
+      <span class="nav-icon">🌐</span> Storefront
+    </div>
+  </div>
+  <div id="sidebar-footer">
+    Port 3001 · <span id="stripe-mode-indicator">...</span>
+  </div>
+</nav>
+
+<!-- Main -->
+<div id="main">
+  <div id="topbar">
+    <div id="topbar-title">Dashboard</div>
+    <div id="topbar-right">
+      <span id="topbar-stripe" class="stripe-badge test">TEST MODE</span>
+      <span id="topbar-time"></span>
+    </div>
+  </div>
+  <div id="content"></div>
+</div>
+
+<!-- Modal container -->
+<div id="modal-container"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

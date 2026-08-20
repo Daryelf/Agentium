@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Argentum Business Office</title>
+    <link rel="stylesheet" href="./office.css" />
+    <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-1" />
+    <script src="./office.js" defer></script>
+  </head>
+  <body>
+    <main class="office-shell">
+      <header class="office-topbar">
+        <a href="/" class="back-link">Back to Argentum</a>
+        <span id="officeMode">Local</span>
+      </header>
+
+      <section class="office-hero">
+        <div>
+          <p id="officeEyebrow">Business Office</p>
+          <h1 id="officeTitle">Loading office...</h1>
+          <span id="officeRisk">Draft only</span>
+        </div>
+        <div class="office-actions">
+          <button id="createTaskPlan" type="button">Create task plan</button>
+          <button id="packageApproval" type="button">Package for approval</button>
+          <button id="refreshOffice" type="button">Refresh</button>
+        </div>
+      </section>
+
+      <section class="office-grid">
+        <article class="office-panel wide">
+          <div class="panel-head">
+            <span>Operating goal</span>
+            <strong id="officeIntent">Local office</strong>
+          </div>
+          <p id="officeGoal">Loading the office profile from Argentum OS.</p>
+        </article>
+
+        <article class="office-panel">
+          <div class="panel-head">
+            <span>Allowed work</span>
+            <strong>Agent 101</strong>
+          </div>
+          <ul id="allowedWork"></ul>
+        </article>
+
+        <article class="office-panel">
+          <div class="panel-head">
+            <span>Human Gate</span>
+            <strong>Blocked live actions</strong>
+          </div>
+          <ul id="blockedWork"></ul>
+        </article>
+
+        <article class="office-panel">
+          <div class="panel-head">
+            <span>Tasks</span>
+            <strong id="taskCount">0</strong>
+          </div>
+          <div id="taskList" class="office-list"></div>
+        </article>
+
+        <article class="office-panel">
+          <div class="panel-head">
+            <span>Artifacts</span>
+            <strong id="artifactCount">0</strong>
+          </div>
+          <div id="artifactList" class="office-list"></div>
+        </article>
+
+        <article class="office-panel">
+          <div class="panel-head">
+            <span>Approvals</span>
+            <strong id="approvalCount">0</strong>
+          </div>
+          <div id="approvalList" class="office-list"></div>
+        </article>
+      </section>
+    </main>
+    <script src="/human-gate-bubble.js?v=20260812-1"></script>
+  </body>
+</html>

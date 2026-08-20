@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Argentum Monitor 3</title>
+  <link rel="stylesheet" href="/display/display.css" />
+</head>
+<body>
+  <main class="display-shell" id="displayShell" data-view="home">
+    <header class="display-header" aria-label="Argentum display status">
+      <section class="brand-lockup" aria-label="Argentum">
+        <span class="brand-mark" aria-hidden="true">AG</span>
+        <div>
+          <h1>ARGENTUM</h1>
+          <p id="displayViewLabel">Command Center</p>
+        </div>
+      </section>
+      <section class="display-status-strip" aria-label="Hub health">
+        <div class="status-chip is-online" id="hubStatusChip"><span></span><strong>HUB ONLINE</strong></div>
+        <div class="status-chip" id="connectionStatusChip"><span></span><strong>RECONNECTING</strong></div>
+        <div class="header-metric"><small>TIME</small><strong id="currentTime">--:--</strong></div>
+        <div class="header-metric"><small>AGENTS</small><strong id="activeAgentCount">0</strong></div>
+        <div class="header-metric alert-metric" id="alertMetric"><small>ALERTS</small><strong>0</strong></div>
+      </section>
+    </header>
+
+    <nav class="mode-rail" id="modeRail" aria-label="Display modes"></nav>
+
+    <section class="display-stage" id="displayStage" aria-live="polite">
+      <div class="boot-panel">
+        <span class="boot-line"></span>
+        <strong>ARGENTUM HUB</strong>
+        <p>Connecting to local command state.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/display/display.js"></script>
+</body>
+</html>

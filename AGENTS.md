@@ -5,6 +5,8 @@
 - Read `CODEX_PROJECT_MEMORY.md` and `README.md` before changing code.
 - Treat this folder as the portable source of truth when the ZYLO drive moves between Macs.
 - Preserve the supervised-agent safety model: Argentum can draft and propose, but high-risk actions require human approval.
+- Agent 101 Studio is the autonomous business-building workspace. It may plan, write output files, scaffold websites, generate copy, prepare deployment configs, and create handoff docs inside the approved outputs area.
+- Agent 101 Studio must route risky work to Human Gate: shell commands, writes outside approved output/workspace paths, deletes, email sends, publishing, spending money, account changes, credentials, customer contact, deploys, and system settings.
 
 ## Project shape
 
@@ -23,3 +25,4 @@
 
 - Do not store real credentials, API keys, session secrets, or financial permissions in project memory.
 - Ask before changing deployment credentials, admin auth rules, or any action that could contact customers, move money, publish externally, or place trades.
+- Never expose Agent 101 provider secrets to browser JavaScript. Frontend status may show configured/not configured only.

@@ -1,5 +1,6 @@
 .DS_Store
 node_modules/
+dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -9,3 +10,9 @@ yarn-error.log*
 !LAUNCH DESK /.env.example
 data/*.json
 !.gitkeep
+CLIPPING OFFICE /Clips/
+CLIPPING OFFICE /data/
+CLIPPING OFFICE /uploads/
+CLIPPING OFFICE /outputs/
+CLIPPING OFFICE /browser-profile/
+CLIPPING OFFICE /browser-downloads/

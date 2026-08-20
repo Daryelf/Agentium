@@ -1,0 +1,43 @@
+{
+  "products": [],
+  "orders": [],
+  "customers": [],
+  "printJobs": [],
+  "materials": [
+    {
+      "id": "mat_pla_black",
+      "name": "PLA Black",
+      "type": "PLA",
+      "color": "Black",
+      "grams_available": 1000,
+      "cost_per_gram_cents": 3,
+      "updated_at": ""
+    },
+    {
+      "id": "mat_pla_white",
+      "name": "PLA White",
+      "type": "PLA",
+      "color": "White",
+      "grams_available": 1000,
+      "cost_per_gram_cents": 3,
+      "updated_at": ""
+    },
+    {
+      "id": "mat_resin_clear",
+      "name": "Resin Clear",
+      "type": "Resin",
+      "color": "Clear",
+      "grams_available": 500,
+      "cost_per_gram_cents": 8,
+      "updated_at": ""
+    }
+  ],
+  "approvalRequests": [],
+  "artifacts": [],
+  "settings": {
+    "shopName": "My 3D Print Shop",
+    "stripeMode": "test",
+    "currency": "usd",
+    "defaultShippingDays": 5
+  }
+}

@@ -3,9 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Argentum</title>
+    <title>Control Floor</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23030507'/%3E%3Cpath d='M16 4 29 27H19l-3-6-3 6H3L16 4Z' fill='none' stroke='%23c7d2fe' stroke-width='2'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=memory-center-1" />
+    <link rel="stylesheet" href="./styles.css?v=performance-20260818" />
+    <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-1" />
   </head>
   <body>
     <div class="space-backdrop" aria-hidden="true">
@@ -17,59 +18,54 @@
     </div>
 
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Argentum command sidebar">
-        <div class="brand-block">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32"><path d="M16 3 29 26H19L16 20l-3 6H3L16 3Z"/><path d="M16 8v8"/><path d="M9 26l7-12 7 12"/></svg>
+      <aside class="sidebar" aria-label="Local command sidebar">
+        <header class="sidebar-context">
+          <div class="sidebar-context-copy">
+            <span><i aria-hidden="true"></i>Private workspace</span>
+            <strong>Local command</strong>
           </div>
-          <div>
-            <h1>Control Floor</h1>
+          <div class="sidebar-clock">
+            <strong><time data-system-clock>13:42:18</time><span> ET</span></strong>
+            <small data-system-date>May 12, 2025</small>
           </div>
-        </div>
-
-        <section class="system-time-card">
-          <p class="eyebrow">Eastern Time</p>
-          <strong><span>ET</span> <time data-system-clock>13:42:18</time></strong>
-          <small data-system-date>May 12, 2025</small>
-        </section>
+        </header>
 
         <section class="agent-roster" aria-label="Agent command">
           <div class="section-head">
-            <p class="eyebrow">Agent Command</p>
+            <p class="eyebrow">Supervisor</p>
           </div>
           <div class="roster-list" id="agentRosterList"></div>
         </section>
 
+        <button class="sidebar-workflow-launcher" id="projectInfrastructureOpenBtn" type="button" aria-haspopup="dialog" aria-controls="projectInfrastructureOverlay" aria-expanded="false">
+          <span class="sidebar-workflow-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="18" cy="17" r="2"/><circle cx="6" cy="19" r="2"/><path d="M8 5h3a3 3 0 0 1 3 3v1a3 3 0 0 0 3 3h1M8 19h3a3 3 0 0 0 3-3V9"/></svg>
+          </span>
+          <span class="sidebar-workflow-copy">
+            <small>Project command</small>
+            <strong>Workflow</strong>
+            <em id="sidebarWorkflowStatus">Reading infrastructure</em>
+          </span>
+          <span class="sidebar-workflow-arrow" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>
+          </span>
+        </button>
+
         <section class="system-mini-card command-health">
           <div class="card-head">
-            <p class="eyebrow">System Status</p>
-            <button class="icon-button tiny" type="button" aria-label="Expand system status">
-              <svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg>
-            </button>
+            <p class="eyebrow">Local systems</p>
           </div>
           <strong id="sidebarSystemHealth"><span class="status-dot"></span>All systems operational</strong>
           <div class="health-summary-grid" aria-label="Live system summary">
-            <div><small>Mode</small><b id="sidebarAgentMode">Draft only</b></div>
+            <div><small>Agent mode</small><b id="sidebarAgentMode">Draft only</b></div>
             <div><small>Agent health</small><b id="sidebarAgentId">Stable</b></div>
           </div>
-          <div class="resource-bars">
-            <div><span id="sidebarStatusLabelA">Agent Health</span><em id="sidebarStatusBarA" style="--bar: 92%"></em><strong id="sidebarStatusValueA">Stable</strong></div>
-            <div><span id="sidebarStatusLabelB">Workload</span><em id="sidebarStatusBarB" style="--bar: 18%"></em><strong id="sidebarStatusValueB">Light</strong></div>
-            <div><span id="sidebarStatusLabelC">Memory</span><em id="sidebarStatusBarC" style="--bar: 0%"></em><strong id="sidebarStatusValueC">0</strong></div>
-            <div><span id="sidebarStatusLabelD">Safety Gate</span><em id="sidebarStatusBarD" style="--bar: 100%"></em><strong id="sidebarStatusValueD">On</strong></div>
-          </div>
-          <div class="mini-line-chart" id="sidebarMiniChart" aria-hidden="true">
-            <i style="height: 28%"></i>
-            <i style="height: 38%"></i>
-            <i style="height: 34%"></i>
-            <i style="height: 52%"></i>
-            <i style="height: 46%"></i>
-            <i style="height: 64%"></i>
-            <i style="height: 58%"></i>
-            <i style="height: 78%"></i>
-            <i style="height: 66%"></i>
-            <i style="height: 84%"></i>
-          </div>
+          <dl class="system-facts" aria-label="Measured local system facts">
+            <div><dt id="sidebarStatusLabelA">Runtime</dt><dd id="sidebarStatusValueA">Online</dd></div>
+            <div><dt id="sidebarStatusLabelB">Queued work</dt><dd id="sidebarStatusValueB">0</dd></div>
+            <div><dt id="sidebarStatusLabelC">Memory</dt><dd id="sidebarStatusValueC">Unavailable</dd></div>
+            <div><dt id="sidebarStatusLabelD">Human Gate</dt><dd id="sidebarStatusValueD">Clear</dd></div>
+          </dl>
         </section>
 
         <section class="sidebar-agent-chat" aria-label="Agent 101 main chat">
@@ -77,7 +73,7 @@
             <div class="sidebar-chat-identity">
               <span class="sidebar-chat-avatar">A</span>
               <div>
-                <p class="eyebrow">Agent 101</p>
+                <p class="eyebrow">Supervisor chat</p>
                 <strong id="sidebarAgentChatTitle">Main command thread</strong>
               </div>
             </div>
@@ -85,18 +81,28 @@
           </div>
           <div class="sidebar-chat-log" id="sidebarAgentChatLog" aria-live="polite"></div>
           <div class="sidebar-chat-actions">
-            <button id="openAgentChatBtn" type="button">Open Chat</button>
-            <button id="newAgentChatBtn" type="button">New Chat</button>
+            <button id="openAgentChatBtn" type="button">Open supervisor</button>
+            <button id="newAgentChatBtn" type="button">New conversation</button>
           </div>
         </section>
       </aside>
 
       <main>
-        <header class="topbar">
+        <header class="topbar control-floor-topbar">
           <div class="topbar-title">
-            <h2>Argentum</h2>
+            <div>
+              <h1 id="workspaceViewTitle">Control Floor</h1>
+              <p id="workspaceViewDescription">Offices, active work, and approvals in one view.</p>
+            </div>
           </div>
           <div class="topbar-actions">
+            <span class="topbar-runtime-status" id="controlFloorTopStatus"><i></i>Connecting</span>
+            <button class="topbar-icon-button project-workflow-topbar-button" id="projectInfrastructureTopBtn" type="button" aria-label="Open project workflow" aria-haspopup="dialog" aria-controls="projectInfrastructureOverlay" aria-expanded="false" title="Project workflow">
+              <svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="18" cy="17" r="2"/><circle cx="6" cy="19" r="2"/><path d="M8 5h3a3 3 0 0 1 3 3v1a3 3 0 0 0 3 3h1M8 19h3a3 3 0 0 0 3-3V9"/></svg>
+            </button>
+            <button class="topbar-icon-button" id="controlFloorTopRefresh" type="button" aria-label="Refresh live operations" title="Refresh live operations">
+              <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/></svg>
+            </button>
             <div class="admin-menu-wrap">
               <button class="profile-button" id="adminMenuBtn" type="button" aria-label="Admin menu" aria-expanded="false" title="Admin menu">
                 <span id="profileInitials">--</span>
@@ -119,7 +125,62 @@
           </div>
         </header>
 
-        <section class="view active" id="view-floor" aria-label="Argentum habitat overview">
+        <nav class="workspace-nav bottom-nav" aria-label="Workspace navigation">
+          <button class="nav-item active" data-view="floor" type="button" aria-current="page">
+            <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 10v10h14V10"/></svg>
+            <span>Control Floor</span>
+          </button>
+          <button class="nav-item" data-view="depo" type="button">
+            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+            <span>Supervisor</span>
+          </button>
+          <button class="nav-item" data-view="approval" type="button">
+            <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
+            <span>Human Gate</span>
+          </button>
+          <button class="nav-item" data-view="outputs" type="button">
+            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
+            <span>Outputs</span>
+          </button>
+          <button class="nav-item" data-view="memory" type="button">
+            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
+            <span>Memory</span>
+          </button>
+          <button class="nav-item" data-view="settings" type="button">
+            <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.08A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.72.9.92.25.12.53.18.82.18H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.52.9Z"/></svg>
+            <span>Settings</span>
+          </button>
+        </nav>
+
+        <section class="view active" id="view-floor" aria-label="Control Floor">
+          <section class="control-floor-dashboard" id="controlFloorDashboard" aria-label="Clipping Office live operations" hidden aria-hidden="true">
+            <header class="control-floor-heading">
+              <div>
+                <p class="eyebrow">Live operations</p>
+                <h1>Clipping Office</h1>
+                <p id="controlFloorSummary">Connecting to the local office...</p>
+              </div>
+              <div class="control-floor-heading-actions">
+                <span class="control-floor-data-source" id="controlFloorDataSource">Waiting for measured data</span>
+                <button class="control-floor-refresh" id="controlFloorRefreshBtn" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/></svg>
+                  Refresh
+                </button>
+                <a class="control-floor-open-office" href="/apps/clipping-office/">
+                  Open office
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                </a>
+              </div>
+            </header>
+            <div class="control-floor-live-region" id="controlFloorLiveRegion" aria-live="polite">
+              <div class="control-floor-loading" role="status">
+                <span></span>
+                <div><strong>Reading local operations</strong><small>Clipping Office state and macOS resources</small></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="office-floor-runtime">
           <div class="command-grid">
             <section class="operations-floor" aria-label="Command floor map">
               <div class="station-map" id="stationMap">
@@ -140,17 +201,22 @@
                     <div class="mini-agent-robot core-agent" aria-hidden="true">
                       <span class="agent-core-tag">
                         <strong id="agentCoreName">Agent 101</strong>
-                        <small id="agentCoreRole">Superior Agent</small>
+                        <small id="agentCoreRole">Supervising operations</small>
                       </span>
                       <span class="robot-head"><i></i><i></i></span>
                       <span class="robot-body"></span>
                     </div>
                   </div>
+                  <div class="office-agent-transit" id="officeAgentTransit" aria-hidden="true">
+                    <span class="office-agent-head"></span>
+                    <span class="office-agent-body"></span>
+                    <span class="office-agent-shadow"></span>
+                  </div>
                   <div class="habitat-modules" id="habitatModules"></div>
                   <div class="agent-avatar" id="depoAvatar" aria-label="Active task ping"><span></span></div>
                 </div>
-                <!-- OrbitMiniMap -->
-                <div class="mini-map" aria-label="Habitat mini map">
+                <!-- CurrentWorkRoute -->
+                <div class="mini-map" aria-label="Current work route" aria-live="polite">
                   <div id="miniMapNodes"></div>
                 </div>
                 <!-- OrbitControls -->
@@ -168,22 +234,24 @@
               </div>
               <aside class="module-info-card" id="moduleInfoCard" aria-live="polite" hidden></aside>
 
-              <div class="agent-control-bar" aria-label="Agent map controls">
-                <div>
-                  <p class="eyebrow">Agent Controls</p>
-                  <strong id="taskStage">Stage: Agent Habitat</strong>
+              <div class="agent-control-bar" aria-label="Supervisor controls">
+                <div class="agent-control-current">
+                  <span>Current office</span>
+                  <strong id="taskStage">Agent Office</strong>
+                  <small id="taskStageDetail">Waiting for a bounded task.</small>
                 </div>
-                <div class="progress-track" aria-label="Mission progress">
-                  <div class="progress-bar" id="missionProgress"></div>
+                <div class="agent-control-safety">
+                  <span>Human Gate</span>
+                  <strong id="riskLevel">Approval-gated</strong>
                 </div>
                 <div class="agent-control-actions">
-                  <span id="riskLevel">Risk: Approval required</span>
-                  <button class="primary-button run-button" id="runCycleBtn" type="button">
-                    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    Run cycle
+                  <button class="primary-button run-button" id="openSupervisorFromFloorBtn" type="button">
+                    <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                    Open supervisor
                   </button>
-                  <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause habitat" title="Pause habitat">
+                  <button class="icon-button" id="pauseBtn" type="button" aria-label="Pause Agent 101" title="Pause Agent 101">
                     <svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+                    <span>Pause</span>
                   </button>
                 </div>
               </div>
@@ -445,6 +513,7 @@
               </div>
             </article>
           </section>
+          </div>
         </section>
 
         <section class="view agent-command-page" id="view-depo" aria-label="Agent 101 details">
@@ -872,7 +941,7 @@
                 <p class="eyebrow">Connected offices</p>
                 <div class="gate-office-list">
                   <span><b>Clips Office</b><em>Draft lane</em></span>
-                  <span><b>Stock Office</b><em>Read-only</em></span>
+                  <span><b>Stock Office</b><em>Paper + gate</em></span>
                   <span><b>Etsy Store Office</b><em>Approval gated</em></span>
                   <span><b>Essentrx Office</b><em>Local prep</em></span>
                   <span><b>System Log</b><em>Active</em></span>
@@ -988,6 +1057,79 @@
 
         <section class="view" id="view-memory" aria-label="Memory center">
           <div class="memory-center">
+            <section class="panel memory-vault-panel">
+              <div class="memory-header">
+                <div>
+                  <p class="eyebrow">Obsidian Brain</p>
+                  <h3>Memory Center</h3>
+                  <p>Argentum command center connected to the local Argentum-Brain vault.</p>
+                </div>
+                <span class="status-chip" id="obsidianVaultStatusChip">Checking</span>
+              </div>
+              <div class="ai-provider-status-grid memory-vault-grid">
+                <div><small>Vault Status</small><strong id="obsidianVaultStatus">Checking</strong></div>
+                <div><small>Daily Notes</small><strong id="obsidianDailyCount">0</strong></div>
+                <div><small>Business Knowledge</small><strong id="obsidianBusinessCount">0</strong></div>
+                <div><small>Agent Knowledge</small><strong id="obsidianAgentCount">0</strong></div>
+                <div><small>Skills</small><strong id="obsidianSkillCount">0</strong></div>
+                <div><small>Workflows</small><strong id="obsidianWorkflowCount">0</strong></div>
+              </div>
+              <div class="brain-health-panel">
+                <div class="memory-header">
+                  <div>
+                    <p class="eyebrow">Brain Health</p>
+                    <h3>Agent 1010 context inspector</h3>
+                    <p>Live vault health, deterministic context, citations, exclusions, backups, and gateway status.</p>
+                  </div>
+                  <span class="status-chip" id="brainHealthStatusChip">Waiting</span>
+                </div>
+                <div class="brain-health-grid" id="brainHealthGrid">
+                  <div><small>Schema</small><strong>Checking</strong><span>Vault version</span></div>
+                  <div><small>Indexed</small><strong>0</strong><span>Search records</span></div>
+                  <div><small>Canonical</small><strong>0</strong><span>Entities</span></div>
+                  <div><small>Conflicts</small><strong>0</strong><span>Open records</span></div>
+                  <div><small>Context</small><strong>Not built</strong><span>Agent 1010</span></div>
+                  <div><small>Backup</small><strong>None</strong><span>Latest verified</span></div>
+                </div>
+                <div class="brain-context-layout">
+                  <div>
+                    <div class="brain-context-toolbar">
+                      <strong>Current context</strong>
+                      <span id="brainContextMeta">No context build yet</span>
+                    </div>
+                    <div class="brain-record-list" id="brainContextList"></div>
+                  </div>
+                  <div>
+                    <div class="brain-context-toolbar">
+                      <strong>Excluded records</strong>
+                      <span id="brainExcludedMeta">0 exclusions</span>
+                    </div>
+                    <div class="brain-record-list" id="brainExcludedList"></div>
+                  </div>
+                </div>
+                <div class="settings-action-row memory-vault-actions">
+                  <span id="brainActionStatus">Brain commands are local and admin-gated.</span>
+                  <button class="ghost-button compact-action" type="button" data-brain-action="verify">Verify Brain</button>
+                  <button class="ghost-button compact-action" type="button" data-brain-action="context">Build Context</button>
+                  <button class="ghost-button compact-action" type="button" data-brain-action="backup">Create Backup</button>
+                  <button class="ghost-button compact-action" type="button" data-brain-action="dry-run">Restore Dry-Run</button>
+                </div>
+              </div>
+              <div class="settings-action-row memory-vault-actions">
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="init">Initialize Vault</button>
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="daily">Create Daily Note</button>
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="skill">Create Skill</button>
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="agent">Create Agent Profile</button>
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="business">Create Business Master File</button>
+                <button class="ghost-button compact-action" type="button" data-obsidian-action="open">Open in Obsidian</button>
+              </div>
+              <form class="memory-search-form" id="obsidianSearchForm">
+                <input id="obsidianSearchInput" name="query" autocomplete="off" placeholder="Search vault notes, skills, workflows, and lessons" />
+                <button class="primary-button compact-action" type="submit">Search Memory</button>
+              </form>
+              <div class="settings-list memory-vault-results" id="obsidianSearchResults"></div>
+            </section>
+
             <section class="panel memory-library-panel">
               <div class="memory-header">
                 <div>
@@ -1128,6 +1270,10 @@
                   <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3a7 7 0 0 0 14 0v-3a7 7 0 0 0-7-7Z"/><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M9 15c1.8 1 4.2 1 6 0"/></svg>
                   AI Providers
                 </button>
+                <button class="settings-nav-item" data-settings-target="settings-business-profile" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M4 20V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14"/><path d="M8 20v-6h8v6"/><path d="M8 8h.01"/><path d="M12 8h.01"/><path d="M16 8h.01"/><path d="M8 11h.01"/><path d="M12 11h.01"/><path d="M16 11h.01"/></svg>
+                  Business Profile
+                </button>
                 <button class="settings-nav-item" data-settings-target="settings-sessions" type="button">
                   <svg viewBox="0 0 24 24"><path d="M4 5h16v12H4Z"/><path d="M9 21h6"/><path d="M12 17v4"/></svg>
                   Sessions
@@ -1177,7 +1323,7 @@
                         <span>Current</span>
                         <span>Owner</span>
                       </div>
-                      <p id="settingsSessionMeta">Browser session - 127.0.0.1</p>
+                      <p id="settingsSessionMeta">App session - 127.0.0.1</p>
                     </div>
                     <em>Active now</em>
                   </article>
@@ -1345,13 +1491,41 @@
                   </div>
                   <div class="settings-flow-card">
                     <strong>Key policy</strong>
-                    <p>Credentials belong in server environment variables only. Agent 101 can document connector plans, but cannot rotate keys, grant permissions, or call external APIs without approval.</p>
+                    <p>Credentials stay server-side. Cloud mode uses Railway variables; local Mac mode uses Keychain or encrypted local storage. Agent 101 cannot rotate keys, grant permissions, or call external APIs without approval.</p>
                     <div class="settings-flow">
                       <span>Server-side</span>
                       <span>Not committed</span>
                       <span>Human Gate</span>
                     </div>
                   </div>
+                  <form class="access-form local-secret-form" id="localSecretForm">
+                    <div class="settings-form-grid">
+                      <label>
+                        Secret
+                        <select name="provider" id="localSecretProvider">
+                          <option value="openai">OpenAI</option>
+                          <option value="anthropic">Claude / Anthropic</option>
+                          <option value="twitch_client_id">Twitch Client ID</option>
+                          <option value="twitch_client_secret">Twitch Client Secret</option>
+                          <option value="twitch_app_access_token">Twitch App Access Token</option>
+                          <option value="twitch_oauth_token">Twitch OAuth Token</option>
+                          <option value="kick_client_id">Kick Client ID</option>
+                          <option value="kick_client_secret">Kick Client Secret</option>
+                          <option value="kick_oauth_token">Kick OAuth Token</option>
+                          <option value="tiktok">TikTok</option>
+                          <option value="stripe">Stripe</option>
+                        </select>
+                      </label>
+                      <label>
+                        Value
+                        <input name="value" id="localSecretValue" type="password" autocomplete="off" placeholder="Stored locally, never shown again" />
+                      </label>
+                    </div>
+                    <div class="settings-action-row ai-key-actions">
+                      <span id="localSecretStatus">Local secure storage is checked after sign-in.</span>
+                      <button class="primary-button" type="submit">Save local secret</button>
+                    </div>
+                  </form>
                   <div class="settings-list">
                     <div>
                       <span class="settings-list-icon" aria-hidden="true">
@@ -1526,6 +1700,63 @@
                   </div>
                 </section>
 
+                <section class="settings-card settings-span-2" id="settings-business-profile">
+                  <div class="settings-card-heading">
+                    <div>
+                      <h4>Business Profile</h4>
+                      <p>Teach Agent 101 the verified business context it is allowed to use.</p>
+                    </div>
+                    <span class="status-chip" id="businessReadinessChip">Loading</span>
+                  </div>
+                  <div class="settings-control-grid business-profile-grid">
+                    <form class="access-form business-profile-form" id="businessProfileForm">
+                      <div class="settings-form-grid">
+                        <label>
+                          Company name
+                          <input name="companyName" id="businessCompanyName" autocomplete="organization" placeholder="Argentum" />
+                        </label>
+                        <label>
+                          Business type
+                          <input name="businessType" id="businessTypeInput" autocomplete="off" placeholder="Supervised AI operating system" />
+                        </label>
+                        <label>
+                          Current stage
+                          <input name="currentStage" id="businessStageInput" autocomplete="off" placeholder="prototype" />
+                        </label>
+                        <label>
+                          Time zone
+                          <input name="timeZone" id="businessTimeZoneInput" autocomplete="off" placeholder="America/New_York" />
+                        </label>
+                      </div>
+                      <label>
+                        Mission
+                        <textarea name="mission" id="businessMissionInput" rows="3" placeholder="What should Agent 101 help the business accomplish?"></textarea>
+                      </label>
+                      <label>
+                        Primary goal
+                        <input name="primaryGoal" id="businessPrimaryGoalInput" autocomplete="off" placeholder="Run Clips Office end to end in draft-only mode" />
+                      </label>
+                      <label>
+                        Main KPIs
+                        <input name="kpis" id="businessKpiInput" autocomplete="off" placeholder="safe runs, artifacts, approvals cleared" />
+                      </label>
+                      <button class="primary-button" type="submit">Save business profile</button>
+                    </form>
+                    <aside class="settings-side-note business-readiness-panel">
+                      <strong>Readiness</strong>
+                      <p id="businessReadinessSummary">Agent 101 needs verified context before it should make strong business claims.</p>
+                      <div class="settings-tool-grid business-readiness-grid" id="businessReadinessGrid" aria-label="Business readiness checks"></div>
+                      <div class="settings-flow">
+                        <span>Profile</span>
+                        <span>Goals</span>
+                        <span>KPIs</span>
+                        <span>Authority</span>
+                        <span>Risk policy</span>
+                      </div>
+                    </aside>
+                  </div>
+                </section>
+
                 <section class="settings-card" id="settings-audit">
                   <div class="settings-card-heading">
                     <div>
@@ -1663,10 +1894,25 @@
                     <span class="status-chip">Local first</span>
                   </div>
                   <div class="settings-stat-grid">
-                    <div class="settings-stat"><small>Runtime</small><strong>JSON</strong><span>Ignored by Git</span></div>
-                    <div class="settings-stat"><small>Memory</small><strong>Private</strong><span>Operator controlled</span></div>
-                    <div class="settings-stat"><small>Export</small><strong>Gated</strong><span>Approval required</span></div>
+                    <div class="settings-stat"><small>Mode</small><strong id="localRuntimeMode">Checking</strong><span id="localRuntimeHost">Backend status</span></div>
+                    <div class="settings-stat"><small>Database</small><strong id="localDatabaseStatus">Checking</strong><span>SQLite in app data</span></div>
+                    <div class="settings-stat"><small>File access</small><strong id="localWorkspaceCount">0 folders</strong><span>Permission scoped</span></div>
                   </div>
+                  <div class="settings-action-row">
+                    <span id="localWorkspaceStatus">Agents cannot use full disk access by default.</span>
+                    <button class="ghost-button" id="pickLocalWorkspaceBtn" type="button">Choose folder</button>
+                  </div>
+                  <form class="access-form obsidian-vault-form" id="obsidianVaultForm">
+                    <label>
+                      Obsidian Vault Path
+                      <input name="vaultPath" id="obsidianVaultPathInput" autocomplete="off" placeholder="~/Documents/Argentum-Brain" />
+                    </label>
+                    <div class="settings-action-row">
+                      <span id="obsidianVaultPathStatus">Connect the local Argentum-Brain vault.</span>
+                      <button class="ghost-button" id="pickObsidianVaultBtn" type="button">Choose vault</button>
+                      <button class="primary-button" type="submit">Save vault path</button>
+                    </div>
+                  </form>
                   <div class="settings-tool-grid storage-tool-grid">
                     <span><b>Raw footage</b><em>Supported</em></span>
                     <span><b>Music / audio</b><em>Supported</em></span>
@@ -1676,6 +1922,7 @@
                     <span><b>Captions</b><em>Draft</em></span>
                     <span><b>Google Drive</b><em>Not connected</em></span>
                   </div>
+                  <div class="settings-list" id="localWorkspaceList"></div>
                   <div class="settings-list">
                     <div>
                       <span class="settings-list-icon" aria-hidden="true">
@@ -1703,9 +1950,15 @@
                 <section class="settings-card" id="settings-backup">
                   <div class="settings-card-heading">
                     <div>
-                      <h4>Backup &amp; Restore</h4>
-                      <p>Disaster recovery controls for the local command floor.</p>
+                      <h4>Brain Backup &amp; Recovery</h4>
+                      <p>Verified backups and destructive-restore guardrails for Argentum-Brain.</p>
                     </div>
+                    <span class="status-chip" id="brainBackupStatusChip">Checking</span>
+                  </div>
+                  <div class="settings-stat-grid">
+                    <div class="settings-stat"><small>Vault</small><strong id="brainBackupVaultPath">Checking</strong><span>Configured Brain path</span></div>
+                    <div class="settings-stat"><small>Database</small><strong id="brainBackupDatabasePath">Checking</strong><span>Local SQLite path</span></div>
+                    <div class="settings-stat"><small>Latest Backup</small><strong id="brainBackupLatest">None</strong><span id="brainBackupVerified">Not verified</span></div>
                   </div>
                   <div class="settings-flow-card">
                     <strong>Restore rule</strong>
@@ -1717,27 +1970,11 @@
                       <span>Restore</span>
                     </div>
                   </div>
-                  <div class="settings-list">
-                    <div>
-                      <span class="settings-list-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 19h16"/></svg>
-                      </span>
-                      <div>
-                        <strong>Manual export</strong>
-                        <p>State export is planned as an explicit operator action.</p>
-                      </div>
-                      <em>Planned</em>
-                    </div>
-                    <div>
-                      <span class="settings-list-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>
-                      </span>
-                      <div>
-                        <strong>Restore points</strong>
-                        <p>Restore will require a local file and confirmation before replacing state.</p>
-                      </div>
-                      <em>Gated</em>
-                    </div>
+                  <div class="settings-action-row memory-vault-actions">
+                    <span id="brainBackupStatus">Backups are stored outside the live vault.</span>
+                    <button class="ghost-button compact-action" type="button" data-brain-backup-action="create">Create backup</button>
+                    <button class="ghost-button compact-action" type="button" data-brain-backup-action="verify">Verify latest</button>
+                    <button class="ghost-button compact-action" type="button" data-brain-backup-action="dry-run">Restore dry-run</button>
                   </div>
                 </section>
 
@@ -1781,33 +2018,6 @@
             </div>
           </div>
         </section>
-
-        <nav class="bottom-nav" aria-label="Argentum system navigation">
-          <button class="nav-item active" data-view="floor" type="button">
-            <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 10v10h14V10"/></svg>
-            Overview
-          </button>
-          <button class="nav-item" data-view="depo" type="button">
-            <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
-            Agent 101
-          </button>
-          <button class="nav-item" data-view="approval" type="button">
-            <svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3"/><path d="M5 11h14v10H5Z"/></svg>
-            Human Gate
-          </button>
-          <button class="nav-item" data-view="outputs" type="button">
-            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
-            Outputs
-          </button>
-          <button class="nav-item" data-view="memory" type="button">
-            <svg viewBox="0 0 24 24"><path d="M6 4h12v16H6Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>
-            Memory
-          </button>
-          <button class="nav-item" data-view="settings" type="button">
-            <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 0 1-4 0v-.08A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 0 1 4 0v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.72.9.92.25.12.53.18.82.18H21a2 2 0 0 1 0 4h-.08a1.7 1.7 0 0 0-1.52.9Z"/></svg>
-            Settings
-          </button>
-        </nav>
 
         <section class="workspace-overlay" id="workspaceOverlay" aria-hidden="true">
           <div class="workspace-panel">
@@ -1863,27 +2073,48 @@
               </form>
             </section>
 
-            <aside class="agent-chat-side" aria-label="Agent 101 run status">
-              <div class="agent-chat-side-card">
-                <p class="eyebrow">Status</p>
-                <strong id="agentChatRunStatus">Idle</strong>
-                <span id="agentChatRunDetail">Waiting for a safe internal command.</span>
-              </div>
-              <div class="agent-chat-side-card">
-                <p class="eyebrow">Human Gate</p>
-                <strong id="agentChatApprovalStatus">Clear</strong>
-                <span>External posting, uploads, accounts, keys, spending, and deletion stay approval-gated.</span>
-              </div>
-              <div class="agent-chat-side-card">
-                <p class="eyebrow">Thread Rules</p>
-                <ul>
-                  <li>Saved server-side.</li>
-                  <li>One thread at a time.</li>
-                  <li>Safe draft work runs internally.</li>
-                  <li>Risky external work becomes a permission card.</li>
-                </ul>
-              </div>
+            <aside class="agent-chat-side" aria-label="Agent 101 supervisor">
+              <section class="agent-mission-cockpit" id="agentMissionCockpit" aria-labelledby="agentMissionCockpitTitle">
+                <div class="agent-mission-cockpit-head">
+                  <div>
+                    <p class="eyebrow">Your supervisor</p>
+                    <h3 id="agentMissionCockpitTitle">Task watch</h3>
+                  </div>
+                  <span class="agent-mission-live-dot" id="agentMissionConnection" data-state="connecting">Checking</span>
+                </div>
+                <label class="agent-mission-picker" for="agentMissionSelect">
+                  <span>Task</span>
+                  <select id="agentMissionSelect" aria-label="Select a task from this conversation">
+                    <option value="">No task in this chat</option>
+                  </select>
+                </label>
+                <div id="agentMissionRail">
+                  <div class="agent-mission-empty">
+                    <strong>No task assigned yet</strong>
+                    <p>Give Agent 101 a task in this conversation. Its current work and anything that needs your decision will stay here.</p>
+                  </div>
+                </div>
+              </section>
             </aside>
+          </div>
+        </section>
+
+        <section class="agent-mission-output-modal" id="agentOutputPreview" aria-hidden="true" hidden>
+          <div class="agent-output-preview-card" role="dialog" aria-modal="true" aria-labelledby="agentOutputPreviewTitle">
+            <header>
+              <div>
+                <p class="eyebrow">Mission Output</p>
+                <h3 id="agentOutputPreviewTitle">Mission file</h3>
+                <span id="agentOutputPreviewMeta">Saved output workspace · verification status is shown per file</span>
+              </div>
+              <button id="agentOutputPreviewClose" type="button" aria-label="Close output preview">Close</button>
+            </header>
+            <img id="agentOutputPreviewImage" alt="Saved mission output preview" hidden>
+            <pre id="agentOutputPreviewContent" data-binary="false">Select a saved mission output to inspect its file record.</pre>
+            <footer>
+              <a id="agentOutputPreviewRaw" href="#" download>Download original file</a>
+              <a id="agentOutputDownloadAll" href="#" download hidden>Download mission output manifest (JSON)</a>
+            </footer>
           </div>
         </section>
 
@@ -1904,6 +2135,40 @@
       </main>
     </div>
 
-    <script src="./script.js?v=agent-chat-workspace-2"></script>
+    <section class="project-infrastructure-overlay" id="projectInfrastructureOverlay" hidden aria-hidden="true">
+      <article class="project-infrastructure-card" id="projectInfrastructureDialog" role="dialog" aria-modal="true" aria-labelledby="projectInfrastructureTitle" aria-describedby="projectInfrastructureSummary" tabindex="-1">
+        <header class="project-infrastructure-head">
+          <div class="project-infrastructure-heading-copy">
+            <p class="eyebrow">Live project route</p>
+            <h2 id="projectInfrastructureTitle">Workflow</h2>
+            <p id="projectInfrastructureSummary">Open an office to inspect its recorded pipeline and current work.</p>
+          </div>
+          <div class="project-infrastructure-head-actions">
+            <span class="project-infrastructure-source" id="projectInfrastructureSource" data-state="loading"><i aria-hidden="true"></i>Reading live sources</span>
+            <button class="project-infrastructure-refresh" id="projectInfrastructureRefreshBtn" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/></svg>
+              Refresh
+            </button>
+            <button class="project-infrastructure-close" id="projectInfrastructureCloseBtn" type="button" aria-label="Close project infrastructure">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        </header>
+        <div class="project-infrastructure-status" id="projectInfrastructureStatus" role="status" aria-live="polite">Reading the supervised project workspace and local runtime sources.</div>
+        <div class="project-infrastructure-body" id="projectInfrastructureBody">
+          <div class="project-infrastructure-loading" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
+        <footer class="project-infrastructure-footer">
+          <span id="projectInfrastructureUpdated">Local read-only infrastructure view</span>
+          <div>
+            <button id="projectInfrastructureAgentBtn" type="button">Open Agent 101</button>
+            <button id="projectInfrastructureGateBtn" type="button">Open Human Gate</button>
+          </div>
+        </footer>
+      </article>
+    </section>
+
+    <script src="./script.js?v=performance-4-20260818"></script>
+    <script src="/human-gate-bubble.js?v=20260812-1"></script>
   </body>
 </html>

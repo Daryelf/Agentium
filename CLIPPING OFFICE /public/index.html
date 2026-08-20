@@ -1,46 +1,161 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>StreamClipper Agent</title>
-    <link rel="stylesheet" href="./styles.css">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clipping Office</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./product-ui.css" />
   </head>
-  <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-mark">SC</span>
-          <div>
-            <strong>Stream<span>Clipper</span></strong>
-            <span>Agent</span>
-          </div>
-          <button class="sidebar-collapse" type="button" aria-label="Sidebar stays open">‹‹</button>
+  <body class="office-starting">
+    <div class="office-startup" id="office-startup" role="status" aria-live="polite" aria-label="Clipping Office startup checks">
+      <div class="office-startup-inner">
+        <div class="office-startup-brand">
+          <span class="office-startup-mark" aria-hidden="true">CO</span>
+          <div><strong>Clipping Office</strong><small>Preparing your workspace</small></div>
         </div>
-        <nav id="nav" class="nav"></nav>
-        <div id="sidebar-ops" class="sidebar-ops"></div>
-      </aside>
-
-      <main class="main">
-        <header class="topbar">
-          <div>
-            <h1 id="view-title">Dashboard</h1>
-            <p id="view-subtitle">Supervised clipping workflow</p>
+        <div class="office-startup-progress" aria-hidden="true"><span data-startup-progress></span></div>
+        <div class="office-startup-checks">
+          <div data-startup-step="engine"><i>1</i><span><b>Local engine</b><small>Connecting</small></span></div>
+          <div data-startup-step="media"><i>2</i><span><b>Media tools</b><small>Queued</small></span></div>
+          <div data-startup-step="providers"><i>3</i><span><b>Live providers</b><small>Queued</small></span></div>
+          <div data-startup-step="watchers"><i>4</i><span><b>Watch pool</b><small>Queued</small></span></div>
+          <div data-startup-step="discovery"><i>5</i><span><b>Discovery</b><small>Queued</small></span></div>
+        </div>
+        <p class="office-startup-message" data-startup-message>Starting local engine...</p>
+      </div>
+    </div>
+    <div class="product-shell">
+      <section class="argentum-command-bar" id="argentum-command-bar" aria-label="Argentum command bar">
+        <div class="argentum-command-inner">
+          <button class="argentum-command-tab" type="button" data-argentum-command-toggle aria-expanded="true" aria-controls="argentum-command-bar" title="Minimize Argentum bar">
+            <span class="argentum-command-tab-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32"><path d="M16 3 29 26H19L16 20l-3 6H3L16 3Z"/><path d="M16 8v8"/><path d="M9 26l7-12 7 12"/></svg>
+            </span>
+            <span class="argentum-command-tab-glyph" data-argentum-command-glyph aria-hidden="true">&minus;</span>
+          </button>
+          <div class="argentum-command-brand" aria-label="Argentum, Agent 101 command">
+            <strong>Argentum</strong>
+            <small>Agent 101</small>
           </div>
-          <div class="status-strip">
-            <span id="api-status" class="pill neutral">API</span>
-            <span id="openai-status" class="pill neutral">OpenAI</span>
-            <span id="twitch-status" class="pill neutral">Twitch</span>
-            <span id="limit-status" class="pill neutral">0/20</span>
-            <span class="operator-avatar" aria-label="Operator">d8</span>
+          <div class="argentum-agent-chat">
+            <form class="argentum-agent-chat-form" data-agent101-chat-form autocomplete="off">
+              <span class="argentum-agent-label" aria-hidden="true">Agent 101</span>
+              <input type="text" data-agent101-chat-input aria-label="Message Agent 101" placeholder="Ask about this office" maxlength="4000" enterkeyhint="send" />
+              <button class="argentum-agent-send" type="submit" data-agent101-chat-send aria-label="Send to Agent 101" title="Send to Agent 101">
+                <span aria-hidden="true">&uarr;</span>
+              </button>
+              <button class="argentum-agent-disclosure" type="button" data-agent101-panel-toggle aria-expanded="false" aria-controls="argentum-agent-panel" aria-label="Show Agent 101 conversation" title="Show conversation">
+                <span aria-hidden="true">&hellip;</span>
+              </button>
+            </form>
+            <p data-agent101-chat-status aria-live="polite">Clipping Office context</p>
           </div>
-        </header>
+          <a class="product-main-office" href="/" data-main-office-link aria-label="Back to Main Office">
+            <span aria-hidden="true">&larr;</span>
+            <b>Main Office</b>
+          </a>
+          <section class="argentum-agent-panel" id="argentum-agent-panel" data-agent101-chat-panel aria-label="Agent 101 conversation" hidden>
+            <header>
+              <div><strong>Agent 101</strong><small>Clipping Office thread</small></div>
+              <button type="button" data-agent101-panel-close aria-label="Close Agent 101 conversation" title="Close conversation">&times;</button>
+            </header>
+            <div class="argentum-agent-messages" data-agent101-chat-messages aria-live="polite">
+              <p class="argentum-agent-empty">Clipping Office thread</p>
+            </div>
+          </section>
+        </div>
+      </section>
+      <section class="workflow-rail" id="workflow-rail" aria-label="Live clip workflow">
+        <div class="workflow-rail-inner">
+          <div class="workflow-rail-heading">
+            <span><i aria-hidden="true"></i>Live workflow</span>
+            <strong data-workflow-status aria-live="polite">Standing by</strong>
+          </div>
+          <div class="workflow-track">
+            <div class="workflow-track-line" aria-hidden="true"></div>
+            <ol class="workflow-stages" aria-hidden="true">
+              <li data-workflow-stage="studio" style="--workflow-position: 0%"><span>Studio</span><i></i></li>
+              <li data-workflow-stage="review" style="--workflow-position: 25%"><span>Review</span><i></i></li>
+              <li data-workflow-stage="precheck" style="--workflow-position: 50%"><span>Precheck</span><i></i></li>
+              <li data-workflow-stage="ready" style="--workflow-position: 75%"><span>Ready</span><i></i></li>
+              <li data-workflow-stage="library" style="--workflow-position: 100%"><span>Library</span><i></i></li>
+            </ol>
+            <div class="workflow-clips" data-workflow-clips></div>
+          </div>
+        </div>
+      </section>
+      <header class="product-header">
+        <div class="product-header-inner">
+          <div class="product-header-primary">
+            <button type="button" class="product-brand" data-app-view="studio" aria-label="Open Studio">
+              <span class="product-brand-mark" aria-hidden="true">CO</span>
+              <span><strong>Clipping Office</strong><small>Video workspace</small></span>
+            </button>
+            <nav class="product-nav" aria-label="Primary navigation">
+              <button type="button" data-app-view="discover">Discover</button>
+              <button type="button" data-app-view="studio">Studio</button>
+              <button type="button" data-app-view="review">Review</button>
+              <button type="button" data-app-view="library">Library</button>
+              <button type="button" data-app-view="settings">Settings</button>
+            </nav>
+          </div>
+          <div class="product-header-actions">
+            <label class="product-create" aria-label="New clip">
+              <span aria-hidden="true">+</span>
+              <b>New clip</b>
+              <input type="file" accept="video/mp4,video/webm,video/quicktime,video/*" data-editor-upload-clip>
+            </label>
+          </div>
+        </div>
+      </header>
 
-        <section id="toast" class="toast" hidden></section>
-        <section id="view" class="view"></section>
+      <main class="hello-shell">
+        <section class="product-view-head" id="product-view-head" aria-live="polite"></section>
+
+        <section class="discovery-surface" data-app-surface="discover">
+          <header class="live-row" id="live-row" role="status" aria-live="polite">
+            <div class="live-title">Find live moments</div>
+            <div class="live-search">
+              <input id="stream-search-input" type="text" placeholder="Search creators, games, or categories" />
+              <select id="stream-category-filter" aria-label="Filter streams by category">
+                <option value="all">All categories</option>
+                <option value="irl">IRL &amp; Chatting</option>
+                <option value="gaming">Games &amp; Esports</option>
+                <option value="sports">Sports</option>
+                <option value="music">Music</option>
+                <option value="creative">Creative</option>
+              </select>
+              <button id="stream-search-button" type="button">Search</button>
+            </div>
+            <div class="live-pill" id="twitch-pill">
+              <span>Twitch</span>
+              <div class="live-pill-metrics">
+                <b id="twitch-live-count">—</b>
+                <small id="twitch-connection-status">checking...</small>
+              </div>
+            </div>
+            <div class="live-pill" id="kick-pill">
+              <span>Kick</span>
+              <div class="live-pill-metrics">
+                <b id="kick-live-count">—</b>
+                <small id="kick-connection-status">checking...</small>
+              </div>
+            </div>
+          </header>
+          <section class="search-summary" aria-live="polite">
+            <span id="search-status">Ready</span>
+          </section>
+          <section class="stream-results" id="stream-results" aria-label="Live stream results"></section>
+          <section class="watch-area" id="watch-area" aria-label="Agent watch area"></section>
+          <section class="discover-clips" id="discover-clips" aria-label="Clips from this discovery"></section>
+        </section>
+
+        <section class="clips-area" id="clips-area" aria-label="Clipping Office workspace"></section>
       </main>
     </div>
-
-    <script type="module" src="./app.js"></script>
+    <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-1" />
+    <script src="./app.js"></script>
+    <script src="/human-gate-bubble.js?v=20260812-1"></script>
   </body>
 </html>

@@ -1,0 +1,20 @@
+{
+  "name": "print-shop-office",
+  "version": "1.0.0",
+  "description": "Argentum OS — 3D Print Shop Office (Agent 202)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "stripe": "^14.0.0",
+    "openai": "^4.0.0",
+    "resend": "^3.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

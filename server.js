@@ -1,7 +1,9 @@
 const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const { URL, pathToFileURL } = require("node:url");
 const {
   STOCK_WORKSPACE_ID,
@@ -10,23 +12,104 @@ const {
   stockOverview,
   listStockRecords,
   getStockRecord,
+  getMirrorCandidate,
   answerStockQuestion,
   redactSensitiveText,
   stockPermissions,
+  resolveStockRoot,
 } = require("./services/stock-office");
+const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
+const { createStockIntelligenceScheduler } = require("./services/stock-intelligence-scheduler");
+const { createStockIntelligenceStore } = require("./services/stock-intelligence-store");
+const { createStockEventBus } = require("./services/stock-event-bus");
+const { reconcileOrderDrafts } = require("./services/stock-order-lifecycle");
+const { evaluateTradingHalt } = require("./services/stock-trading-halt");
+const { buildStockMarketWorkers, marketSession } = require("./services/stock-market-workers");
+const { buildContinuousReviewView, selectNextQualifiedProposal } = require("./services/stock-continuous-review");
+const {
+  ALLOWED_EVENT_TYPES: STOCK_TELEGRAM_EVENT_TYPES,
+  APPROVAL_ACTION: STOCK_TELEGRAM_APPROVAL_ACTION,
+  createStockTelegramNotifier,
+} = require("./services/stock-telegram-notifier");
+const { createRobinhoodMcpClient } = require("./services/robinhood-mcp-client");
+const {
+  applyPaperProposal,
+  normalizeShadowPortfolio,
+  paperProposalEligibility,
+  resetShadowPortfolio,
+  runShadowPortfolioCycle,
+} = require("./services/stock-shadow-portfolio");
+const { runAutonomousSimulationCycle } = require("./services/stock-simulation-engine");
+const {
+  brokerControlOverview,
+  buildCopyPortfolioPlan,
+  buildTradeDraft,
+  claimApprovedDispatch,
+  executionEnvelope,
+  normalizeGuardrails,
+  settleApprovedDispatch,
+  tradeDraftWithApprovalState,
+} = require("./services/stock-broker-control");
+const agent101Os = require("./services/agent101-operating-system");
+const openclawRuntime = require("./services/openclaw-runtime");
+const localRuntime = require("./services/local-runtime");
+const localDatabase = require("./services/local-database");
+const obsidianVault = require("./services/obsidian-vault");
+const secureSecrets = require("./services/secure-secrets");
+const brainBackup = require("./services/brain-backup");
+const brainVerification = require("./services/brain-verification");
+const agentContextBuilder = require("./services/agent-context-builder");
+const gatewayAdapter = require("./services/gateway-adapter");
+const agent101MissionManager = require("./services/agent101-mission-manager");
+const agent101ProjectWorkspace = require("./services/agent101-project-workspace");
+const printShopWorkspace = require("./services/print-shop-workspace");
 
-const PORT = Number(process.env.PORT || 5173);
-const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
+loadLocalEnvFiles(ROOT);
+const APP_MODE = localRuntime.resolveAppMode(process.env);
+const PORT = localRuntime.resolvePort(process.env);
+const HOST = localRuntime.resolveHost(process.env);
+localRuntime.assertLocalModeHost(APP_MODE, HOST);
+const DATA_DIR = localRuntime.resolveDataDir(ROOT, process.env);
+const STOCK_SHADOW_FILE = path.join(DATA_DIR, "stock-shadow-portfolio.json");
+const STOCK_SIMULATION_FILE = path.join(DATA_DIR, "stock-simulation-lab.json");
+const STOCK_INTELLIGENCE_STATUS_FILE = path.join(DATA_DIR, "stock-intelligence-scheduler.json");
+const STOCK_GURU_RUNTIME_ROOT = path.resolve(process.env.STOCK_GURU_RUNTIME_DIR || path.join(DATA_DIR, "stock-guru-runtime"));
+const STOCK_LOGO_CACHE_DIR = path.join(DATA_DIR, "company-logos");
+const STOCK_LOGO_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+if (APP_MODE === "local") {
+  process.env.CLIPPING_OFFICE_DATA_DIR = process.env.ARGENTUM_CLIPPING_OFFICE_DATA_DIR || path.join(DATA_DIR, "clipping-office");
+}
+const CLIPPING_OFFICE_DATA_DIR = path.resolve(process.env.CLIPPING_OFFICE_DATA_DIR || path.join(ROOT, "CLIPPING OFFICE ", "data"));
+const AGENT101_OUTPUT_ROOT = path.resolve(CLIPPING_OFFICE_DATA_DIR, process.env.AGENT101_OUTPUT_DIR || "./outputs");
 const CLIPPING_OFFICE_MOUNT = "/apps/clipping-office";
+const CLIPPING_OFFICE_AGENT101_BRIDGE = `${CLIPPING_OFFICE_MOUNT}/api/argentum/agent101`;
 const CLIPPING_OFFICE_SERVER = path.join(ROOT, "CLIPPING OFFICE ", "server.js");
+const PUBLIC_SITE_DIR = path.join(ROOT, "website");
 const STOCK_OFFICE_MOUNT = "/apps/stock-office";
 const STOCK_OFFICE_APP_DIR = path.join(ROOT, "apps", "stock-office");
+const PRINT_SHOP_OFFICE_MOUNT = "/apps/print-shop-office";
+const PRINT_SHOP_OFFICE_APP_DIR = path.join(ROOT, "apps", "print-shop-office");
+const DISPLAY_APP_MOUNT = "/display";
+const DISPLAY_APP_DIR = path.join(ROOT, "apps", "display");
+const BUSINESS_OFFICE_APP_DIR = path.join(ROOT, "apps", "business-office");
+const BUSINESS_OFFICE_APP_MOUNTS = {
+  "/apps/etsy-office": "etsy-office",
+  "/apps/essentrx-office": "essentrx-office",
+};
+const LOCAL_OFFICE_BYPASS = process.env.ARGENTUM_LOCAL_OFFICE_BYPASS === "1";
+const PRINT_SHOP_DATA_ROOT = path.resolve(process.env.ARGENTUM_PRINT_SHOP_DATA_DIR || DATA_DIR);
 const STATE_FILE = path.join(DATA_DIR, "argentum-state.json");
 const AUTH_FILE = path.join(DATA_DIR, "argentum-auth.json");
 const SESSION_SECRET_FILE = path.join(DATA_DIR, "argentum-session-secret.json");
 const AI_PROVIDER_FILE = path.join(DATA_DIR, "argentum-ai-provider.json");
+const DISPLAY_VIEW_ORDER = ["home", "agents", "agent-1010", "clipping", "trading", "human-gate", "activity"];
+const DISPLAY_VIEWS = new Set(DISPLAY_VIEW_ORDER);
+const DISPLAY_CONTROLLER_STALE_MS = 45_000;
+const DISPLAY_SSE_HEARTBEAT_MS = 15_000;
+const DISPLAY_PAIRING_TTL_MS = 5 * 60 * 1000;
+const displayEventClients = new Set();
+let displayEventSequence = 0;
 const ENV_ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ENV_OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -38,7 +121,11 @@ const ENV_AI_PROVIDER = process.env.AI_PROVIDER || "";
 const ENV_AI_MODE = process.env.AI_MODE || "";
 const ENV_AI_MONTHLY_LIMIT_USD = process.env.AI_MONTHLY_LIMIT_USD || "";
 const ENV_OPENAI_TEST_BUDGET_USD = process.env.OPENAI_TEST_BUDGET_USD || "";
+const ENV_BRAVE_API_KEY = process.env.BRAVE_API_KEY || "";
+const ENV_SERP_API_KEY = process.env.SERP_API_KEY || "";
+let localDatabaseStatus = null;
 const SESSION_SECRET = process.env.SESSION_SECRET || readPersistentSessionSecret();
+hydrateStockSecIdentity();
 const DAY_MS = 1000 * 60 * 60 * 24;
 const SESSION_TTL_MS = boundedDurationMs(process.env.SESSION_TTL_MS, 1000 * 60 * 60 * 8, 30 * DAY_MS);
 const REMEMBER_SESSION_TTL_MS = boundedDurationMs(process.env.REMEMBER_SESSION_TTL_MS, 30 * DAY_MS, 30 * DAY_MS);
@@ -49,8 +136,223 @@ const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
+const stockGuruRefreshManager = createStockGuruRefreshManager({ runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+const stockIntelligenceStore = createStockIntelligenceStore({ dataDir: DATA_DIR });
+const stockEventBus = createStockEventBus({
+  persist: (event) => {
+    stockIntelligenceStore.recordSystemEvent(event);
+    invalidateStockIntelligenceStateCache();
+  },
+});
+const stockIntelligenceScheduler = createStockIntelligenceScheduler({
+  refreshManager: stockGuruRefreshManager,
+  stockRoot: resolveStockRoot(ROOT),
+  statusFile: STOCK_INTELLIGENCE_STATUS_FILE,
+  onCompleted: async (result) => {
+    if (process.env.NODE_ENV === "test") return;
+    const schedulerStatus = stockIntelligenceScheduler.getStatus();
+    if (["success", "partial"].includes(result.status)) {
+      try {
+        const intelligenceSnapshot = stockOfficeSnapshot(readState());
+        const persisted = stockIntelligenceStore.ingestSnapshot(intelligenceSnapshot, {
+          status: result.status,
+          startedAt: schedulerStatus.lastStartedAt,
+          completedAt: result.completedAt || schedulerStatus.lastCompletedAt,
+          nextScheduledAt: schedulerStatus.nextRunAt,
+          cycleType: marketSession(new Date(result.completedAt || Date.now())).status,
+          trigger: "scheduler",
+        });
+        invalidateStockIntelligenceStateCache();
+        stockEventBus.publish("research.completed", {
+          runId: persisted.runId,
+          status: result.status,
+          symbolsScanned: persisted.opportunities.length,
+          reportTypes: Object.keys(persisted.reports || {}),
+        }, { correlationId: persisted.correlationId });
+        persisted.opportunities.filter((opportunity) => opportunity.status === "high_priority" && (opportunity.change?.previousStatus !== "high_priority" || opportunity.change?.thesisChanged)).slice(0, 12).forEach((opportunity) => {
+          stockEventBus.publish("opportunity.updated", {
+            opportunityId: opportunity.id,
+            symbol: opportunity.symbol,
+            status: opportunity.status,
+            score: opportunity.overallScore,
+            confidence: opportunity.confidenceScore,
+            reason: opportunity.change?.previousStatus ? `Opportunity crossed from ${opportunity.change.previousStatus} to high priority.` : "New high-priority opportunity persisted.",
+          }, { id: `opportunity.updated:${persisted.runId}:${opportunity.symbol}`, correlationId: persisted.correlationId });
+        });
+        if (persisted.providerHealthTransition) {
+          stockEventBus.publish("provider.health_changed", persisted.providerHealthTransition, {
+            id: `provider.health_changed:${persisted.runId}`,
+            correlationId: persisted.correlationId,
+          });
+        }
+        if (persisted.reports?.overnight) stockEventBus.publish("overnight.completed", { reportId: `stock-report-overnight-${persisted.reports.overnight.generatedAt?.slice(0, 10) || "current"}`, status: "ready" }, { correlationId: persisted.correlationId });
+        if (persisted.reports?.morning) stockEventBus.publish("morning.report_ready", { reportId: `stock-report-morning-${persisted.reports.morning.generatedAt?.slice(0, 10) || "current"}`, status: "ready" }, { correlationId: persisted.correlationId });
+        const persistedSnapshot = stockOfficeSnapshot(readState());
+        const portfolioPlan = buildCopyPortfolioPlan(persistedSnapshot);
+        portfolioPlan.proposals.forEach((proposal) => {
+          stockIntelligenceStore.upsertProposal(proposal, { opportunityId: proposal.opportunityId });
+          stockIntelligenceStore.recordRiskDecision({
+            correlationId: persisted.correlationId,
+            proposalId: proposal.id,
+            symbol: proposal.symbol,
+            decision: proposal.draftEligible ? "passed" : proposal.side === "HOLD" ? "monitoring" : "blocked",
+            reasons: proposal.blockers || [],
+            data: { side: proposal.side, scores: proposal.scores || null },
+          });
+          if (!proposal.draftEligible && proposal.side !== "HOLD" && proposal.blockers?.length) {
+            stockEventBus.publish("risk.blocked", {
+              proposalId: proposal.id,
+              symbol: proposal.symbol,
+              side: proposal.side,
+              status: "blocked",
+              reason: proposal.blockers[0],
+              blockers: proposal.blockers.slice(0, 8),
+            }, { id: `risk.blocked:${proposal.fingerprint}`, correlationId: persisted.correlationId });
+          }
+        });
+        const brokerControl = brokerControlOverview(persistedSnapshot);
+        const workers = buildStockMarketWorkers({
+          snapshot: persistedSnapshot,
+          brokerControl,
+          portfolioPlan,
+          intelligenceScheduler: schedulerStatus,
+          intelligence: persistedSnapshot.intelligence,
+        });
+        workers.workers.forEach((worker) => stockIntelligenceStore.updateWorkerHeartbeat(worker, {
+          correlationId: persisted.correlationId,
+          cycleType: workers.market.status,
+          startedAt: schedulerStatus.lastStartedAt,
+          completedAt: result.completedAt || schedulerStatus.lastCompletedAt,
+          itemsSeen: worker.metrics?.[0]?.value || 0,
+          itemsCreated: worker.metrics?.[1]?.value || 0,
+          errors: worker.status === "blocked" ? 1 : 0,
+        }));
+      } catch (error) {
+        console.warn("Stock research persistence failed safely:", error.message);
+        stockEventBus.publish("source.failed", { source: "stock_intelligence_database", error: error.message, status: "failed" });
+      }
+    } else {
+      stockEventBus.publish("research.failed", { status: result.status, error: result.errors?.[0] || result.message || "Research cycle failed safely." });
+      stockEventBus.publish("source.failed", { source: "stock_guru_refresh", status: result.status, error: result.errors?.[0] || result.message || "Research cycle failed safely." });
+    }
+    (result.warnings || []).filter((warning) => /failed|error|timeout|exceeded/i.test(warning)).forEach((warning) => {
+      const warningFingerprint = crypto.createHash("sha256").update(String(warning)).digest("hex").slice(0, 20);
+      stockEventBus.publish("source.failed", { source: "stock_guru_provider", status: "partial", error: warning }, { id: `source.failed:stock_guru_provider:${warningFingerprint}` });
+    });
+    if (result.recordsMayHaveChanged) {
+      try {
+        refreshStockShadowPortfolio({ force: true });
+        refreshStockSimulationLab({ force: true });
+      } catch (error) {
+        console.warn("Stock simulation follow-up cycle failed safely:", error.message);
+      }
+    }
+    if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+      await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+        stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Official Robinhood refresh failed; execution remains closed." });
+        return null;
+      });
+      await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Stock order lifecycle reconciliation failed safely:", error.message));
+    }
+    await runStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
+  },
+});
+const robinhoodMcpClient = createRobinhoodMcpClient({
+  dataDir: path.join(DATA_DIR, "broker-auth"),
+  codexConfigFile: process.env.ARGENTUM_CODEX_CONFIG_PATH || path.join(os.homedir(), ".codex", "config.toml"),
+});
+const stockTelegramSecretCache = new Map();
+const stockTelegramNotifier = createStockTelegramNotifier({
+  environment: process.env,
+  controlTransport: APP_MODE === "local" ? "local_polling" : "webhook",
+  getSetting: (key, fallback) => localDatabase.getLocalSetting(DATA_DIR, key, fallback),
+  setSetting: (key, value) => localDatabase.setLocalSetting(DATA_DIR, key, value),
+  getSecret: (provider) => {
+    const cached = stockTelegramSecretCache.get(provider);
+    if (cached) return cached;
+    const value = secureSecrets.getSecret({ dataDir: DATA_DIR, provider });
+    if (value) stockTelegramSecretCache.set(provider, value);
+    else stockTelegramSecretCache.delete(provider);
+    return value;
+  },
+  setSecret: (provider, value) => {
+    const saved = secureSecrets.setSecret({ dataDir: DATA_DIR, provider, value, preferKeychain: true });
+    stockTelegramSecretCache.set(provider, value);
+    localDatabase.upsertSecretMetadata(DATA_DIR, provider, saved.storage, true);
+    return saved;
+  },
+  deleteSecret: (provider) => {
+    const removed = secureSecrets.deleteSecret({ dataDir: DATA_DIR, provider });
+    stockTelegramSecretCache.delete(provider);
+    localDatabase.upsertSecretMetadata(DATA_DIR, provider, removed.storage, false);
+    return removed;
+  },
+  reserveEvent: (event) => stockIntelligenceStore.reserveTelegramEvent(event),
+  completeEvent: (id, result) => stockIntelligenceStore.completeTelegramEvent(id, result),
+  commandContext: (input) => stockTelegramCommandContext(input),
+  approvalAction: (input) => stockTelegramApprovalAction(input),
+  watchAction: (input) => stockTelegramWatchAction(input),
+});
+stockEventBus.subscribe("overnight.completed", (event) => {
+  const report = stockIntelligenceStore.latestReport("overnight");
+  return stockTelegramNotifier.notifySystemEvent({ eventId: event.id, kind: "overnight_report", text: stockTelegramReportText("ARGENTUM NIGHT RESEARCH", report) }, readState().approvals || []).catch(() => null);
+});
+stockEventBus.subscribe("morning.report_ready", (event) => {
+  const report = stockIntelligenceStore.latestReport("morning");
+  return stockTelegramNotifier.notifySystemEvent({ eventId: event.id, kind: "morning_report", text: stockTelegramReportText("ARGENTUM MORNING INTELLIGENCE", report) }, readState().approvals || []).catch(() => null);
+});
+stockEventBus.subscribe("source.failed", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "source_failure",
+  text: `ARGENTUM SOURCE FAILURE\n${event.payload?.source || "Market intelligence source"}\n${redactSensitiveText(event.payload?.error || "Source failed safely.").slice(0, 800)}\nResearch continues with available evidence; execution cannot use missing or stale data.`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("provider.health_changed", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "system_health",
+  text: `ARGENTUM PROVIDER HEALTH\n${event.payload?.from || "UNKNOWN"} → ${event.payload?.to || "UNKNOWN"}\n${["HEALTHY", "DEGRADED"].includes(event.payload?.to) ? "Research continues with the recorded provider state." : "New entries are blocked when required market data is stale or offline; research continues where safe."}`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("broker.disconnected", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "broker_failure",
+  text: `ARGENTUM BROKER FAILURE\n${redactSensitiveText(event.payload?.reason || event.payload?.error || "Official Robinhood state is unavailable.").slice(0, 800)}\nExecution is closed. Research continues.`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.rejected", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "order_rejected",
+  text: `ARGENTUM ORDER STOPPED\n${event.payload?.side || ""} ${event.payload?.symbol || ""}\n${redactSensitiveText(event.payload?.reason || "Broker review or reconciliation did not pass.").slice(0, 800)}\nNo automatic retry.`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.cancelled", (event) => stockTelegramNotifier.notifySystemEvent({
+  eventId: event.id,
+  kind: "order_cancelled",
+  text: `ARGENTUM ORDER CANCELLED\n${event.payload?.side || ""} ${event.payload?.symbol || ""}\n${redactSensitiveText(event.payload?.reason || "Official broker state reports this order as cancelled.").slice(0, 800)}`,
+}, readState().approvals || []).catch(() => null));
+stockEventBus.subscribe("order.filled", (event) => {
+  const draft = event.payload?.draft;
+  if (!draft) return null;
+  return stockTelegramNotifier.notifyVerifiedTrade(draft, readState().approvals || []).catch(() => null);
+});
+const agent101MissionWorkers = new Map();
+const agent101MissionStreamClients = new Map();
+const aiBudgetReservations = new Map();
+const MAX_ACTIVE_AGENT101_MISSIONS = Math.max(1, Math.min(50, Number(process.env.AGENT101_MAX_ACTIVE_MISSIONS || 12)));
+const AI_BUDGET_INPUT_USD_PER_MILLION = Math.max(1, Number(process.env.AI_BUDGET_INPUT_USD_PER_MILLION || 30));
+const AI_BUDGET_OUTPUT_USD_PER_MILLION = Math.max(1, Number(process.env.AI_BUDGET_OUTPUT_USD_PER_MILLION || 120));
 const AI_PROVIDER_OPTIONS = new Set(["local_demo", "local", "openai", "anthropic"]);
 const AI_MODE_OPTIONS = new Set(["demo", "live"]);
+const LOCAL_CONNECTOR_SECRET_ENV = [
+  { provider: "twitch_client_id", env: "TWITCH_CLIENT_ID" },
+  { provider: "twitch_client_secret", env: "TWITCH_CLIENT_SECRET" },
+  { provider: "twitch_oauth_token", env: "TWITCH_OAUTH_TOKEN" },
+  { provider: "twitch_app_access_token", env: "TWITCH_APP_ACCESS_TOKEN" },
+  { provider: "twitch_user_access_token", env: "TWITCH_USER_ACCESS_TOKEN" },
+  { provider: "kick_client_id", env: "KICK_CLIENT_ID" },
+  { provider: "kick_client_secret", env: "KICK_CLIENT_SECRET" },
+  { provider: "kick_oauth_token", env: "KICK_OAUTH_TOKEN" },
+];
+const LOCAL_CONNECTOR_ENV_ORIGINALS = Object.fromEntries(
+  LOCAL_CONNECTOR_SECRET_ENV.map(({ env }) => [env, process.env[env] || ""]),
+);
+const localConnectorEnvApplied = new Set();
 const AI_RISKY_ACTION_TYPES = new Set([
   "publish",
   "publish_video",
@@ -70,10 +372,15 @@ const AI_RISKY_ACTION_TYPES = new Set([
   "external_api_action",
   "browser_login",
   "payment_action",
+  "delete_file",
+  "write_file",
+  "send_email",
+  "change_system_settings",
 ]);
 const DEPO_SYSTEM_RULES = [
-  "Agent 101 is the supervised draft-only agent inside Argentum OS.",
-  "Agent 101 can research, organize evidence, draft outputs, create task plans, create workflow plans, prepare prompts, prepare reports, save internal notes, package work for approval, and create future agent blueprints.",
+  "Agent 101 is the Chief Operations Intelligence Agent inside Argentum OS.",
+  "Agent 101 investigates, analyzes, infers, plans, executes safe internal work, reports operational truth, and optimizes workflows.",
+  "Agent 101 communicates in executive operating format: CURRENT STATUS, KEY FINDINGS, RISKS, RECOMMENDATIONS, NEXT ACTIONS.",
   "Agent 101 cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.",
   "Any risky action must be returned as pending approval, not executed.",
 ].join(" ");
@@ -89,6 +396,15 @@ const CONNECTOR_DEFINITIONS = {
     approvalRequired: false,
     blockedActions: ["frontend key exposure", "unlimited spend"],
     checklist: ["Set Railway environment variables", "Run backend test", "Confirm monthly limit", "Keep key server-side"],
+  },
+  openclaw: {
+    label: "OpenClaw Gateway",
+    category: "agent_runtime",
+    status: "not_configured",
+    requiredEnv: ["OPENCLAW_ENABLED", "OPENCLAW_BASE_URL", "OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_DEFAULT_MODEL"],
+    approvalRequired: false,
+    blockedActions: ["browser-side gateway calls", "raw tool invocation", "public gateway exposure"],
+    checklist: ["Run OpenClaw as a private service", "Set server env vars", "Test /v1/models", "Keep Gateway token server-side"],
   },
   browser: {
     label: "Browser",
@@ -145,6 +461,8 @@ const CONNECTOR_DEFINITIONS = {
     checklist: ["Operator chooses folder", "Store folder id in Railway only", "Agent 101 can reference file metadata after approval"],
   },
 };
+
+openclawRuntime.assertValidOpenClawStartupConfig(openclawRuntime.readOpenClawConfig(process.env));
 
 const BUSINESS_OFFICES = {
   "depo-habitat": {
@@ -207,6 +525,19 @@ const BUSINESS_OFFICES = {
     outputs: ["brand plan", "admin checklist", "customer-safe draft", "approval package"],
     blockedWork: ["contact customers", "change checkout", "publish campaigns", "modify accounts"],
   },
+  "print-shop-office": {
+    id: "print-shop-office",
+    name: "Print Shop Office",
+    title: "Business Office: 3D Print Shop",
+    workflowId: "workflow-print-shop",
+    intent: "ecommerce_fulfillment",
+    risk: "medium",
+    appUrl: "/apps/print-shop-office/",
+    allowedWork: ["approval-gated opportunity discovery", "source-backed product hypotheses", "A1 Mini feasibility checks", "single-color part planning", "deterministic template geometry", "STL validation"],
+    requiredInputs: ["saved A1 Mini profile", "Human Gate approval for external research", "measured dimensions and material before geometry", "use environment", "color process"],
+    outputs: ["cited opportunity shortlist", "feasibility assessment", "multipart proposal", "versioned STL artifact", "validation record", "research approval package"],
+    blockedWork: ["start a printer without approval", "invent market demand or cost", "publish products", "charge customers", "send customer emails", "buy supplies"],
+  },
   "human-gate": {
     id: "human-gate",
     name: "Human Gate",
@@ -226,11 +557,269 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 
 function now() {
   return new Date().toISOString();
+}
+
+function safeIso(value) {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+function normalizeDisplayView(value, fallback = "home") {
+  const raw = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+  const aliases = {
+    "1010": "agent-1010",
+    agent101: "agent-1010",
+    "agent101": "agent-1010",
+    "agent-101": "agent-1010",
+    "agent-1010": "agent-1010",
+    humangate: "human-gate",
+    "human-gate": "human-gate",
+    human: "human-gate",
+    gate: "human-gate",
+    clips: "clipping",
+    clip: "clipping",
+    stock: "trading",
+    stocks: "trading",
+    trade: "trading",
+  };
+  const normalized = aliases[raw] || raw;
+  if (DISPLAY_VIEWS.has(normalized)) return normalized;
+  if (fallback === null) return "";
+  return DISPLAY_VIEWS.has(fallback) ? fallback : "home";
+}
+
+function displayDeviceId(value = "") {
+  return String(value || "").trim().replace(/[^a-z0-9_.:-]/gi, "").slice(0, 120);
+}
+
+function displayDeviceLabel(value = "") {
+  return safeDisplayText(value || "ESP32 controller", 120);
+}
+
+function displayTokenHash(token = "") {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function defaultDisplayConfig() {
+  return {
+    enabled: true,
+    displayMode: "external",
+    preferredDisplay: 3,
+    fullscreen: true,
+    defaultView: "home",
+    selectedDisplay: null,
+    updatedAt: now(),
+  };
+}
+
+function normalizeDisplayBounds(value = {}) {
+  const bounds = value && typeof value === "object" ? value : {};
+  const normalized = {};
+  for (const key of ["x", "y", "width", "height"]) {
+    const parsed = Number(bounds[key]);
+    normalized[key] = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+  }
+  return normalized;
+}
+
+function normalizeDisplayConfig(value = {}) {
+  const fresh = defaultDisplayConfig();
+  const config = value && typeof value === "object" ? value : {};
+  const preferredDisplay = Number(config.preferredDisplay);
+  const selected = config.selectedDisplay && typeof config.selectedDisplay === "object"
+    ? {
+      id: String(config.selectedDisplay.id || "").slice(0, 120),
+      label: String(config.selectedDisplay.label || "").slice(0, 160),
+      bounds: normalizeDisplayBounds(config.selectedDisplay.bounds || {}),
+      scaleFactor: Number.isFinite(Number(config.selectedDisplay.scaleFactor)) ? Number(config.selectedDisplay.scaleFactor) : null,
+      updatedAt: safeIso(config.selectedDisplay.updatedAt) || now(),
+    }
+    : null;
+  return {
+    ...fresh,
+    enabled: config.enabled !== false,
+    displayMode: ["external", "selected", "primary"].includes(config.displayMode) ? config.displayMode : fresh.displayMode,
+    preferredDisplay: Number.isFinite(preferredDisplay) ? Math.max(1, Math.min(12, Math.round(preferredDisplay))) : fresh.preferredDisplay,
+    fullscreen: config.fullscreen !== false,
+    defaultView: normalizeDisplayView(config.defaultView, fresh.defaultView),
+    selectedDisplay: selected,
+    updatedAt: safeIso(config.updatedAt) || fresh.updatedAt,
+  };
+}
+
+function normalizeTrustedDisplayControllers(value = []) {
+  return listFrom(value).map((controller) => {
+    const deviceId = displayDeviceId(controller.deviceId);
+    if (!deviceId) return null;
+    return {
+      deviceId,
+      label: displayDeviceLabel(controller.label || deviceId),
+      pairedAt: safeIso(controller.pairedAt) || now(),
+      lastSeenAt: safeIso(controller.lastSeenAt),
+      status: String(controller.status || "paired").replace(/[^a-z0-9_.:-]/gi, "").slice(0, 80) || "paired",
+      tokenHash: String(controller.tokenHash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+    };
+  }).filter(Boolean).slice(0, 8);
+}
+
+function normalizeDisplayPairing(value = null) {
+  if (!value || typeof value !== "object") return null;
+  const deviceId = displayDeviceId(value.deviceId);
+  if (!deviceId) return null;
+  const status = ["pending", "accepted", "expired"].includes(value.status) ? value.status : "pending";
+  return {
+    deviceId,
+    label: displayDeviceLabel(value.label || deviceId),
+    code: String(value.code || "").replace(/\D/g, "").slice(0, 8),
+    status,
+    requestedAt: safeIso(value.requestedAt) || now(),
+    expiresAt: safeIso(value.expiresAt) || new Date(Date.now() + DISPLAY_PAIRING_TTL_MS).toISOString(),
+    acceptedAt: safeIso(value.acceptedAt),
+  };
+}
+
+function defaultDisplayState() {
+  return {
+    view: "home",
+    connected: true,
+    lastCommandAt: null,
+    lastCommandSource: "system",
+    controllerConnected: false,
+    controllerLastSeenAt: null,
+    controllerDeviceId: "",
+    controllerStatus: "unknown",
+    commandVersion: 0,
+    config: defaultDisplayConfig(),
+    pairing: null,
+    trustedControllers: [],
+    updatedAt: now(),
+  };
+}
+
+function normalizeDisplayState(value = {}) {
+  const fresh = defaultDisplayState();
+  const display = value && typeof value === "object" ? value : {};
+  const config = normalizeDisplayConfig(display.config || fresh.config);
+  const commandVersion = Number(display.commandVersion);
+  return {
+    ...fresh,
+    view: normalizeDisplayView(display.view, config.defaultView),
+    connected: display.connected !== false,
+    lastCommandAt: safeIso(display.lastCommandAt),
+    lastCommandSource: String(display.lastCommandSource || fresh.lastCommandSource).replace(/[^a-z0-9_.:-]/gi, "").slice(0, 80) || fresh.lastCommandSource,
+    controllerConnected: display.controllerConnected === true,
+    controllerLastSeenAt: safeIso(display.controllerLastSeenAt),
+    controllerDeviceId: String(display.controllerDeviceId || "").replace(/[^a-z0-9_.:-]/gi, "").slice(0, 120),
+    controllerStatus: String(display.controllerStatus || fresh.controllerStatus).replace(/[^a-z0-9_.:-]/gi, "").slice(0, 80) || fresh.controllerStatus,
+    commandVersion: Number.isFinite(commandVersion) ? Math.max(0, Math.floor(commandVersion)) : fresh.commandVersion,
+    config,
+    pairing: normalizeDisplayPairing(display.pairing),
+    trustedControllers: normalizeTrustedDisplayControllers(display.trustedControllers),
+    updatedAt: safeIso(display.updatedAt) || fresh.updatedAt,
+  };
+}
+
+function displayControllerConnected(display) {
+  const seenAt = Date.parse(display.controllerLastSeenAt || "");
+  return Boolean(display.controllerConnected && Number.isFinite(seenAt) && Date.now() - seenAt <= DISPLAY_CONTROLLER_STALE_MS);
+}
+
+function publicDisplayPairing(display = {}) {
+  const pairing = normalizeDisplayPairing(display.pairing);
+  if (!pairing) return null;
+  const expiresAt = Date.parse(pairing.expiresAt || "");
+  if (pairing.status !== "pending" || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
+  return {
+    deviceId: pairing.deviceId,
+    label: pairing.label,
+    code: pairing.code,
+    status: pairing.status,
+    requestedAt: pairing.requestedAt,
+    expiresAt: pairing.expiresAt,
+  };
+}
+
+function displayControllerTrust(display = {}, payload = {}) {
+  const deviceId = displayDeviceId(payload.deviceId);
+  const token = String(payload.deviceToken || payload.token || "").trim();
+  if (!deviceId || !token) return { trusted: false, deviceId, controller: null };
+  const tokenHash = displayTokenHash(token);
+  const controller = listFrom(display.trustedControllers).find((item) => item.deviceId === deviceId && item.tokenHash === tokenHash) || null;
+  return { trusted: Boolean(controller), deviceId, controller };
+}
+
+function displayPairingCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function publicDisplayState(state = {}) {
+  const display = normalizeDisplayState(state.display || {});
+  const activePairing = publicDisplayPairing(display);
+  return {
+    view: display.view,
+    connected: true,
+    lastCommandAt: display.lastCommandAt,
+    lastCommandSource: display.lastCommandSource,
+    controllerConnected: displayControllerConnected(display),
+    controllerLastSeenAt: display.controllerLastSeenAt,
+    controllerDeviceId: display.controllerDeviceId,
+    controllerStatus: display.controllerStatus,
+    controllerStaleAfterMs: DISPLAY_CONTROLLER_STALE_MS,
+    commandVersion: display.commandVersion,
+    config: display.config,
+    pairing: activePairing,
+    trustedControllerCount: display.trustedControllers.length,
+    allowedViews: DISPLAY_VIEW_ORDER,
+    updatedAt: display.updatedAt,
+    hub: {
+      status: "online",
+      appMode: APP_MODE,
+      host: HOST,
+      port: PORT,
+      updatedAt: state.meta?.updatedAt || null,
+      serverTime: now(),
+    },
+  };
+}
+
+function loadLocalEnvFiles(rootDir) {
+  const appDataEnv = path.join(process.env.HOME || "", "Library", "Application Support", "Argentum OS", ".env");
+  const projectEnvFiles = process.env.ARGENTUM_SKIP_PROJECT_ENV === "true"
+    ? []
+    : [path.join(rootDir, ".env"), path.join(rootDir, ".env.local")];
+  const candidates = [
+    ...projectEnvFiles,
+    appDataEnv,
+  ];
+  for (const filePath of candidates) {
+    if (!filePath || !fs.existsSync(filePath)) continue;
+    const raw = fs.readFileSync(filePath, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match) continue;
+      const [, key, rawValue] = match;
+      if (process.env[key]) continue;
+      process.env[key] = parseEnvValue(rawValue);
+    }
+  }
+}
+
+function parseEnvValue(value) {
+  let text = String(value || "").trim();
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+  return text.replaceAll("\\n", "\n");
 }
 
 function boundedDurationMs(value, fallback, max) {
@@ -241,6 +830,9 @@ function boundedDurationMs(value, fallback, max) {
 
 function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (APP_MODE === "local" && !localDatabaseStatus) {
+    localDatabaseStatus = localDatabase.initializeLocalDatabase(DATA_DIR);
+  }
 }
 
 function readPersistentSessionSecret() {
@@ -566,7 +1158,7 @@ function securityHeaders(req) {
     "cross-origin-opener-policy": "same-origin",
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "referrer-policy": "same-origin",
-    "content-security-policy": `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${connectSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
+    "content-security-policy": `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://static-cdn.jtvnw.net https://images.kick.com; connect-src ${connectSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
   };
   if (isSecureRequest(req)) {
     headers["strict-transport-security"] = "max-age=15552000; includeSubDomains";
@@ -795,7 +1387,7 @@ function setupPage(errorMessage = "") {
     title: "Create Admin Login",
     eyebrow: "Argentum OS first-run setup",
     copy: "Create the owner login before Argentum opens the console.",
-    action: "/",
+    action: APP_MODE === "cloud" ? "/setup" : "/",
     fields: `
       <label>
         Username
@@ -836,7 +1428,7 @@ function defaultState() {
     agent: {
       id: "agent-001-depo",
       name: "Agent 101",
-      role: "Draft-only Operator",
+      role: "Supervised Founder Operator",
       state: "active_supervised",
       spendLimit: "$5/day sandbox",
       externalActions: "Draft only",
@@ -846,12 +1438,13 @@ function defaultState() {
       id: "agent-101",
       name: "Agent 101",
       role: "Master Agent",
-      mode: "Draft-only",
+      mode: "Autonomous internal work / Human Gate external actions",
       status: "Active supervised",
       currentOffice: "Clips Office",
       approvalRequired: true,
       externalActions: "Locked",
     },
+    display: defaultDisplayState(),
     stockOffice: {
       workspaceId: STOCK_WORKSPACE_ID,
       lastLocalSyncAt: null,
@@ -859,6 +1452,8 @@ function defaultState() {
       chatMessages: [],
       syncRuns: [],
       assistantRuns: [],
+      tradeDrafts: [],
+      proposalDecisions: [],
     },
     toolConnections: {
       openai: { status: "local_demo", mode: "Local Demo", model: ENV_AI_MODEL || ENV_OPENAI_MODEL || "gpt-5.4-nano", lastTest: null },
@@ -1114,6 +1709,15 @@ function defaultState() {
     },
     chatMessages: [],
     agent101ChatThreads: [],
+    agent101Missions: [],
+    agent101EditProposals: [],
+    agent101StudioLayout: {
+      panels: ["mission", "knowledge", "tools", "files", "approvals", "conversation"],
+      density: "comfortable",
+      accent: "blue",
+      updatedBy: "system",
+      updatedAt: now(),
+    },
     audit: [
       {
         id: "audit-system-created",
@@ -1137,6 +1741,7 @@ function normalizeState(state) {
   state.meta = { ...fresh.meta, ...state.meta };
   state.agent = { ...fresh.agent, ...state.agent };
   state.agent101 = { ...fresh.agent101, ...state.agent101 };
+  state.display = normalizeDisplayState(state.display || fresh.display);
   state.stockOffice = normalizeStockOfficeState(state.stockOffice || fresh.stockOffice);
   state.toolConnections = {
     ...fresh.toolConnections,
@@ -1144,7 +1749,7 @@ function normalizeState(state) {
   };
   if (state.agent?.id === "agent-001-depo") {
     state.agent.name = "Agent 101";
-    state.agent.role = "Draft-only Operator";
+    state.agent.role = "Supervised Founder Operator";
   }
   state.governance = { ...fresh.governance, ...state.governance };
   state.mission = { ...fresh.mission, ...state.mission };
@@ -1163,16 +1768,34 @@ function normalizeState(state) {
   state.artifacts = Array.isArray(state.artifacts) ? state.artifacts : fresh.artifacts;
   state.executions = Array.isArray(state.executions) ? state.executions : fresh.executions;
   state.approvals = Array.isArray(state.approvals) ? state.approvals : fresh.approvals;
-  state.approvals = state.approvals.filter((approval) => !["approval-pod-lane-v0", "approval-stock-readonly-v0"].includes(approval?.id));
+  const approvalReadAt = Date.now();
+  state.approvals = state.approvals
+    .filter((approval) => !["approval-pod-lane-v0", "approval-stock-readonly-v0"].includes(approval?.id))
+    .map((approval) => {
+      const expiresAt = Date.parse(approval?.expiresAt || "");
+      if (approval?.status !== "pending" || !Number.isFinite(expiresAt) || expiresAt > approvalReadAt) return approval;
+      return {
+        ...approval,
+        status: "expired",
+        expiredAt: approval.expiresAt,
+        resolvedAt: approval.resolvedAt || approval.expiresAt,
+      };
+    });
   state.chatMessages = normalizeChatMessages(Array.isArray(state.chatMessages) ? state.chatMessages : fresh.chatMessages);
   state.agent101ChatThreads = normalizeAgent101ChatThreads(state.agent101ChatThreads, state.chatMessages);
+  agent101MissionManager.normalizeMissionState(state);
+  agent101ProjectWorkspace.normalizeProposalState(state);
+  state.agent101StudioLayout = {
+    ...fresh.agent101StudioLayout,
+    ...(state.agent101StudioLayout || {}),
+  };
   state.memory = {
     working: mergeById(normalizeMemoryEntries(state.memory?.working || []), fresh.memory.working),
     shared: mergeById(normalizeMemoryEntries(state.memory?.shared || []), fresh.memory.shared),
     agent: mergeById(normalizeMemoryEntries(state.memory?.agent || []), fresh.memory.agent),
   };
   state.audit = Array.isArray(state.audit) ? state.audit : fresh.audit;
-  return state;
+  return agent101Os.normalizeAgent101OperatingState(state);
 }
 
 function normalizeMemoryEntries(entries = []) {
@@ -1268,7 +1891,7 @@ function normalizeAgent101ChatMessage(message = {}, threadId = "", fallbackRoom 
   const validRoles = new Set(["user", "agent", "system", "tool", "approval", "artifact"]);
   const roleFromSpeaker = message.speaker === "operator" ? "user" : message.speaker === "depo" || message.speaker === "agent" ? "agent" : "";
   const role = validRoles.has(message.role) ? message.role : roleFromSpeaker || "agent";
-  const validStatuses = new Set(["queued", "sending", "sent", "thinking", "running", "waiting_approval", "complete", "failed", "cancelled", "error"]);
+  const validStatuses = new Set(["queued", "sending", "sent", "thinking", "running", "verifying", "recovering", "paused", "waiting_approval", "complete", "failed", "cancelled", "blocked", "needs_revision", "error"]);
   const rawRoom = String(message.roomId || message.metadata?.roomId || fallbackRoom || "depo-habitat").trim();
   const roomId = BUSINESS_OFFICES[rawRoom] ? rawRoom : "depo-habitat";
   const createdAt = message.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : now();
@@ -1333,7 +1956,7 @@ function defaultAgentThread(roomId = "depo-habitat", flatMessages = []) {
       normalizeAgent101ChatMessage(
         {
           role: "agent",
-          content: "Ready. Send one goal and I will keep the plan, tool steps, approvals, saved outputs, and final summary in this thread.",
+          content: "AGENT 101 ONLINE\n\nCURRENT STATUS\n• Main command thread is ready.\n• Thread memory, tool steps, approvals, saved outputs, and final reports stay attached here.\n\nKEY FINDINGS\n• Safe internal work can begin immediately.\n• External actions remain Human Gate-gated.\n\nRISKS\n• Vague goals create low-quality execution unless converted into a task contract.\n\nRECOMMENDATIONS\n• Send one operating objective with the target office or outcome.\n\nNEXT ACTIONS\n• Convert the objective into a bounded plan, run, approval package, or operating report.",
           status: "complete",
           metadata: { roomId },
         },
@@ -1378,7 +2001,7 @@ function normalizeAgent101ChatThread(thread = {}, fallbackRoom = "depo-habitat")
   const createdAt = thread.createdAt && !Number.isNaN(Date.parse(thread.createdAt)) ? thread.createdAt : messages[0]?.createdAt || now();
   const updatedAt = thread.updatedAt && !Number.isNaN(Date.parse(thread.updatedAt)) ? thread.updatedAt : messages.at(-1)?.createdAt || createdAt;
   const lastMessage = chatPreview(thread.lastMessagePreview || thread.lastMessage || messages.at(-1)?.content || "Ready for supervised work.");
-  const validStatuses = new Set(["idle", "thinking", "running", "waiting_approval", "complete", "error"]);
+  const validStatuses = new Set(["idle", "thinking", "running", "verifying", "recovering", "paused", "waiting_approval", "complete", "blocked", "cancelled", "error"]);
   return {
     id,
     title: String(thread.title || chatTitleFromMessage(messages.find((message) => message.role === "user")?.content || "")).slice(0, 80),
@@ -1452,8 +2075,8 @@ function refreshThreadPreview(thread) {
   if ((!thread.title || thread.title === "Agent 101 Session") && thread.messages?.some((message) => message.role === "user")) {
     thread.title = chatTitleFromMessage(thread.messages.find((message) => message.role === "user").content);
   }
-  const active = (thread.messages || []).slice().reverse().find((message) => ["thinking", "running", "waiting_approval"].includes(message.status));
-  thread.status = active?.status === "waiting_approval" ? "waiting_approval" : active?.status === "running" ? "running" : active?.status === "thinking" ? "thinking" : thread.status === "error" ? "error" : "idle";
+  const active = (thread.messages || []).slice().reverse().find((message) => ["thinking", "running", "verifying", "recovering", "paused", "waiting_approval"].includes(message.status));
+  thread.status = active?.status || (["error", "blocked", "cancelled"].includes(thread.status) ? thread.status : "idle");
   thread.threadSummary = {
     threadId: thread.id,
     summary: `Recent Agent 101 context: ${thread.messages
@@ -1508,7 +2131,7 @@ function createAgent101ChatThread(payload = {}) {
     messages: [
       {
         role: "agent",
-        content: "New chat started. Tell me what you want Agent 101 to plan, draft, check, or run safely.",
+        content: "NEW OPERATING THREAD\n\nCURRENT STATUS\n• Thread opened for Agent 101 operations.\n• Prior decisions and outputs will remain attached to this conversation.\n\nKEY FINDINGS\n• No objective has been assigned in this thread yet.\n\nRISKS\n• External actions remain locked until Human Gate approves exact scope.\n\nRECOMMENDATIONS\n• Start with the business outcome, office, or workflow that needs movement.\n\nNEXT ACTIONS\n• Convert the objective into a task contract, run plan, approval package, or operating report.",
         status: "complete",
         metadata: { roomId },
       },
@@ -1526,7 +2149,7 @@ function updateAgent101ChatThread(threadId, payload = {}) {
   if (payload.title !== undefined) thread.title = String(payload.title || "Agent 101 Session").trim().slice(0, 80);
   if (payload.archived !== undefined) thread.archived = Boolean(payload.archived);
   if (payload.lastOpenedAt !== undefined) thread.lastOpenedAt = payload.lastOpenedAt && !Number.isNaN(Date.parse(payload.lastOpenedAt)) ? payload.lastOpenedAt : now();
-  if (payload.status !== undefined && ["idle", "thinking", "running", "waiting_approval", "complete", "error"].includes(payload.status)) thread.status = payload.status;
+  if (payload.status !== undefined && ["idle", "thinking", "running", "verifying", "recovering", "paused", "waiting_approval", "complete", "blocked", "cancelled", "error"].includes(payload.status)) thread.status = payload.status;
   thread.updatedAt = now();
   refreshThreadPreview(thread);
   writeState(state);
@@ -1609,7 +2232,19 @@ function runToolSummary(step = {}) {
 }
 
 function appendRunMessagesToThread(thread, result = {}) {
-  const toolMessages = (result.steps || [])
+  const normalizedSteps = Array.isArray(result.toolResults) && result.toolResults.length
+    ? result.toolResults.map((tool) => ({
+        tool: tool.toolName,
+        status: tool.status,
+        message: tool.summary,
+        details: {
+          artifactIds: tool.artifactIds || [],
+          recordIds: tool.recordIds || [],
+          approvalIds: tool.approvalIds || [],
+        },
+      }))
+    : (result.steps || []);
+  const toolMessages = normalizedSteps
     .filter((step) => step.tool !== "planner")
     .map((step) => ({
       role: "tool",
@@ -1627,11 +2262,35 @@ function appendRunMessagesToThread(thread, result = {}) {
   appendAgent101ThreadMessages(thread, toolMessages);
   const approvalIds = Array.from(
     new Set(
-      (result.steps || [])
+      [
+        ...normalizedSteps.flatMap((step) => step.details?.approvalIds || (step.details?.approvalId ? [step.details.approvalId] : [])),
+        ...(result.approvals || []).map((approval) => approval.id || approval),
+      ]
+        .filter(Boolean)
+        .flatMap((item) => Array.isArray(item) ? item : [item])
+        .filter(Boolean),
+    ),
+  );
+  const approvalActionTypes = new Map(
+    (result.approvals || [])
+      .filter((approval) => approval?.id)
+      .map((approval) => [approval.id, approval.actionType || "external_api_action"]),
+  );
+  /*
+   * Legacy StreamClipper results put approval IDs inside step.details. The
+   * operating harness returns first-class approval objects. Support both so old
+   * run records still render correctly after reload.
+   */
+  const legacyApprovalIds = Array.from(
+    new Set(
+      normalizedSteps
         .flatMap((step) => step.details?.approvalIds || (step.details?.approvalId ? [step.details.approvalId] : []))
         .filter(Boolean),
     ),
   );
+  legacyApprovalIds.forEach((approvalId) => {
+    if (!approvalIds.includes(approvalId)) approvalIds.push(approvalId);
+  });
   approvalIds.forEach((approvalId, index) => {
     appendAgent101ThreadMessages(thread, {
       id: `approval-message-${approvalId}`,
@@ -1642,7 +2301,7 @@ function appendRunMessagesToThread(thread, result = {}) {
         taskType: "human_gate_request",
         runId: result.runId,
         approvalId,
-        actionType: "publish_video",
+        actionType: approvalActionTypes.get(approvalId) || "publish_video",
         riskLevel: "medium",
         requiresApproval: true,
         roomId: "human-gate",
@@ -1654,8 +2313,15 @@ function appendRunMessagesToThread(thread, result = {}) {
     role: "agent",
     content:
       result.status === "completed"
-        ? result.summary || "Done. The safe internal clipping workflow completed and any external posting remains behind Human Gate."
-        : result.summary || "This action needs Human Gate approval. I can prepare the package, but I cannot execute it externally.",
+        ? result.summary || formatAgent101ExecutiveReport({
+          title: "RUN STATUS",
+          currentStatus: ["Run status: complete.", "External posting and account actions remain Human Gate-gated."],
+          keyFindings: ["Safe internal workflow returned records to this thread."],
+          risks: ["External execution remains blocked without approval."],
+          recommendations: ["Review saved outputs and advance only verified winners."],
+          nextActions: ["Open the related office output and clear any Human Gate decision."],
+        })
+        : result.summary || blockedDepoResponse("external_api_action").message,
     status: result.status === "error" ? "error" : "complete",
     metadata: {
       taskType: "agent_run_summary",
@@ -1672,33 +2338,743 @@ function appendRunMessagesToThread(thread, result = {}) {
 }
 
 async function clippingOfficeModule() {
-  if (!clippingOfficeModulePromise) {
-    clippingOfficeModulePromise = import(pathToFileURL(CLIPPING_OFFICE_SERVER).href);
+  applyLocalConnectorSecretsToEnv();
+  const runtimeKey = `${process.env.CLIPPING_OFFICE_DATA_DIR || path.join(DATA_DIR, "clipping-office")}:${localConnectorEnvSignature()}`;
+  if (!clippingOfficeModulePromise || clippingOfficeRuntimeKey !== runtimeKey) {
+    clippingOfficeRuntimeKey = runtimeKey;
+    const moduleUrl = `${pathToFileURL(CLIPPING_OFFICE_SERVER).href}?runtime=${encodeURIComponent(runtimeKey)}`;
+    clippingOfficeModulePromise = import(moduleUrl);
   }
   return clippingOfficeModulePromise;
 }
 
-async function runClippingOfficeAgent101(payload = {}) {
+function applyLocalConnectorSecretsToEnv() {
+  if (APP_MODE !== "local") return;
+  for (const { env } of LOCAL_CONNECTOR_SECRET_ENV) {
+    const original = LOCAL_CONNECTOR_ENV_ORIGINALS[env];
+    if (original) process.env[env] = original;
+    else if (localConnectorEnvApplied.has(env)) delete process.env[env];
+    localConnectorEnvApplied.delete(env);
+  }
+  for (const { provider, env } of LOCAL_CONNECTOR_SECRET_ENV) {
+    if (LOCAL_CONNECTOR_ENV_ORIGINALS[env]) continue;
+    const value = secureSecrets.getSecret({ dataDir: DATA_DIR, provider });
+    if (!value) continue;
+    process.env[env] = value;
+    localConnectorEnvApplied.add(env);
+  }
+}
+
+function localConnectorEnvSignature() {
+  return crypto
+    .createHash("sha256")
+    .update(LOCAL_CONNECTOR_SECRET_ENV.map(({ env }) => `${env}:${Boolean(process.env[env])}`).join("|"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function reloadClippingOfficeModuleFromLocalSecrets() {
+  applyLocalConnectorSecretsToEnv();
+  clippingOfficeModulePromise = null;
+  clippingOfficeRuntimeKey = "";
+}
+
+function isLocalConnectorSecretProvider(provider) {
+  return LOCAL_CONNECTOR_SECRET_ENV.some((item) => item.provider === provider);
+}
+
+async function runClippingOfficeAgent101(payload = {}, runtimeBridge = {}) {
   const clippingOffice = await clippingOfficeModule();
   if (typeof clippingOffice.runAgent101Workflow !== "function") {
     throw guardedError("StreamClipper Agent runner is not available.", 503);
   }
-  return clippingOffice.runAgent101Workflow(payload);
+  return clippingOffice.runAgent101Workflow(payload, runtimeBridge);
+}
+
+function findAgent101Mission(state, missionId) {
+  return (state.agent101Missions || []).find((mission) => mission.id === missionId) || null;
+}
+
+function publicAgent101Mission(mission, options = {}) {
+  if (!mission) return null;
+  const approvals = options.approvals || readState().approvals || [];
+  return agent101MissionManager.publicMission(mission, { ...options, approvals });
+}
+
+function writeAgent101MissionSse(res, event, payload, id = "") {
+  if (id) res.write(`id: ${id}\n`);
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function emitAgent101MissionEvent(mission, event) {
+  const clients = agent101MissionStreamClients.get(mission.id);
+  if (!clients?.size) return;
+  const payload = { missionId: mission.id, event, mission: publicAgent101Mission(mission, { includeEvents: false }) };
+  for (const res of clients) writeAgent101MissionSse(res, event.type || "mission_event", payload, event.id);
+}
+
+function subscribeAgent101Mission(missionId, req, res) {
+  const state = readState();
+  const mission = findAgent101Mission(state, missionId);
+  if (!mission) throw guardedError("Agent 101 mission not found.", 404);
+  res.writeHead(200, {
+    ...securityHeaders(req),
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  const clients = agent101MissionStreamClients.get(mission.id) || new Set();
+  clients.add(res);
+  agent101MissionStreamClients.set(mission.id, clients);
+  writeAgent101MissionSse(res, "connected", { missionId: mission.id, mission: publicAgent101Mission(mission) });
+  for (const event of (mission.events || []).slice(-150)) {
+    writeAgent101MissionSse(res, event.type || "mission_event", { missionId: mission.id, event }, event.id);
+  }
+  const timer = setInterval(() => writeAgent101MissionSse(res, "heartbeat", {
+    missionId: mission.id,
+    timestamp: now(),
+  }), 15_000);
+  res.on("close", () => {
+    clearInterval(timer);
+    clients.delete(res);
+    if (!clients.size) agent101MissionStreamClients.delete(mission.id);
+  });
+}
+
+function agent101MissionIntent(message = "") {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  const startsAsQuestion = /^(?:what|why|how|when|where|who|which|can you explain|tell me about|do you know)\b/i.test(text);
+  const explicitBuild = /\b(?:build|create|make|start|launch|design|implement|edit|update|upgrade|fix|redesign|wire|scaffold|set up|generate|research and write|prepare|draft|configure|move|reorganize|refactor|launch prep|business blueprint|business plan)\b/i.test(text);
+  const target = /\b(?:business|brand|website|site|shop|store|checkout|email flow|product|project|argentum|agent 101|agent101|ui|interface|dashboard|file|code|backend|frontend|office|blueprint|landing page|saas|portfolio|3d print|3d printing)\b/i.test(text);
+  return explicitBuild && target && (!startsAsQuestion || /\b(?:build|create|make|implement|edit|upgrade|fix|redesign)\b/i.test(text));
+}
+
+function agent101MissionGrounding(state, mission) {
+  const thread = mission.threadId ? findAgent101Thread(state, mission.threadId) : null;
+  let vaultContext = null;
+  try {
+    const status = obsidianStatusPayload();
+    if (status.initialized || status.connected) {
+      vaultContext = agentContextBuilder.buildAgentContext({
+        vaultPath: status.vaultPath,
+        state,
+        agentId: "agent.1010",
+        threadId: mission.threadId,
+        officeId: thread?.roomId || "depo-habitat",
+        includeTrace: false,
+      });
+    }
+  } catch {
+    vaultContext = null;
+  }
+  return {
+    mission: {
+      id: mission.id,
+      title: mission.title,
+      goal: mission.goal,
+      attempt: Number(mission.attempts || 0) + 1,
+      maxIterations: mission.maxIterations,
+    },
+    operatingContext: agent101Os.buildAgent101Context(state, {
+      goal: mission.goal,
+      threadId: mission.threadId,
+      obsidianContext: vaultContext,
+    }),
+    knowledgeContext: vaultContext,
+    conversation: (thread?.messages || []).slice(-24).map((message) => ({
+      role: message.role,
+      content: String(message.content || "").slice(0, 6000),
+      status: message.status,
+      createdAt: message.createdAt,
+    })),
+    approvals: (state.approvals || [])
+      .filter((approval) => approval.missionId === mission.id || mission.approvalIds.includes(approval.id))
+      .map((approval) => ({
+        id: approval.id,
+        status: approval.status,
+        actionType: approval.actionType,
+        title: approval.title,
+        exactScope: approval.exactScope,
+        details: approval.details,
+        decidedAt: approval.decidedAt || null,
+      })),
+    projectWorkspace: agent101ProjectWorkspace.inspectWorkspace({ state, rootDir: ROOT }),
+  };
+}
+
+function attachApprovalToMission(missionId, approvalId) {
+  const state = readState();
+  const mission = findAgent101Mission(state, missionId);
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (!mission || !approval) return approval || null;
+  if (agent101MissionManager.TERMINAL_STATUSES.has(mission.status)) {
+    approval.status = "cancelled";
+    approval.decisionNote = "The linked mission finished before this approval could be attached.";
+    approval.decidedAt = now();
+    writeState(state);
+    return approval;
+  }
+  approval.missionId = mission.id;
+  approval.runId = approval.runId || mission.runId;
+  mission.approvalIds = [...new Set([...(mission.approvalIds || []), approval.id])];
+  mission.status = "waiting_approval";
+  mission.stage = "human_gate";
+  mission.updatedAt = now();
+  writeState(state);
+  return approval;
+}
+
+function createMissionHumanGateRequest(missionId, payload = {}) {
+  const details = payload.details || payload.evidence?.details || {};
+  const result = createHumanGateRequest({
+    actionType: payload.actionType || payload.type || "agent101_tool",
+    title: payload.title,
+    action: payload.action || payload.title,
+    evidence: payload.evidence,
+    exactScope: payload.exactScope || `Only this exact tool input is authorized: ${JSON.stringify(details).slice(0, 2500)}`,
+    riskLevel: payload.riskLevel || "high",
+    details,
+    linkedId: payload.linkedId,
+    missionId,
+    runId: payload.evidence?.runId || null,
+    reversible: payload.reversible,
+    expectedPostcondition: payload.expectedPostcondition,
+    rollbackPlan: payload.rollbackPlan,
+  });
+  return attachApprovalToMission(missionId, result.approval.id);
+}
+
+function agent101MissionRuntimeBridge(mission, providerConfig) {
+  const approvalState = {};
+  Object.defineProperty(approvalState, "approvalRequests", {
+    enumerable: true,
+    get() {
+      return readState().approvals || [];
+    },
+  });
+  const configuredProvider = sanitizeProvider(providerConfig.provider);
+  const mode = isLocalProvider(configuredProvider) ? "demo" : sanitizeAiMode(providerConfig.mode);
+  const providerKey = mode === "live" ? keyFromConfig(providerConfig, configuredProvider) : "";
+  const provider = providerKey ? configuredProvider : "local_tool_fallback";
+  if (providerKey) assertAiUsageBudget(providerConfig);
+
+  const projectWorkspace = {
+    inspect() {
+      return agent101ProjectWorkspace.inspectWorkspace({ state: readState(), rootDir: ROOT });
+    },
+    propose(input) {
+      const proposalState = readState();
+      const result = agent101ProjectWorkspace.createEditProposal({
+        state: proposalState,
+        rootDir: ROOT,
+        outputRoot: AGENT101_OUTPUT_ROOT,
+        input,
+        createApprovalRequest: (payload) => createMissionHumanGateRequest(mission.id, payload),
+      });
+      const latestState = readState();
+      latestState.agent101EditProposals = proposalState.agent101EditProposals;
+      writeState(latestState);
+      return result;
+    },
+    apply(input) {
+      const projectState = readState();
+      try {
+        return agent101ProjectWorkspace.applyEditProposal({
+          state: projectState,
+          rootDir: ROOT,
+          outputRoot: AGENT101_OUTPUT_ROOT,
+          proposalId: input.proposal_id,
+          approvalId: input.approval_id,
+        });
+      } finally {
+        // Conflict, rollback, applying, and approval-consumption state are all
+        // durable even when the source operation throws.
+        writeState(projectState);
+      }
+    },
+  };
+
+  const approvedApprovals = (readState().approvals || []).filter((approval) => mission.approvalIds.includes(approval.id) && approval.status === "approved" && !approval.consumedAt);
+  return {
+    missionId: mission.id,
+    preferredProvider: provider,
+    projectRoot: ROOT,
+    outputRoot: AGENT101_OUTPUT_ROOT,
+    state: approvalState,
+    openaiApiKey: provider === "openai" ? providerKey : "",
+    openaiModel: providerConfig.providers.openai.model,
+    anthropicApiKey: provider === "anthropic" ? providerKey : "",
+    anthropicModel: providerConfig.providers.anthropic.model,
+    maxOutputTokens: Math.max(2000, Number(provider === "anthropic"
+      ? providerConfig.providers.anthropic.maxOutputTokens
+      : providerConfig.providers.openai.maxOutputTokens) || 2000),
+    maxIterations: mission.maxIterations,
+    approvedApprovalIds: approvedApprovals.map((approval) => approval.id),
+    approvedApprovals: approvedApprovals.map((approval) => ({ id: approval.id, actionType: approval.actionType, details: approval.grantedDetails || approval.details })),
+    isCancelled() {
+      return findAgent101Mission(readState(), mission.id)?.status === "cancelled";
+    },
+    systemContext: agent101MissionGrounding(readState(), mission),
+    projectWorkspace,
+    configureStudioLayout(input) {
+      const layoutState = readState();
+      const result = agent101ProjectWorkspace.configureStudioLayout({ state: layoutState, input });
+      writeState(layoutState);
+      return result;
+    },
+    createApprovalRequest: (payload) => createMissionHumanGateRequest(mission.id, payload),
+    consumeApproval({ approvalId, actionType, details = {} }) {
+      const state = readState();
+      const currentMission = findAgent101Mission(state, mission.id);
+      if (!currentMission || agent101MissionManager.TERMINAL_STATUSES.has(currentMission.status)) {
+        throw guardedError("The linked mission is no longer active.", 409);
+      }
+      const approval = (state.approvals || []).find((item) => item.id === approvalId);
+      if (!approval || approval.status !== "approved" || approval.missionId !== mission.id || approval.actionType !== actionType) {
+        throw guardedError("Human Gate approval does not match this mission and tool capability.", 403);
+      }
+      if (approval.expiresAt && Date.parse(approval.expiresAt) <= Date.now()) throw guardedError("Human Gate approval expired.", 409);
+      if (approval.consumedAt || Number(approval.useCount || 0) >= 1) throw guardedError("Human Gate approval has already been used.", 409);
+      const granted = approval.grantedDetails || approval.details || {};
+      const exact = Object.entries(details).every(([key, value]) => String(granted[key] ?? "") === String(value ?? ""));
+      if (!exact) throw guardedError("Human Gate approval scope does not match the exact tool input.", 403);
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = now();
+      approval.consumedByRunId = currentMission.runId || null;
+      writeState(state);
+      return approval;
+    },
+    saveState: async () => {},
+    logEvent: async () => {},
+    recordUsage(providerName, usage, providerEstimate, reservationId) {
+      if (["openai", "anthropic"].includes(providerName)) {
+        recordAiUsage(providerConfig, usage, {
+          reservationId,
+          estimatedCostUsd: Number(providerEstimate?.estimatedCostUsd || 0),
+        });
+      }
+    },
+    beforeModelCall(call = {}) {
+      const callProvider = ["openai", "anthropic"].includes(call.provider) ? call.provider : provider;
+      if (!["openai", "anthropic"].includes(callProvider)) return "";
+      return reserveAiUsage({
+        provider: callProvider,
+        model: call.model || (callProvider === "anthropic" ? providerConfig.providers.anthropic.model : providerConfig.providers.openai.model),
+        estimatedInputTokens: Math.max(1000, Number(call.estimatedInputTokens || 16_000)),
+        maxOutputTokens: Math.max(64, Number(call.maxOutputTokens || 2_000)),
+        estimatedCostUsd: Math.max(0, Number(call.estimatedCostUsd || 0)),
+      });
+    },
+    providerCallFailed(reservationId, error) {
+      recordAiProviderFailure(providerConfig, redactSensitiveText(error?.message || error), reservationId);
+    },
+    onEvent(event, run) {
+      const state = readState();
+      const current = findAgent101Mission(state, mission.id);
+      if (!current || current.status === "cancelled") return;
+      current.runId = run.runId;
+      current.provider = run.provider;
+      current.model = run.model;
+      current.toolCallCount = run.toolCalls?.length || 0;
+      current.outputFiles = run.outputFiles || [];
+      if (event.type === "approval_required" || event.type === "run_waiting_approval") current.status = "waiting_approval";
+      else if (event.type === "model_call") current.status = "running";
+      else if (event.type === "run_completed") current.status = "verifying";
+      const missionEvent = agent101MissionManager.appendEvent(current, event.type, event.message, event.details || {});
+      if (["tool_result", "tool_error", "approval_required", "run_completed", "run_failed", "run_blocked"].includes(event.type)) {
+        agent101MissionManager.checkpoint(current, {
+          stage: event.type,
+          toolCallCount: current.toolCallCount,
+          outputFileCount: current.outputFiles.length,
+          summary: event.message,
+        });
+      }
+      writeState(state);
+      emitAgent101MissionEvent(current, missionEvent);
+    },
+    onRunUpdate(run) {
+      const state = readState();
+      const current = findAgent101Mission(state, mission.id);
+      if (!current || current.status === "cancelled") return;
+      current.runId = run.runId;
+      current.provider = run.provider;
+      current.model = run.model;
+      current.toolCallCount = run.toolCalls?.length || 0;
+      current.outputFiles = run.outputFiles || [];
+      current.costEstimateUsd = Number(run.costEstimateUsd || 0);
+      current.updatedAt = now();
+      writeState(state);
+    },
+  };
+}
+
+function appendMissionResultToThread(state, mission, result) {
+  if (!mission.threadId) return;
+  const thread = findAgent101Thread(state, mission.threadId);
+  if (!thread) return;
+  const runningNotice = (thread.messages || []).slice().reverse().find((message) => message.status === "running" && message.metadata?.missionId === mission.id);
+  if (runningNotice) {
+    runningNotice.status = mission.status === "completed" ? "complete" : mission.status;
+    runningNotice.updatedAt = now();
+  }
+  for (const call of result.run?.toolCalls || []) {
+    const detail = JSON.stringify(call.output ?? {}, null, 2).slice(0, 10_000);
+    appendAgent101ThreadMessages(thread, {
+      role: "tool",
+      content: `${runnerStepTitle({ tool: call.name })}\n${detail}`,
+      status: call.status === "completed" ? "complete" : call.status,
+      metadata: {
+        taskType: "agent101_mission_tool",
+        missionId: mission.id,
+        sessionId: mission.sessionId,
+        runId: result.runId,
+        tool: call.name,
+        input: call.input,
+        output: call.output,
+        durationMs: call.durationMs,
+        outputFiles: result.outputFiles || [],
+        roomId: thread.roomId,
+      },
+    });
+  }
+  const approvals = (state.approvals || []).filter((approval) => mission.approvalIds.includes(approval.id));
+  for (const approval of approvals) {
+    if ((thread.messages || []).some((message) => message.metadata?.approvalId === approval.id)) continue;
+    appendAgent101ThreadMessages(thread, {
+      role: "approval",
+      content: `${approval.title}\n\nExact scope: ${approval.exactScope}\n\n${approval.evidence}`,
+      status: approval.status === "pending" ? "waiting_approval" : approval.status,
+      metadata: {
+        taskType: "human_gate_request",
+        missionId: mission.id,
+        sessionId: mission.sessionId,
+        runId: result.runId,
+        approvalId: approval.id,
+        actionType: approval.actionType,
+        details: approval.details,
+        exactScope: approval.exactScope,
+        requiresApproval: approval.status === "pending",
+        riskLevel: approval.riskLevel,
+        roomId: "human-gate",
+      },
+    });
+  }
+  appendAgent101ThreadMessages(thread, {
+    role: "agent",
+    content: mission.response || result.response || "Agent 101 mission stopped without a final response.",
+    status: mission.status === "completed" ? "complete" : mission.status,
+    metadata: {
+      taskType: "agent101_mission_summary",
+      missionId: mission.id,
+      sessionId: mission.sessionId,
+      runId: result.runId,
+      provider: mission.provider,
+      model: mission.model,
+      outputFiles: mission.outputFiles,
+      artifacts: mission.outputFiles,
+      toolCallCount: mission.toolCallCount,
+      costEstimateUsd: mission.costEstimateUsd,
+      approvalIds: mission.approvalIds,
+      requiresApproval: mission.status === "waiting_approval",
+      riskLevel: mission.status === "waiting_approval" ? "high" : "low",
+      roomId: thread.roomId,
+    },
+  });
+  thread.activeRunId = mission.runId;
+  thread.activeMissionId = mission.id;
+  thread.activeApprovalId = mission.approvalIds.find((id) => (state.approvals || []).find((approval) => approval.id === id)?.status === "pending") || null;
+  thread.status = mission.status === "waiting_approval" ? "waiting_approval" : mission.status === "completed" ? "complete" : mission.status === "failed" ? "error" : mission.status;
+}
+
+function applyApprovedMissionProjectEdits(missionId) {
+  const state = readState();
+  const mission = findAgent101Mission(state, missionId);
+  if (!mission) return [];
+  const approvals = new Map((state.approvals || []).map((approval) => [approval.id, approval]));
+  const proposals = (state.agent101EditProposals || []).filter((proposal) => (
+    proposal.status === "waiting_approval"
+    && mission.approvalIds.includes(proposal.approvalId)
+    && approvals.get(proposal.approvalId)?.status === "approved"
+  ));
+  const applied = [];
+  for (const proposal of proposals) {
+    try {
+      const result = agent101ProjectWorkspace.applyEditProposal({
+        state,
+        rootDir: ROOT,
+        outputRoot: AGENT101_OUTPUT_ROOT,
+        proposalId: proposal.id,
+        approvalId: proposal.approvalId,
+      });
+      applied.push(result);
+      const validationLabel = result.validation?.status === "passed"
+        ? `${result.validation.check} passed`
+        : `${result.validation?.check || "hash verification"} completed`;
+      const event = agent101MissionManager.appendEvent(mission, "project_edit_applied", `Applied approved source edit: ${result.path}. ${validationLabel}.`, {
+        stage: "project_edit_applied",
+        proposalId: proposal.id,
+        approvalId: proposal.approvalId,
+        path: result.path,
+        validation: result.validation,
+      });
+      agent101MissionManager.checkpoint(mission, {
+        stage: "project_edit_applied",
+        summary: `${result.path} now matches the exact approved SHA-256; validation scope: ${result.validation?.check || "hash verification"}.`,
+      });
+      writeState(state);
+      emitAgent101MissionEvent(mission, event);
+    } catch (error) {
+      const event = agent101MissionManager.appendEvent(mission, "project_edit_failed", `Approved source edit did not remain active: ${redactSensitiveText(error.message)}.`, {
+        stage: "project_edit_failed",
+        proposalId: proposal.id,
+        approvalId: proposal.approvalId,
+        path: proposal.path,
+      });
+      agent101MissionManager.checkpoint(mission, {
+        stage: "project_edit_failed",
+        summary: `Source edit stopped safely: ${redactSensitiveText(error.message)}.`,
+      });
+      writeState(state);
+      emitAgent101MissionEvent(mission, event);
+      throw error;
+    }
+  }
+  return applied;
+}
+
+async function executeAgent101Mission(missionId) {
+  if (agent101MissionWorkers.has(missionId)) return agent101MissionWorkers.get(missionId);
+  const worker = (async () => {
+    let state = readState();
+    let mission = findAgent101Mission(state, missionId);
+    if (!mission || ["completed", "failed", "cancelled", "blocked"].includes(mission.status)) return mission;
+    agent101MissionManager.transition(mission, "running", { stage: "starting", message: "Agent 101 Studio worker started." });
+    writeState(state);
+    emitAgent101MissionEvent(mission, mission.events.at(-1));
+    try {
+      const appliedProjectEdits = applyApprovedMissionProjectEdits(mission.id);
+      state = readState();
+      mission = findAgent101Mission(state, missionId);
+      const providerConfig = readAiProviderConfig();
+      const runtimeBridge = agent101MissionRuntimeBridge(mission, providerConfig);
+      const resume = mission.attempts > 1;
+      const message = resume
+        ? `Resume this checkpointed mission without duplicating verified work. ${appliedProjectEdits.length ? `The runtime already applied and syntax-validated ${appliedProjectEdits.length} exact approved source edit(s); inspect their current state and continue with remaining verification.` : "Use the approved Human Gate scopes in context and continue only the exact paused steps."} Original goal: ${mission.goal}`
+        : mission.goal;
+      const result = await runClippingOfficeAgent101({
+        studio: true,
+        agentMode: "studio",
+        missionId: mission.id,
+        sessionId: mission.sessionId,
+        message,
+        maxIterations: mission.maxIterations,
+        provider: runtimeBridge.preferredProvider,
+      }, runtimeBridge);
+      state = readState();
+      mission = findAgent101Mission(state, missionId);
+      if (!mission || mission.status === "cancelled") return mission;
+      mission.runId = result.runId;
+      mission.provider = result.provider;
+      mission.model = result.model;
+      mission.outputFiles = result.outputFiles || [];
+      mission.toolCallCount = Number(result.toolCallCount || 0);
+      mission.costEstimateUsd = Number(result.costEstimateUsd || 0);
+      mission.response = result.response || "";
+      const pendingIds = (state.approvals || []).filter((approval) => approval.missionId === mission.id && approval.status === "pending").map((approval) => approval.id);
+      mission.approvalIds = [...new Set([...(mission.approvalIds || []), ...pendingIds])];
+      const nextStatus = result.status === "COMPLETED"
+        ? "completed"
+        : result.status === "NEEDS_APPROVAL"
+          ? "waiting_approval"
+          : result.status === "BLOCKED"
+            ? "blocked"
+            : "failed";
+      agent101MissionManager.transition(mission, nextStatus, {
+        stage: nextStatus === "waiting_approval" ? "human_gate" : "final",
+        message: nextStatus === "completed"
+          ? "Agent 101 mission completed with recorded verification."
+          : nextStatus === "waiting_approval"
+            ? "Mission checkpointed at Human Gate."
+            : "Mission stopped without a completion claim.",
+        response: mission.response,
+        error: nextStatus === "failed" ? mission.response : null,
+      });
+      appendMissionResultToThread(state, mission, result);
+      writeState(state);
+      emitAgent101MissionEvent(mission, mission.events.at(-1));
+      return mission;
+    } catch (error) {
+      state = readState();
+      mission = findAgent101Mission(state, missionId);
+      if (!mission || mission.status === "cancelled") return mission;
+      agent101MissionManager.transition(mission, "failed", {
+        stage: "runtime_error",
+        message: "Agent 101 mission runtime failed without executing external actions.",
+        error: redactSensitiveText(error.message),
+        response: redactSensitiveText(error.message),
+      });
+      appendMissionResultToThread(state, mission, { response: mission.response, outputFiles: [], run: { toolCalls: [] } });
+      writeState(state);
+      emitAgent101MissionEvent(mission, mission.events.at(-1));
+      return mission;
+    }
+  })().finally(() => agent101MissionWorkers.delete(missionId));
+  agent101MissionWorkers.set(missionId, worker);
+  return worker;
+}
+
+function queueAgent101Mission(missionId) {
+  setImmediate(() => executeAgent101Mission(missionId).catch((error) => console.error(`[agent101-mission] ${error.message}`)));
+}
+
+function createAgent101Mission(payload = {}) {
+  const state = readState();
+  const activeCount = (state.agent101Missions || []).filter((mission) => !agent101MissionManager.TERMINAL_STATUSES.has(mission.status)).length;
+  if (activeCount >= MAX_ACTIVE_AGENT101_MISSIONS) {
+    throw guardedError(`Agent 101 already has ${activeCount} active missions. Finish, cancel, or unblock one before creating another.`, 429);
+  }
+  const mission = agent101MissionManager.createMission(state, payload);
+  if (mission.threadId) {
+    const thread = findAgent101Thread(state, mission.threadId);
+    if (thread) {
+      thread.activeMissionId = mission.id;
+      thread.status = "running";
+      appendAgent101ThreadMessages(thread, {
+        role: "agent",
+        content: "Mission accepted. Agent 101 is grounding the request in your business knowledge, thread decisions, project scope, and Human Gate policy before it starts tools.",
+        status: "running",
+        metadata: {
+          taskType: "agent101_mission",
+          missionId: mission.id,
+          sessionId: mission.sessionId,
+          roomId: thread.roomId,
+          riskLevel: "low",
+        },
+      });
+    }
+  }
+  writeState(state);
+  queueAgent101Mission(mission.id);
+  return publicAgent101Mission(mission);
+}
+
+function resumeAgent101Mission(missionId) {
+  const state = readState();
+  const mission = findAgent101Mission(state, missionId);
+  if (!mission) throw guardedError("Agent 101 mission not found.", 404);
+  if (!agent101MissionManager.resumable(mission, state.approvals || [])) throw guardedError("Mission cannot resume until every exact Human Gate request is approved.", 409);
+  agent101MissionManager.transition(mission, "recovering", { stage: "resume", message: "Mission queued from its durable checkpoint." });
+  writeState(state);
+  emitAgent101MissionEvent(mission, mission.events.at(-1));
+  queueAgent101Mission(mission.id);
+  return publicAgent101Mission(mission);
+}
+
+function cancelAgent101Mission(missionId) {
+  const state = readState();
+  const mission = findAgent101Mission(state, missionId);
+  if (!mission) throw guardedError("Agent 101 mission not found.", 404);
+  if (["completed", "failed", "cancelled", "blocked"].includes(mission.status)) throw guardedError("Mission is already finished.", 409);
+  agent101MissionManager.transition(mission, "cancelled", { stage: "cancelled", message: "Operator cancelled the mission. No new tool steps will be accepted." });
+  const cancelledApprovalIds = new Set();
+  for (const approval of state.approvals || []) {
+    if (approval.missionId !== mission.id || approval.consumedAt || !["pending", "approved", "needs_revision"].includes(approval.status)) continue;
+    approval.status = "cancelled";
+    approval.decision = "mission_cancelled";
+    approval.decisionNote = "The operator cancelled the linked mission before this approval was used.";
+    approval.decidedAt = now();
+    cancelledApprovalIds.add(approval.id);
+  }
+  for (const proposal of state.agent101EditProposals || []) {
+    if (!cancelledApprovalIds.has(proposal.approvalId) || !["waiting_approval", "approved"].includes(proposal.status)) continue;
+    proposal.status = "cancelled";
+    proposal.updatedAt = now();
+  }
+  if (mission.threadId) {
+    const thread = findAgent101Thread(state, mission.threadId);
+    if (thread) {
+      const runningNotice = (thread.messages || []).slice().reverse().find((message) => message.metadata?.missionId === mission.id && ["thinking", "running", "verifying", "recovering", "waiting_approval"].includes(message.status));
+      if (runningNotice) {
+        runningNotice.status = "cancelled";
+        runningNotice.updatedAt = now();
+      }
+      for (const message of thread.messages || []) {
+        if (message.metadata?.approvalId && cancelledApprovalIds.has(message.metadata.approvalId)) {
+          message.status = "cancelled";
+          message.updatedAt = now();
+        }
+      }
+      appendAgent101ThreadMessages(thread, {
+        role: "system",
+        content: "Mission cancelled by the operator. Agent 101 will reject any later tool result or completion from this run.",
+        status: "cancelled",
+        metadata: {
+          taskType: "agent101_mission_cancelled",
+          missionId: mission.id,
+          sessionId: mission.sessionId,
+          runId: mission.runId,
+          roomId: thread.roomId,
+        },
+      });
+      thread.activeApprovalId = null;
+      thread.status = "cancelled";
+    }
+  }
+  writeState(state);
+  emitAgent101MissionEvent(mission, mission.events.at(-1));
+  return publicAgent101Mission(mission);
+}
+
+function recoverAgent101Missions() {
+  const state = readState();
+  const recoverable = (state.agent101Missions || []).filter((mission) => ["queued", "running", "verifying", "recovering"].includes(mission.status));
+  for (const mission of recoverable) {
+    mission.status = "recovering";
+    mission.stage = "startup_recovery";
+    mission.updatedAt = now();
+  }
+  if (recoverable.length) writeState(state);
+  recoverable.forEach((mission) => queueAgent101Mission(mission.id));
+  return recoverable.length;
 }
 
 async function runAgent101FromRoot(payload = {}) {
-  const result = await runClippingOfficeAgent101({
+  const state = readState();
+  let obsidianContext = null;
+  try {
+    const status = obsidianStatusPayload();
+    if (status.connected) {
+      obsidianContext = obsidianVault.agentContext(status.vaultPath, {
+        business: payload.business || payload.project || "Argentum",
+        workflow: payload.workflow,
+        skills: payload.skills,
+        depth: payload.depth ?? 2,
+      });
+    }
+  } catch {
+    obsidianContext = null;
+  }
+  const result = await agent101Os.runAgent101OperatingTask({
+    state,
     goal: payload.goal || payload.message,
     mode: payload.mode || "demo",
     maxSteps: payload.maxSteps || 10,
+    threadId: payload.threadId || null,
+    obsidianContext,
+    providerStatus: currentAiProviderStatus(),
+    officeRunner: runClippingOfficeAgent101,
   });
-  if (payload.threadId) {
-    const state = readState();
-    const thread = findAgent101Thread(state, payload.threadId);
+  writeState(result.state);
+  if (payload.threadId && payload.appendToThread !== false) {
+    const refreshedState = readState();
+    const thread = findAgent101Thread(refreshedState, payload.threadId);
     if (thread) {
       appendRunMessagesToThread(thread, result);
-      writeState(state);
-      return { ...result, thread, threads: publicAgent101ChatThreads(state) };
+      writeState(refreshedState);
+      return { ...result, thread, threads: publicAgent101ChatThreads(refreshedState) };
     }
   }
   return result;
@@ -1723,21 +3099,39 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
   if (!thread.title || thread.title === "Agent 101 Session") thread.title = chatTitleFromMessage(content);
 
   const recentMessages = thread.messages.slice(-20);
+  if (agent101MissionIntent(content)) {
+    writeState(state);
+    const mission = createAgent101Mission({
+      goal: content,
+      title: chatTitleFromMessage(content),
+      threadId,
+      maxIterations: payload.maxIterations || 25,
+      autoResume: payload.autoResume !== false,
+    });
+    const refreshedState = readState();
+    const refreshedThread = findAgent101Thread(refreshedState, threadId);
+    return {
+      mission,
+      thread: refreshedThread,
+      threads: publicAgent101ChatThreads(refreshedState),
+    };
+  }
   if (shouldTriggerAgentRunner(content)) {
     appendAgent101ThreadMessages(thread, {
       role: "agent",
-      content: "I can run that as a safe internal draft workflow. Posting and uploads stay blocked by Human Gate. Starting now.",
+      content: "SAFE INTERNAL RUN\n\nCURRENT STATUS\n• Workflow classified as internal draft execution.\n• Posting, uploads, account actions, spending, and external APIs remain locked by Human Gate.\n\nKEY FINDINGS\n• Existing thread context will be attached to the run.\n\nRISKS\n• Downstream external steps require a separate approval package.\n\nRECOMMENDATIONS\n• Run the internal workflow now and route any risky output to Human Gate.\n\nNEXT ACTIONS\n• Start the safe internal run and record every tool result in this thread.",
       status: "running",
-      metadata: { taskType: "agent_run", roomId: thread.roomId, riskLevel: "low", clientMessageId },
+      metadata: { taskType: "agent_run", roomId: thread.roomId, riskLevel: "low", replyToClientMessageId: clientMessageId },
     });
     thread.status = "running";
     writeState(state);
     try {
-      const result = await runClippingOfficeAgent101({
+      const result = await runAgent101FromRoot({
         goal: content,
         mode: payload.mode || "demo",
         maxSteps: payload.maxSteps || 10,
         threadId,
+        appendToThread: false,
       });
       const refreshedState = readState();
       const refreshedThread = findAgent101Thread(refreshedState, threadId) || thread;
@@ -1757,9 +3151,28 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
       const erroredThread = findAgent101Thread(erroredState, threadId) || thread;
       appendAgent101ThreadMessages(erroredThread, {
         role: "agent",
-        content: `I could not finish that run: ${error.message}. Your request is saved in this thread and nothing external happened.`,
+        content: formatAgent101ExecutiveReport({
+          title: "RUN STATUS",
+          currentStatus: [
+            "Run status: failed.",
+            "External actions: none executed.",
+            "Thread state: request preserved.",
+          ],
+          keyFindings: [
+            `Failure reason: ${error.message}.`,
+          ],
+          risks: [
+            "Completion is not claimed until the failed stage is repaired.",
+          ],
+          recommendations: [
+            "Inspect the failing run path and rerun only the blocked internal step.",
+          ],
+          nextActions: [
+            "Repair the failing tool path, then rerun verification.",
+          ],
+        }),
         status: "failed",
-        metadata: { taskType: "agent_run_error", roomId: thread.roomId, clientMessageId, riskLevel: "medium" },
+        metadata: { taskType: "agent_run_error", roomId: thread.roomId, replyToClientMessageId: clientMessageId, riskLevel: "medium" },
       });
       erroredThread.status = "error";
       writeState(erroredState);
@@ -1769,6 +3182,7 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
 
   const response = await handleAgent101Chat({
     message: content,
+    threadId,
     office: payload.roomId || thread.roomId,
     officeId: payload.roomId || thread.roomId,
     roomId: payload.roomId || thread.roomId,
@@ -1780,13 +3194,39 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
     })),
     threadSummary: thread.threadSummary,
   });
+  let structuredResponse = null;
+  try {
+    const status = obsidianStatusPayload();
+    if (status.initialized || status.connected) {
+      const context = agentContextBuilder.buildAgentContext({
+        vaultPath: status.vaultPath,
+        state,
+        agentId: "agent.1010",
+        threadId,
+        officeId: payload.officeId || "office.clipping",
+        projectId: payload.projectId || "",
+        includeTrace: false,
+      });
+      structuredResponse = agentContextBuilder.structureAgentResponse(response.message || "", context, {
+        artifacts: response.artifacts || [],
+        approvals: response.approval ? [response.approval] : [],
+      });
+      response.message = appendAgent101CitationsToMessage(response.message, structuredResponse);
+      response.evidence = structuredResponse.evidence;
+      response.claims = structuredResponse.claims;
+      response.unknowns = structuredResponse.unknowns;
+      response.conflicts = structuredResponse.conflicts;
+    }
+  } catch {
+    structuredResponse = null;
+  }
   appendAgent101ThreadMessages(thread, {
     role: response.approval ? "system" : "agent",
     content:
       response.message ||
       (response.approval
-        ? "This action needs Human Gate approval. I can prepare a draft package, but I cannot execute it."
-        : "I can help with safe internal draft work."),
+        ? blockedDepoResponse(response.blockedAction || "external_api_action").message
+        : buildGeneralExecutiveResponse(content, payload).message),
     status: "complete",
     metadata: {
       taskType: response.taskType,
@@ -1794,8 +3234,12 @@ async function addAgent101ChatMessage(threadId, payload = {}) {
       requiresApproval: Boolean(response.requiresApproval || response.approval),
       riskLevel: response.riskLevel || "low",
       approvalId: response.approval?.id,
+      evidence: response.evidence || [],
+      claims: response.claims || [],
+      unknowns: response.unknowns || [],
+      conflicts: response.conflicts || [],
       roomId: payload.roomId || thread.roomId,
-      clientMessageId,
+      replyToClientMessageId: clientMessageId,
     },
   });
   (response.logs || []).slice(0, 4).forEach((log) => {
@@ -1830,17 +3274,34 @@ function readState() {
 function writeState(state) {
   state.meta.updatedAt = now();
   ensureDataDir();
-  fs.writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
+  const temporary = `${STATE_FILE}.${process.pid}.${crypto.randomBytes(5).toString("hex")}.tmp`;
+  const descriptor = fs.openSync(temporary, "w", 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(state, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporary, STATE_FILE);
+  queueDisplayStateChanged(state, "state.write");
 }
 
 function audit(state, title, body) {
-  state.audit.unshift({
+  const entry = {
     id: `audit-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title,
     body,
     createdAt: now(),
-  });
+  };
+  state.audit.unshift(entry);
   state.audit = state.audit.slice(0, 50);
+  if (APP_MODE === "local" && localDatabaseStatus?.dbPath) {
+    try {
+      localDatabase.insertAuditLog(localDatabaseStatus.dbPath, entry);
+    } catch {
+      // Audit must not leak sensitive details or break the supervised task path.
+    }
+  }
 }
 
 function addMemory(state, layer, title, body, provenance) {
@@ -1885,7 +3346,7 @@ function defaultAiProviderConfig() {
   return {
     version: 1,
     provider,
-    mode: provider === "openai" ? sanitizeAiMode(ENV_AI_MODE || "live") : "demo",
+    mode: ["openai", "anthropic"].includes(provider) ? sanitizeAiMode(ENV_AI_MODE || "live") : "demo",
     monthlyLimitUsd: parseMonthlyLimit(ENV_OPENAI_TEST_BUDGET_USD || ENV_AI_MONTHLY_LIMIT_USD, 10),
     usage: defaultAiUsage(),
     providers: {
@@ -1978,7 +3439,15 @@ function writeAiProviderConfig(config) {
     usage: normalizeAiUsage(config.usage),
     updatedAt: now(),
   };
-  fs.writeFileSync(AI_PROVIDER_FILE, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${AI_PROVIDER_FILE}.${process.pid}.${crypto.randomBytes(5).toString("hex")}.tmp`;
+  const descriptor = fs.openSync(temporary, "w", 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(nextConfig, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporary, AI_PROVIDER_FILE);
   try {
     fs.chmodSync(AI_PROVIDER_FILE, 0o600);
   } catch {
@@ -1988,17 +3457,26 @@ function writeAiProviderConfig(config) {
 }
 
 function keyFromConfig(config, provider) {
-  const stored = String(config.keys?.[provider] || "");
-  if (stored) return stored;
-  if (provider === "openai") return ENV_OPENAI_API_KEY;
-  if (provider === "anthropic") return ENV_ANTHROPIC_API_KEY;
+  if (provider === "openai" && ENV_OPENAI_API_KEY) return ENV_OPENAI_API_KEY;
+  if (provider === "anthropic" && ENV_ANTHROPIC_API_KEY) return ENV_ANTHROPIC_API_KEY;
+  const stored = config.keys?.[provider];
+  if (stored && typeof stored === "object") {
+    return secureSecrets.getSecret({
+      dataDir: DATA_DIR,
+      provider,
+      storage: stored.storage,
+    });
+  }
+  if (typeof stored === "string" && stored) return stored;
   return "";
 }
 
 function keySource(config, provider) {
-  if (String(config.keys?.[provider] || "")) return "server-config";
   if (provider === "openai" && ENV_OPENAI_API_KEY) return "environment";
   if (provider === "anthropic" && ENV_ANTHROPIC_API_KEY) return "environment";
+  const stored = config.keys?.[provider];
+  if (stored && typeof stored === "object") return stored.storage || "secure_store";
+  if (typeof stored === "string" && stored) return "server-config";
   return "none";
 }
 
@@ -2055,7 +3533,11 @@ function currentAiProviderStatus(config = readAiProviderConfig()) {
   const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
   const usage = normalizeAiUsage(config.usage);
   const activeSettings = activeProviderSettings({ ...config, provider });
-  const keyConfigured = provider === "openai" ? Boolean(keyFromConfig(config, "openai")) : false;
+  const keyConfigured = provider === "openai"
+    ? Boolean(keyFromConfig(config, "openai"))
+    : provider === "anthropic"
+      ? Boolean(keyFromConfig(config, "anthropic"))
+      : false;
   const lastTest = config.lastTest || null;
   const lastError = lastTest?.success === false ? lastTest.message || lastTest.error || "Provider test failed." : "";
   let connectionStatus = "Not configured";
@@ -2094,45 +3576,42 @@ function currentSystemStatus() {
   const queuedTasks = tasks.filter((task) => ["queued", "needs_revision"].includes(task.status)).length;
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
   const aiStatus = currentAiProviderStatus();
-  const heap = process.memoryUsage();
-  const heapPercent = heap.heapTotal > 0 ? Math.round((heap.heapUsed / heap.heapTotal) * 100) : 0;
   const users = activeUserCount(readAuthStore());
+  const processMemory = readArgentumProcessMemorySnapshot();
+  const clippingOfficeState = readClippingOfficeStateSnapshot();
   const queueTotal = queuedTasks + pendingApprovals;
-  const workloadPercent = Math.min(100, queueTotal * 18 + artifacts.length * 4);
-  const healthPercent = Math.max(35, 100 - workloadPercent);
-  const agentHealth = workloadPercent >= 78 ? "Overloaded" : workloadPercent >= 48 ? "Busy" : "Stable";
-  const workloadLabel = workloadPercent >= 78 ? "Heavy" : workloadPercent >= 48 ? "Medium" : "Light";
+  const agentHealth = aiStatus.connectionStatus === "Error" || !clippingOfficeState.available ? "Needs attention" : "Online";
   const health = aiStatus.connectionStatus === "Error"
     ? "OpenAI needs attention"
+    : !clippingOfficeState.available
+      ? "Clipping Office state unavailable"
     : "Local systems operational";
+  const memoryMb = Math.round(Number(processMemory.totalBytes || 0) / 1024 ** 2);
 
   return {
     health,
     agentHealth,
     agentMode: state.agent?.mode || "Draft only",
     metrics: [
-      { label: "Agent Health", value: agentHealth, percent: healthPercent },
-      { label: "Workload", value: workloadLabel, percent: workloadPercent },
-      { label: "Memory", value: String(memoryCount), percent: Math.min(100, Math.max(8, memoryCount * 8)) },
-      { label: "Safety Gate", value: users > 0 ? pendingApprovals ? `${pendingApprovals} pending` : "On" : "Setup", percent: users > 0 ? pendingApprovals ? Math.min(100, 50 + pendingApprovals * 12) : 100 : 35 },
+      { label: "Runtime", value: "Online", percent: 100, measured: true },
+      { label: "Queued work", value: String(queueTotal), percent: null, measured: true },
+      { label: "Argentum RAM", value: `${memoryMb} MB`, percent: processMemory.percentOfSystem, measured: true },
+      { label: "Human Gate", value: users > 0 ? pendingApprovals ? `${pendingApprovals} pending` : "Clear" : "Setup", percent: users > 0 ? 100 : null, measured: true },
     ],
-    chart: [
-      healthPercent,
-      Math.min(100, 28 + queuedTasks * 12),
-      Math.min(100, 30 + pendingApprovals * 10),
-      Math.min(100, 26 + artifacts.length * 7),
-      Math.min(100, 34 + audit.length * 4),
-      Math.min(100, Math.max(12, heapPercent)),
-      workloadPercent,
-      aiStatus.connectionStatus === "Error" ? 34 : 76,
-    ],
+    chart: [],
     counts: {
       queuedTasks,
       pendingApprovals,
       memoryCount,
       artifacts: artifacts.length,
       audit: audit.length,
-      heapPercent,
+      queueTotal,
+    },
+    memory: processMemory,
+    dataQuality: {
+      mode: "measured",
+      estimatedFields: [],
+      sampledAt: processMemory.measuredAt,
     },
     ai: {
       provider: aiStatus.providerLabel,
@@ -2141,6 +3620,551 @@ function currentSystemStatus() {
     },
     updatedAt: now(),
   };
+}
+
+function safeDisplayText(value, limit = 180) {
+  return redactSensitiveText(String(value ?? "").replace(/\s+/g, " ").trim()).slice(0, limit);
+}
+
+function displayStatusCount(records = [], statuses = []) {
+  const allowed = new Set(statuses);
+  return listFrom(records).filter((record) => allowed.has(String(record?.status || record?.state || "").toLowerCase())).length;
+}
+
+function displayActiveStatus(value = "") {
+  const status = String(value || "").toLowerCase();
+  return INFRASTRUCTURE_ACTIVE_STATUSES.has(status) || ["active", "working", "watching", "connecting"].includes(status);
+}
+
+function buildAgentDisplaySummary(state = {}, infrastructure = null) {
+  const tasks = listFrom(state.tasks);
+  const missions = listFrom(state.agent101Missions);
+  const runs = listFrom(state.agent101Runs);
+  const activeWork = [...missions, ...runs, ...tasks].find((item) => displayActiveStatus(item.status || item.state));
+  const missionStep = listFrom(state.mission?.steps)[Number(state.mission?.currentStep || 0)] || null;
+  const agentNodes = listFrom(infrastructure?.nodes).filter((node) => node.kind === "agent");
+  const agentNode = agentNodes.find((node) => node.id === "agent:agent-101") || agentNodes[0] || {};
+  const queuedTasks = displayStatusCount(tasks, ["queued", "needs_revision", "pending"]);
+  const runningTasks = displayStatusCount(tasks, ["running", "processing", "in_progress", "drafting", "verifying"]);
+  const completedTasks = displayStatusCount(tasks, ["complete", "completed", "approved"]);
+  const activeMissions = missions.filter((mission) => displayActiveStatus(mission.status)).length;
+  const activeRuns = runs.filter((run) => displayActiveStatus(run.status)).length;
+  const pendingApprovals = listFrom(state.approvals).filter((approval) => approval.status === "pending").length;
+  const currentTask = activeWork?.title
+    || activeWork?.prompt
+    || activeWork?.mission
+    || missionStep?.title
+    || "Standing by for bounded work";
+
+  return {
+    status: safeDisplayText(state.agent101?.status || agentNode.lifecycle || "Active supervised", 80),
+    currentTask: safeDisplayText(currentTask, 220),
+    mode: safeDisplayText(state.agent101?.mode || state.agent?.mode || "Supervised internal work", 120),
+    activeAgents: Math.max(1, agentNodes.filter((node) => node.availability !== "offline").length || 1),
+    queuedTasks,
+    runningTasks: runningTasks + activeMissions + activeRuns,
+    completedTasks,
+    activeMissions,
+    activeRuns,
+    pendingApprovals,
+    agents: [
+      {
+        id: "agent-1010",
+        label: "Agent 1010",
+        status: safeDisplayText(state.agent101?.status || agentNode.lifecycle || "Active supervised", 80),
+        office: safeDisplayText(state.agent101?.currentOffice || "Control Floor", 80),
+        authority: "Human Gate external actions",
+      },
+    ],
+  };
+}
+
+function buildClippingDisplaySummary() {
+  try {
+    const dashboard = buildClipOfficeDashboardSnapshot();
+    const raw = readClippingOfficeStateSnapshot();
+    const pendingApprovals = listFrom(raw.approvalRequests).filter((approval) => String(approval.status || "").toLowerCase() === "pending").length;
+    const postingQueue = listFrom(raw.postingDrafts).filter((draft) => !["approved", "posted", "published", "dismissed", "rejected"].includes(String(draft.status || draft.approvalStatus || "").toLowerCase())).length;
+    return {
+      available: dashboard.available,
+      status: dashboard.status,
+      monitoringStatus: dashboard.automation.enabled ? dashboard.automation.status : dashboard.status,
+      headline: safeDisplayText(dashboard.headline || "Office standing by", 140),
+      streamsWatched: dashboard.metrics.activeStreams,
+      streams: listFrom(dashboard.watchers).slice(0, 6).map((watcher) => ({
+        id: safeDisplayText(watcher.id, 80),
+        streamerName: safeDisplayText(watcher.streamerName || "Live stream", 80),
+        platform: safeDisplayText(watcher.platform || "live", 32),
+        status: safeDisplayText(watcher.status || "watching", 48),
+        bufferedSeconds: watcher.bufferedSeconds,
+        messagesPerMinute: watcher.messagesPerMinute,
+      })),
+      clipCandidates: dashboard.metrics.capturedClips,
+      clipsQueued: dashboard.metrics.discovery + dashboard.metrics.studio + dashboard.metrics.precheck,
+      clipsAwaitingApproval: pendingApprovals,
+      postingQueue,
+      workflow: dashboard.workflow,
+      recentClips: listFrom(dashboard.recentClips).slice(0, 6).map((clip) => ({
+        id: safeDisplayText(clip.id, 80),
+        title: safeDisplayText(clip.title || "Clip candidate", 120),
+        streamerName: safeDisplayText(clip.streamerName || "", 80),
+        stage: safeDisplayText(clip.stage || "discovery", 40),
+        quality: clip.quality,
+        updatedAt: clip.updatedAt || null,
+      })),
+      activity: listFrom(dashboard.activity).slice(0, 6),
+      updatedAt: dashboard.updatedAt || dashboard.sampledAt || null,
+      error: dashboard.error || null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      status: "offline",
+      monitoringStatus: "unavailable",
+      headline: "Clipping Office state unavailable",
+      streamsWatched: null,
+      streams: [],
+      clipCandidates: null,
+      clipsQueued: null,
+      clipsAwaitingApproval: null,
+      postingQueue: null,
+      workflow: [],
+      recentClips: [],
+      activity: [],
+      updatedAt: null,
+      error: safeDisplayText(error.message || "Unavailable", 160),
+    };
+  }
+}
+
+function buildTradingDisplaySummary(state = {}) {
+  try {
+    const permissions = stockPermissions("viewer");
+    const snapshot = stockOfficeSnapshot(state, permissions, { cachedIntelligence: true });
+    const overview = stockOverview(snapshot);
+    const brokerControl = brokerControlOverview(snapshot);
+    const scheduler = stockIntelligenceScheduler.getStatus();
+    const session = marketSession(new Date());
+    const tradeDrafts = listFrom(overview.tradeDrafts);
+    const attentionDrafts = tradeDrafts.filter((draft) => ["awaiting_human_gate", "approved", "dispatch_claimed", "stopped", "failed"].includes(String(draft.status || "").toLowerCase()));
+    const positions = listFrom(overview.broker?.positions).slice(0, 6).map((position) => ({
+      symbol: safeDisplayText(position.symbol || position.instrument || "POSITION", 20),
+      quantity: position.quantity ?? position.shares ?? null,
+      marketValue: position.marketValue || position.market_value || null,
+      currentPrice: position.currentPrice || position.current_price || null,
+    }));
+    const sourceHealth = overview.sourceHealth || {};
+    const providerHealth = overview.providerHealth || {};
+    return {
+      available: overview.available !== false,
+      status: overview.killSwitch?.active ? "halted" : brokerControl.liveReady ? "live-ready gated" : "research guarded",
+      marketState: safeDisplayText(overview.marketContext?.riskState || overview.marketContext?.regime || session.label || session.status || "unknown", 80),
+      researchStatus: scheduler.running ? "running" : safeDisplayText(sourceHealth.status || providerHealth.status || "idle", 80),
+      sourceHealth: {
+        status: safeDisplayText(sourceHealth.status || "unknown", 80),
+        ready: sourceHealth.ready ?? null,
+        stale: sourceHealth.stale ?? null,
+        error: sourceHealth.error ?? null,
+      },
+      positionsSummary: {
+        count: positions.length,
+        accountValue: overview.broker?.accountValue || null,
+        cash: overview.broker?.cash || null,
+        buyingPower: overview.broker?.buyingPower || null,
+        updatedAt: overview.broker?.updatedAt || null,
+        positions,
+      },
+      ordersRequiringAttention: attentionDrafts.length,
+      tradeDrafts: attentionDrafts.slice(0, 5).map((draft) => ({
+        id: safeDisplayText(draft.id, 80),
+        side: safeDisplayText(draft.side || "", 12),
+        symbol: safeDisplayText(draft.symbol || "", 16),
+        status: safeDisplayText(draft.status || "draft", 48),
+        expiresAt: draft.expiresAt || null,
+      })),
+      alerts: listFrom(overview.alerts).slice(0, 6).map((alert) => ({
+        level: safeDisplayText(alert.level || "info", 20),
+        title: safeDisplayText(alert.title || "Stock Office alert", 120),
+        body: safeDisplayText(alert.body || "", 180),
+      })),
+      activity: listFrom(overview.activity).slice(0, 6),
+      scheduler: {
+        running: Boolean(scheduler.running),
+        lastCompletedAt: scheduler.lastCompletedAt || null,
+        nextRunAt: scheduler.nextRunAt || null,
+      },
+      updatedAt: overview.generatedAt || null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      status: "unavailable",
+      marketState: "unknown",
+      researchStatus: "unavailable",
+      sourceHealth: { status: "unknown", ready: null, stale: null, error: null },
+      positionsSummary: { count: null, accountValue: null, cash: null, buyingPower: null, updatedAt: null, positions: [] },
+      ordersRequiringAttention: null,
+      tradeDrafts: [],
+      alerts: [{ level: "warning", title: "Stock Office unavailable", body: safeDisplayText(error.message || "Stock Office summary could not be read.", 180) }],
+      activity: [],
+      scheduler: { running: false, lastCompletedAt: null, nextRunAt: null },
+      updatedAt: null,
+    };
+  }
+}
+
+function buildHumanGateDisplaySummary(state = {}) {
+  const approvals = listFrom(state.approvals)
+    .filter((approval) => approval.status === "pending")
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+  return {
+    pending: approvals.length,
+    approvals: approvals.slice(0, 10).map((approval) => {
+      const risk = String(approval.riskLevel || approval.risk || "medium").toLowerCase();
+      return {
+        id: safeDisplayText(approval.id, 100),
+        title: safeDisplayText(approval.title || "Approval required", 140),
+        category: safeDisplayText(approval.officeId || approval.workflowId || approval.actionType || "central", 80),
+        urgency: risk.includes("high") ? "high" : risk.includes("low") ? "low" : "medium",
+        originatingSystem: safeDisplayText(approval.officeId || approval.metadata?.officeId || approval.source || "Argentum", 80),
+        createdAt: approval.createdAt || null,
+      };
+    }),
+  };
+}
+
+function buildDisplayActivityFeed(state = {}, clipping = {}, trading = {}, display = {}) {
+  const items = [
+    ...listFrom(state.audit).slice(0, 10).map((entry) => ({
+      id: entry.id,
+      source: "Audit",
+      title: safeDisplayText(entry.title || "Argentum event", 120),
+      detail: safeDisplayText(entry.body || "", 180),
+      createdAt: entry.createdAt || null,
+    })),
+    ...listFrom(clipping.activity).slice(0, 6).map((entry) => ({
+      id: `clip:${entry.id || entry.createdAt || Math.random()}`,
+      source: "Clipping",
+      title: safeDisplayText(entry.title || entry.type || "Clipping update", 120),
+      detail: safeDisplayText(entry.detail || "", 180),
+      createdAt: entry.createdAt || null,
+    })),
+    ...listFrom(trading.activity).slice(0, 6).map((entry) => ({
+      id: `stock:${entry.id || entry.createdAt || Math.random()}`,
+      source: "Trading",
+      title: safeDisplayText(entry.title || entry.type || "Stock Office update", 120),
+      detail: safeDisplayText(entry.body || entry.detail || "", 180),
+      createdAt: entry.createdAt || entry.updatedAt || null,
+    })),
+  ];
+  if (display.lastCommandAt) {
+    items.push({
+      id: `display-command:${display.commandVersion}`,
+      source: "Display",
+      title: `View changed to ${display.view}`,
+      detail: `Command source: ${display.lastCommandSource || "api"}`,
+      createdAt: display.lastCommandAt,
+    });
+  }
+  return items
+    .filter((item) => item.title)
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+    .slice(0, 14);
+}
+
+function buildDisplayAlertSummary(system = {}, humanGate = {}, trading = {}, infrastructure = null, display = {}) {
+  const alerts = [];
+  if (display.pairing) {
+    alerts.push({
+      level: "pairing",
+      title: `Pair ${display.pairing.label}`,
+      body: `Verify code ${display.pairing.code} on Monitor 3, then press Accept on the ESP32 screen.`,
+    });
+  }
+  if (Number(humanGate.pending || 0) > 0) {
+    alerts.push({
+      level: humanGate.approvals.some((approval) => approval.urgency === "high") ? "urgent" : "attention",
+      title: `${humanGate.pending} Human Gate approval${humanGate.pending === 1 ? "" : "s"} pending`,
+      body: "Operator review is required before external or risky work can continue.",
+    });
+  }
+  listFrom(trading.alerts).forEach((alert) => alerts.push(alert));
+  listFrom(infrastructure?.warnings).slice(0, 4).forEach((warning) => {
+    alerts.push({ level: "warning", title: "Infrastructure warning", body: safeDisplayText(warning, 180) });
+  });
+  if (/attention|unavailable|error/i.test(system.health || "")) {
+    alerts.push({ level: "warning", title: "System attention", body: safeDisplayText(system.health, 180) });
+  }
+  return alerts.slice(0, 10);
+}
+
+function buildDisplayStateDelta(state = {}, reason = "state.write") {
+  const tasks = listFrom(state.tasks);
+  const approvals = listFrom(state.approvals);
+  const display = publicDisplayState(state);
+  const missionStep = listFrom(state.mission?.steps)[Number(state.mission?.currentStep || 0)] || null;
+  return {
+    reason,
+    display,
+    agent: {
+      status: safeDisplayText(state.agent101?.status || "Active supervised", 80),
+      currentTask: safeDisplayText(missionStep?.title || "Standing by", 160),
+    },
+    counts: {
+      queuedTasks: displayStatusCount(tasks, ["queued", "needs_revision", "pending"]),
+      runningTasks: displayStatusCount(tasks, ["running", "processing", "in_progress", "drafting", "verifying"]),
+      completedTasks: displayStatusCount(tasks, ["complete", "completed", "approved"]),
+      pendingApprovals: approvals.filter((approval) => approval.status === "pending").length,
+    },
+    updatedAt: state.meta?.updatedAt || now(),
+  };
+}
+
+async function buildArgentumDisplaySnapshot(state = readState()) {
+  let infrastructure = null;
+  try {
+    infrastructure = await controlFloorInfrastructureSnapshot(state, { includeAdminOnly: false });
+  } catch (error) {
+    infrastructure = {
+      partial: true,
+      sources: [],
+      summary: {},
+      nodes: [],
+      warnings: [`Control Floor infrastructure unavailable: ${safeDisplayText(error.message, 140)}`],
+    };
+  }
+  const display = publicDisplayState(state);
+  const system = currentSystemStatus();
+  const agents = buildAgentDisplaySummary(state, infrastructure);
+  const clipping = buildClippingDisplaySummary();
+  const trading = buildTradingDisplaySummary(state);
+  const humanGate = buildHumanGateDisplaySummary(state);
+  const alerts = buildDisplayAlertSummary(system, humanGate, trading, infrastructure, display);
+  const activity = buildDisplayActivityFeed(state, clipping, trading, display);
+  return {
+    schemaVersion: 1,
+    generatedAt: now(),
+    display,
+    header: {
+      brand: "ARGENTUM",
+      hubStatus: "HUB ONLINE",
+      localConnectionStatus: "HUB ONLINE",
+      activeAgentCount: agents.activeAgents,
+      alertCount: alerts.length,
+      currentTime: now(),
+    },
+    system: {
+      status: system.health,
+      agentHealth: system.agentHealth,
+      metrics: system.metrics,
+      counts: system.counts,
+      ai: system.ai,
+      updatedAt: system.updatedAt,
+    },
+    agents,
+    clipping,
+    trading,
+    humanGate,
+    activity,
+    alerts,
+    infrastructure: {
+      partial: Boolean(infrastructure.partial),
+      summary: infrastructure.summary || {},
+      sources: listFrom(infrastructure.sources).map((source) => ({
+        id: safeDisplayText(source.id, 80),
+        status: safeDisplayText(source.status, 60),
+        freshness: safeDisplayText(source.freshness, 60),
+        warning: safeDisplayText(source.warning || "", 160),
+      })),
+    },
+  };
+}
+
+function detachDisplayEventClient(client) {
+  if (!client) return;
+  clearInterval(client.timer);
+  displayEventClients.delete(client);
+}
+
+function writeDisplaySse(client, eventName, payload = {}) {
+  const eventId = `${Date.now()}-${displayEventSequence += 1}`;
+  try {
+    client.res.write(`id: ${eventId}\n`);
+    client.res.write(`event: ${eventName}\n`);
+    client.res.write(`data: ${JSON.stringify({ ...payload, type: payload.type || eventName, emittedAt: now() })}\n\n`);
+  } catch {
+    detachDisplayEventClient(client);
+  }
+}
+
+function publishDisplayEvent(eventName, payload = {}) {
+  if (!displayEventClients.size) return;
+  [...displayEventClients].forEach((client) => writeDisplaySse(client, eventName, payload));
+}
+
+function queueDisplayStateChanged(state = {}, reason = "state.write") {
+  if (!displayEventClients.size) return;
+  const payload = buildDisplayStateDelta(state, reason);
+  setImmediate(() => publishDisplayEvent("argentum.state_changed", payload));
+}
+
+async function handleDisplayEvents(req, res) {
+  requireAdminAccess(req);
+  res.writeHead(200, {
+    ...securityHeaders(req),
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  const client = { res, timer: null };
+  displayEventClients.add(client);
+  req.on("close", () => detachDisplayEventClient(client));
+  writeDisplaySse(client, "display.snapshot", await buildArgentumDisplaySnapshot(readState()));
+  client.timer = setInterval(() => {
+    writeDisplaySse(client, "display.heartbeat", { display: publicDisplayState(readState()) });
+  }, DISPLAY_SSE_HEARTBEAT_MS);
+  client.timer.unref?.();
+}
+
+function updateDisplayHeartbeat(payload = {}, source = "hardware") {
+  const state = readState();
+  const display = normalizeDisplayState(state.display || {});
+  const trust = displayControllerTrust(display, payload);
+  const observedAt = now();
+  if (trust.trusted && trust.controller) {
+    trust.controller.lastSeenAt = observedAt;
+    trust.controller.status = String(payload.status || "online").replace(/[^a-z0-9_.:-]/gi, "").slice(0, 80) || "online";
+    display.controllerConnected = true;
+    display.controllerLastSeenAt = observedAt;
+    display.controllerDeviceId = trust.deviceId;
+    display.controllerStatus = trust.controller.status;
+  }
+  display.lastCommandSource = source;
+  display.updatedAt = observedAt;
+  state.display = display;
+  writeState(state);
+  const publicState = publicDisplayState(state);
+  publishDisplayEvent("display.controller", { display: publicState });
+  return { ...publicState, trusted: trust.trusted, pairingRequired: !trust.trusted };
+}
+
+function navigateDisplay(payload = {}, source = "api") {
+  const view = normalizeDisplayView(payload.view ?? payload.target ?? payload.targetView, null);
+  if (!view) throw guardedError(`Display view must be one of: ${DISPLAY_VIEW_ORDER.join(", ")}.`, 400);
+  const state = readState();
+  const display = normalizeDisplayState(state.display || {});
+  if (source === "hardware") {
+    const trust = displayControllerTrust(display, payload);
+    if (!trust.trusted) throw guardedError("Display controller is not paired. Request pairing and press Accept on the ESP32 screen first.", 403);
+    if (trust.controller) {
+      trust.controller.lastSeenAt = now();
+      trust.controller.status = "online";
+    }
+  }
+  const changedAt = now();
+  display.view = view;
+  display.lastCommandAt = changedAt;
+  display.lastCommandSource = source;
+  display.commandVersion += 1;
+  display.updatedAt = changedAt;
+  if (payload.deviceId && source !== "hardware") {
+    display.controllerConnected = true;
+    display.controllerLastSeenAt = changedAt;
+    display.controllerDeviceId = String(payload.deviceId).replace(/[^a-z0-9_.:-]/gi, "").slice(0, 120);
+    display.controllerStatus = "online";
+  } else if (payload.deviceId && source === "hardware") {
+    display.controllerConnected = true;
+    display.controllerLastSeenAt = changedAt;
+    display.controllerDeviceId = displayDeviceId(payload.deviceId);
+    display.controllerStatus = "online";
+  }
+  state.display = display;
+  audit(state, "Monitor 3 display changed", `Dedicated display view changed to ${view} by ${source}.`);
+  writeState(state);
+  const publicState = publicDisplayState(state);
+  publishDisplayEvent("display.navigate", { display: publicState, view, source });
+  return publicState;
+}
+
+function createDisplayPairingRequest(payload = {}) {
+  const deviceId = displayDeviceId(payload.deviceId);
+  if (!deviceId) throw guardedError("A display controller deviceId is required for pairing.", 400);
+  const state = readState();
+  const display = normalizeDisplayState(state.display || {});
+  const requestedAt = now();
+  display.pairing = {
+    deviceId,
+    label: displayDeviceLabel(payload.label || payload.deviceLabel || deviceId),
+    code: displayPairingCode(),
+    status: "pending",
+    requestedAt,
+    expiresAt: new Date(Date.now() + DISPLAY_PAIRING_TTL_MS).toISOString(),
+    acceptedAt: null,
+  };
+  display.updatedAt = requestedAt;
+  state.display = display;
+  audit(state, "Monitor 3 controller pairing requested", `${display.pairing.label} requested display control pairing. Verify the code on Monitor 3 before accepting on the controller.`);
+  writeState(state);
+  const publicState = publicDisplayState(state);
+  publishDisplayEvent("display.pairing_requested", { display: publicState, pairing: publicState.pairing });
+  return publicState;
+}
+
+function acceptDisplayPairing(payload = {}) {
+  const deviceId = displayDeviceId(payload.deviceId);
+  const pairingCode = String(payload.pairingCode || payload.code || "").replace(/\D/g, "");
+  if (!deviceId || !pairingCode) throw guardedError("deviceId and pairingCode are required to accept display pairing.", 400);
+  const state = readState();
+  const display = normalizeDisplayState(state.display || {});
+  const pairing = normalizeDisplayPairing(display.pairing);
+  const expiresAt = Date.parse(pairing?.expiresAt || "");
+  if (!pairing || pairing.status !== "pending" || pairing.deviceId !== deviceId || pairing.code !== pairingCode || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw guardedError("Display pairing request is not valid or has expired.", 403);
+  }
+  const deviceToken = crypto.randomBytes(32).toString("base64url");
+  const acceptedAt = now();
+  const controller = {
+    deviceId,
+    label: pairing.label,
+    pairedAt: acceptedAt,
+    lastSeenAt: acceptedAt,
+    status: "online",
+    tokenHash: displayTokenHash(deviceToken),
+  };
+  display.trustedControllers = [controller, ...display.trustedControllers.filter((item) => item.deviceId !== deviceId)].slice(0, 8);
+  display.pairing = { ...pairing, status: "accepted", acceptedAt };
+  display.controllerConnected = true;
+  display.controllerLastSeenAt = acceptedAt;
+  display.controllerDeviceId = deviceId;
+  display.controllerStatus = "online";
+  display.updatedAt = acceptedAt;
+  state.display = display;
+  audit(state, "Monitor 3 controller paired", `${pairing.label} was paired from the ESP32 accept button. Future hardware navigation requires its one-device token.`);
+  writeState(state);
+  const publicState = publicDisplayState(state);
+  publishDisplayEvent("display.controller", { display: publicState });
+  return { display: publicState, deviceToken };
+}
+
+function handleHardwareDisplayCommand(payload = {}) {
+  const action = String(payload.action || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (action === "request_pairing" || action === "pairing_request" || action === "pair") {
+    return { display: createDisplayPairingRequest(payload), action: "request_pairing" };
+  }
+  if (action === "accept_pairing" || action === "accept") {
+    return { ...acceptDisplayPairing(payload), action: "accept_pairing" };
+  }
+  if (action === "navigate") {
+    return { display: navigateDisplay({ view: payload.target || payload.view, deviceId: payload.deviceId, deviceToken: payload.deviceToken || payload.token }, "hardware"), action };
+  }
+  if (action === "return_home") {
+    return { display: navigateDisplay({ view: "home", deviceId: payload.deviceId, deviceToken: payload.deviceToken || payload.token }, "hardware"), action };
+  }
+  if (action === "heartbeat" || action === "status") {
+    return { display: updateDisplayHeartbeat(payload, "hardware"), action };
+  }
+  throw guardedError("Unsupported display hardware action. Allowed actions: request_pairing, accept_pairing, navigate, return_home, heartbeat, status.", 400);
 }
 
 function publicAiProviderSettings(config = readAiProviderConfig()) {
@@ -2173,12 +4197,24 @@ function publicAiProviderSettings(config = readAiProviderConfig()) {
         keyConfigured: Boolean(keyFromConfig(config, "openai")),
         keyStatus: keyFromConfig(config, "openai") ? "Key saved securely" : "Not configured",
         keySource: keySource(config, "openai"),
+        keyStorageLabel: secureSecrets.publicStorageLabel(keySource(config, "openai")),
         model: config.providers.openai.model,
         temperature: config.providers.openai.temperature,
         maxOutputTokens: config.providers.openai.maxOutputTokens,
       },
+      anthropic: {
+        keyConfigured: Boolean(keyFromConfig(config, "anthropic")),
+        keyStatus: keyFromConfig(config, "anthropic") ? "Key saved securely" : "Not configured",
+        keySource: keySource(config, "anthropic"),
+        keyStorageLabel: secureSecrets.publicStorageLabel(keySource(config, "anthropic")),
+        model: config.providers.anthropic.model,
+        temperature: config.providers.anthropic.temperature,
+        maxOutputTokens: config.providers.anthropic.maxOutputTokens,
+      },
     },
-    storageNote: "API keys are held server-side only. Prefer environment variables on Railway; local saved keys live in ignored backend config.",
+    storageNote: APP_MODE === "local"
+      ? "API keys are held server-side only. Local saved keys use Mac Keychain when available."
+      : "API keys are held server-side only. Prefer environment variables on Railway; cloud saved keys live in ignored backend config.",
   };
 }
 
@@ -2205,9 +4241,51 @@ function updateAiProviderSettings(payload) {
 function estimatedAiCostUsd(usage = {}) {
   const inputTokens = Number(usage.input_tokens || usage.inputTokens || 0);
   const outputTokens = Number(usage.output_tokens || usage.outputTokens || 0);
-  const totalTokens = inputTokens + outputTokens;
-  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
-  return Math.round((totalTokens / 1000) * 0.001 * 10000) / 10000;
+  if ((!Number.isFinite(inputTokens) || inputTokens <= 0) && (!Number.isFinite(outputTokens) || outputTokens <= 0)) return 0;
+  const cost = (Math.max(0, inputTokens) * AI_BUDGET_INPUT_USD_PER_MILLION / 1_000_000)
+    + (Math.max(0, outputTokens) * AI_BUDGET_OUTPUT_USD_PER_MILLION / 1_000_000);
+  return Math.ceil(cost * 10000) / 10000;
+}
+
+function estimatedAiInputTokens(value) {
+  const serialized = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return Math.max(256, Math.min(250_000, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4)));
+}
+
+function reserveAiRequest(provider, model, requestBody, maxOutputTokens) {
+  return reserveAiUsage({
+    provider,
+    model,
+    estimatedInputTokens: estimatedAiInputTokens(requestBody),
+    maxOutputTokens: Math.max(1, Number(maxOutputTokens || 0)),
+  });
+}
+
+function activeAiReservationUsd() {
+  return [...aiBudgetReservations.values()].reduce((total, reservation) => total + Number(reservation.amountUsd || 0), 0);
+}
+
+function reserveAiUsage({ provider, model, estimatedInputTokens = 16_000, maxOutputTokens = 2_000, estimatedCostUsd = 0 } = {}) {
+  const config = readAiProviderConfig();
+  const amountUsd = Math.max(
+    estimatedAiCostUsd({ inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }),
+    Math.max(0, Number(estimatedCostUsd || 0)),
+  );
+  const usage = normalizeAiUsage(config.usage);
+  const limit = parseMonthlyLimit(config.monthlyLimitUsd, 10);
+  const projected = usage.estimatedMonthlyUsd + activeAiReservationUsd() + amountUsd;
+  if (limit > 0 && projected > limit) {
+    config.usage = { ...usage, blockedByLimit: true, lastError: "AI monthly spending limit would be exceeded by the next reserved call." };
+    writeAiProviderConfig(config);
+    throw guardedError("AI monthly spending limit would be exceeded by the next model call. Use Local Demo Mode or raise the operator-controlled limit.", 402);
+  }
+  const id = `ai-reservation-${Date.now()}-${crypto.randomBytes(5).toString("hex")}`;
+  aiBudgetReservations.set(id, { id, provider, model, amountUsd, createdAt: now() });
+  return id;
+}
+
+function releaseAiUsageReservation(reservationId) {
+  if (reservationId) aiBudgetReservations.delete(reservationId);
 }
 
 function aiUsageLimitReached(config) {
@@ -2219,10 +4297,14 @@ function aiUsageLimitReached(config) {
 function aiUsageBudgetStatus(config) {
   const usage = normalizeAiUsage(config.usage);
   const limit = parseMonthlyLimit(config.monthlyLimitUsd, 10);
-  const ratio = limit > 0 ? usage.estimatedMonthlyUsd / limit : 0;
+  const inFlightReservedUsd = activeAiReservationUsd();
+  const projectedMonthlyUsd = usage.estimatedMonthlyUsd + inFlightReservedUsd;
+  const ratio = limit > 0 ? projectedMonthlyUsd / limit : 0;
   return {
     limitUsd: limit,
     estimatedMonthlyUsd: usage.estimatedMonthlyUsd,
+    inFlightReservedUsd,
+    projectedMonthlyUsd,
     percentUsed: limit > 0 ? Math.min(100, Math.round(ratio * 100)) : 0,
     warning: limit > 0 && ratio >= 0.75 && ratio < 1,
     blocked: limit > 0 && ratio >= 1,
@@ -2230,41 +4312,48 @@ function aiUsageBudgetStatus(config) {
 }
 
 function assertAiUsageBudget(config) {
-  if (!aiUsageLimitReached(config)) return;
-  config.usage = {
-    ...normalizeAiUsage(config.usage),
+  const latest = readAiProviderConfig();
+  if (!aiUsageBudgetStatus(latest).blocked) return latest;
+  latest.usage = {
+    ...normalizeAiUsage(latest.usage),
     blockedByLimit: true,
     lastError: "AI monthly spending limit reached.",
   };
-  writeAiProviderConfig(config);
+  writeAiProviderConfig(latest);
   throw guardedError("AI monthly spending limit reached. Agent 101 used Local Demo Mode fallback.", 402);
 }
 
-function recordAiUsage(config, usage = {}) {
-  const current = normalizeAiUsage(config.usage);
+function recordAiUsage(config, usage = {}, options = {}) {
+  releaseAiUsageReservation(options.reservationId);
+  const latest = readAiProviderConfig();
+  const current = normalizeAiUsage(latest.usage);
   const inputTokens = Number(usage.input_tokens || usage.inputTokens || 0);
   const outputTokens = Number(usage.output_tokens || usage.outputTokens || 0);
-  config.usage = {
+  latest.usage = {
     ...current,
     requestCount: current.requestCount + 1,
     inputTokens: current.inputTokens + (Number.isFinite(inputTokens) ? inputTokens : 0),
     outputTokens: current.outputTokens + (Number.isFinite(outputTokens) ? outputTokens : 0),
-    estimatedMonthlyUsd: Math.round((current.estimatedMonthlyUsd + estimatedAiCostUsd(usage)) * 10000) / 10000,
+    estimatedMonthlyUsd: Math.round((current.estimatedMonthlyUsd + Math.max(estimatedAiCostUsd(usage), Math.max(0, Number(options.estimatedCostUsd || 0)))) * 10000) / 10000,
     lastCallAt: now(),
     lastError: null,
   };
-  config.usage.blockedByLimit = aiUsageLimitReached(config);
-  if (aiUsageBudgetStatus(config).warning && !config.usage.warnedAt) config.usage.warnedAt = now();
-  writeAiProviderConfig(config);
-  return config.usage;
+  latest.usage.blockedByLimit = aiUsageLimitReached(latest);
+  if (aiUsageBudgetStatus(latest).warning && !latest.usage.warnedAt) latest.usage.warnedAt = now();
+  writeAiProviderConfig(latest);
+  if (config && typeof config === "object") config.usage = latest.usage;
+  return latest.usage;
 }
 
-function recordAiProviderFailure(config, message) {
-  config.usage = {
-    ...normalizeAiUsage(config.usage),
+function recordAiProviderFailure(config, message, reservationId = "") {
+  releaseAiUsageReservation(reservationId);
+  const latest = readAiProviderConfig();
+  latest.usage = {
+    ...normalizeAiUsage(latest.usage),
     lastError: String(message || "Provider error").slice(0, 240),
   };
-  writeAiProviderConfig(config);
+  writeAiProviderConfig(latest);
+  if (config && typeof config === "object") config.usage = latest.usage;
 }
 
 function saveAiProviderKey(payload) {
@@ -2278,7 +4367,25 @@ function saveAiProviderKey(payload) {
   }
   const config = readAiProviderConfig();
   config.keys = config.keys || {};
-  config.keys[provider] = apiKey;
+  if (APP_MODE === "local") {
+    const saved = secureSecrets.setSecret({
+      dataDir: DATA_DIR,
+      provider,
+      value: apiKey,
+      preferKeychain: true,
+    });
+    config.keys[provider] = {
+      storage: saved.storage,
+      configured: true,
+      updatedAt: saved.updatedAt,
+    };
+    localDatabase.upsertSecretMetadata(DATA_DIR, provider, saved.storage, true);
+    const state = readState();
+    audit(state, "Provider key saved", `${aiProviderLabel(provider)} key saved to ${secureSecrets.publicStorageLabel(saved.storage)}.`);
+    writeState(state);
+  } else {
+    config.keys[provider] = apiKey;
+  }
   writeAiProviderConfig(config);
   return publicAiProviderSettings(config);
 }
@@ -2289,9 +4396,118 @@ function removeAiProviderKey(payload) {
     throw guardedError("Choose OpenAI or Anthropic before removing a provider key.", 400);
   }
   const config = readAiProviderConfig();
+  if (config.keys?.[provider] && APP_MODE === "local") {
+    const storage = typeof config.keys[provider] === "object" ? config.keys[provider].storage : "";
+    secureSecrets.deleteSecret({ dataDir: DATA_DIR, provider, storage });
+    localDatabase.upsertSecretMetadata(DATA_DIR, provider, storage || "secure_store", false);
+    const state = readState();
+    audit(state, "Provider key removed", `${aiProviderLabel(provider)} key removed from local secure storage.`);
+    writeState(state);
+  }
   if (config.keys) delete config.keys[provider];
   writeAiProviderConfig(config);
   return publicAiProviderSettings(config);
+}
+
+function localRuntimeStatusPayload() {
+  return localRuntime.publicRuntimeStatus({
+    appMode: APP_MODE,
+    host: HOST,
+    port: PORT,
+    dataDir: DATA_DIR,
+    dbStatus: localDatabaseStatus || (APP_MODE === "local" ? localDatabase.status(DATA_DIR) : null),
+  });
+}
+
+function createLocalAgentJob(payload = {}) {
+  const goal = String(payload.goal || payload.message || "").trim();
+  if (!goal) throw guardedError("Local job goal is required.", 400);
+  const risky = detectRiskyAction(goal);
+  if (risky && requiresHumanGate(risky)) {
+    const approval = createHumanGatePackage({
+      title: `Review local agent action: ${risky}`,
+      message: goal,
+      actionType: risky,
+      risk: "high",
+      evidence: "Local job runner detected a dangerous desktop action. Nothing was executed.",
+    }).approval;
+    const job = localDatabase.enqueueAgentJob(DATA_DIR, {
+      goal,
+      riskLevel: "high",
+      requiresApproval: true,
+      approvalId: approval.id,
+      status: "waiting_approval",
+    });
+    localDatabase.recordLocalAudit(DATA_DIR, {
+      actor: "agent-101",
+      action: "Local job blocked by Human Gate",
+      detail: `${risky}: ${goal}`,
+    });
+    return { job, approval, requiresApproval: true };
+  }
+  const job = localDatabase.enqueueAgentJob(DATA_DIR, {
+    goal,
+    riskLevel: payload.riskLevel || "low",
+    requiresApproval: false,
+    status: "queued",
+  });
+  localDatabase.recordLocalAudit(DATA_DIR, {
+    actor: "agent-101",
+    action: "Local job queued",
+    detail: goal,
+  });
+  return { job, requiresApproval: false };
+}
+
+function runNextLocalAgentJob() {
+  const job = localDatabase.listAgentJobs(DATA_DIR, 50).reverse().find((item) => item.status === "queued");
+  if (!job) return { job: null, message: "No queued local jobs." };
+  const result = {
+    summary: "Local Agent 101 job completed in draft-only mode. No external action was executed.",
+    completedAt: now(),
+    output: localDepoDemoResponse(job.goal),
+  };
+  localDatabase.updateAgentJob(DATA_DIR, job.id, { status: "complete", result });
+  const state = readState();
+  audit(state, "Local agent job completed", job.goal);
+  writeState(state);
+  return { job: { ...job, status: "complete", result }, result };
+}
+
+function localWorkspacePermissions(payload = {}) {
+  return {
+    read: payload.read !== false,
+    write: payload.write === true,
+    delete: false,
+    agentAccess: payload.agentAccess === true,
+  };
+}
+
+function addLocalFileWorkspace(payload = {}) {
+  const folderPath = path.resolve(String(payload.folderPath || payload.path || "").trim());
+  if (!folderPath || folderPath === path.parse(folderPath).root) {
+    throw guardedError("Choose a specific folder, not the whole disk.", 400);
+  }
+  if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    throw guardedError("Folder does not exist or is not a directory.", 400);
+  }
+  const permissions = localWorkspacePermissions(payload.permissions || payload);
+  const workspace = localDatabase.upsertFileWorkspace(DATA_DIR, {
+    folderPath,
+    label: String(payload.label || path.basename(folderPath) || "Local workspace").slice(0, 80),
+    permissions,
+  });
+  localDatabase.logFileAccess(DATA_DIR, {
+    workspaceId: workspace.id,
+    action: "grant_workspace",
+    filePath: folderPath,
+    allowed: true,
+    reason: "Operator manually added folder workspace.",
+  });
+  const state = readState();
+  audit(state, "Local file workspace added", `${workspace.label}: read=${permissions.read}, write=${permissions.write}, agentAccess=${permissions.agentAccess}.`);
+  writeState(state);
+  return workspace;
 }
 
 function detectRiskyAction(text) {
@@ -2311,6 +4527,10 @@ function detectRiskyAction(text) {
     ["modify_permissions", ["modify permission", "edit permission"]],
     ["change_permissions", ["change permission", "grant permission", "admin permission"]],
     ["change_api_key", ["change api key", "rotate key", "replace key"]],
+    ["delete_file", ["delete file", "delete files", "remove file", "remove files", "wipe folder", "erase folder"]],
+    ["write_file", ["write file", "write files", "modify file", "modify files", "edit file", "edit files", "overwrite file"]],
+    ["send_email", ["send email", "email this", "mail customer", "send message", "send outreach"]],
+    ["change_system_settings", ["change system setting", "change mac setting", "system settings", "grant full disk access", "install extension"]],
     ["deploy_campaign", ["deploy campaign", "launch campaign", "send campaign"]],
     ["external_api_action", ["call external api", "run external api", "external api action"]],
     ["browser_login", ["log in for me", "login for me", "use my login", "sign into", "sign in to my account"]],
@@ -2341,12 +4561,22 @@ function isClipsOfficeIntakeRequest(text) {
 function normalizedAgent101ChatHistory(context = {}) {
   const incoming = Array.isArray(context.chatHistory) ? context.chatHistory : [];
   return incoming
-    .map((message) => ({
-      speaker: ["operator", "depo", "agent"].includes(message?.speaker) ? message.speaker : "depo",
-      text: String(message?.text || "").trim().slice(0, 1000),
-      roomId: String(message?.roomId || context.roomId || context.officeId || "").slice(0, 80),
-      createdAt: message?.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : undefined,
-    }))
+    .map((message) => {
+      const rawRole = String(message?.speaker || message?.role || message?.sender || "").toLowerCase();
+      const speaker = ["operator", "user"].includes(rawRole)
+        ? "operator"
+        : ["agent", "assistant", "depo"].includes(rawRole)
+          ? "agent"
+          : rawRole === "tool"
+            ? "tool"
+            : "agent";
+      return {
+        speaker,
+        text: String(message?.text || message?.content || message?.message || "").trim().slice(0, 1000),
+        roomId: String(message?.roomId || message?.metadata?.roomId || context.roomId || context.officeId || "").slice(0, 80),
+        createdAt: message?.createdAt && !Number.isNaN(Date.parse(message.createdAt)) ? message.createdAt : undefined,
+      };
+    })
     .filter((message) => message.text)
     .slice(-18);
 }
@@ -2364,84 +4594,12 @@ function hasClipsOfficeChatContext(context = {}) {
   });
 }
 
-function buildClipsOfficeIntakeResponse(message) {
-  return {
-    message: [
-      "Got it. I will treat this as a Clips Office build/intake request, not a shutdown.",
-      "",
-      "I can help build the auto-clipping system for your own channels, approved creators, or public discovery lists. I will not log in, impersonate creators, claim ownership of channels, post, spend, or change accounts without Human Gate.",
-      "",
-      "Answer these so I can turn it into a real workflow:",
-      "1. Which platform first: Twitch, Kick, YouTube, TikTok, or all discovery?",
-      "2. Are we monitoring your own account, creators who gave permission, or public streams for research only?",
-      "3. When you say claim big streamers, do you mean find/recommend streamers, draft outreach, request clipping permission, or manage approved clip packages?",
-      "4. What games/categories should Agent 101 watch first?",
-      "5. What counts as a good clip: reaction, clutch, funny moment, tutorial, drama-free highlight, or something else?",
-      "6. What output should come first: streamer shortlist, clip radar candidates, CapCut brief, posting draft, or Human Gate permission package?",
-      "7. What daily limit should stay active while this is draft-only?",
-      "",
-      "Safe next move: I can create a Clips Office intake plan with a permission checklist, discovery rubric, streamer scoring rules, and a Human Gate package for any external step.",
-    ].join("\n"),
-    taskType: "clips",
-    suggestedActions: [
-      { label: "Create Clips Office intake", action: "create_task_plan", requiresApproval: false },
-      { label: "Create streamer scoring rubric", action: "create_clips_plan", requiresApproval: false },
-      { label: "Package external permissions", action: "package_for_approval", requiresApproval: true },
-    ],
-    artifacts: [
-      {
-        type: "intake",
-        title: "Clips Office intake questions",
-        content: `Original request: ${String(message || "").slice(0, 1200)}\n\nNeeded: platform, permission model, streamer discovery goal, clip scoring rubric, first output, daily limit, and Human Gate boundaries.`,
-      },
-    ],
-    requiresApproval: false,
-    riskLevel: "medium",
-    blockedAction: null,
-    logs: ["Agent 101 entered Clips Office intake mode instead of blocking ambiguous planning work."],
-  };
+function buildClipsOfficeIntakeResponse(message, context = {}) {
+  return buildClipOfficeExecutiveResponse(message, { ...context, roomId: context.roomId || context.officeId || context.office || "clips-office" });
 }
 
 function buildClipsOfficeFollowupResponse(message, context = {}) {
-  const history = normalizedAgent101ChatHistory(context);
-  const answered = String(message || "").trim();
-  const priorOperatorAnswers = history
-    .filter((item) => item.speaker === "operator")
-    .map((item) => item.text)
-    .slice(-4);
-  return {
-    message: [
-      "Got it. I kept this inside the Clips Office thread and added it to the working setup context.",
-      "",
-      answered ? `Latest answer: ${answered}` : "Latest answer captured.",
-      priorOperatorAnswers.length ? `Current thread context: ${priorOperatorAnswers.join(" | ").slice(0, 700)}` : "",
-      "",
-      "Next safe build step:",
-      "1. Turn this into a Clips Office intake record.",
-      "2. Build a streamer discovery rubric for approved/public discovery only.",
-      "3. Create a permission checklist before any creator outreach or posting.",
-      "4. Draft the first CapCut/posting package for Human Gate review.",
-      "",
-      "Still blocked without approval: logging in, claiming ownership, posting, spending, account changes, API key changes, or contacting people as if permission already exists.",
-    ].filter(Boolean).join("\n"),
-    taskType: "clips",
-    suggestedActions: [
-      { label: "Create Clips Office intake", action: "create_task_plan", requiresApproval: false },
-      { label: "Draft discovery rubric", action: "create_clips_plan", requiresApproval: false },
-      { label: "Package permissions", action: "package_for_approval", requiresApproval: true },
-    ],
-    artifacts: [
-      {
-        type: "working_context",
-        title: "Clips Office setup context",
-        content: `Latest operator answer: ${answered}\n\nRecent thread:\n${history.map((item) => `${item.speaker}: ${item.text}`).join("\n").slice(0, 4000)}`,
-      },
-    ],
-    requiresApproval: false,
-    riskLevel: "medium",
-    blockedAction: null,
-    logs: ["Agent 101 used recent Clips Office chat context instead of starting over."],
-  };
+  return buildClipOfficeExecutiveResponse(message, context);
 }
 
 function shouldUseClipsOfficeIntake(message, context = {}, response = null) {
@@ -2467,7 +4625,7 @@ function localDepoDemoResponse(message) {
     return "Clips Office plan: 1. define goal and audience, 2. list raw footage/audio/script assets, 3. create three hook-first clip structures, 4. prepare CapCut handoff notes, 5. draft TikTok/Instagram/YouTube captions, 6. package the posting decision for Human Gate. No posting or account action will happen without approval.";
   }
   if (text.includes("what can you do") || text.includes("can you do")) {
-    return "I can help you turn ideas into safe, structured work: research, organize evidence, draft outputs, create task plans, draft workflows, save internal notes, prepare reports, and package risky work for Human Gate review.";
+    return "Agent 101 operating scope: research, evidence organization, draft outputs, task plans, workflow plans, internal notes, reports, and Human Gate packages for risky work.";
   }
   if (text.includes("blocked") || text.includes("cannot") || text.includes("can't")) {
     return "I cannot publish, spend money, move money, contact customers, modify accounts, create live agents, change permissions, change API keys, deploy campaigns, or call external APIs without Human Gate approval.";
@@ -2582,19 +4740,23 @@ function normalizeAgent101AiPayload(payload, fallbackMessage = "") {
 function agent101SystemInstructions() {
   const riskyActions = Array.from(AI_RISKY_ACTION_TYPES).join(", ");
   return [
-    "You are Agent 101, the first supervised master agent inside Argentum OS.",
-    "You help the user turn ideas into safe, structured work.",
-    "You can plan, research, organize, draft, write prompts, create implementation plans, prepare code-change instructions, create workflow plans, generate content packages, and propose future agents.",
-    "You are draft-only. You cannot perform external actions.",
-    "You cannot publish, spend money, contact customers, modify accounts, change API keys, create live agents, grant permissions, run external APIs/tools, or deploy campaigns.",
-    "Any risky action must be routed to Human Gate for approval.",
-    "Important: do not behave like a generic refusal chatbot. If the user gives a vague business goal, ask intake questions and propose safe internal next steps.",
-    "For clipping/streamer ideas, you may create discovery rubrics, approved-streamer checklists, CapCut briefs, posting drafts, permission checklists, and Human Gate packages. Ask clarifying questions when ownership, permission, platform, or output is unclear.",
-    "If the user says claim or get big streamers, clarify what they mean and reframe toward approved discovery, permission requests, and draft-only packages. Do not set blockedAction just because wording is rough.",
+    "Agent 101 is the Chief Operations Intelligence Agent of Argentum OS, not a chatbot.",
+    "Operate like a COO, chief of staff, head of operations, and founder-level operator.",
+    "Silently determine the user's real objective, systems to inspect, relevant data, risks, opportunities, next action, and highest-leverage recommendation. Never expose that reasoning.",
+    "Return conclusions only.",
+    "Every message must use these sections in this order inside the message string: CURRENT STATUS, KEY FINDINGS, RISKS, RECOMMENDATIONS, NEXT ACTIONS.",
+    "Use confident, direct, high-signal executive language. No fluff. No assistant phrasing.",
+    "Never say: User asked, System detected, I attempted, I was unable, I need clarification, Would you like me to, Based on your request, Here's what I found, I can help with that.",
+    "If data is incomplete, state the operational impact, infer the likely cause, and continue with the next best action.",
+    "Constantly look for revenue opportunities, cost reductions, growth leverage, bottlenecks, missing automation, risk exposure, team inefficiencies, and workflow improvements.",
+    "For Clip Office, always report active streams, streamers monitored, candidate clips, clips approved, clips pending, export status, posting queue, failures, success rate, and recommendations.",
+    "Thread memory is persistent operational memory. Use prior approvals, denials, decisions, goals, workflows, and recent messages without restarting the conversation.",
+    "Agent 101 is draft-only for consequential external actions. Do not publish, spend money, contact customers, modify accounts, change API keys, create live agents, grant permissions, run external APIs/tools, or deploy campaigns without Human Gate approval.",
+    "For clipping/streamer ideas, create operational intelligence: discovery priorities, permission risk, monitored-stream coverage, candidate quality, queue health, and the next action. Do not ask a questionnaire unless execution is impossible.",
+    "If the user says claim or get big streamers, interpret it as discovery, permission workflow, or approved clip-package operations unless an explicit blocked action is requested.",
     `Only set blockedAction when the requested action directly matches one of these exact blocked action IDs: ${riskyActions}.`,
-    "If the user asks for a coding task, create a clear implementation plan, file checklist, patch strategy, test plan, and prompt for Codex or Claude if needed.",
+    "If the user asks for a coding task, return an executive implementation brief with impacted systems, risks, and next actions.",
     "Do not claim you edited files unless a real code-editing tool exists and was used.",
-    "Be direct, useful, operational, and concise.",
     "Return only valid JSON with keys: message, taskType, suggestedActions, artifacts, requiresApproval, riskLevel, blockedAction, logs.",
   ].join(" ");
 }
@@ -2605,12 +4767,12 @@ function agent101UserInput(message, context = {}) {
     `Message: ${message}`,
     `Room ID: ${context.roomId || context.office || "agent-office"}`,
     `Current stage: ${context.currentStage || "Agent 101"}`,
-    `Context: ${JSON.stringify(context.context || {}, null, 2).slice(0, 2000)}`,
+    `Grounded business and knowledge context: ${JSON.stringify(context.context || {}, null, 2).slice(0, 16_000)}`,
     `Recent room chat: ${JSON.stringify(chatHistory, null, 2).slice(0, 5000)}`,
     "Allowed task types: general, code_plan, content, clips, agent_blueprint, approval_request.",
     "Use the recent room chat as memory for this conversation. Do not restart as if the user is asking from zero.",
-    "If key details are missing, ask follow-up questions in the message and keep requiresApproval false.",
-    "If the request is about Clips Office, streamer discovery, clipping, Twitch, Kick, CapCut, or TikTok and does not explicitly request a blocked external action, return a helpful Clips Office intake/workflow response.",
+    "If key details are missing, make intelligent assumptions and identify the next verification action.",
+    "If the request is about Clips Office, streamer discovery, clipping, Twitch, Kick, CapCut, or TikTok and does not explicitly request a blocked external action, return Clip Office operational intelligence with the required metrics.",
     "If risky, return taskType approval_request, requiresApproval true, riskLevel high, blockedAction as an exact blocked action ID only, and a Send to Human Gate suggested action.",
   ].join("\n");
 }
@@ -2623,43 +4785,48 @@ async function callOpenAiProvider(config, message, context) {
   const provider = "openai";
   const key = keyFromConfig(config, provider);
   if (!key) throw guardedError("OpenAI API key is not configured.", 400);
-  assertAiUsageBudget(config);
   const settings = config.providers.openai;
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${key}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      instructions: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
-      input: [
-        {
-          role: "user",
-          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
-        },
-      ],
-      temperature: settings.temperature,
-      max_output_tokens: settings.maxOutputTokens,
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
-    error.openAiCode = payload.error?.code || "";
-    error.openAiType = payload.error?.type || "";
-    throw error;
+  const requestBody = {
+    model: settings.model,
+    instructions: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
+    input: [
+      {
+        role: "user",
+        content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
+      },
+    ],
+    temperature: settings.temperature,
+    max_output_tokens: settings.maxOutputTokens,
+  };
+  const reservationId = reserveAiRequest(provider, settings.model, requestBody, settings.maxOutputTokens);
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+      error.openAiCode = payload.error?.code || "";
+      error.openAiType = payload.error?.type || "";
+      throw error;
+    }
+    recordAiUsage(config, payload.usage || {}, { reservationId });
+    const outputText = extractOpenAiOutputText(payload);
+    return normalizeDepoAiPayload(outputText, outputText);
+  } finally {
+    releaseAiUsageReservation(reservationId);
   }
-  recordAiUsage(config, payload.usage || {});
-  const outputText = extractOpenAiOutputText(payload);
-  return normalizeDepoAiPayload(outputText, outputText);
 }
 
 async function callOpenAiAgent101(config, message, context = {}) {
   const key = keyFromConfig(config, "openai");
   if (!key) throw guardedError("OpenAI API key is not configured.", 400);
-  assertAiUsageBudget(config);
   const settings = config.providers.openai;
   const requestBody = {
     model: settings.model,
@@ -2675,23 +4842,29 @@ async function callOpenAiAgent101(config, message, context = {}) {
   };
 
   async function sendRequest(body) {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
-      error.openAiCode = payload.error?.code || "";
-      error.openAiType = payload.error?.type || "";
-      throw error;
+    const reservationId = reserveAiRequest("openai", settings.model, body, body.max_output_tokens);
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+        error.openAiCode = payload.error?.code || "";
+        error.openAiType = payload.error?.type || "";
+        throw error;
+      }
+      recordAiUsage(config, payload.usage || {}, { reservationId });
+      return extractOpenAiOutputText(payload);
+    } finally {
+      releaseAiUsageReservation(reservationId);
     }
-    recordAiUsage(config, payload.usage || {});
-    return extractOpenAiOutputText(payload);
   }
 
   const firstText = await sendRequest(requestBody);
@@ -2715,42 +4888,121 @@ async function callOpenAiAgent101(config, message, context = {}) {
   return normalized;
 }
 
+async function callAnthropicAgent101(config, message, context = {}) {
+  const key = keyFromConfig(config, "anthropic");
+  if (!key) throw guardedError("Anthropic API key is not configured.", 400);
+  const settings = config.providers.anthropic;
+
+  async function sendRequest(messages) {
+    const maxTokens = Math.max(700, Number(settings.maxOutputTokens || 900));
+    const body = {
+      model: settings.model,
+      max_tokens: maxTokens,
+      temperature: settings.temperature,
+      system: agent101SystemInstructions(),
+      messages,
+    };
+    const reservationId = reserveAiRequest("anthropic", settings.model, body, maxTokens);
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw guardedError(payload.error?.message || `Anthropic request failed with ${response.status}.`, response.status);
+      recordAiUsage(config, payload.usage || {}, { reservationId });
+      return (payload.content || []).filter((part) => part.type === "text").map((part) => part.text || "").join("\n").trim();
+    } finally {
+      releaseAiUsageReservation(reservationId);
+    }
+  }
+
+  const userInput = agent101UserInput(message, context);
+  const firstText = await sendRequest([{ role: "user", content: userInput }]);
+  let normalized = normalizeAgent101AiPayload(firstText, firstText);
+  if (normalized.logs.includes("Agent 101 returned text. JSON parsing fallback used.")) {
+    const retryText = await sendRequest([
+      { role: "user", content: userInput },
+      { role: "assistant", content: firstText },
+      { role: "user", content: "Convert the response into the exact required JSON object. Return JSON only and preserve the factual content." },
+    ]);
+    normalized = normalizeAgent101AiPayload(retryText, firstText);
+  }
+  return normalized;
+}
+
 async function callAnthropicProvider(config, message, context) {
   const provider = "anthropic";
   const key = keyFromConfig(config, provider);
   if (!key) throw guardedError("Anthropic API key is not configured.", 400);
   const settings = config.providers.anthropic;
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      max_tokens: settings.maxOutputTokens,
-      temperature: settings.temperature,
-      system: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
-      messages: [
-        {
-          role: "user",
-          content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
-        },
-      ],
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw guardedError(payload.error?.message || `Anthropic request failed with ${response.status}.`, response.status);
+  const body = {
+    model: settings.model,
+    max_tokens: settings.maxOutputTokens,
+    temperature: settings.temperature,
+    system: `${DEPO_SYSTEM_RULES} ${depoResponseSchemaInstruction()}`,
+    messages: [
+      {
+        role: "user",
+        content: `Room: ${context.roomId || "depo-habitat"}\nStage: ${context.currentStage || "Agent Habitat"}\nMessage: ${message}`,
+      },
+    ],
+  };
+  const reservationId = reserveAiRequest(provider, settings.model, body, settings.maxOutputTokens);
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw guardedError(payload.error?.message || `Anthropic request failed with ${response.status}.`, response.status);
+    }
+    recordAiUsage(config, payload.usage || {}, { reservationId });
+    const outputText = (payload.content || []).map((part) => part.text || "").join("\n");
+    return normalizeDepoAiPayload(outputText, outputText);
+  } finally {
+    releaseAiUsageReservation(reservationId);
   }
-  const outputText = (payload.content || []).map((part) => part.text || "").join("\n");
-  return normalizeDepoAiPayload(outputText, outputText);
 }
 
 function blockedDepoResponse(actionType) {
   return {
-    message: "Human Gate approval required before this can continue.",
+    message: formatAgent101ExecutiveReport({
+      title: "HUMAN GATE STATUS",
+      currentStatus: [
+        `Requested action: ${String(actionType || "external_action").replaceAll("_", " ")}.`,
+        "Execution status: blocked pending human decision.",
+        "Internal planning and approval-package preparation remain available.",
+      ],
+      keyFindings: [
+        "The requested action crosses Agent 101's external/consequential authority boundary.",
+        "No external action was executed.",
+      ],
+      risks: [
+        "Proceeding without approval would bypass the audit trail and operator control.",
+        "Account, posting, file, payment, customer, permission, or system-setting changes require exact scoped approval.",
+      ],
+      recommendations: [
+        "Create a Human Gate package with action scope, evidence, reversibility, expiration, and risk level.",
+        "Keep all preparatory work draft-only until the operator approves the exact step.",
+      ],
+      nextActions: [
+        "Review the Human Gate request and decide approve, send back, or decline.",
+      ],
+    }),
     suggestedActions: [],
     requiresApproval: true,
     riskLevel: "high",
@@ -2850,28 +5102,35 @@ async function testAgent101OpenAi() {
     return result;
   }
   try {
-    assertAiUsageBudget(config);
     const settings = config.providers.openai;
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${keyFromConfig(config, "openai")}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        instructions: "Reply with exactly: Agent 101 online.",
-        input: [{ role: "user", content: "Reply with exactly: Agent 101 online." }],
-        max_output_tokens: 24,
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
-      error.openAiCode = payload.error?.code || "";
-      throw error;
+    const body = {
+      model: settings.model,
+      instructions: "Reply with exactly: Agent 101 online.",
+      input: [{ role: "user", content: "Reply with exactly: Agent 101 online." }],
+      max_output_tokens: 24,
+    };
+    const reservationId = reserveAiRequest("openai", settings.model, body, 24);
+    let payload;
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${keyFromConfig(config, "openai")}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = guardedError(payload.error?.message || `OpenAI request failed with ${response.status}.`, response.status);
+        error.openAiCode = payload.error?.code || "";
+        throw error;
+      }
+      recordAiUsage(config, payload.usage || {}, { reservationId });
+    } finally {
+      releaseAiUsageReservation(reservationId);
     }
-    recordAiUsage(config, payload.usage || {});
     const outputText = extractOpenAiOutputText(payload);
     const result = {
       success: true,
@@ -2912,6 +5171,174 @@ async function testAgent101OpenAi() {
     audit(state, "OpenAI connection test failed", friendly);
     writeState(state);
     return result;
+  }
+}
+
+function logOpenClawRuntimeEvent(event) {
+  const parts = [
+    `requestId=${event.requestId || "unknown"}`,
+    "provider=openclaw",
+    `target=${event.target || "unknown"}`,
+    `durationMs=${Number.isFinite(Number(event.durationMs)) ? Number(event.durationMs) : 0}`,
+    `ok=${Boolean(event.ok)}`,
+  ];
+  if (event.httpStatus) parts.push(`httpStatus=${event.httpStatus}`);
+  if (event.errorCode) parts.push(`errorCode=${event.errorCode}`);
+  console.info(`[agent-runtime] ${parts.join(" ")}`);
+}
+
+function createOpenClawRuntime() {
+  return new openclawRuntime.OpenClawRuntime({
+    config: openclawRuntime.readOpenClawConfig(process.env),
+    logger: logOpenClawRuntimeEvent,
+  });
+}
+
+function openClawConnectorStatus(state = readState(), extra = {}) {
+  const stored = state.toolConnections?.openclaw || {};
+  const base = openclawRuntime.publicOpenClawStatus(openclawRuntime.readOpenClawConfig(process.env), {
+    lastTest: stored.lastTest || extra.lastTest || null,
+    lastError: stored.lastError || extra.lastError || null,
+    models: extra.models || stored.models || [],
+    connected: extra.connected || stored.status === "ready",
+    status: extra.status || stored.status,
+    selectedModel: stored.selectedModel,
+  });
+  return {
+    id: "openclaw",
+    label: CONNECTOR_DEFINITIONS.openclaw.label,
+    category: CONNECTOR_DEFINITIONS.openclaw.category,
+    status: !base.enabled ? "not_configured" : base.configured ? (base.lastError ? "error" : base.connected ? "ready" : "approval_required") : "error",
+    mode: base.mode,
+    configured: base.configured,
+    connected: base.connected,
+    requiredEnv: CONNECTOR_DEFINITIONS.openclaw.requiredEnv.filter((name) => name !== "OPENCLAW_GATEWAY_TOKEN"),
+    secretEnv: ["Gateway token"],
+    missingEnv: base.missingConfig,
+    approvalRequired: false,
+    blockedActions: CONNECTOR_DEFINITIONS.openclaw.blockedActions,
+    checklist: CONNECTOR_DEFINITIONS.openclaw.checklist,
+    baseUrlOrigin: base.baseUrlOrigin,
+    defaultModel: base.defaultModel,
+    selectedModel: base.selectedModel,
+    tokenConfigured: base.tokenConfigured,
+    timeoutMs: base.timeoutMs,
+    models: base.models,
+    lastTest: base.lastTest,
+    lastError: base.lastError,
+    securityBoundary: base.securityBoundary,
+  };
+}
+
+function rememberOpenClawTest(result) {
+  const state = readState();
+  state.toolConnections = state.toolConnections || {};
+  state.toolConnections.openclaw = {
+    ...(state.toolConnections.openclaw || {}),
+    status: result.success ? "ready" : "error",
+    selectedModel: result.selectedModel || openclawRuntime.readOpenClawConfig(process.env).defaultModel,
+    models: Array.isArray(result.models) ? result.models.slice(0, 50) : [],
+    lastTest: {
+      success: Boolean(result.success),
+      provider: "openclaw",
+      message: result.message,
+      requestId: result.requestId || null,
+      durationMs: result.durationMs || null,
+      testedAt: result.testedAt || now(),
+    },
+    lastError: result.success ? null : result.message,
+  };
+  audit(state, result.success ? "OpenClaw connection tested" : "OpenClaw connection test failed", result.message);
+  writeState(state);
+}
+
+async function testOpenClawRuntime() {
+  try {
+    const result = await createOpenClawRuntime().testConnection();
+    rememberOpenClawTest(result);
+    return {
+      ...result,
+      status: openClawConnectorStatus(readState(), { connected: true, models: result.models }),
+    };
+  } catch (error) {
+    const safeError = openclawRuntime.safePublicError(error);
+    const result = {
+      success: false,
+      provider: "openclaw",
+      connected: false,
+      selectedModel: openclawRuntime.readOpenClawConfig(process.env).defaultModel,
+      models: [],
+      message: safeError.message,
+      code: safeError.code,
+      httpStatus: safeError.httpStatus,
+      testedAt: now(),
+      configurationErrors: safeError.configurationErrors,
+    };
+    rememberOpenClawTest(result);
+    return {
+      ...result,
+      status: openClawConnectorStatus(readState(), { connected: false, lastError: safeError.message }),
+    };
+  }
+}
+
+async function listOpenClawModels() {
+  try {
+    const result = await createOpenClawRuntime().listModels();
+    return {
+      success: true,
+      provider: "openclaw",
+      selectedModel: result.selectedModel,
+      models: result.models,
+      requestId: result.requestId,
+      durationMs: result.durationMs,
+    };
+  } catch (error) {
+    const safeError = openclawRuntime.safePublicError(error);
+    return {
+      success: false,
+      provider: "openclaw",
+      selectedModel: openclawRuntime.readOpenClawConfig(process.env).defaultModel,
+      models: [],
+      message: safeError.message,
+      code: safeError.code,
+      httpStatus: safeError.httpStatus,
+      configurationErrors: safeError.configurationErrors,
+    };
+  }
+}
+
+async function runOpenClawAgentRequest(payload = {}) {
+  try {
+    const result = await createOpenClawRuntime().runAgent({
+      conversationId: payload.conversationId || payload.threadId || "agent101-main",
+      input: payload.input || payload.message || payload.goal,
+      model: payload.model || payload.target,
+    });
+    const state = readState();
+    audit(state, "OpenClaw agent request completed", `Target ${result.model} completed request ${result.requestId}.`);
+    writeState(state);
+    return {
+      success: true,
+      provider: "openclaw",
+      model: result.model,
+      conversationUser: result.conversationUser,
+      requestId: result.requestId,
+      durationMs: result.durationMs,
+      outputText: result.outputText,
+      rawId: result.rawId,
+    };
+  } catch (error) {
+    const safeError = openclawRuntime.safePublicError(error);
+    const state = readState();
+    audit(state, "OpenClaw agent request failed", safeError.message);
+    writeState(state);
+    const status = error.status || 502;
+    const wrapped = guardedError(safeError.message, status);
+    wrapped.code = safeError.code;
+    wrapped.httpStatus = safeError.httpStatus;
+    wrapped.configurationErrors = safeError.configurationErrors;
+    throw wrapped;
   }
 }
 
@@ -2989,13 +5416,14 @@ function agent101Model(state = readState()) {
   };
 }
 
-function publicToolConnections(state = readState()) {
+function publicToolConnections(state = readState(), options = {}) {
   const ai = currentAiProviderStatus();
   const stored = state.toolConnections || {};
   const browser = stored.browser || {};
   const capcut = stored.capcut || {};
   const tiktok = stored.tiktok || {};
-  return {
+  const openclaw = openClawConnectorStatus(state);
+  const connections = {
     openai: {
       provider: "OpenAI",
       status: ai.configured ? ai.connectionStatus : "Not configured",
@@ -3041,6 +5469,19 @@ function publicToolConnections(state = readState()) {
       fileTypes: stored.storage?.fileTypes || ["raw_footage", "audio", "scripts", "exports", "thumbnails", "captions", "posting_package"],
     },
   };
+  if (options.includeOpenClaw) {
+    connections.openclaw = {
+      provider: "OpenClaw",
+      status: openclaw.status,
+      mode: "Optional server-side runtime",
+      keyStatus: openclaw.tokenConfigured ? "Gateway token configured server-side" : "Not configured",
+      target: openclaw.selectedModel,
+      lastTest: openclaw.lastTest,
+      lastTestResult: openclaw.lastError || openclaw.lastTest?.message || "Not tested",
+      securityBoundary: openclaw.securityBoundary,
+    };
+  }
+  return connections;
 }
 
 function normalizeConnectorStatus(value, fallback = "not_configured") {
@@ -3079,6 +5520,9 @@ function publicConnectorStatus(connectorId, state = readState()) {
       checklist: definition.checklist,
     };
   }
+  if (connectorId === "openclaw") {
+    return openClawConnectorStatus(state);
+  }
 
   const stored = state.toolConnections?.[connectorId] || {};
   const configuredEnv = envConfigured(definition.requiredEnv);
@@ -3104,8 +5548,11 @@ function publicConnectorStatus(connectorId, state = readState()) {
   };
 }
 
-function publicConnectorStatuses(state = readState()) {
-  return Object.keys(CONNECTOR_DEFINITIONS).map((connectorId) => publicConnectorStatus(connectorId, state));
+function publicConnectorStatuses(state = readState(), options = {}) {
+  const includeAdminOnly = Boolean(options.includeAdminOnly);
+  return Object.keys(CONNECTOR_DEFINITIONS)
+    .filter((connectorId) => includeAdminOnly || connectorId !== "openclaw")
+    .map((connectorId) => publicConnectorStatus(connectorId, state));
 }
 
 function testConnector(connectorId) {
@@ -3114,6 +5561,9 @@ function testConnector(connectorId) {
   const testedAt = now();
   if (connectorId === "openai") {
     return testAgent101OpenAi();
+  }
+  if (connectorId === "openclaw") {
+    return testOpenClawRuntime();
   }
   const success = status.status === "manual_handoff" || status.status === "ready" || status.status === "approval_required";
   const result = {
@@ -3166,6 +5616,1884 @@ function agent101Readiness(state = readState()) {
     pendingApprovals,
     connectors,
     clipsOfficeReady: Boolean(connectors.find((connector) => connector.id === "capcut") && connectors.find((connector) => connector.id === "tiktok") && connectors.find((connector) => connector.id === "youtube")),
+  };
+}
+
+const INFRASTRUCTURE_ACTIVE_STATUSES = new Set([
+  "queued",
+  "running",
+  "processing",
+  "in_progress",
+  "drafting",
+  "verifying",
+  "recovering",
+  "waiting_approval",
+]);
+const INFRASTRUCTURE_PENDING_STATUSES = new Set(["pending", "waiting", "waiting_approval"]);
+
+function infrastructureFreshness(value, options = {}) {
+  const observedMs = Date.parse(value || "");
+  if (!Number.isFinite(observedMs)) return "unknown";
+  const ageMs = Math.max(0, Date.now() - observedMs);
+  const liveMs = Number(options.liveMs || 2 * 60 * 1000);
+  const freshMs = Number(options.freshMs || 24 * 60 * 60 * 1000);
+  if (ageMs <= liveMs) return "live";
+  if (ageMs <= freshMs) return "fresh";
+  return "stale";
+}
+
+function readPrintShopRecordedSummary() {
+  try {
+    const state = readState();
+    const payload = printShopWorkspace.publicSnapshot(PRINT_SHOP_DATA_ROOT, { approvals: state.approvals || [] });
+    return {
+      available: true,
+      recordedAt: payload.updatedAt,
+      freshness: infrastructureFreshness(payload.updatedAt, { liveMs: 5 * 60 * 1000, freshMs: 7 * DAY_MS }),
+      counts: {
+        products: Number(payload.counts?.candidates || 0),
+        opportunities: Number(payload.counts?.opportunities || 0),
+        orders: null,
+        customers: null,
+        printJobs: Number(payload.counts?.designJobs || 0),
+        approvalsPending: Number(payload.counts?.pendingApprovals || 0),
+        artifacts: Number(payload.counts?.stlArtifacts || 0),
+      },
+      workflow: infrastructurePrintWorkflow(payload, payload.updatedAt),
+      payload,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      recordedAt: null,
+      freshness: "unknown",
+      counts: { products: null, opportunities: null, orders: null, customers: null, printJobs: null, approvalsPending: null, artifacts: null },
+      workflow: infrastructurePrintWorkflow(null, null),
+      warning: error?.code === "ENOENT" ? "Print Shop Product Research Lab has no persisted state yet." : "Print Shop Product Research Lab state could not be read.",
+    };
+  }
+}
+
+async function probePrintShopRuntime() {
+  const recorded = readPrintShopRecordedSummary();
+  if (!recorded.available) {
+    return {
+      observedAt: now(),
+      reachable: false,
+      status: "state_unavailable",
+      counts: recorded.counts,
+      workflow: recorded.workflow,
+      warning: recorded.warning,
+    };
+  }
+  return {
+    observedAt: now(),
+    reachable: true,
+    status: "integrated",
+    counts: recorded.counts,
+    workflow: recorded.workflow,
+    warning: "Authenticated Product Lab is integrated. A slicer and physical printer are not connected.",
+  };
+}
+
+function infrastructureConnectorState(connector = {}) {
+  const status = String(connector.status || "unknown").toLowerCase();
+  const localDemo = connector.id === "openai" && /local demo/i.test(String(connector.mode || ""));
+  const lastTest = connector.lastTest && typeof connector.lastTest === "object" ? connector.lastTest : null;
+  const verified = !localDemo && connector.connected === true && status === "ready" && lastTest?.success === true;
+  if (localDemo) return { state: "local_demo", label: "Local demo", verified: false };
+  if (verified) return { state: "connected", label: "Verified connection", verified: true };
+  if (status === "ready" || connector.connected === true) return { state: "configured_unverified", label: "Configured · unverified", verified: false };
+  if (status === "approval_required") return { state: "approval_required", label: "Approval required", verified: false };
+  if (status === "manual_handoff") return { state: "manual_handoff", label: "Manual handoff", verified: false };
+  if (["not_configured", "not_connected"].includes(status)) return { state: "not_connected", label: "Not connected", verified: false };
+  if (status === "error") return { state: "error", label: "Needs attention", verified: false };
+  return { state: "unknown", label: "Unavailable", verified: false };
+}
+
+function infrastructureMemoryCount(state = {}) {
+  const memory = state.memory || {};
+  return ["working", "shared", "agent"].reduce((total, layer) => total + listFrom(memory[layer]).length, 0);
+}
+
+function infrastructureKnownSum(...values) {
+  if (!values.length || values.some((value) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)))) return null;
+  return values.reduce((total, value) => total + Number(value), 0);
+}
+
+const INFRASTRUCTURE_WORKFLOW_ITEM_LIMIT = 8;
+const INFRASTRUCTURE_RUNNING_STATUSES = new Set([
+  "running",
+  "processing",
+  "in_progress",
+  "drafting",
+  "verifying",
+  "recovering",
+]);
+const INFRASTRUCTURE_QUEUE_STATUSES = new Set([
+  "queued",
+  "draft",
+  "planned",
+  "intake",
+  "needs_revision",
+]);
+
+function infrastructureSafeText(value, maxLength = 140) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function infrastructureRecordedAt(...values) {
+  for (const value of values) {
+    if (!value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  return null;
+}
+
+function infrastructureRecordItem(record = {}, options = {}) {
+  const id = infrastructureSafeText(options.id ?? record.id, 180);
+  if (!id) return null;
+  const status = infrastructureSafeText(
+    options.status ?? record.status ?? record.stage ?? record.decision,
+    80,
+  );
+  return {
+    id,
+    title: infrastructureSafeText(
+      options.title
+        ?? record.title
+        ?? record.name
+        ?? record.goal
+        ?? record.ticker
+        ?? record.action,
+      160,
+    ),
+    status,
+    meta: infrastructureSafeText(options.meta, 120),
+    updatedAt: infrastructureRecordedAt(
+      options.updatedAt,
+      record.updatedAt,
+      record.updated_at,
+      record.createdAt,
+      record.created_at,
+    ),
+    recordType: infrastructureSafeText(options.recordType, 60),
+    state: options.state || (INFRASTRUCTURE_RUNNING_STATUSES.has(String(status || "").toLowerCase())
+      ? "active"
+      : INFRASTRUCTURE_PENDING_STATUSES.has(String(status || "").toLowerCase())
+        ? "attention"
+        : "recorded"),
+    ...(options.metrics && typeof options.metrics === "object" ? { metrics: options.metrics } : {}),
+    ...(options.media && typeof options.media === "object" ? { media: options.media } : {}),
+  };
+}
+
+function infrastructureWorkflowStage(id, label, records, options = {}) {
+  if (records === null) {
+    return { id, label, count: null, state: "unavailable", items: [], hasMore: false };
+  }
+  const items = listFrom(records)
+    .filter(Boolean)
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+    .slice(0, INFRASTRUCTURE_WORKFLOW_ITEM_LIMIT);
+  return {
+    id,
+    label,
+    count: listFrom(records).length,
+    state: options.state || (items.some((item) => item.state === "attention") ? "attention" : options.active ? "active" : "recorded"),
+    items,
+    hasMore: listFrom(records).length > items.length,
+  };
+}
+
+function infrastructureNewestItem(items = []) {
+  return [...listFrom(items)]
+    .filter(Boolean)
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0] || null;
+}
+
+function infrastructureGenericOfficeWorkflow(records = {}, observedAt = null) {
+  const workRecords = [
+    ...listFrom(records.tasks).map((record) => ({ record, recordType: "task" })),
+    ...listFrom(records.missions).map((record) => ({ record, recordType: "mission" })),
+    ...listFrom(records.runs).map((record) => ({ record, recordType: "run" })),
+    ...listFrom(records.contracts).map((record) => ({ record, recordType: "task contract" })),
+  ];
+  const queued = workRecords
+    .filter(({ record, recordType }) => INFRASTRUCTURE_QUEUE_STATUSES.has(String(record.status || "").toLowerCase()) || (recordType === "task contract" && String(record.status || "").toLowerCase() === "confirmed"))
+    .map(({ record, recordType }) => infrastructureRecordItem(record, { title: record.title ?? record.interpretedGoal, recordType }))
+    .filter(Boolean);
+  const active = workRecords
+    .filter(({ record }) => INFRASTRUCTURE_RUNNING_STATUSES.has(String(record.status || "").toLowerCase()) && String(record.status || "").toLowerCase() !== "verifying")
+    .map(({ record, recordType }) => infrastructureRecordItem(record, { title: record.title ?? record.interpretedGoal, recordType }))
+    .filter(Boolean);
+  const verifying = workRecords
+    .filter(({ record }) => ["verifying", "needs_revision", "failed_verification"].includes(String(record.status || "").toLowerCase()))
+    .map(({ record, recordType }) => infrastructureRecordItem(record, {
+      title: record.title ?? record.interpretedGoal,
+      recordType,
+      state: String(record.status || "").toLowerCase() === "verifying" ? "active" : "attention",
+    }))
+    .filter(Boolean);
+  const waitingWork = workRecords
+    .filter(({ record }) => ["waiting", "waiting_approval", "needs_approval"].includes(String(record.status || "").toLowerCase()))
+    .map(({ record, recordType }) => infrastructureRecordItem(record, {
+      title: record.title ?? record.interpretedGoal,
+      recordType,
+      state: "attention",
+    }))
+    .filter(Boolean);
+  const approvals = [...waitingWork, ...listFrom(records.approvals)
+    .map((record) => infrastructureRecordItem(record, {
+      title: record.title ?? record.actionType ?? record.action,
+      recordType: "approval",
+      state: INFRASTRUCTURE_PENDING_STATUSES.has(String(record.status || "").toLowerCase()) ? "attention" : "recorded",
+    }))
+    .filter(Boolean)];
+  const outputs = listFrom(records.artifacts)
+    .map((record) => infrastructureRecordItem(record, { recordType: record.type || "output" }))
+    .filter(Boolean);
+  const current = infrastructureNewestItem(active)
+    || infrastructureNewestItem(verifying)
+    || infrastructureNewestItem(approvals.filter((item) => item.state === "attention"))
+    || null;
+  const activeStageId = active.length ? "active" : verifying.length ? "verify" : approvals.some((item) => item.state === "attention") ? "gate" : null;
+  return {
+    source: "argentum-state",
+    measured: true,
+    observedAt,
+    activeStageId,
+    current: current ? { ...current, stageId: activeStageId } : null,
+    stages: [
+      infrastructureWorkflowStage("queue", "Queue", queued),
+      infrastructureWorkflowStage("active", "Active", active, { active: activeStageId === "active" }),
+      infrastructureWorkflowStage("verify", "Verify", verifying, { active: activeStageId === "verify" }),
+      infrastructureWorkflowStage("gate", "Human Gate", approvals, { active: activeStageId === "gate" }),
+      infrastructureWorkflowStage("outputs", "Outputs", outputs),
+    ],
+  };
+}
+
+function clippingProductionWorkflowStage(candidate = {}, automation = {}) {
+  const stage = String(candidate.productionWorkflow?.stage || "editing").toLowerCase();
+  if (candidate.productionWorkflow?.localLibraryPath || stage === "library") return "library";
+  if (stage === "product_ready") return "ready";
+  if (stage === "precheck") return "precheck";
+  if (
+    String(automation.workerStatus || "").toLowerCase() === "processing"
+    && automation.workerClipId
+    && candidate.id === automation.workerClipId
+  ) return "review";
+  return "studio";
+}
+
+function clippingProductionWorkflowEligible(candidate = {}, automation = {}) {
+  if (clipOfficeCandidateStage(candidate) === "dismissed") return false;
+  const stage = String(candidate.productionWorkflow?.stage || "editing").toLowerCase();
+  return Boolean(
+    candidate.builderApproved
+    || candidate.builderStatus === "approved"
+    || ["builder_ready", "in_builder"].includes(String(candidate.status || "").toLowerCase())
+    || candidate.builderDraft
+    || stage !== "editing"
+    || (
+      String(automation.workerStatus || "").toLowerCase() === "processing"
+      && automation.workerClipId
+      && candidate.id === automation.workerClipId
+    )
+  );
+}
+
+function infrastructureClippingWorkflow(clipping = {}) {
+  const stageDefinitions = [
+    ["studio", "Studio"],
+    ["review", "Review"],
+    ["precheck", "Precheck"],
+    ["ready", "Ready"],
+    ["library", "Library"],
+  ];
+  if (!clipping.available) {
+    return {
+      source: "clipping-office",
+      measured: false,
+      observedAt: null,
+      activeStageId: null,
+      current: null,
+      operation: null,
+      stages: stageDefinitions.map(([id, label]) => infrastructureWorkflowStage(id, label, null)),
+    };
+  }
+  const automation = clipping.automation || {};
+  const sourceCandidateCount = Number(clipping.sourceCounts?.clipCandidates);
+  const candidateProjectionComplete = !Number.isFinite(sourceCandidateCount)
+    || sourceCandidateCount <= listFrom(clipping.clipCandidates).length;
+  const candidates = visibleClipOfficeCandidates(clipping)
+    .filter((candidate) => clippingProductionWorkflowEligible(candidate, automation));
+  const byStage = Object.fromEntries(stageDefinitions.map(([id]) => [id, []]));
+  candidates.forEach((candidate) => {
+    const stageId = clippingProductionWorkflowStage(candidate, automation);
+    const qualityValue = candidate.qualityScore ?? candidate.score;
+    const durationValue = candidate.durationSeconds ?? candidate.duration;
+    const title = infrastructureSafeText(
+      candidate.editorialCaption?.primary_caption
+      ?? candidate.editorialCaption?.text
+      ?? candidate.title,
+      160,
+    );
+    const item = infrastructureRecordItem(candidate, {
+      title,
+      status: candidate.productionWorkflow?.status ?? candidate.status ?? candidate.decision,
+      meta: candidate.streamerName ?? candidate.creatorName,
+      updatedAt: candidate.productionWorkflow?.updatedAt ?? candidate.updatedAt ?? candidate.createdAt,
+      recordType: "clip",
+      state: stageId === "review" ? "active" : stageId === "precheck" ? "attention" : "recorded",
+      metrics: {
+        quality: qualityValue !== null && qualityValue !== undefined && qualityValue !== "" && Number.isFinite(Number(qualityValue))
+          ? Math.max(0, Math.min(100, Math.round(Number(qualityValue))))
+          : null,
+        durationSeconds: durationValue !== null && durationValue !== undefined && durationValue !== "" && Number.isFinite(Number(durationValue))
+          ? Math.max(0, Math.round(Number(durationValue)))
+          : null,
+      },
+      media: {
+        thumbnailUrl: infrastructureSafeText(clipOfficeThumbnailUrl(candidate.thumbnailUrl), 1000),
+        playbackUrl: infrastructureSafeText(candidate.productionWorkflow?.playbackUrl ?? candidate.playbackUrl, 1000),
+        savedLocally: Boolean(candidate.productionWorkflow?.localLibraryPath),
+      },
+    });
+    if (item) byStage[stageId].push(item);
+  });
+  const workerCandidate = automation.workerClipId
+    ? candidates.find((candidate) => candidate.id === automation.workerClipId)
+    : null;
+  const workerStageId = workerCandidate ? clippingProductionWorkflowStage(workerCandidate, automation) : null;
+  const activeStageId = stageDefinitions.some(([id]) => id === workerStageId)
+    ? workerStageId
+    : null;
+  const workerItem = workerStageId
+    ? byStage[workerStageId].find((item) => item.id === automation.workerClipId) || null
+    : null;
+  const hasWorkerState = [automation.status, automation.workerStatus, automation.workerStage, automation.workerDetail]
+    .some((value) => infrastructureSafeText(value));
+  const operation = hasWorkerState ? {
+    status: infrastructureSafeText(automation.status, 80),
+    workerStatus: infrastructureSafeText(automation.workerStatus, 80),
+    stage: infrastructureSafeText(automation.workerStage, 120),
+    detail: infrastructureSafeText(automation.workerDetail, 260),
+    progress: Object.hasOwn(automation, "workerProgress") && Number.isFinite(Number(automation.workerProgress))
+      ? Math.max(0, Math.min(100, Number(automation.workerProgress)))
+      : null,
+    recordId: infrastructureSafeText(automation.workerClipId, 180),
+    lastFailure: automation.workerLastFailure && typeof automation.workerLastFailure === "object"
+      ? {
+        recordId: infrastructureSafeText(automation.workerLastFailure.clipId, 180),
+        message: infrastructureSafeText(automation.workerLastFailure.error, 260),
+        at: infrastructureRecordedAt(automation.workerLastFailure.at),
+      }
+      : null,
+  } : null;
+  return {
+    source: "clipping-office",
+    measured: true,
+    observedAt: infrastructureRecordedAt(clipping.sourceUpdatedAt),
+    activeStageId,
+    current: workerItem ? { ...workerItem, stageId: workerStageId } : null,
+    operation,
+    complete: candidateProjectionComplete,
+    stages: stageDefinitions.map(([id, label]) => {
+      const stage = infrastructureWorkflowStage(id, label, byStage[id], { active: activeStageId === id });
+      return candidateProjectionComplete ? stage : { ...stage, count: null, sampled: true };
+    }),
+  };
+}
+
+function infrastructureStockWorkflow(stock = {}, records = {}, observedAt = null) {
+  if (!stock.available) {
+    return {
+      source: "stock-office",
+      measured: false,
+      observedAt: null,
+      activeStageId: null,
+      current: null,
+      stages: ["sources", "evaluations", "readiness", "gate", "outputs"].map((id) => infrastructureWorkflowStage(id, ({ sources: "Sources", evaluations: "Evaluations", readiness: "Readiness", gate: "Human Gate", outputs: "Outputs" })[id], null)),
+    };
+  }
+  const sourceItems = listFrom(stock.sources).map((source) => infrastructureRecordItem(source, {
+    title: source.label,
+    status: source.status,
+    updatedAt: source.generatedAt ?? source.lastModified,
+    recordType: source.category || "source",
+    state: ["error", "stale", "missing"].includes(String(source.status || "").toLowerCase()) ? "attention" : "recorded",
+  })).filter(Boolean);
+  const evaluationItems = listFrom(stock.records).map((record) => infrastructureRecordItem(record, {
+    id: record.id ?? record.ticker,
+    title: record.ticker,
+    status: record.status ?? record.decision,
+    meta: record.decision,
+    updatedAt: record.lastUpdated,
+    recordType: "evaluation",
+    metrics: {
+      score: Number.isFinite(Number(record.score)) ? Number(record.score) : null,
+      confidence: infrastructureSafeText(record.confidence, 40),
+    },
+  })).filter(Boolean);
+  const readinessCheckByName = new Map();
+  listFrom(stock.readiness?.checks).forEach((check, index) => {
+    const key = String(check?.name || `check-${index}`).trim().toLowerCase();
+    const existing = readinessCheckByName.get(key);
+    if (!existing || (existing.passed && check?.passed === false) || (existing.severity !== "blocker" && check?.severity === "blocker")) {
+      readinessCheckByName.set(key, check);
+    }
+  });
+  const readinessItems = [...readinessCheckByName.values()].map((check, index) => infrastructureRecordItem({}, {
+    id: `readiness:${index}:${String(check.name || "check").slice(0, 40)}`,
+    title: check.name,
+    status: check.passed ? "passed" : check.severity || "not passed",
+    meta: check.detail,
+    updatedAt: stock.readiness?.generatedAt,
+    recordType: "readiness check",
+    state: check.passed ? "recorded" : "attention",
+  })).filter(Boolean);
+  const approvalItems = listFrom(records.approvals).map((record) => infrastructureRecordItem(record, {
+    title: record.title ?? record.actionType ?? record.action,
+    recordType: "approval",
+    state: INFRASTRUCTURE_PENDING_STATUSES.has(String(record.status || "").toLowerCase()) ? "attention" : "recorded",
+  })).filter(Boolean);
+  const outputItems = listFrom(records.artifacts).map((record) => infrastructureRecordItem(record, { recordType: record.type || "output" })).filter(Boolean);
+  const activeSync = infrastructureNewestItem([...listFrom(stock.syncRuns), ...listFrom(stock.assistantRuns)]
+    .filter((run) => INFRASTRUCTURE_RUNNING_STATUSES.has(String(run.status || "").toLowerCase()))
+    .map((run) => infrastructureRecordItem(run, { recordType: "stock run" }))
+    .filter(Boolean));
+  const needsReadiness = readinessItems.some((item) => item.state === "attention");
+  const needsGate = approvalItems.some((item) => item.state === "attention");
+  const activeStageId = activeSync ? "evaluations" : needsReadiness ? "readiness" : needsGate ? "gate" : null;
+  const current = activeSync
+    || infrastructureNewestItem(readinessItems.filter((item) => item.state === "attention"))
+    || infrastructureNewestItem(approvalItems.filter((item) => item.state === "attention"))
+    || null;
+  const sourceObservedAt = infrastructureRecordedAt(...listFrom(stock.sources)
+    .flatMap((source) => [source.generatedAt, source.lastModified])
+    .filter(Boolean)
+    .sort((left, right) => String(right).localeCompare(String(left))));
+  return {
+    source: "stock-office",
+    measured: true,
+    observedAt: sourceObservedAt || infrastructureRecordedAt(observedAt),
+    activeStageId,
+    current: current ? { ...current, stageId: activeStageId } : null,
+    stages: [
+      infrastructureWorkflowStage("sources", "Sources", sourceItems),
+      infrastructureWorkflowStage("evaluations", "Evaluations", evaluationItems, { active: activeStageId === "evaluations" }),
+      infrastructureWorkflowStage("readiness", "Readiness", readinessItems, { active: activeStageId === "readiness" }),
+      infrastructureWorkflowStage("gate", "Human Gate", approvalItems, { active: activeStageId === "gate" }),
+      infrastructureWorkflowStage("outputs", "Outputs", outputItems),
+    ],
+  };
+}
+
+function infrastructurePrintWorkflow(payload, observedAt = null) {
+  if (Array.isArray(payload?.candidates) && Array.isArray(payload?.artifacts)) {
+    const candidates = payload.candidates;
+    const designJobs = listFrom(payload.designJobs);
+    const artifacts = payload.artifacts;
+    const researchRequests = listFrom(payload.researchRequests);
+    const candidateItems = candidates.map((candidate) => infrastructureRecordItem(candidate, {
+      title: candidate.title,
+      status: candidate.status,
+      meta: candidate.requirements?.templateName,
+      updatedAt: candidate.updatedAt,
+      recordType: "product concept",
+      state: candidate.assessment?.generationEligible ? "recorded" : "attention",
+    })).filter(Boolean);
+    const feasibilityItems = candidates.map((candidate) => infrastructureRecordItem(candidate, {
+      id: `feasibility:${candidate.id}`,
+      title: candidate.title,
+      status: candidate.assessment?.printerFit?.status,
+      meta: candidate.assessment?.headline,
+      updatedAt: candidate.updatedAt,
+      recordType: "A1 Mini feasibility",
+      state: candidate.assessment?.generationEligible ? "recorded" : "attention",
+      metrics: {
+        evidenceCoverage: Number(candidate.assessment?.requirementsCoverage?.percent || 0),
+        requiredColors: Number(candidate.requirements?.requiredColors || 1),
+      },
+    })).filter(Boolean);
+    const designItems = designJobs.map((job) => {
+      const candidate = candidates.find((item) => item.id === job.candidateId);
+      return infrastructureRecordItem(job, {
+        title: candidate?.title || job.id,
+        status: job.status,
+        meta: job.generator?.templateId,
+        recordType: "design job",
+      });
+    }).filter(Boolean);
+    const sliceItems = artifacts.map((artifact) => infrastructureRecordItem(artifact, {
+      title: artifact.name,
+      status: artifact.validation?.slicerStatus || "not_run",
+      meta: artifact.validation?.slicerStatus === "accepted" ? "Exact profile accepted" : "Exact A1 Mini slice pending",
+      recordType: artifact.kind || "design artifact",
+      state: artifact.validation?.slicerStatus === "accepted" ? "recorded" : "attention",
+      metrics: {
+        triangles: Number(artifact.validation?.triangleCount || 0),
+        byteSize: Number(artifact.byteSize || 0),
+      },
+    })).filter(Boolean);
+    const approvalItems = researchRequests.map((request) => infrastructureRecordItem(request, {
+      title: request.query,
+      status: request.status,
+      meta: request.provider,
+      recordType: "external research approval",
+      state: ["pending", "pending_approval", "approved_not_run"].includes(request.status) ? "attention" : "recorded",
+    })).filter(Boolean);
+    const prototypeItems = artifacts
+      .filter((artifact) => artifact.validation?.prototypeStatus && artifact.validation.prototypeStatus !== "not_run")
+      .map((artifact) => infrastructureRecordItem(artifact, {
+        id: `prototype:${artifact.id}`,
+        title: artifact.name,
+        status: artifact.validation.prototypeStatus,
+        recordType: "prototype evidence",
+        state: artifact.validation.prototypeStatus === "verified" ? "recorded" : "attention",
+      }))
+      .filter(Boolean);
+    const currentGate = infrastructureNewestItem(approvalItems.filter((item) => item.state === "attention"));
+    const currentSlice = infrastructureNewestItem(sliceItems.filter((item) => item.state === "attention"));
+    const candidatesWithDesign = new Set(designJobs.map((job) => job.candidateId));
+    const currentDesign = infrastructureNewestItem(candidateItems.filter((item) => {
+      const candidate = candidates.find((entry) => entry.id === item.id);
+      return candidate?.assessment?.generationEligible && !candidatesWithDesign.has(candidate.id);
+    }));
+    const currentFeasibility = infrastructureNewestItem(feasibilityItems.filter((item) => item.state === "attention"));
+    const activeStageId = currentGate ? "gate" : currentSlice ? "slice" : currentDesign ? "design" : currentFeasibility ? "feasibility" : null;
+    const current = currentGate || currentSlice || currentDesign || currentFeasibility;
+    return {
+      source: "print-shop-product-lab",
+      measured: true,
+      observedAt: infrastructureRecordedAt(observedAt || payload.updatedAt),
+      activeStageId,
+      current: current ? { ...current, stageId: activeStageId } : null,
+      stages: [
+        infrastructureWorkflowStage("concept", "Concepts", candidateItems),
+        infrastructureWorkflowStage("feasibility", "A1 Mini fit", feasibilityItems, { active: activeStageId === "feasibility" }),
+        infrastructureWorkflowStage("design", "Design files", designItems, { active: activeStageId === "design" }),
+        infrastructureWorkflowStage("slice", "Slice check", sliceItems, { active: activeStageId === "slice" }),
+        infrastructureWorkflowStage("gate", "Human Gate", approvalItems, { active: activeStageId === "gate" }),
+        infrastructureWorkflowStage("prototype", "Prototype", prototypeItems),
+      ],
+    };
+  }
+  const stageDefinitions = [
+    ["products", "Products"],
+    ["orders", "Orders"],
+    ["print_jobs", "Print queue"],
+    ["gate", "Human Gate"],
+    ["outputs", "Outputs"],
+  ];
+  if (!payload || typeof payload !== "object") {
+    return {
+      source: "print-shop",
+      measured: false,
+      observedAt: null,
+      activeStageId: null,
+      current: null,
+      stages: stageDefinitions.map(([id, label]) => infrastructureWorkflowStage(id, label, null)),
+    };
+  }
+  const products = listFrom(payload.products);
+  const productById = new Map(products.filter((product) => product?.id).map((product) => [product.id, product]));
+  const productItems = products.map((product) => infrastructureRecordItem(product, {
+    title: product.name,
+    recordType: "product",
+  })).filter(Boolean);
+  const orderItems = listFrom(payload.orders).map((order) => {
+    const product = productById.get(order.product_id);
+    return infrastructureRecordItem(order, {
+      title: product?.name,
+      meta: order.id,
+      recordType: "order",
+      state: ["pending", "paid", "printing"].includes(String(order.status || "").toLowerCase()) ? "active" : "recorded",
+    });
+  }).filter(Boolean);
+  const printItems = listFrom(payload.printJobs).map((job) => {
+    const product = productById.get(job.product_id);
+    return infrastructureRecordItem(job, {
+      title: product?.name,
+      meta: job.order_id,
+      recordType: "print job",
+      state: ["queued", "printing"].includes(String(job.status || "").toLowerCase()) ? "active" : "recorded",
+    });
+  }).filter(Boolean);
+  const approvalItems = listFrom(payload.approvalRequests).map((approval) => infrastructureRecordItem(approval, {
+    title: approval.tool,
+    meta: approval.input?.order_id,
+    updatedAt: approval.resolved_at ?? approval.created_at,
+    recordType: "approval",
+    state: INFRASTRUCTURE_PENDING_STATUSES.has(String(approval.status || "").toLowerCase()) ? "attention" : "recorded",
+  })).filter(Boolean);
+  const outputItems = listFrom(payload.artifacts).map((artifact) => infrastructureRecordItem(artifact, {
+    title: artifact.title ?? artifact.name,
+    recordType: artifact.type || "output",
+  })).filter(Boolean);
+  const currentPrint = infrastructureNewestItem(printItems.filter((item) => item.state === "active"));
+  const currentOrder = infrastructureNewestItem(orderItems.filter((item) => item.state === "active"));
+  const currentApproval = infrastructureNewestItem(approvalItems.filter((item) => item.state === "attention"));
+  const current = currentPrint || currentApproval || currentOrder;
+  const activeStageId = currentPrint ? "print_jobs" : currentApproval ? "gate" : currentOrder ? "orders" : null;
+  return {
+    source: "print-shop",
+    measured: true,
+    observedAt: infrastructureRecordedAt(observedAt),
+    activeStageId,
+    current: current ? { ...current, stageId: activeStageId } : null,
+    stages: [
+      infrastructureWorkflowStage("products", "Products", productItems),
+      infrastructureWorkflowStage("orders", "Orders", orderItems, { active: activeStageId === "orders" }),
+      infrastructureWorkflowStage("print_jobs", "Print queue", printItems, { active: activeStageId === "print_jobs" }),
+      infrastructureWorkflowStage("gate", "Human Gate", approvalItems, { active: activeStageId === "gate" }),
+      infrastructureWorkflowStage("outputs", "Outputs", outputItems),
+    ],
+  };
+}
+
+async function controlFloorInfrastructureSnapshot(state = readState(), options = {}) {
+  const generatedAt = now();
+  const includeAdminOnly = Boolean(options.includeAdminOnly);
+  const officeContracts = Object.values(BUSINESS_OFFICES).filter((office) => office.id !== "human-gate");
+  const officeById = Object.fromEntries(officeContracts.map((office) => [office.id, office]));
+  const workflowOwners = new Map();
+  officeContracts.forEach((office) => {
+    const owners = workflowOwners.get(office.workflowId) || [];
+    owners.push(office.id);
+    workflowOwners.set(office.workflowId, owners);
+  });
+
+  const tasks = listFrom(state.tasks);
+  const artifacts = listFrom(state.artifacts);
+  const approvals = listFrom(state.approvals);
+  const missions = listFrom(state.agent101Missions);
+  const runs = listFrom(state.agent101Runs);
+  const taskContracts = listFrom(state.agent101TaskContracts);
+  const taskById = Object.fromEntries(tasks.filter((item) => item?.id).map((item) => [item.id, item]));
+  const artifactById = Object.fromEntries(artifacts.filter((item) => item?.id).map((item) => [item.id, item]));
+  const contractById = Object.fromEntries(taskContracts.filter((item) => item?.id).map((item) => [item.id, item]));
+
+  const recordOfficeIds = (record = {}, depth = 0) => {
+    const ids = new Set();
+    const add = (value) => {
+      const normalized = String(value || "").trim();
+      if (officeById[normalized]) ids.add(normalized);
+    };
+    add(record.officeId);
+    add(record.roomId);
+    add(record.metadata?.officeId);
+    add(record.metadata?.roomId);
+    add(record.content?.officeId);
+    add(record.content?.roomId);
+    listFrom(record.officeIds).forEach(add);
+    listFrom(record.relatedOffices).forEach(add);
+    const contract = contractById[record.taskContractId];
+    if (contract) listFrom(contract.relatedOffices).forEach(add);
+    if (!ids.size && depth < 2 && record.taskId && taskById[record.taskId]) {
+      recordOfficeIds(taskById[record.taskId], depth + 1).forEach(add);
+    }
+    if (!ids.size && depth < 2 && record.artifactId && artifactById[record.artifactId]) {
+      recordOfficeIds(artifactById[record.artifactId], depth + 1).forEach(add);
+    }
+    if (!ids.size && record.workflowId) {
+      const owners = workflowOwners.get(record.workflowId) || [];
+      if (owners.length === 1) add(owners[0]);
+    }
+    return [...ids];
+  };
+
+  const grouped = Object.fromEntries(officeContracts.map((office) => [office.id, {
+    tasks: [], artifacts: [], approvals: [], missions: [], runs: [], contracts: [],
+  }]));
+  const unlinked = { tasks: 0, artifacts: 0, approvals: 0, missions: 0, runs: 0, contracts: 0 };
+  const assign = (records, key) => {
+    records.forEach((record) => {
+      const ids = recordOfficeIds(record);
+      if (!ids.length) {
+        unlinked[key] += 1;
+        return;
+      }
+      ids.forEach((officeId) => grouped[officeId]?.[key].push(record));
+    });
+  };
+  assign(tasks, "tasks");
+  assign(artifacts, "artifacts");
+  assign(approvals, "approvals");
+  assign(missions, "missions");
+  assign(runs, "runs");
+  assign(taskContracts, "contracts");
+
+  const clipping = readClippingOfficeStateSnapshot();
+  const clippingFreshness = infrastructureFreshness(clipping.sourceUpdatedAt, { liveMs: 2 * 60 * 1000, freshMs: 60 * 60 * 1000 });
+  const clippingWorkerActive = Boolean(
+    clipping.available
+    && clippingFreshness !== "stale"
+    && (clipping.automation?.status === "running" || clipping.automation?.workerStatus === "processing")
+  );
+  const clippingPending = clipping.available
+    ? listFrom(clipping.approvalRequests).filter((item) => INFRASTRUCTURE_PENDING_STATUSES.has(String(item.status || "").toLowerCase())).length
+    : null;
+
+  const stock = loadStockOfficeSnapshot({ rootDir: ROOT, state, runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+  const stockSources = listFrom(stock.sources);
+  const stockErrors = stockSources.filter((source) => source.status === "error").length;
+  const stockStale = stockSources.filter((source) => source.status === "stale").length;
+  const stockFreshness = stockErrors || stockStale ? "stale" : stock.available ? "fresh" : "unknown";
+
+  const printRecorded = readPrintShopRecordedSummary();
+  const printProbe = await probePrintShopRuntime();
+  const printCounts = printProbe.reachable ? printProbe.counts : printRecorded.counts;
+  const genericOfficeSurfaceAvailable = fs.existsSync(path.join(BUSINESS_OFFICE_APP_DIR, "index.html"));
+  const connectorRecords = publicConnectorStatuses(state, { includeAdminOnly }).map((connector) => ({
+    ...connector,
+    presentation: infrastructureConnectorState(connector),
+  }));
+  const projectWorkspace = agent101ProjectWorkspace.inspectWorkspace({ state, rootDir: ROOT });
+  const clippingWorkflow = infrastructureClippingWorkflow(clipping);
+  const clippingWorkflowCount = clippingWorkflow.measured && clippingWorkflow.stages.every((stage) => stage.count !== null)
+    ? clippingWorkflow.stages.reduce((sum, stage) => sum + Number(stage.count || 0), 0)
+    : null;
+  const printWorkflow = printProbe.reachable ? printProbe.workflow : printRecorded.workflow;
+
+  const officeNodes = officeContracts.map((office) => {
+    const records = grouped[office.id];
+    const activeTasks = records.tasks.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+    const activeMissions = records.missions.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+    const activeRuns = records.runs.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+    const pendingApprovals = records.approvals.filter((item) => INFRASTRUCTURE_PENDING_STATUSES.has(String(item.status || "").toLowerCase())).length;
+    let counts = {
+      tasks: records.tasks.length,
+      activeTasks,
+      missions: records.missions.length,
+      activeMissions,
+      runs: records.runs.length,
+      activeRuns,
+      outputs: records.artifacts.length,
+      approvalsPending: pendingApprovals,
+    };
+    let lifecycle = pendingApprovals ? "waiting_approval" : activeTasks || activeMissions || activeRuns ? "running" : records.artifacts.length ? "completed" : "idle";
+    let availability = "online";
+    let freshness = "live";
+    let evidenceLevel = records.tasks.length || records.artifacts.length || records.approvals.length || records.missions.length || records.runs.length || records.contracts.length ? "recorded" : "declared";
+    let warning = "";
+    let workflow = infrastructureGenericOfficeWorkflow(records, generatedAt);
+    counts.contracts = records.contracts.length;
+    const stockIntelligenceStatus = stockIntelligenceScheduler.getStatus();
+    if (workflow.activeStageId === "gate") lifecycle = "waiting_approval";
+    else if (["active", "verify"].includes(workflow.activeStageId)) lifecycle = "running";
+
+    if (office.id === "clips-office") {
+      counts = {
+        ...counts,
+        watchSessions: clipping.available ? listFrom(clipping.watchSessions).length : null,
+        candidates: clippingWorkflowCount,
+        officeOutputs: clipping.available ? listFrom(clipping.artifacts).length : null,
+        officeApprovalsPending: clippingPending,
+      };
+      lifecycle = clippingPending || pendingApprovals ? "waiting_approval" : clippingWorkerActive ? "running" : lifecycle;
+      availability = clipping.available ? clippingFreshness === "stale" ? "degraded" : "online" : "unknown";
+      freshness = clippingFreshness;
+      evidenceLevel = clipping.available ? "measured" : evidenceLevel;
+      workflow = clippingWorkflow;
+      if (!clipping.available) warning = "Clipping Office runtime projection is not available.";
+      else if (clippingFreshness === "stale") warning = "Clipping Office runtime projection is stale.";
+    } else if (office.id === "stock-office") {
+      const stockTrackedRecords = stock.available && Number.isFinite(Number(stock.metrics?.trackedRecords))
+        ? Number(stock.metrics.trackedRecords)
+        : stock.available ? listFrom(stock.records).length : null;
+      counts = {
+        ...counts,
+        trackedRecords: stockTrackedRecords,
+        records: stock.available ? listFrom(stock.records).length : null,
+        sources: stock.available ? stockSources.length : null,
+        staleSources: stock.available ? stockStale : null,
+        sourceErrors: stock.available ? stockErrors : null,
+        activeResearch: stock.available ? Number(Boolean(stockIntelligenceStatus?.running)) : null,
+      };
+      availability = !stock.available ? "unknown" : stockErrors || stockStale ? "degraded" : "online";
+      freshness = stockFreshness;
+      evidenceLevel = stock.available ? "measured" : evidenceLevel;
+      workflow = infrastructureStockWorkflow(stock, records, generatedAt);
+      if (!stock.available) warning = "Stock Office source snapshot is unavailable.";
+      else if (stockErrors || stockStale) warning = `${stockErrors} source errors · ${stockStale} stale sources.`;
+    } else if (office.id === "print-shop-office") {
+      counts = { ...counts, ...printCounts };
+      lifecycle = printCounts.approvalsPending
+        ? "waiting_approval"
+        : printWorkflow?.current && printWorkflow.activeStageId !== "gate"
+          ? "running"
+          : records.artifacts.length || printCounts.artifacts
+            ? "completed"
+            : "idle";
+      availability = printProbe.reachable ? "online" : "offline";
+      freshness = printRecorded.freshness;
+      evidenceLevel = printRecorded.available ? "recorded" : "declared";
+      workflow = printWorkflow;
+      warning = printProbe.warning;
+    } else if (["etsy-office", "essentrx-office"].includes(office.id)) {
+      availability = genericOfficeSurfaceAvailable ? "surface_only" : "offline";
+      freshness = genericOfficeSurfaceAvailable ? "fresh" : "unknown";
+      warning = genericOfficeSurfaceAvailable ? "Local office surface; no independent store runtime is registered." : "Local office surface is unavailable.";
+    }
+
+    return {
+      id: `office:${office.id}`,
+      kind: "office",
+      label: office.name,
+      description: office.title,
+      lifecycle,
+      availability,
+      authority: office.id === "stock-office" ? "locked" : "approval_required",
+      freshness,
+      evidenceLevel,
+      observedAt: generatedAt,
+      source: { system: office.id === "clips-office" ? "clipping-office" : office.id === "stock-office" ? "stock-office" : office.id === "print-shop-office" ? "print-shop" : "argentum-state", recordId: office.id },
+      refs: { officeId: office.id, workflowId: office.workflowId },
+      counts,
+      route: office.externalUrl || ({
+        "depo-habitat": "/?agent101=1",
+        "clips-office": "/apps/clipping-office/",
+        "stock-office": "/apps/stock-office/",
+        "print-shop-office": "/apps/print-shop-office/",
+        "etsy-office": "/apps/etsy-office/",
+        "essentrx-office": "/apps/essentrx-office/",
+      })[office.id] || `/apps/${office.id}/`,
+      allowedWork: office.allowedWork,
+      blockedWork: office.blockedWork,
+      outputs: office.outputs,
+      warning,
+      workflow,
+    };
+  });
+
+  const centralPending = approvals.filter((item) => INFRASTRUCTURE_PENDING_STATUSES.has(String(item.status || "").toLowerCase())).length;
+  const activeMissions = missions.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+  const activeRuns = runs.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+  const activeTasks = tasks.filter((item) => INFRASTRUCTURE_ACTIVE_STATUSES.has(String(item.status || "").toLowerCase())).length;
+  const printStateAvailable = printProbe.reachable || printRecorded.available;
+  const printPending = printStateAvailable ? Number(printCounts.approvalsPending || 0) : null;
+  const clippingOutputs = clipping.available ? listFrom(clipping.artifacts).length : null;
+  const printOutputs = printStateAvailable ? Number(printCounts.artifacts || 0) : null;
+  const totalPending = infrastructureKnownSum(centralPending, clippingPending, printPending);
+  const totalOutputs = infrastructureKnownSum(artifacts.length, clippingOutputs, printOutputs);
+  const hasPendingApprovals = [centralPending, clippingPending, printPending].some((value) => Number(value) > 0);
+
+  const nodes = [
+    {
+      id: "workspace:argentum",
+      kind: "project",
+      label: path.basename(projectWorkspace.root),
+      description: "Approved supervised source workspace",
+      lifecycle: projectWorkspace.pendingProposals.length ? "waiting_approval" : "idle",
+      availability: "online",
+      authority: "approval_required",
+      freshness: "live",
+      evidenceLevel: "measured",
+      observedAt: generatedAt,
+      source: { system: "agent101-project-workspace", recordId: projectWorkspace.root },
+      refs: {},
+      counts: { pendingProposals: projectWorkspace.pendingProposals.length, recentProposals: projectWorkspace.recentProposals.length },
+    },
+    {
+      id: "agent:agent-101",
+      kind: "agent",
+      label: "Agent 101",
+      description: "Supervised founder-operator",
+      lifecycle: hasPendingApprovals ? "waiting_approval" : activeMissions || activeRuns || activeTasks ? "running" : "idle",
+      availability: "online",
+      authority: "internal_only",
+      freshness: "live",
+      evidenceLevel: "measured",
+      observedAt: generatedAt,
+      source: { system: "argentum-state", recordId: "agent-101" },
+      refs: { agentId: "agent-101" },
+      counts: { missions: missions.length, activeMissions, runs: runs.length, activeRuns, tasks: tasks.length, activeTasks },
+    },
+    ...officeNodes,
+    {
+      id: "gate:human",
+      kind: "approval",
+      label: "Human Gate",
+      description: "Three isolated approval domains",
+      lifecycle: hasPendingApprovals ? "waiting_approval" : "idle",
+      availability: "online",
+      authority: "locked",
+      freshness: "live",
+      evidenceLevel: "measured",
+      observedAt: generatedAt,
+      source: { system: "approval-domains", recordId: "human-gate" },
+      refs: {},
+      counts: { central: centralPending, clippingOffice: clippingPending, printShop: printPending, pending: totalPending },
+    },
+    {
+      id: "output:local",
+      kind: "output",
+      label: "Saved Outputs",
+      description: "Internal artifacts remain approval-gated",
+      lifecycle: Number(totalOutputs) > 0 ? "completed" : "idle",
+      availability: fs.existsSync(AGENT101_OUTPUT_ROOT) ? "online" : "unknown",
+      authority: "internal_only",
+      freshness: "live",
+      evidenceLevel: "measured",
+      observedAt: generatedAt,
+      source: { system: "local-output-stores", recordId: AGENT101_OUTPUT_ROOT },
+      refs: {},
+      counts: { central: artifacts.length, clippingOffice: clippingOutputs, printShop: printOutputs, total: totalOutputs },
+      warning: totalOutputs === null ? "One or more output stores could not be measured; the total is unknown." : "",
+    },
+    {
+      id: "memory:local",
+      kind: "memory",
+      label: "Local Memory",
+      description: "Recorded context available to Agent 101",
+      lifecycle: "idle",
+      availability: "online",
+      authority: "internal_only",
+      freshness: "live",
+      evidenceLevel: "recorded",
+      observedAt: generatedAt,
+      source: { system: "argentum-state", recordId: "memory" },
+      refs: {},
+      counts: { notes: infrastructureMemoryCount(state) },
+    },
+    ...connectorRecords.map((connector) => ({
+      id: `connector:${connector.id}`,
+      kind: "connector",
+      label: connector.label,
+      description: connector.presentation.label,
+      lifecycle: connector.presentation.verified ? "running" : connector.presentation.state === "error" ? "failed" : "idle",
+      availability: connector.presentation.verified ? "online" : connector.presentation.state === "error" ? "degraded" : "unknown",
+      authority: connector.presentation.state === "manual_handoff" ? "manual_handoff" : connector.approvalRequired ? "approval_required" : "internal_only",
+      freshness: connector.lastTest?.testedAt ? infrastructureFreshness(connector.lastTest.testedAt, { liveMs: 60 * 60 * 1000, freshMs: 7 * DAY_MS }) : "unknown",
+      evidenceLevel: connector.presentation.verified ? "measured" : "declared",
+      observedAt: generatedAt,
+      source: { system: "connector-registry", recordId: connector.id },
+      refs: { connectorId: connector.id },
+      counts: {},
+      connectorState: connector.presentation.state,
+      connectorLabel: connector.presentation.label,
+      connected: connector.presentation.verified,
+      configured: Boolean(connector.configured),
+      missingConfigurationCount: listFrom(connector.missingEnv).length,
+    })),
+  ];
+
+  const edges = [];
+  const pushEdge = ({ id, from, to, relation, basis, flow = "idle", authority = "internal_only", evidence = [] }) => {
+    edges.push({ id, from, to, relation, basis, flow, authority, evidence });
+  };
+  pushEdge({
+    id: "edge:workspace:agent101",
+    from: "workspace:argentum",
+    to: "agent:agent-101",
+    relation: "approved_workspace",
+    basis: "measured_workspace",
+    flow: "available",
+    evidence: [{ source: "agent101-project-workspace", recordId: projectWorkspace.root, field: "mode", observedAt: generatedAt }],
+  });
+  officeNodes.forEach((officeNode) => {
+    const explicitRecordCount = officeNode.counts.tasks + officeNode.counts.missions + officeNode.counts.runs + Number(officeNode.counts.contracts || 0);
+    pushEdge({
+      id: `edge:agent101:${officeNode.refs.officeId}`,
+      from: "agent:agent-101",
+      to: officeNode.id,
+      relation: "routes_to",
+      basis: explicitRecordCount ? "explicit_record" : "declared_contract",
+      flow: explicitRecordCount || officeNode.lifecycle === "running" ? "active" : "idle",
+      authority: "internal_only",
+      evidence: explicitRecordCount
+        ? [{ source: "argentum-state", recordId: officeNode.refs.officeId, field: "officeId", observedAt: generatedAt }]
+        : [{ source: "office-registry", recordId: officeNode.refs.officeId, field: "workflowId", observedAt: generatedAt }],
+    });
+    const pending = Number(officeNode.counts.approvalsPending || 0) + Number(officeNode.counts.officeApprovalsPending || 0);
+    pushEdge({
+      id: `edge:${officeNode.refs.officeId}:gate`,
+      from: officeNode.id,
+      to: "gate:human",
+      relation: "risk_gated_by",
+      basis: pending ? "explicit_record" : "declared_policy",
+      flow: pending ? "blocked" : "enforced",
+      authority: "approval_required",
+      evidence: [{ source: pending ? officeNode.source.system : "office-registry", recordId: officeNode.refs.officeId, field: pending ? "approval" : "blockedWork", observedAt: generatedAt }],
+    });
+    const officeOutputs = Number(officeNode.counts.outputs || 0) + Number(officeNode.counts.officeOutputs || 0) + Number(officeNode.counts.artifacts || 0);
+    pushEdge({
+      id: `edge:${officeNode.refs.officeId}:output`,
+      from: officeNode.id,
+      to: "output:local",
+      relation: "produces",
+      basis: officeOutputs ? "explicit_record" : "declared_contract",
+      flow: officeOutputs ? "recorded" : "idle",
+      authority: "internal_only",
+      evidence: [{ source: officeOutputs ? officeNode.source.system : "office-registry", recordId: officeNode.refs.officeId, field: officeOutputs ? "artifacts" : "outputs", observedAt: generatedAt }],
+    });
+  });
+  connectorRecords.forEach((connector) => {
+    pushEdge({
+      id: `edge:agent101:connector:${connector.id}`,
+      from: "agent:agent-101",
+      to: `connector:${connector.id}`,
+      relation: "uses_connector",
+      basis: connector.presentation.verified ? "verified_test" : "declared_registry",
+      flow: connector.presentation.verified ? "active" : connector.presentation.state,
+      authority: connector.presentation.state === "manual_handoff" ? "manual_handoff" : connector.approvalRequired ? "approval_required" : "internal_only",
+      evidence: [{ source: "connector-registry", recordId: connector.id, field: connector.presentation.verified ? "lastTest.success" : "status", observedAt: generatedAt }],
+    });
+  });
+
+  const sources = [
+    { id: "core-state", kind: "state_file", status: "available", freshness: infrastructureFreshness(state.meta?.updatedAt), observedAt: generatedAt, sourceUpdatedAt: state.meta?.updatedAt || null, warning: "" },
+    { id: "project-workspace", kind: "local_workspace", status: "available", freshness: "live", observedAt: generatedAt, sourceUpdatedAt: null, warning: "" },
+    { id: "clipping-office", kind: "local_projection", status: clipping.available ? (clippingFreshness === "stale" ? "degraded" : "available") : "unavailable", freshness: clippingFreshness, observedAt: generatedAt, sourceUpdatedAt: clipping.sourceUpdatedAt || null, warning: clipping.available ? "" : "Clipping Office runtime projection is unavailable." },
+    { id: "stock-office", kind: "local_workspace", status: !stock.available ? "unavailable" : stockErrors || stockStale ? "degraded" : "available", freshness: stockFreshness, observedAt: generatedAt, sourceUpdatedAt: stock.generatedAt || null, warning: stockErrors || stockStale ? `${stockErrors} source errors · ${stockStale} stale sources.` : "" },
+    { id: "print-shop", kind: "local_workspace", status: printProbe.reachable ? "available" : "unavailable", freshness: printRecorded.freshness, observedAt: printProbe.observedAt, sourceUpdatedAt: printRecorded.recordedAt, warning: printProbe.reachable ? "Physical printer and slicer connections are not configured." : printProbe.warning },
+    { id: "connector-registry", kind: "connector_registry", status: "available", freshness: "live", observedAt: generatedAt, sourceUpdatedAt: null, warning: "Connection means a verified successful test; manual handoff is not connected." },
+  ];
+  const degradedSources = sources.filter((source) => ["unavailable", "degraded"].includes(source.status)).length;
+  const unlinkedTotal = Object.values(unlinked).reduce((sum, count) => sum + count, 0);
+  const warnings = sources.map((source) => source.warning).filter(Boolean);
+  if (unlinkedTotal) warnings.push(`${unlinkedTotal} legacy records have no explicit office link and were not inferred into office routes.`);
+  if ((workflowOwners.get("workflow-pod-lab") || []).length > 1) warnings.push("Etsy and Essentrx share one legacy workflow ID; records without an explicit office ID remain unlinked.");
+  if (!printProbe.reachable) warnings.push("The integrated Print Shop Product Lab state is unavailable.");
+
+  return {
+    schemaVersion: 1,
+    snapshotId: `infra-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+    generatedAt,
+    partial: degradedSources > 0,
+    sources,
+    summary: {
+      registeredOffices: officeNodes.length,
+      activeMissions,
+      activeTasks,
+      activeRuns,
+      activeOffices: officeNodes.some((node) => node.availability === "unknown")
+        ? null
+        : officeNodes.filter((node) => ["running", "waiting_approval", "verifying"].includes(node.lifecycle)).length,
+      outputsReady: totalOutputs,
+      approvalsPending: totalPending,
+      connectorsVerified: connectorRecords.filter((connector) => connector.presentation.verified).length,
+      sourcesDegraded: degradedSources,
+      unlinkedRecords: unlinkedTotal,
+    },
+    workspace: {
+      root: projectWorkspace.root,
+      mode: projectWorkspace.mode,
+      readPolicy: projectWorkspace.readPolicy,
+      writePolicy: projectWorkspace.writePolicy,
+      immutableFiles: projectWorkspace.immutableFiles,
+      pendingProposals: projectWorkspace.pendingProposals,
+      recentProposals: projectWorkspace.recentProposals,
+      outputRoot: AGENT101_OUTPUT_ROOT,
+      safety: "supervised_human_gate",
+      workerCount: agent101MissionWorkers.size,
+    },
+    approvalDomains: {
+      central: { label: "Central Human Gate", pending: centralPending, evidenceLevel: "recorded" },
+      clippingOffice: { label: "Clipping Office approvals", pending: clippingPending, evidenceLevel: clipping.available ? "measured" : "unavailable" },
+      printShop: { label: "Print Shop approvals", pending: printPending, evidenceLevel: printRecorded.available ? "recorded" : "unavailable" },
+    },
+    nodes,
+    edges,
+    warnings: [...new Set(warnings)].slice(0, 20),
+    unlinked,
+  };
+}
+
+function listFrom(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function sectionLines(title, lines = []) {
+  const normalized = listFrom(lines).map((line) => String(line || "").trim()).filter(Boolean);
+  return [title, ...normalized.map((line) => `• ${line}`)].join("\n");
+}
+
+function formatAgent101ExecutiveReport({ title = "AGENT 101 OPERATING STATUS", currentStatus = [], keyFindings = [], risks = [], recommendations = [], nextActions = [] } = {}) {
+  return [
+    title,
+    "",
+    sectionLines("CURRENT STATUS", currentStatus),
+    "",
+    sectionLines("KEY FINDINGS", keyFindings),
+    "",
+    sectionLines("RISKS", risks),
+    "",
+    sectionLines("RECOMMENDATIONS", recommendations),
+    "",
+    sectionLines("NEXT ACTIONS", nextActions),
+  ].join("\n");
+}
+
+function agent101MessageViolatesExecutiveStyle(message = "") {
+  return [
+    /\bUser asked\b/i,
+    /\bSystem detected\b/i,
+    /\bI attempted\b/i,
+    /\bI was unable\b/i,
+    /\bI need clarification\b/i,
+    /\bWould you like me to\b/i,
+    /\bBased on your request\b/i,
+    /\bHere's what I found\b/i,
+    /\bI can help with that\b/i,
+  ].some((pattern) => pattern.test(String(message || "")));
+}
+
+function agent101MessageHasExecutiveSections(message = "") {
+  const text = String(message || "");
+  return /CURRENT STATUS/i.test(text)
+    && /KEY FINDINGS/i.test(text)
+    && /RISKS/i.test(text)
+    && /RECOMMENDATIONS/i.test(text)
+    && /NEXT ACTIONS/i.test(text);
+}
+
+const CLIPPING_OFFICE_OVERVIEW_CACHE_TTL_MS = 1500;
+const CLIPPING_OFFICE_OVERVIEW_ARRAY_FIELDS = [
+  "streamers",
+  "watchSessions",
+  "clipCandidates",
+  "clipPackages",
+  "postingDrafts",
+  "approvalRequests",
+  "mediaJobs",
+  "artifacts",
+  "watchEvents",
+];
+let clippingOfficeOverviewCache = null;
+const clippingOfficeLegacyBootstrapRuntimeDirs = new Set();
+
+function projectClippingOfficeOverview(source = {}, fallbackUpdatedAt = null) {
+  const projection = {
+    sourceUpdatedAt: typeof source.sourceUpdatedAt === "string" && source.sourceUpdatedAt.trim()
+      ? source.sourceUpdatedAt
+      : fallbackUpdatedAt,
+    automation: source.automation && typeof source.automation === "object" ? source.automation : {},
+    sourceCounts: source.sourceCounts && typeof source.sourceCounts === "object" ? source.sourceCounts : null,
+  };
+  for (const field of CLIPPING_OFFICE_OVERVIEW_ARRAY_FIELDS) {
+    projection[field] = listFrom(source[field]);
+  }
+  return projection;
+}
+
+function clippingOfficeSnapshotFromProjection(projection, filePath) {
+  return {
+    available: true,
+    filePath,
+    sourceUpdatedAt: projection.sourceUpdatedAt,
+    automation: projection.automation,
+    sourceCounts: projection.sourceCounts,
+    ...Object.fromEntries(CLIPPING_OFFICE_OVERVIEW_ARRAY_FIELDS.map((field) => [field, projection[field]])),
+  };
+}
+
+function clippingOfficeUnavailableSnapshot(filePath, error) {
+  return {
+    available: false,
+    filePath,
+    sourceUpdatedAt: null,
+    automation: {},
+    sourceCounts: null,
+    error: error?.code === "ENOENT" ? "not_initialized" : error?.message || "not_initialized",
+    ...Object.fromEntries(CLIPPING_OFFICE_OVERVIEW_ARRAY_FIELDS.map((field) => [field, []])),
+  };
+}
+
+function clippingOfficeOverviewStatSignature(stat) {
+  if (!stat) return null;
+  return {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    inode: String(stat.ino || ""),
+  };
+}
+
+function clippingOfficeOverviewSignatureMatches(left, right) {
+  return Boolean(left && right)
+    && left.mtimeMs === right.mtimeMs
+    && left.size === right.size
+    && left.inode === right.inode;
+}
+
+function cacheClippingOfficeOverview(projection, filePath, stat = null, checkedAtMs = Date.now()) {
+  const snapshot = clippingOfficeSnapshotFromProjection(projection, filePath);
+  clippingOfficeOverviewCache = {
+    checkedAtMs,
+    runtimeDir: path.dirname(filePath),
+    signature: clippingOfficeOverviewStatSignature(stat),
+    snapshot,
+  };
+  return snapshot;
+}
+
+function writeClippingOfficeOverviewAtomic(filePath, projection) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(projection)}\n`, "utf8");
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    try {
+      fs.rmSync(temporaryPath, { force: true });
+    } catch (_cleanupError) {}
+    throw error;
+  }
+}
+
+function readClippingOfficeStateSnapshot() {
+  const runtimeDir = process.env.CLIPPING_OFFICE_DATA_DIR || path.join(DATA_DIR, "clipping-office");
+  const overviewPath = path.join(runtimeDir, "overview.json");
+  const legacyStatePath = path.join(runtimeDir, "state.json");
+  const checkedAtMs = Date.now();
+  if (
+    clippingOfficeOverviewCache
+    && clippingOfficeOverviewCache.runtimeDir === runtimeDir
+    && checkedAtMs - clippingOfficeOverviewCache.checkedAtMs < CLIPPING_OFFICE_OVERVIEW_CACHE_TTL_MS
+  ) {
+    return clippingOfficeOverviewCache.snapshot;
+  }
+
+  let overviewError = null;
+  try {
+    const overviewStat = fs.statSync(overviewPath);
+    const signature = clippingOfficeOverviewStatSignature(overviewStat);
+    if (
+      clippingOfficeOverviewCache?.runtimeDir === runtimeDir
+      && clippingOfficeOverviewSignatureMatches(clippingOfficeOverviewCache.signature, signature)
+    ) {
+      clippingOfficeOverviewCache.checkedAtMs = checkedAtMs;
+      return clippingOfficeOverviewCache.snapshot;
+    }
+    const overview = JSON.parse(fs.readFileSync(overviewPath, "utf8"));
+    const projection = projectClippingOfficeOverview(overview, overviewStat.mtime.toISOString());
+    return cacheClippingOfficeOverview(projection, overviewPath, overviewStat, checkedAtMs);
+  } catch (error) {
+    overviewError = error;
+  }
+
+  if (clippingOfficeOverviewCache?.runtimeDir === runtimeDir) {
+    clippingOfficeOverviewCache.checkedAtMs = checkedAtMs;
+    return clippingOfficeOverviewCache.snapshot;
+  }
+
+  let legacyError = null;
+  if (!clippingOfficeLegacyBootstrapRuntimeDirs.has(runtimeDir)) {
+    try {
+      const legacyStat = fs.statSync(legacyStatePath);
+      clippingOfficeLegacyBootstrapRuntimeDirs.add(runtimeDir);
+      let legacyState = JSON.parse(fs.readFileSync(legacyStatePath, "utf8"));
+      const projection = projectClippingOfficeOverview(legacyState, legacyStat.mtime.toISOString());
+      legacyState = null;
+      try {
+        writeClippingOfficeOverviewAtomic(overviewPath, projection);
+        const overviewStat = fs.statSync(overviewPath);
+        return cacheClippingOfficeOverview(projection, overviewPath, overviewStat, checkedAtMs);
+      } catch (_writeError) {
+        return cacheClippingOfficeOverview(projection, legacyStatePath, null, checkedAtMs);
+      }
+    } catch (error) {
+      legacyError = error;
+      if (error?.code !== "ENOENT") clippingOfficeLegacyBootstrapRuntimeDirs.add(runtimeDir);
+    }
+  }
+
+  const unavailableError = legacyError && legacyError.code !== "ENOENT"
+    ? legacyError
+    : overviewError && overviewError.code !== "ENOENT"
+      ? overviewError
+      : legacyError || overviewError;
+  return clippingOfficeUnavailableSnapshot(overviewPath, unavailableError);
+}
+
+function clipOfficeCandidateStage(candidate = {}) {
+  const workflowStage = String(candidate.productionWorkflow?.stage || "").toLowerCase();
+  const status = String(candidate.status || candidate.decision || "").toLowerCase();
+  if (candidate.operatorDeclined || candidate.declinedAt || ["rejected", "dismissed", "deleted"].includes(status)) return "dismissed";
+  if (workflowStage === "product_ready" || status === "product_ready") return "ready";
+  if (workflowStage === "precheck") return "precheck";
+  if (
+    ["editing"].includes(workflowStage)
+    || candidate.builderApproved
+    || candidate.builderStatus === "approved"
+    || ["builder_ready", "in_builder"].includes(status)
+    || candidate.builderDraft
+  ) return "studio";
+  return "discovery";
+}
+
+function clipOfficeCandidateUsesPracticeEvidence(candidate = {}) {
+  const sourceType = String(candidate.sourceType || "").trim().toLowerCase();
+  const provenance = [candidate.sourceProvenance, candidate.provenance]
+    .map((value) => String(value || "").trim().toLowerCase());
+  return provenance.includes("demo_source")
+    || ["demo", "practice", "agent101_demo"].includes(sourceType);
+}
+
+function clipOfficeSessionIsCurrent(session = {}) {
+  const latestActivityAt = [
+    session.heartbeatAt,
+    session.lastMediaAt,
+    session.rollingBuffer?.updatedAt,
+    session.updatedAt,
+  ]
+    .map((value) => new Date(value || "").getTime())
+    .filter(Number.isFinite)
+    .reduce((latest, value) => Math.max(latest, value), 0);
+  if (!latestActivityAt) return true;
+  if (Date.now() - latestActivityAt <= 90_000) return true;
+  const leaseExpiresAt = new Date(session.leaseExpiresAt || "").getTime();
+  return Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now();
+}
+
+function visibleClipOfficeCandidates(clipState = {}) {
+  const activeWatchStatuses = new Set(["queued", "starting", "connecting", "watching", "degraded", "reconnecting"]);
+  const activeWatchSessionIds = new Set(
+    listFrom(clipState.watchSessions)
+      .filter((session) => activeWatchStatuses.has(String(session.status || "").toLowerCase()) && clipOfficeSessionIsCurrent(session))
+      .map((session) => session.id)
+      .filter(Boolean),
+  );
+  return listFrom(clipState.clipCandidates).filter((candidate) => {
+    if (clipOfficeCandidateUsesPracticeEvidence(candidate)) return false;
+    if (candidate?.sourceType !== "live_recording_window") return true;
+    if (["studio", "precheck", "ready"].includes(clipOfficeCandidateStage(candidate))) return true;
+    return activeWatchSessionIds.has(candidate?.watchSessionId);
+  });
+}
+
+function clipOfficeCandidateTitle(candidate = {}) {
+  const caption = String(candidate.editorialCaption?.primary_caption || candidate.editorialCaption?.text || "").trim();
+  if (caption) return caption.slice(0, 90);
+  const title = String(candidate.title || "").trim();
+  if (title && !/^\d+s clip window \d+:/i.test(title)) return title.slice(0, 90);
+  const streamer = String(candidate.streamerName || candidate.creatorName || "Creator").trim();
+  return `${streamer} clip`;
+}
+
+function clipOfficeThumbnailUrl(value = "") {
+  return String(value || "")
+    .trim()
+    .replaceAll("{width}", "640")
+    .replaceAll("{height}", "360");
+}
+
+function readArgentumProcessMemorySnapshot() {
+  const systemTotalBytes = os.totalmem();
+  const systemUsedBytes = Math.max(0, systemTotalBytes - os.freemem());
+  const fallbackBytes = Number(process.memoryUsage().rss || 0);
+  const fallback = {
+    totalBytes: fallbackBytes,
+    percentOfSystem: systemTotalBytes ? Number(((fallbackBytes / systemTotalBytes) * 100).toFixed(1)) : 0,
+    processCount: 1,
+    systemTotalBytes,
+    systemUsedBytes,
+    systemUsedPercent: systemTotalBytes ? Math.round((systemUsedBytes / systemTotalBytes) * 100) : 0,
+    status: "Measured",
+    measuredAt: now(),
+    source: "macOS process RSS",
+    breakdown: [{ id: "core", label: "Argentum core", bytes: fallbackBytes, processCount: 1 }],
+  };
+  try {
+    const output = execFileSync("ps", ["-axo", "pid=,ppid=,rss=,command="], {
+      encoding: "utf8",
+      timeout: 1500,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const rows = output
+      .split("\n")
+      .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/))
+      .filter(Boolean)
+      .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), rssKb: Number(match[3]), command: match[4] }));
+    const byPid = new Map(rows.map((row) => [row.pid, row]));
+    let rootPid = process.pid;
+    let cursor = byPid.get(process.pid);
+    while (cursor && cursor.ppid > 1) {
+      if (/\/(?:Argentum OS|Electron)\.app\/Contents\/MacOS\/(?:Argentum OS|Electron)(?:\s|$)/.test(cursor.command)) {
+        rootPid = cursor.pid;
+        break;
+      }
+      cursor = byPid.get(cursor.ppid);
+    }
+    const selected = new Set([rootPid]);
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      rows.forEach((row) => {
+        if (selected.has(row.ppid) && !selected.has(row.pid)) {
+          selected.add(row.pid);
+          expanded = true;
+        }
+      });
+    }
+    selected.add(process.pid);
+    const included = rows.filter((row) => selected.has(row.pid));
+    if (!included.length) return fallback;
+    const buckets = new Map();
+    included.forEach((row) => {
+      let id = "core";
+      let label = "Argentum core";
+      if (/ffmpeg|ffprobe|streamlink|yt-dlp/i.test(row.command) && /clipping-office|watch_session|rolling/i.test(row.command)) {
+        id = "media";
+        label = "Live media workers";
+      } else if (/--type=renderer|Helper \(Renderer\)/i.test(row.command)) {
+        id = "renderer";
+        label = "Interface renderer";
+      } else if (/--type=gpu-process/i.test(row.command)) {
+        id = "graphics";
+        label = "Graphics";
+      } else if (/--type=utility/i.test(row.command)) {
+        id = "services";
+        label = "Local services";
+      }
+      const current = buckets.get(id) || { id, label, bytes: 0, processCount: 0 };
+      current.bytes += Math.max(0, row.rssKb) * 1024;
+      current.processCount += 1;
+      buckets.set(id, current);
+    });
+    const totalBytes = [...buckets.values()].reduce((sum, bucket) => sum + bucket.bytes, 0);
+    return {
+      totalBytes,
+      percentOfSystem: systemTotalBytes ? Number(((totalBytes / systemTotalBytes) * 100).toFixed(1)) : 0,
+      processCount: included.length,
+      systemTotalBytes,
+      systemUsedBytes,
+      systemUsedPercent: systemTotalBytes ? Math.round((systemUsedBytes / systemTotalBytes) * 100) : 0,
+      status: totalBytes >= 2 * 1024 ** 3 ? "High" : totalBytes >= 1024 ** 3 ? "Elevated" : "Efficient",
+      measuredAt: now(),
+      source: "macOS process RSS",
+      breakdown: [...buckets.values()].sort((left, right) => right.bytes - left.bytes),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function clipOfficeEventTitle(type = "", streamerName = "") {
+  const labels = {
+    chat_keyword_detected: "Chat keyword detected",
+    recording_window_waiting_for_source: "Capture source pending",
+    candidate_created: "Moment captured",
+    candidate_saved: "Clip saved",
+    clip_builder_approved: "Clip entered Studio",
+    editor_export_completed: "Render completed",
+    product_ready_approved: "Clip approved",
+  };
+  const label = labels[type] || String(type || "Office activity").replaceAll("_", " ");
+  return streamerName ? `${streamerName} · ${label}` : label;
+}
+
+function buildClipOfficeDashboardSnapshot() {
+  const clipState = readClippingOfficeStateSnapshot();
+  const processMemory = readArgentumProcessMemorySnapshot();
+  const activeWatchStatuses = new Set(["queued", "starting", "connecting", "watching", "degraded", "reconnecting"]);
+  const streamerById = new Map(clipState.streamers.map((streamer) => [streamer.id, streamer]));
+  const sessionById = new Map(clipState.watchSessions.map((session) => [session.id, session]));
+  const latestChatRateBySession = new Map();
+  [...clipState.watchEvents]
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+    .forEach((event) => {
+      if (!latestChatRateBySession.has(event.sessionId) && Number.isFinite(Number(event.payload?.messagesPerMinute))) {
+        latestChatRateBySession.set(event.sessionId, Number(event.payload.messagesPerMinute));
+      }
+    });
+  const activeSessions = clipState.watchSessions
+    .filter((session) => activeWatchStatuses.has(String(session.status || "").toLowerCase()) && clipOfficeSessionIsCurrent(session))
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+  const recordingSessions = activeSessions.filter((session) => session.rollingBuffer?.running === true);
+  const metadataOnlySessions = activeSessions.filter((session) => (
+    String(session.status || "").toLowerCase() === "degraded" && session.rollingBuffer?.running !== true
+  ));
+  const connectingSessions = Math.max(0, activeSessions.length - recordingSessions.length - metadataOnlySessions.length);
+  const watchers = activeSessions.slice(0, 50).map((session) => {
+    const streamer = streamerById.get(session.streamerId) || {};
+    const liveMetadata = streamer.officialLiveMetadata && typeof streamer.officialLiveMetadata === "object"
+      ? streamer.officialLiveMetadata
+      : {};
+    return {
+      id: session.id,
+      streamerName: session.streamerName || streamer.displayName || streamer.name || streamer.login || "Live stream",
+      platform: session.platform || streamer.platform || "live",
+      status: String(session.status || "watching"),
+      stage: String(session.currentStage || "Listening to live media"),
+      bufferedSeconds: Math.max(0, Number(session.rollingBuffer?.bufferedSeconds || 0)),
+      retentionSeconds: Math.max(1, Number(session.rollingBuffer?.retentionSeconds || 180)),
+      bufferRunning: Boolean(session.rollingBuffer?.running),
+      messagesPerMinute: Math.max(0, Number(latestChatRateBySession.get(session.id) ?? session.lastChatMessagesPerMinute ?? 0)),
+      thumbnailUrl: clipOfficeThumbnailUrl(liveMetadata.thumbnail || streamer.thumbnailUrl),
+      streamTitle: String(liveMetadata.title || session.streamTitle || ""),
+      category: String(liveMetadata.category || session.category || ""),
+      viewerCount: Number.isFinite(Number(liveMetadata.viewerCount ?? session.viewerCount))
+        ? Math.max(0, Number(liveMetadata.viewerCount ?? session.viewerCount))
+        : null,
+      verifiedAt: liveMetadata.verifiedAt || null,
+      metadataSource: String(liveMetadata.source || ""),
+      updatedAt: session.updatedAt || session.rollingBuffer?.updatedAt || "",
+    };
+  });
+  const visibleCandidates = visibleClipOfficeCandidates(clipState);
+  const candidates = visibleCandidates.filter((candidate) => clipOfficeCandidateStage(candidate) !== "dismissed");
+  const stageCounts = { discovery: 0, studio: 0, precheck: 0, ready: 0 };
+  candidates.forEach((candidate) => {
+    const stage = clipOfficeCandidateStage(candidate);
+    if (Object.hasOwn(stageCounts, stage)) stageCounts[stage] += 1;
+  });
+  const stagePriority = { studio: 0, precheck: 1, discovery: 2, ready: 3 };
+  const recentClips = [...candidates]
+    .sort((left, right) => {
+      const stageDifference = (stagePriority[clipOfficeCandidateStage(left)] ?? 9) - (stagePriority[clipOfficeCandidateStage(right)] ?? 9);
+      return stageDifference || String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || ""));
+    })
+    .slice(0, 12)
+    .map((candidate) => ({
+      id: candidate.id,
+      streamerName: infrastructureSafeText(candidate.streamerName ?? candidate.creatorName, 160),
+      title: infrastructureSafeText(
+        candidate.editorialCaption?.primary_caption
+        ?? candidate.editorialCaption?.text
+        ?? candidate.title,
+        160,
+      ),
+      stage: clipOfficeCandidateStage(candidate),
+      quality: candidate.qualityScore !== null && candidate.qualityScore !== undefined && candidate.qualityScore !== "" && Number.isFinite(Number(candidate.qualityScore))
+        ? Math.max(0, Math.min(100, Math.round(Number(candidate.qualityScore))))
+        : candidate.score !== null && candidate.score !== undefined && candidate.score !== "" && Number.isFinite(Number(candidate.score))
+          ? Math.max(0, Math.min(100, Math.round(Number(candidate.score))))
+          : null,
+      durationSeconds: candidate.durationSeconds !== null && candidate.durationSeconds !== undefined && candidate.durationSeconds !== "" && Number.isFinite(Number(candidate.durationSeconds))
+        ? Math.max(0, Math.round(Number(candidate.durationSeconds)))
+        : candidate.duration !== null && candidate.duration !== undefined && candidate.duration !== "" && Number.isFinite(Number(candidate.duration))
+          ? Math.max(0, Math.round(Number(candidate.duration)))
+          : null,
+      updatedAt: candidate.updatedAt || candidate.productionWorkflow?.updatedAt || candidate.createdAt || "",
+      captionsReady: Boolean(candidate.builderDraft?.editorState?.captions?.enabled),
+      stickerReady: Boolean(candidate.builderDraft?.editorState?.sticker?.enabled),
+      localSaved: Boolean(candidate.productionWorkflow?.localLibraryPath),
+      thumbnailUrl: clipOfficeThumbnailUrl(candidate.thumbnailUrl),
+      playbackUrl: String(candidate.productionWorkflow?.playbackUrl || candidate.playbackUrl || ""),
+    }));
+  const seenEvents = new Set();
+  const activity = [...clipState.watchEvents]
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+    .filter((event) => {
+      const key = `${event.sessionId || "office"}:${event.type || "activity"}`;
+      if (seenEvents.has(key)) return false;
+      seenEvents.add(key);
+      return true;
+    })
+    .slice(0, 10)
+    .map((event) => {
+      const session = sessionById.get(event.sessionId) || {};
+      const streamer = streamerById.get(session.streamerId) || {};
+      const streamerName = session.streamerName || streamer.displayName || streamer.name || event.payload?.channel || "";
+      return {
+        id: event.id,
+        type: event.type || "activity",
+        title: clipOfficeEventTitle(event.type, streamerName),
+        detail: String(event.payload?.message || session.currentStage || "Clipping Office state updated.").slice(0, 180),
+        createdAt: event.createdAt || "",
+      };
+    });
+  const averageBufferSeconds = watchers.length
+    ? Math.round(watchers.reduce((sum, watcher) => sum + watcher.bufferedSeconds, 0) / watchers.length)
+    : 0;
+  const activeEdits = stageCounts.studio + stageCounts.precheck;
+  const automation = clipState.automation || {};
+  const focusLabel = String(automation.focusLabel || automation.focus || "").trim() || "Not configured";
+  const missingSourceCandidates = clipState.clipCandidates.filter((candidate) => candidate.sourceIntegrity?.status === "missing").length;
+  const excludedPracticeCandidates = clipState.clipCandidates.filter(clipOfficeCandidateUsesPracticeEvidence).length;
+  const staleActiveSessions = clipState.watchSessions.filter((session) => (
+    activeWatchStatuses.has(String(session.status || "").toLowerCase()) && !clipOfficeSessionIsCurrent(session)
+  )).length;
+  return {
+    available: clipState.available,
+    error: clipState.error || null,
+    updatedAt: clipState.sourceUpdatedAt || null,
+    sampledAt: now(),
+    status: activeSessions.length ? "live" : clipState.available ? "idle" : "offline",
+    headline: activeSessions.length
+      ? `${recordingSessions.length} recording · ${metadataOnlySessions.length} metadata-only · ${connectingSessions} connecting`
+      : activeEdits ? `Preparing ${activeEdits} clip${activeEdits === 1 ? "" : "s"}` : "Office standing by",
+    summary: `${stageCounts.discovery} in Discovery · ${stageCounts.studio} in Studio · ${stageCounts.precheck} in Precheck · ${stageCounts.ready} ready`,
+    metrics: {
+      activeStreams: activeSessions.length,
+      recordingStreams: recordingSessions.length,
+      metadataOnlyStreams: metadataOnlySessions.length,
+      connectingStreams: connectingSessions,
+      capturedClips: candidates.length,
+      discovery: stageCounts.discovery,
+      studio: stageCounts.studio,
+      precheck: stageCounts.precheck,
+      ready: stageCounts.ready,
+      localLibrary: candidates.filter((candidate) => candidate.productionWorkflow?.localLibraryPath).length,
+      averageBufferSeconds,
+    },
+    workflow: [
+      { id: "discovery", label: "Discovery", count: stageCounts.discovery, detail: "Captured moments under review" },
+      { id: "studio", label: "Studio", count: stageCounts.studio, detail: "Captions, stickers, and reframing" },
+      { id: "precheck", label: "Precheck", count: stageCounts.precheck, detail: "Rendered clips awaiting validation" },
+      { id: "ready", label: "Product Ready", count: stageCounts.ready, detail: "Verified and saved locally" },
+    ],
+    watchers,
+    recentClips,
+    activity,
+    memory: processMemory,
+    automation: {
+      enabled: automation.enabled === true,
+      focus: String(automation.focus || ""),
+      focusLabel,
+      status: String(automation.status || (automation.enabled ? "running" : "paused")),
+      workerStatus: String(automation.workerStatus || "unavailable"),
+      workerClipId: String(automation.workerClipId || ""),
+      workerProgress: Math.max(0, Math.min(100, Number(automation.workerProgress || 0))),
+      workerStage: String(automation.workerStage || ""),
+      workerDetail: String(automation.workerDetail || ""),
+      workerLastFailure: automation.workerLastFailure && typeof automation.workerLastFailure === "object"
+        ? {
+          clipId: String(automation.workerLastFailure.clipId || ""),
+          error: String(automation.workerLastFailure.error || ""),
+          at: automation.workerLastFailure.at || null,
+        }
+        : null,
+      lastScanAt: automation.lastScanAt || null,
+      nextScanAt: automation.nextScanAt || null,
+      matchedStreams: Math.max(0, Number(automation.matchedStreams || 0)),
+      scannedStreams: Math.max(0, Number(automation.scannedStreams || 0)),
+      activeFocusedStreams: Math.max(0, Number(automation.activeFocusedStreams || 0)),
+      scanTruncated: automation.scanTruncated === true,
+      providerPages: automation.providerPages && typeof automation.providerPages === "object"
+        ? automation.providerPages
+        : {},
+      lastError: String(automation.lastError || ""),
+      sourceIntegrity: {
+        status: String(automation.sourceIntegrity?.status || (missingSourceCandidates ? "attention" : "verified")),
+        missingProductionSources: Math.max(0, Number(automation.sourceIntegrity?.missingProductionSources ?? missingSourceCandidates)),
+        checkedAt: automation.sourceIntegrity?.checkedAt || null,
+        detail: String(automation.sourceIntegrity?.detail || ""),
+      },
+    },
+    dataQuality: {
+      mode: "measured",
+      label: "Verified live data",
+      source: "Clipping Office state",
+      sourceUpdatedAt: clipState.sourceUpdatedAt || null,
+      sampledAt: now(),
+      estimatedFields: [],
+      excludedHistoricalCandidates: Math.max(0, clipState.clipCandidates.length - visibleCandidates.length - excludedPracticeCandidates),
+      excludedPracticeCandidates,
+      missingSourceCandidates,
+      staleActiveSessions,
+      candidateRule: "Active Discovery windows plus durable Studio, Precheck, and Product Ready clips",
+    },
+  };
+}
+
+function buildClipOfficeOperationsSnapshot() {
+  const clipState = readClippingOfficeStateSnapshot();
+  const activeWatchStatuses = new Set(["queued", "starting", "connecting", "watching", "degraded", "reconnecting"]);
+  const terminalWatchStatuses = new Set(["stream_ended", "completed", "failed", "cancelled"]);
+  const streamers = clipState.streamers;
+  const watchSessions = clipState.watchSessions;
+  const candidates = clipState.clipCandidates;
+  const packages = clipState.clipPackages;
+  const drafts = clipState.postingDrafts;
+  const mediaJobs = clipState.mediaJobs;
+  const approvals = clipState.approvalRequests;
+  const monitoredStreamers = streamers.filter((streamer) => streamer.monitorEnabled);
+  const activeWatchSessions = watchSessions.filter((session) => (
+    activeWatchStatuses.has(String(session.status || "").toLowerCase()) && clipOfficeSessionIsCurrent(session)
+  ));
+  const failedWatchSessions = watchSessions.filter((session) => String(session.status || "").toLowerCase() === "failed");
+  const liveStreamers = streamers.filter((streamer) => String(streamer.liveStatus || "").toLowerCase() === "live");
+  const approvedCandidates = candidates.filter((candidate) => {
+    const decision = String(candidate.decision || candidate.status || "").toLowerCase();
+    return ["accepted", "approved", "ready", "ready_to_package", "packaged"].includes(decision) || Number(candidate.qualityScore || candidate.score || 0) >= 80;
+  });
+  const dismissedCandidates = candidates.filter((candidate) => {
+    const decision = String(candidate.decision || candidate.status || "").toLowerCase();
+    return ["rejected", "dismissed", "deleted"].includes(decision);
+  });
+  const pendingCandidates = candidates.filter((candidate) => {
+    if (approvedCandidates.includes(candidate) || dismissedCandidates.includes(candidate)) return false;
+    const decision = String(candidate.decision || candidate.status || "").toLowerCase();
+    return !decision || ["review", "recording", "pending", "queued", "source_pending"].includes(decision) || candidate.qualityScore == null;
+  });
+  const completedExports = mediaJobs.filter((job) => String(job.status || "").toLowerCase() === "completed").length
+    + clipState.artifacts.filter((artifact) => artifact.type === "rendered_clip").length;
+  const failedExports = mediaJobs.filter((job) => ["failed", "error"].includes(String(job.status || "").toLowerCase())).length;
+  const pendingDrafts = drafts.filter((draft) => !["approved", "posted", "published", "dismissed", "rejected"].includes(String(draft.status || draft.approvalStatus || "").toLowerCase()));
+  const pendingApprovals = approvals.filter((approval) => String(approval.status || "").toLowerCase() === "pending");
+  const failures = failedWatchSessions.length + failedExports;
+  const successRate = candidates.length ? Math.round((approvedCandidates.length / candidates.length) * 100) : 0;
+  const inactiveMonitored = monitoredStreamers.filter((streamer) => !liveStreamers.some((live) => live.id === streamer.id));
+
+  const recommendations = [];
+  if (!clipState.available) recommendations.push("Initialize Clip Office state by opening the local app and running one watch cycle.");
+  if (!monitoredStreamers.length) recommendations.push("Add and approve at least three streamers before relying on Clip Radar volume.");
+  if (activeWatchSessions.length && !candidates.length) recommendations.push("Restart watcher coverage and verify fresh 30-second windows are being written.");
+  if (pendingCandidates.length > Math.max(10, approvedCandidates.length * 3)) recommendations.push("Delete weak candidates in bulk before the review queue buries the good clips.");
+  if (pendingApprovals.length) recommendations.push("Clear Human Gate posting decisions before expanding the queue.");
+  if (failures) recommendations.push("Resolve failed watch/export records before running another production cycle.");
+  if (!recommendations.length) recommendations.push("Keep monitoring live streamers and advance the strongest verified candidates to Clip Builder.");
+
+  return {
+    available: clipState.available,
+    filePath: clipState.filePath,
+    error: clipState.error || null,
+    totalStreamers: streamers.length,
+    monitoredStreamers: monitoredStreamers.length,
+    activeStreams: activeWatchSessions.length,
+    liveNow: liveStreamers.length,
+    offlineStreamers: Math.max(0, streamers.length - liveStreamers.length),
+    inactiveMonitored: inactiveMonitored.length,
+    candidateClips: candidates.length,
+    clipsApproved: approvedCandidates.length,
+    clipsPending: pendingCandidates.length,
+    clipsDismissed: dismissedCandidates.length,
+    packages: packages.length,
+    exportCompleted: completedExports,
+    exportPending: mediaJobs.filter((job) => !["completed", "failed", "error"].includes(String(job.status || "").toLowerCase())).length,
+    exportFailed: failedExports,
+    postingQueue: pendingDrafts.length,
+    postingDrafts: drafts.length,
+    pendingApprovals: pendingApprovals.length,
+    failures,
+    successRate,
+    recommendations,
+    terminalWatchSessions: watchSessions.filter((session) => terminalWatchStatuses.has(String(session.status || "").toLowerCase())).length,
+  };
+}
+
+function clipOfficeCurrentStatusLines(metrics) {
+  return [
+    `Active streams: ${metrics.activeStreams}.`,
+    `Streamers monitored: ${metrics.monitoredStreamers}/${metrics.totalStreamers}.`,
+    `Candidate clips: ${metrics.candidateClips}.`,
+    `Clips approved: ${metrics.clipsApproved}.`,
+    `Clips pending: ${metrics.clipsPending}.`,
+    `Export status: ${metrics.exportCompleted} complete, ${metrics.exportPending} pending, ${metrics.exportFailed} failed.`,
+    `Posting queue: ${metrics.postingQueue} pending draft(s), ${metrics.pendingApprovals} Human Gate approval(s).`,
+    `Failures: ${metrics.failures}.`,
+    `Success rate: ${metrics.successRate}%.`,
+  ];
+}
+
+function buildClipOfficeExecutiveResponse(message, context = {}) {
+  const metrics = buildClipOfficeOperationsSnapshot();
+  const history = normalizedAgent101ChatHistory(context);
+  const memoryLine = history.length
+    ? `Thread memory retained: ${history.slice(-3).map((item) => item.text).join(" | ").slice(0, 240)}.`
+    : "";
+  const keyFindings = [
+    metrics.available ? "Clip Office state is readable from the local runtime." : `Clip Office state is not initialized at ${metrics.filePath}.`,
+    metrics.activeStreams ? `${metrics.activeStreams} active watcher(s) should be producing current windows.` : "No active watcher is currently recorded.",
+    metrics.candidateClips ? `${metrics.candidateClips} candidate clip(s) exist for review/scoring.` : "No candidate clips are available yet.",
+    metrics.postingQueue || metrics.pendingApprovals ? "Posting is bottlenecked at draft/Human Gate review." : "Posting queue is clear.",
+    memoryLine,
+  ].filter(Boolean);
+  const risks = [
+    !metrics.available ? "Operational data is incomplete until Clip Office writes its state file." : "",
+    metrics.activeStreams && !metrics.candidateClips ? "Monitoring without candidates indicates a watcher ingestion or radar refresh gap." : "",
+    metrics.clipsPending > Math.max(20, metrics.clipsApproved * 4) ? "Review backlog is high enough to hide good clips." : "",
+    metrics.inactiveMonitored ? `${metrics.inactiveMonitored} monitored streamer(s) are not live; watch capacity may be underused.` : "",
+    metrics.failures ? `${metrics.failures} failure record(s) need cleanup before scale-up.` : "",
+  ].filter(Boolean);
+  return {
+    message: formatAgent101ExecutiveReport({
+      title: "CLIP OFFICE STATUS",
+      currentStatus: clipOfficeCurrentStatusLines(metrics),
+      keyFindings,
+      risks: risks.length ? risks : ["No critical Clip Office blocker is visible in the local state."],
+      recommendations: metrics.recommendations,
+      nextActions: [
+        metrics.activeStreams && !metrics.candidateClips ? "Refresh Clip Radar and restart the active watcher if no 30-second window appears." : "Review the strongest current candidates and delete obvious low-quality windows.",
+        metrics.postingQueue || metrics.pendingApprovals ? "Clear Human Gate posting decisions before adding more queue volume." : "Keep the watch cycle running and package only clips with verified media or strong live-window evidence.",
+      ],
+    }),
+    taskType: "clips",
+    suggestedActions: [
+      { label: "Refresh Clip Radar", action: "refresh_clip_radar", requiresApproval: false },
+      { label: "Review pending clips", action: "review_clip_candidates", requiresApproval: false },
+      { label: "Package approvals", action: "package_for_approval", requiresApproval: true },
+    ],
+    artifacts: [
+      {
+        type: "operations_report",
+        title: "Clip Office operating snapshot",
+        content: JSON.stringify(metrics, null, 2),
+      },
+    ],
+    requiresApproval: false,
+    riskLevel: metrics.failures || metrics.pendingApprovals ? "medium" : "low",
+    blockedAction: null,
+    logs: ["Clip Office operational snapshot generated from local runtime state."],
+  };
+}
+
+function buildGeneralExecutiveResponse(message, context = {}) {
+  const state = readState();
+  const readiness = agent101Readiness(state);
+  const history = normalizedAgent101ChatHistory(context);
+  const activeRuns = listFrom(state.agent101Runs).filter((run) => ["queued", "running", "waiting_approval", "verifying"].includes(run.status)).length;
+  const pendingTasks = listFrom(state.tasks).filter((task) => ["queued", "needs_revision", "running"].includes(task.status)).length;
+  const artifactsReady = listFrom(state.artifacts).filter((artifact) => ["draft_ready", "ready", "complete"].includes(artifact.status)).length;
+  const pendingApprovals = listFrom(state.approvals).filter((approval) => approval.status === "pending").length;
+  const recommendations = [
+    pendingApprovals ? "Clear Human Gate approvals before adding more external-risk work." : "Move the next safe internal task into execution.",
+    readiness.openaiConnection === "ready" ? "Use live model calls only for analysis that benefits from language reasoning; keep secrets server-side." : "Keep local deterministic mode active until provider status is ready.",
+    "Convert repeated operator decisions into sourced memory after confirmation.",
+  ];
+  return {
+    message: formatAgent101ExecutiveReport({
+      title: "AGENT 101 OPERATING STATUS",
+      currentStatus: [
+        `Provider mode: ${readiness.providerMode}.`,
+        `Human Gate: ${readiness.humanGate}.`,
+        `External actions: ${readiness.externalActions}.`,
+        `Active runs: ${activeRuns}.`,
+        `Queued tasks: ${pendingTasks}.`,
+        `Pending approvals: ${pendingApprovals}.`,
+        `Ready artifacts: ${artifactsReady}.`,
+      ],
+      keyFindings: [
+        `Business readiness score: ${agent101Os.businessReadiness(state).score}%.`,
+        history.length ? `Thread memory retained across ${history.length} recent message(s).` : "No prior thread context was supplied with this message.",
+        pendingTasks ? `${pendingTasks} task(s) need operator or Agent 101 movement.` : "No queued task bottleneck is visible.",
+      ],
+      risks: [
+        pendingApprovals ? "Approval backlog can block posting, account, or external execution lanes." : "No current approval backlog.",
+        readiness.openaiConnection === "ready" ? "" : "Live model provider is not the current dependable reasoning layer.",
+        "External actions remain locked until Human Gate creates an exact approval record.",
+      ].filter(Boolean),
+      recommendations,
+      nextActions: [
+        "Convert the current request into a bounded task contract or run the relevant office workflow.",
+        "Update memory only after a durable decision is confirmed.",
+      ],
+    }),
+    taskType: "general",
+    suggestedActions: [
+      { label: "Create task plan", action: "create_task_plan", requiresApproval: false },
+      { label: "Run safe workflow", action: "run_safe_internal_workflow", requiresApproval: false },
+      { label: "Package approval", action: "package_for_approval", requiresApproval: true },
+    ],
+    artifacts: [
+      {
+        type: "operations_report",
+        title: "Agent 101 operating snapshot",
+        content: `Request: ${String(message || "").slice(0, 1200)}\nReadiness: ${JSON.stringify(readiness, null, 2).slice(0, 3000)}`,
+      },
+    ],
+    requiresApproval: false,
+    riskLevel: pendingApprovals ? "medium" : "low",
+    blockedAction: null,
+    logs: ["Agent 101 executive operating snapshot generated."],
   };
 }
 
@@ -3344,6 +7672,7 @@ function buildConnectorSetupChecklist(payload = {}) {
 function createAgent101Artifact(state, artifact) {
   const next = {
     id: artifact.id || `artifact-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    officeId: artifact.officeId || artifact.content?.officeId || null,
     workflowId: artifact.workflowId || "workflow-clips-office",
     type: artifact.type || "clips_package",
     title: artifact.title || "Agent 101 artifact",
@@ -3395,6 +7724,14 @@ function createAgent101Task(payload = {}) {
   state.mission.activeWorkflowId = task.workflowId;
   state.agent101 = { ...agent101Model(state), currentOffice: office.name };
   audit(state, "Agent 101 received task", task.title);
+  if (APP_MODE === "local" && localDatabaseStatus?.dbPath) {
+    localDatabase.enqueueLocalJob(localDatabaseStatus.dbPath, {
+      id: `local-${task.id}`,
+      type: "agent101_task",
+      status: "queued",
+      payload: { taskId: task.id, officeId: task.officeId, workflowId: task.workflowId, risk: task.risk },
+    });
+  }
   writeState(state);
   return { task, state };
 }
@@ -3416,17 +7753,20 @@ function createOfficeArtifact(officeId, payload = {}) {
   const state = readState();
   const artifact = createAgent101Artifact(state, {
     ...payload,
+    officeId: office.id,
     workflowId: payload.workflowId || office.workflowId,
     type: payload.type || "office_artifact",
     title: payload.title || `${office.name}: Draft artifact`,
     summary: payload.summary || `Draft artifact prepared for ${office.name}.`,
     risk: payload.risk || payload.riskLevel || office.risk,
-    content: payload.content || {
-      officeId: office.id,
-      message: payload.message || payload.goal || "Draft artifact prepared locally.",
-      allowedWork: office.allowedWork,
-      blockedWork: office.blockedWork,
-    },
+    content: payload.content && typeof payload.content === "object"
+      ? { ...payload.content, officeId: office.id }
+      : {
+        officeId: office.id,
+        message: payload.message || payload.goal || "Draft artifact prepared locally.",
+        allowedWork: office.allowedWork,
+        blockedWork: office.blockedWork,
+      },
     blockedActions: payload.blockedActions || office.blockedWork,
   });
   addMemory(state, "working", `${office.name} artifact drafted`, artifact.summary, office.id);
@@ -3492,23 +7832,1258 @@ function createClipsApprovalPackage(payload = {}) {
 function createHumanGateRequest(payload = {}) {
   const actionType = String(payload.actionType || detectRiskyAction(payload.message || payload.title || "") || "external_api_action");
   const state = readState();
+  const linkedId = String(payload.linkedId || "").slice(0, 240) || null;
+  const existing = linkedId
+    ? (state.approvals || []).find((item) => item.linkedId === linkedId && item.actionType === actionType && item.status === "pending")
+    : null;
+  if (existing) return { approval: existing, message: "Human Gate approval required.", requiresApproval: true, riskLevel: existing.riskLevel };
+  const evidenceObject = payload.evidence && typeof payload.evidence === "object" ? payload.evidence : null;
+  const details = payload.details && typeof payload.details === "object"
+    ? payload.details
+    : evidenceObject?.details && typeof evidenceObject.details === "object"
+      ? evidenceObject.details
+      : {};
+  const evidence = typeof payload.evidence === "string"
+    ? payload.evidence
+    : evidenceObject?.reason || "Agent 101 routed this request to Human Gate before any consequential action.";
   const approval = {
     id: `approval-agent101-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     title: String(payload.title || `Review blocked action: ${actionType}`),
     actionType,
     risk: payload.riskLevel || "high",
     riskLevel: payload.riskLevel || "high",
-    evidence: String(payload.evidence || "Agent 101 routed this request to Human Gate before any external action."),
+    evidence: String(evidence).slice(0, 4000),
     action: String(payload.action || "Operator approval required. No external action was executed."),
+    exactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    originalExactScope: String(payload.exactScope || "Only the exact action and details recorded on this request are authorized.").slice(0, 4000),
+    details,
+    originalDetails: JSON.parse(JSON.stringify(details)),
+    grantedDetails: null,
+    linkedId,
+    officeId: payload.officeId || details.officeId || null,
+    workflowId: payload.workflowId || null,
+    runId: payload.runId || evidenceObject?.runId || null,
+    missionId: payload.missionId || null,
+    reversible: payload.reversible !== false,
+    expiresAt: payload.expiresAt || new Date(Date.now() + (1000 * 60 * 60 * 24)).toISOString(),
+    expectedPostcondition: String(payload.expectedPostcondition || "The exact approved action completes and is recorded in the audit trail.").slice(0, 2000),
+    rollbackPlan: String(payload.rollbackPlan || "Stop on mismatch; source edits use atomic rollback and output actions remain isolated.").slice(0, 2000),
     status: "pending",
+    useCount: 0,
+    consumedAt: null,
     createdBy: "agent-101",
     createdAt: now(),
   };
   state.approvals.unshift(approval);
-  state.approvals = state.approvals.slice(0, 50);
+  const activeApprovals = state.approvals.filter((item) => ["pending", "approved", "needs_revision"].includes(item.status) && !item.consumedAt);
+  const archivedApprovals = state.approvals.filter((item) => !activeApprovals.includes(item)).slice(0, Math.max(0, 50 - activeApprovals.length));
+  state.approvals = [...activeApprovals, ...archivedApprovals];
   audit(state, "Risky action blocked", `${actionType}: Human Gate approval required.`);
   writeState(state);
   return { approval, message: "Human Gate approval required.", requiresApproval: true, riskLevel: approval.riskLevel };
+}
+
+function createStockOrderApprovalRequest(draft) {
+  const envelope = executionEnvelope(draft);
+  const plan = draft.tradePlan || {};
+  const position = plan.position || {};
+  const tradeSummary = {
+    symbol: draft.symbol,
+    side: draft.side,
+    quantity: draft.estimatedQuantity,
+    estimatedOrderValue: draft.cappedDollars,
+    score: plan.opportunityScore ?? null,
+    confidence: plan.confidenceScore ?? null,
+    entry: plan.preferredEntry ?? draft.referencePrice,
+    stop: plan.stop ?? null,
+    targets: Array.isArray(plan.targets) ? plan.targets : [],
+    riskDollars: position.estimatedRiskDollars ?? draft.riskBudgetDollars ?? null,
+    accountRiskPct: position.accountRiskPct ?? null,
+    catalyst: plan.catalyst || null,
+    majorReasons: Array.isArray(plan.reasons) ? plan.reasons : [],
+    blockingWarnings: draft.blockers || [],
+    currentSpread: null,
+    quoteAgeSeconds: null,
+    provider: draft.sourceType,
+  };
+  const approvalResult = createHumanGateRequest({
+    actionType: "place_robinhood_equity_order",
+    title: `Approve exact Robinhood order: ${draft.side} ${draft.symbol}`,
+    riskLevel: "critical",
+    linkedId: `stock-office:order:${draft.fingerprint}`,
+    officeId: "stock-office",
+    workflowId: "workflow-stock-watch",
+    expiresAt: draft.expiresAt,
+    evidence: `${draft.side} ${draft.symbol} · $${draft.cappedDollars.toFixed(2)} · ${draft.estimatedQuantity.toFixed(6)} shares · entry $${draft.referencePrice.toFixed(2)}. Local gates passed; Robinhood must still return a clean exact-order review.`,
+    action: `Review and, only if Robinhood's review_equity_order returns no warning or scope change before ${draft.expiresAt}, place this one ${draft.side} ${draft.symbol} order in the dedicated Agentic account.`,
+    exactScope: `One-use order fingerprint ${draft.fingerprint}: ${draft.side} ${draft.symbol}, market notional no more than $${draft.cappedDollars.toFixed(2)}, regular market hours, GFD, ref_id ${draft.clientRefId}. Reject on any broker warning, repricing outside policy, account mismatch, stale data, or scope change.`,
+    details: {
+      officeId: "stock-office",
+      draftId: draft.id,
+      fingerprint: draft.fingerprint,
+      executionEnvelope: envelope,
+      tradeSummary,
+      riskDecision: draft.riskDecision,
+      tradePlan: draft.tradePlan,
+      maxNotionalDollars: draft.cappedDollars,
+      accountScope: "dedicated_agentic_account_only",
+      moneyMovementAuthorized: false,
+      recurringAuthorization: false,
+    },
+    reversible: false,
+    expectedPostcondition: "The exact order is broker-reviewed, placed at most once, and reconciled to a Robinhood order ID; otherwise no order is placed.",
+    rollbackPlan: "If still open, cancel the exact broker order; if filled, stop automation and create a separate explicit SELL review. Never create an offsetting order automatically.",
+  });
+  stockIntelligenceStore.recordApproval(approvalResult.approval, {
+    proposalId: draft.sourceId || draft.id,
+    actorType: "SYSTEM",
+  });
+  stockEventBus.publish("trade.approval_requested", {
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approvalResult.approval.id,
+    symbol: draft.symbol,
+    side: draft.side,
+    status: "pending",
+    draft,
+    approval: approvalResult.approval,
+  }, { id: `trade.approval_requested:${approvalResult.approval.id}` });
+  return { approvalResult, envelope };
+}
+
+function stockOrderNotificationProposal(draft = {}, preferredProposal = null) {
+  const proposal = preferredProposal && typeof preferredProposal === "object" ? preferredProposal : {};
+  const checks = Array.isArray(draft.checks) ? draft.checks : [];
+  return {
+    ...proposal,
+    id: proposal.id || draft.sourceId || draft.id,
+    fingerprint: proposal.fingerprint || draft.fingerprint,
+    draftEligible: true,
+    symbol: proposal.symbol || draft.symbol,
+    side: proposal.side || draft.side,
+    requestedDollars: proposal.requestedDollars ?? draft.requestedDollars,
+    referencePrice: proposal.referencePrice ?? draft.referencePrice,
+    research: {
+      sourceLabel: draft.sourceType,
+      mainReason: draft.thesis,
+      checksPassed: checks.filter((check) => check.passed).length,
+      checksTotal: checks.length,
+      ...(proposal.research || {}),
+    },
+  };
+}
+
+async function notifyStockOrderHumanGate(draft, approval, preferredProposal = null, approvals = null) {
+  const currentApprovals = Array.isArray(approvals) ? approvals : (readState().approvals || []);
+  return stockTelegramNotifier.notifyQualifiedProposal(
+    stockOrderNotificationProposal(draft, preferredProposal),
+    draft,
+    approval,
+    currentApprovals,
+  );
+}
+
+async function syncPendingStockOrderHumanGateToTelegram() {
+  const state = readState();
+  const approvals = state.approvals || [];
+  const notificationStatus = stockTelegramNotifier.publicStatus(approvals);
+  if (!notificationStatus.enabled) return { checked: 0, sent: 0, state: notificationStatus.state };
+  const drafts = normalizeStockOfficeState(state.stockOffice).tradeDrafts || [];
+  const draftsById = new Map(drafts.map((draft) => [String(draft.id || ""), draft]));
+  const pending = approvals.filter((approval) => approval?.officeId === "stock-office"
+    && approval.actionType === "place_robinhood_equity_order"
+    && approval.status === "pending"
+    && !approval.consumedAt
+    && (!approval.expiresAt || Date.parse(approval.expiresAt) > Date.now()))
+    .slice(0, 10);
+  const results = [];
+  for (const approval of pending) {
+    const draftId = String(approval.details?.draftId || approval.originalDetails?.draftId || "");
+    const storedDraft = draftsById.get(draftId);
+    if (!storedDraft) continue;
+    const draft = tradeDraftWithApprovalState(storedDraft, [approval]);
+    if (draft.status !== "awaiting_human_gate" || !draft.fingerprint) continue;
+    const delivery = await notifyStockOrderHumanGate(draft, approval, null, approvals)
+      .catch((error) => ({ sent: false, state: "failed", reason: redactSensitiveText(error.message).slice(0, 300) }));
+    results.push({ approvalId: approval.id, draftId: draft.id, symbol: draft.symbol, side: draft.side, ...delivery });
+    if (!delivery.sent) continue;
+    const latestState = readState();
+    const current = normalizeStockOfficeState(latestState.stockOffice);
+    if (current.continuousReview?.activeApprovalId === approval.id) {
+      latestState.stockOffice = normalizeStockOfficeState({
+        ...current,
+        continuousReview: {
+          ...current.continuousReview,
+          lastOutcome: "notification_delivered",
+          notificationState: delivery.state,
+          notificationSentAt: delivery.sentAt,
+          lastMessage: `${draft.side} ${draft.symbol} is in Human Gate and Telegram was notified. No order has occurred.`,
+        },
+      });
+    }
+    audit(latestState, "Pending Human Gate Telegram delivered", `${draft.side} ${draft.symbol} approval was repaired and delivered to Telegram exactly once.`);
+    writeState(latestState);
+  }
+  return { checked: pending.length, sent: results.filter((result) => result.sent).length, state: "active", results };
+}
+
+function stockTelegramReportText(label, report) {
+  if (!report) return `${label}\nNo persisted report is available yet.`;
+  const top = (report.topOpportunities || []).slice(0, 5);
+  return [
+    label,
+    `Generated ${report.generatedAt || "unknown"}`,
+    `Researched ${report.summary?.researched || 0} · High ${report.summary?.highPriority || 0} · Candidates ${report.summary?.candidates || 0}`,
+    `Market ${report.marketState?.riskState || report.marketState?.regime || "unknown"} · Feeds ${report.providerHealth?.status || "unknown"}`,
+    `Measured ${report.performance?.measuredSignals || 0} · Expectancy ${Number.isFinite(Number(report.performance?.expectancyPct)) ? `${(Number(report.performance.expectancyPct) * 100).toFixed(2)}%` : "insufficient sample"}`,
+    "",
+    ...(top.length ? top.map((item, index) => `${index + 1}. ${item.symbol} — ${Math.round(Number(item.aiScore || item.overallScore || 0))} · ${item.status}`) : ["No opportunity currently meets the persisted candidate threshold."]),
+    "",
+    report.type === "morning" ? "Overnight theses still require current premarket and broker revalidation." : "Research only. No order authority.",
+  ].join("\n");
+}
+
+async function stockTelegramCommandContext(input = {}) {
+  const command = String(input.command || "help").toLowerCase();
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const control = brokerControlOverview(snapshot);
+  const plan = buildCopyPortfolioPlan(snapshot);
+  const intelligence = snapshot.intelligence || stockIntelligenceState();
+  const session = marketSession(new Date());
+  const opportunities = intelligence.opportunities || [];
+  const pending = (state.approvals || []).filter((item) => item.officeId === "stock-office" && item.status === "pending" && !item.consumedAt);
+  if (command === "help") {
+    return { text: "ARGENTUM COMMANDS\n/status /portfolio /positions /watchlist /opportunities /pending /research SYMBOL /overnight /morning /mirror /sources /risk /performance /health /symbol SYMBOL /help\n\nOnly environment-authorized Telegram user and chat IDs can control Human Gate." };
+  }
+  if (command === "status") {
+    return { text: [
+      "ARGENTUM STATUS",
+      `${control.executionMode} · ${session.label}`,
+      `Portfolio ${control.accountValueDollars === null ? "unavailable" : `$${control.accountValueDollars.toFixed(2)}`}`,
+      `Buying power ${control.buyingPowerDollars === null ? "unavailable" : `$${control.buyingPowerDollars.toFixed(2)}`}`,
+      `Opportunities ${opportunities.filter((item) => ["candidate", "high_priority"].includes(item.status)).length}`,
+      `Pending Human Gate ${pending.length}`,
+      `Execution ${control.liveReady ? "eligible for exact approval" : `blocked — ${control.blockers[0] || "unknown state"}`}`,
+    ].join("\n") };
+  }
+  if (command === "portfolio") {
+    return { text: [
+      "ARGENTUM PORTFOLIO",
+      `Value ${control.accountValueDollars === null ? "unavailable" : `$${control.accountValueDollars.toFixed(2)}`}`,
+      `Cash ${control.cashDollars === null ? "unavailable" : `$${control.cashDollars.toFixed(2)}`}`,
+      `Buying power ${control.buyingPowerDollars === null ? "unavailable" : `$${control.buyingPowerDollars.toFixed(2)}`}`,
+      `Stocks ${control.equityValueDollars === null ? "unavailable" : `$${control.equityValueDollars.toFixed(2)}`}`,
+      `Today P&L ${control.capital.dayPnlDollars === null ? "unavailable" : `$${control.capital.dayPnlDollars.toFixed(2)}`}`,
+      `Positions ${control.positions.length} · Open orders ${control.openOrderCount}`,
+      `Updated ${control.snapshotUpdatedAt || "unavailable"}`,
+    ].join("\n") };
+  }
+  if (command === "positions") {
+    return { text: [
+      "ARGENTUM POSITIONS",
+      ...(control.positions.length ? control.positions.slice(0, 15).map((position) => {
+        const quantity = Number(position.quantity ?? position.sharesAvailableForSells ?? 0);
+        const price = Number(position.currentPrice);
+        return `${position.symbol} · ${quantity.toFixed(4)} shares · ${Number.isFinite(price) ? `$${price.toFixed(2)}` : "price unavailable"}`;
+      }) : ["No verified live positions."]),
+    ].join("\n") };
+  }
+  if (["watchlist", "opportunities"].includes(command)) {
+    const top = opportunities.filter((item) => ["candidate", "high_priority"].includes(item.status)).slice(0, 8);
+    return { text: [command === "watchlist" ? "ARGENTUM WATCHLIST" : "ARGENTUM OPPORTUNITIES", ...(top.length ? top.map((item, index) => `${index + 1}. ${item.symbol} · Score ${Math.round(item.overallScore)} · Confidence ${item.confidenceScore ?? item.confidence} · ${item.status.replaceAll("_", " ")}`) : ["No opportunity currently passes the persisted candidate threshold and hard gates."])].join("\n") };
+  }
+  if (command === "pending") {
+    return { text: ["ARGENTUM PENDING", ...(pending.length ? pending.slice(0, 10).map((item) => `${String(item.details?.side || "REVIEW")} ${String(item.details?.executionEnvelope?.args?.symbol || item.title || "").slice(0, 80)} · ${item.id.slice(-8)} · expires ${item.expiresAt || "unknown"}`) : ["No Stock Office Human Gate request is pending."])].join("\n") };
+  }
+  if (["research", "symbol", "why"].includes(command)) {
+    const symbol = String(input.args?.[0] || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+    if (!symbol) return { text: "Use /research SYMBOL, for example /research NET." };
+    const opportunity = opportunities.find((item) => item.symbol === symbol);
+    const proposal = plan.proposals.find((item) => item.symbol === symbol);
+    if (!opportunity && !proposal) return { text: `${symbol}\nNo persisted Argentum research is available for this symbol.` };
+    const evidence = opportunity?.evidence || [];
+    return { text: [
+      `ARGENTUM RESEARCH · ${symbol}`,
+      `Thesis ${opportunity?.thesis?.setup || proposal?.research?.setupType || "monitoring"}`,
+      `Score ${opportunity?.overallScore ?? "unavailable"} · Technical ${opportunity?.technicalScore ?? "unavailable"} · Smart Money ${opportunity?.mirrorScore ?? "unavailable"} · Risk ${opportunity?.riskScore ?? "unavailable"}`,
+      `Confidence ${opportunity?.confidenceScore ?? opportunity?.confidence ?? proposal?.research?.confidence ?? "unavailable"} · State ${opportunity?.state || "unavailable"}`,
+      `Provider ${opportunity?.raw?.dataProvider || opportunity?.marketContext?.sourceProvider || "unavailable"} · ${opportunity?.raw?.dataHealthState || opportunity?.marketContext?.dataHealthState || "UNKNOWN"}`,
+      ...evidence.slice(0, 6).map((item) => `${item.direction === "supporting" ? "✓" : "!"} ${item.label}`),
+      `Risk ${opportunity?.thesis?.risk || proposal?.research?.mainRisk || "unavailable"}`,
+      `Updated ${opportunity?.lastResearchedAt || proposal?.research?.lastResearchedAt || "unavailable"}`,
+      `Next review ${opportunity?.nextReviewAt || proposal?.research?.nextReviewAt || "unavailable"}`,
+      opportunity?.blockers?.length ? `Hard gate ${opportunity.blockers[0].reason || opportunity.blockers[0].code}` : proposal?.blockers?.length ? `Blocked ${proposal.blockers[0]}` : "Execution still requires exact Human Gate and broker revalidation.",
+    ].join("\n") };
+  }
+  if (command === "overnight") return { text: stockTelegramReportText("ARGENTUM NIGHT RESEARCH", intelligence.reports?.overnight) };
+  if (command === "morning") return { text: stockTelegramReportText("ARGENTUM MORNING INTELLIGENCE", intelligence.reports?.morning) };
+  if (command === "mirror") {
+    const mirror = intelligence.mirror || {};
+    return { text: [
+      "ARGENTUM MIRROR",
+      `Sources ${(mirror.sources || []).filter((item) => item.active).length}/${(mirror.sources || []).length}`,
+      `Events ${(mirror.events || []).length} · Consensus ${(mirror.consensus || []).length}`,
+      ...(mirror.consensus || []).slice(0, 5).map((item) => `${item.symbol} ${item.side} · ${item.sourceCount} sources · ${Math.round(item.score)}`),
+      ...(mirror.events || []).slice(0, 4).map((item) => `${item.symbol || "—"} ${item.side || "—"} · ${item.delaySeconds === null ? "delay unavailable" : `${Math.round(item.delaySeconds / 3600)}h delay`} · ${item.status}`),
+    ].join("\n") };
+  }
+  if (command === "sources") {
+    return { text: ["ARGENTUM SOURCES", ...(snapshot.sources || []).slice(0, 15).map((source) => `${source.label || source.id} · ${source.status} · ${source.generatedAt || source.lastModified || "no timestamp"}`)].join("\n") };
+  }
+  if (command === "risk") {
+    const halt = snapshot.killSwitch || {};
+    return { text: [
+      "ARGENTUM RISK",
+      `Mode ${control.executionMode}`,
+      `Trading halt ${halt.active ? "ACTIVE" : "clear"} · ${halt.scope || "new_entries_only"}`,
+      halt.active ? `Reason ${halt.reason || "unknown"}` : null,
+      `Max order $${control.guardrails.maxOrderDollars.toFixed(2)} · Max deployed $${control.guardrails.maxTotalDollars.toFixed(2)}`,
+      `Daily stop $${control.capital.dailyLossLimitDollars.toFixed(2)} · Trades ${control.capital.tradesToday ?? "unavailable"}/${control.guardrails.maxTradesPerDay}`,
+      ...(control.blockers.length ? control.blockers.slice(0, 8).map((item) => `BLOCK · ${item}`) : ["Current loaded checks pass."]),
+    ].filter(Boolean).join("\n") };
+  }
+  if (command === "performance") {
+    const performance = intelligence.performance || stockIntelligenceStore.performanceReport();
+    const summary = performance.summary || {};
+    return { text: [
+      "ARGENTUM PERFORMANCE",
+      `Signals ${summary.totalSignals || 0} · Measured ${summary.measuredSignals || 0} · Pending ${summary.pendingSignals || 0}`,
+      `Wins ${summary.wins || 0} · Losses ${summary.losses || 0}`,
+      `Expectancy ${Number.isFinite(Number(summary.expectancyPct)) ? `${(Number(summary.expectancyPct) * 100).toFixed(2)}%` : "insufficient sample"}`,
+      `Average R ${Number.isFinite(Number(summary.averageRMultiple)) ? Number(summary.averageRMultiple).toFixed(2) : "insufficient sample"}`,
+      `Max drawdown ${Number.isFinite(Number(summary.maximumDrawdownPct)) ? `${(Number(summary.maximumDrawdownPct) * 100).toFixed(2)}%` : "insufficient sample"}`,
+      `Broker trades ${summary.brokerTrades || 0} · Approved ${summary.approvedTrades || 0} · Rejected ${summary.rejectedTrades || 0}`,
+      "Signal outcomes, simulation, backtests, and live broker fills remain separate.",
+    ].join("\n") };
+  }
+  if (command === "health") {
+    const health = stockIntelligenceStore.health({ executionMode: snapshot.executionMode, executionBlocked: !control.liveReady, sourceHealth: snapshot.sourceHealth, providerHealth: snapshot.providerHealth, broker: { authenticationVerified: control.authenticationVerified, updatedAt: control.snapshotUpdatedAt }, telegram: stockTelegramNotifier.publicStatus(state.approvals || []) });
+    return { text: [
+      "ARGENTUM HEALTH",
+      `Market data ${health.marketData.status}`,
+      `Broker ${health.broker.status}`,
+      `Telegram ${health.telegram.status}`,
+      `Research ${health.research.status}`,
+      `Mirror ${health.mirror.healthy}/${health.mirror.total}`,
+      `Database ${health.database.status}`,
+      `Worker heartbeat ${health.lastWorkerHeartbeat || "pending"}`,
+      ...(health.marketData.providers || []).slice(0, 8).map((provider) => `${provider.provider} · ${provider.status} · ${provider.latencyMs === null ? "latency unavailable" : `${provider.latencyMs}ms`}`),
+    ].join("\n") };
+  }
+  return { text: "Use /help for Argentum commands." };
+}
+
+async function stockTelegramApprovalAction(input = {}) {
+  const state = readState();
+  const approval = (state.approvals || []).find((item) => item.id === String(input.approvalId || ""));
+  if (!approval || approval.officeId !== "stock-office" || approval.actionType !== "place_robinhood_equity_order") {
+    return { text: "BLOCKED\nThis immutable Stock Office approval ID is unavailable or invalid." };
+  }
+  if (approval.status !== "pending") {
+    return { text: `NO CHANGE\nThis request is already ${approval.status}${approval.consumedAt ? " and consumed" : ""}.` };
+  }
+  const decision = input.decision === "approve" ? "approve" : "reject";
+  const decided = decideHumanGateRequest(approval.id, {
+    decision,
+    note: `Telegram ${decision} from authorized user ${String(input.actorId || "").slice(-8)}.`,
+    actorType: "TELEGRAM",
+    actorId: input.actorId,
+    telegramMessageId: input.messageId,
+  });
+  stockIntelligenceStore.recordApproval(decided.request, {
+    proposalId: decided.request.details?.draftId || "",
+    actorType: "TELEGRAM",
+    actorId: input.actorId,
+    idempotencyKey: input.idempotencyKey,
+    telegramMessageId: input.messageId,
+  });
+  stockEventBus.publish(decision === "approve" ? "trade.approved" : "trade.rejected", {
+    approvalId: approval.id,
+    proposalId: approval.details?.draftId || "",
+    symbol: approval.details?.executionEnvelope?.args?.symbol || "",
+    decision,
+    status: decided.request.status,
+  }, { actorType: "TELEGRAM", actorId: input.actorId, id: `telegram:${decision}:${approval.id}` });
+  if (decision !== "approve") return { text: "DECLINED\nThe exact Human Gate request was rejected. No broker review or order occurred." };
+  try {
+    const execution = await executeApprovedStockDraft(String(approval.details?.draftId || ""), {
+      dispatchMode: "telegram_human_gate_approval",
+      actorType: "TELEGRAM",
+      actorId: input.actorId,
+      telegramMessageId: input.messageId,
+    });
+    return { text: execution.liveOrderPlaced
+      ? `APPROVED\n${execution.draft.side} ${execution.draft.symbol} was broker-reviewed and independently reconciled as ${execution.draft.status}. Order ••••${String(execution.draft.brokerOrderId || "").slice(-4)}.`
+      : `BLOCKED AFTER APPROVAL\n${execution.draft.lastDispatchError || "No independently verified broker order was recorded."}` };
+  } catch (error) {
+    return { text: `BLOCKED AFTER APPROVAL\n${redactSensitiveText(error.message).slice(0, 800)}\nNo retry will occur automatically.` };
+  }
+}
+
+async function stockTelegramWatchAction(input = {}) {
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const proposal = buildCopyPortfolioPlan(snapshot).proposals.find((item) => item.id === String(input.proposalId || ""));
+  if (!proposal) return { text: "WATCH FAILED\nThe proposal changed or expired. Request /opportunities again." };
+  const current = normalizeStockOfficeState(state.stockOffice);
+  const decision = { proposalId: proposal.id, fingerprint: proposal.fingerprint, symbol: proposal.symbol, side: proposal.side, decision: "reviewed", decidedAt: now() };
+  state.stockOffice = normalizeStockOfficeState({ ...current, proposalDecisions: [decision, ...current.proposalDecisions.filter((item) => item.proposalId !== proposal.id)] });
+  audit(state, "Stock Office Telegram watch", `${proposal.symbol} was marked for continued research by an authorized Telegram user; no broker action occurred.`);
+  writeState(state);
+  stockEventBus.publish("opportunity.updated", { proposalId: proposal.id, symbol: proposal.symbol, decision: "watch", status: "monitoring" }, { actorType: "TELEGRAM", actorId: input.actorId, id: `telegram:watch:${input.idempotencyKey}` });
+  return { text: `WATCHING ${proposal.symbol}\nArgentum will retain it in research memory and re-evaluate it on future cycles. No order occurred.` };
+}
+
+async function processStockContinuousReview(result = {}) {
+  const completedAt = result.completedAt || now();
+  const session = marketSession(new Date(completedAt));
+  const initialState = readState();
+  const initialOffice = normalizeStockOfficeState(initialState.stockOffice);
+  const baseReview = initialOffice.continuousReview || {};
+  const recordReview = (updates) => {
+    const state = readState();
+    const current = normalizeStockOfficeState(state.stockOffice);
+    const evaluatedAt = now();
+    const nextReview = {
+      ...current.continuousReview,
+      lastCycleCompletedAt: completedAt,
+      lastEvaluatedAt: evaluatedAt,
+      reviewTrigger: result.trigger || "market_research",
+      decisionCadenceSeconds: Math.round(stockReadinessIntervalMs() / 1_000),
+      ...updates,
+    };
+    const materialKeys = ["lastOutcome", "lastMessage", "activeProposalFingerprint", "activeDraftId", "activeApprovalId", "notificationState", "notificationSentAt"];
+    const materialStateUnchanged = materialKeys.every((key) => JSON.stringify(current.continuousReview[key] ?? null) === JSON.stringify(nextReview[key] ?? null));
+    const lastPersistedAt = Date.parse(current.continuousReview.lastEvaluatedAt || "");
+    const throttleUnchangedFastTick = result.trigger === "live_readiness"
+      && materialStateUnchanged
+      && current.continuousReview.reviewTrigger === "live_readiness"
+      && current.continuousReview.decisionCadenceSeconds === nextReview.decisionCadenceSeconds
+      && Number.isFinite(lastPersistedAt)
+      && Date.now() - lastPersistedAt < 15_000;
+    if (throttleUnchangedFastTick) return nextReview;
+    state.stockOffice = normalizeStockOfficeState({
+      ...current,
+      continuousReview: nextReview,
+    });
+    writeState(state);
+    return state.stockOffice.continuousReview;
+  };
+  if (!session.regular) {
+    return recordReview({ lastOutcome: "market_closed", lastMessage: `${session.label}; research remains scheduled, but no live order request is staged outside regular hours.` });
+  }
+  if (!["success", "partial"].includes(result.status)) {
+    return recordReview({ lastOutcome: "failed_safe", lastMessage: result.errors?.[0] || result.message || "The research cycle did not complete successfully; no proposal was staged." });
+  }
+
+  const snapshot = stockOfficeSnapshot(initialState);
+  const plan = buildCopyPortfolioPlan(snapshot);
+  const tradeDrafts = initialOffice.tradeDrafts.map((draft) => tradeDraftWithApprovalState(draft, initialState.approvals || []));
+  const activeDraft = tradeDrafts.find((draft) => ["awaiting_human_gate", "approved", "dispatch_claimed"].includes(draft.status));
+  if (activeDraft) {
+    return recordReview({
+      lastOutcome: "waiting_for_human_gate",
+      lastMessage: `${activeDraft.side} ${activeDraft.symbol} is already waiting for operator review; market research continues on the next cycle.`,
+      activeDraftId: activeDraft.id,
+      activeApprovalId: activeDraft.approvalId,
+    });
+  }
+
+  const cycleDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(completedAt));
+  const priorCycleDay = baseReview.lastCycleCompletedAt
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(baseReview.lastCycleCompletedAt))
+    : "";
+  const selectionReview = priorCycleDay && priorCycleDay !== cycleDay ? { ...baseReview, stagedProposalFingerprints: [] } : baseReview;
+  const proposal = selectNextQualifiedProposal(plan, selectionReview, { session, now: completedAt });
+  if (!proposal) {
+    const blockers = plan.proposals?.find((item) => item.side !== "HOLD")?.blockers || [];
+    return recordReview({
+      lastOutcome: "no_qualified_proposal",
+      lastMessage: blockers[0] || "Cycle completed with BUY, HOLD, and SELL reviews; no exact order passed every current check.",
+      activeProposalFingerprint: "",
+      activeDraftId: "",
+      activeApprovalId: "",
+    });
+  }
+
+  const draft = buildTradeDraft({
+    candidateId: proposal.candidateId || undefined,
+    symbol: proposal.symbol,
+    side: proposal.side,
+    requestedDollars: proposal.requestedDollars,
+  }, snapshot, { approvalTtlMinutes: stockApprovalTtlMinutes() });
+  if (draft.status !== "ready_for_broker_review" || draft.blockers.length || draft.fingerprint !== proposal.draftFingerprint) {
+    return recordReview({ lastOutcome: "failed_safe", lastMessage: draft.blockers[0] || "Proposal evidence changed during final cycle revalidation; nothing was staged." });
+  }
+
+  let state = readState();
+  let current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    tradeDrafts: [draft, ...current.tradeDrafts.filter((item) => item.fingerprint !== draft.fingerprint)],
+  });
+  audit(state, "Stock Office continuous order draft", `${draft.side} ${draft.symbol} passed the completed research cycle and was staged locally; no broker review or order occurred.`);
+  writeState(state);
+
+  const { approvalResult } = createStockOrderApprovalRequest(draft);
+  state = readState();
+  current = normalizeStockOfficeState(state.stockOffice);
+  const awaitingDraft = tradeDraftWithApprovalState({ ...draft, approvalId: approvalResult.approval.id, status: "awaiting_human_gate", updatedAt: now() }, [approvalResult.approval]);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+    continuousReview: {
+      ...current.continuousReview,
+      lastCycleCompletedAt: completedAt,
+      lastEvaluatedAt: now(),
+      lastOutcome: "proposal_staged",
+      lastMessage: `${proposal.side} ${proposal.symbol} passed this cycle and is waiting in Human Gate. Research continues; no order has occurred.`,
+      activeProposalFingerprint: proposal.fingerprint,
+      activeDraftId: awaitingDraft.id,
+      activeApprovalId: approvalResult.approval.id,
+      notificationState: "pending",
+      notificationSentAt: null,
+      stagedProposalFingerprints: [...selectionReview.stagedProposalFingerprints, proposal.fingerprint].slice(-40),
+    },
+  });
+  audit(state, "Stock Office cycle awaiting Human Gate", `${proposal.side} ${proposal.symbol} is the one exact proposal staged from this market cycle; no live order placed.`);
+  writeState(state);
+
+  const notificationState = readState();
+  const delivery = await notifyStockOrderHumanGate(awaitingDraft, approvalResult.approval, proposal, notificationState.approvals || []);
+  state = readState();
+  current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({
+    ...current,
+    continuousReview: {
+      ...current.continuousReview,
+      lastOutcome: delivery.sent ? "notification_delivered" : "notification_unavailable",
+      notificationState: delivery.state || "unavailable",
+      notificationSentAt: delivery.sentAt || null,
+      lastMessage: delivery.sent
+        ? `${proposal.side} ${proposal.symbol} is in Human Gate and Telegram was notified. No order has occurred.`
+        : `${proposal.side} ${proposal.symbol} is in Human Gate. Telegram did not send: ${delivery.reason || delivery.state}.`,
+    },
+  });
+  audit(state, delivery.sent ? "Qualified proposal Telegram delivered" : "Qualified proposal Telegram not delivered", delivery.sent ? `${proposal.side} ${proposal.symbol} Human Gate alert delivered.` : `No proposal alert sent: ${delivery.reason || delivery.state}.`);
+  writeState(state);
+  return state.stockOffice.continuousReview;
+}
+
+async function executeApprovedStockDraft(draftId, options = {}) {
+  if (stockExecutionMode() !== "live") {
+    throw guardedError("Stock Office is in PAPER mode. Live dispatch requires STOCK_GURU_EXECUTION_MODE=live and an app restart.", 409);
+  }
+  const executionSession = marketSession();
+  if (process.env.NODE_ENV !== "test" && !executionSession.regular) {
+    throw guardedError(`${executionSession.label}. Regular-hours market orders cannot be reviewed or placed outside the regular session. Research remains active.`, 409);
+  }
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state, options.permissions);
+  const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+  if (!draft) throw guardedError("Order draft not found.", 404);
+  if (options.confirmationFingerprint && String(options.confirmationFingerprint) !== draft.fingerprint) {
+    throw guardedError("Action-time order confirmation does not match the exact approved fingerprint.", 409);
+  }
+  const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+    || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+  if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+  let claimed;
+  try {
+    claimed = claimApprovedDispatch(draft, approval, snapshot);
+  } catch (error) {
+    const approvalCanBeFinalized = approval.status === "approved"
+      && approval.actionType === "place_robinhood_equity_order"
+      && !approval.consumedAt
+      && !(Number(approval.useCount) > 0);
+    if (!approvalCanBeFinalized) throw error;
+    const stoppedAt = now();
+    const stoppedReason = redactSensitiveText(error.message || "Final order revalidation stopped safely.").slice(0, 500);
+    const current = normalizeStockOfficeState(state.stockOffice);
+    const stoppedDraftInput = {
+      ...draft,
+      status: "review_rejected",
+      brokerReviewPassed: false,
+      brokerWarnings: [],
+      lastDispatchError: stoppedReason,
+      liveOrderPlaced: false,
+      updatedAt: stoppedAt,
+    };
+    const stoppedApproval = {
+      ...approval,
+      useCount: Number(approval.useCount || 0) + 1,
+      consumedAt: stoppedAt,
+      executionOutcome: "broker_execution_stopped",
+      executionError: stoppedReason,
+      executionStoppedAt: stoppedAt,
+      executionDraftId: draft.id,
+      executionBrokerOrderId: null,
+    };
+    state.stockOffice = normalizeStockOfficeState({
+      ...current,
+      tradeDrafts: [stoppedDraftInput, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      continuousReview: {
+        ...current.continuousReview,
+        activeDraftId: "",
+        activeApprovalId: "",
+        lastOutcome: "failed_safe",
+        lastMessage: `${draft.side} ${draft.symbol} stopped during final revalidation: ${stoppedReason}`,
+      },
+    });
+    const approvalIndex = (state.approvals || []).findIndex((item) => item.id === approval.id);
+    if (approvalIndex >= 0) state.approvals[approvalIndex] = stoppedApproval;
+    const stoppedDraft = state.stockOffice.tradeDrafts.find((item) => item.id === draft.id) || stoppedDraftInput;
+    stockIntelligenceStore.recordOrderAudit({
+      correlationId: `revalidation:${approval.id}`,
+      actorType: options.actorType || "WEB",
+      actorId: options.actorId || "",
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      action: "final_revalidation_stopped",
+      oldState: draft.status,
+      newState: stoppedDraft.status,
+      reason: stoppedReason,
+      error: stoppedReason,
+      telegramMessageId: options.telegramMessageId || "",
+    });
+    stockEventBus.publish("order.rejected", {
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      symbol: draft.symbol,
+      side: draft.side,
+      status: stoppedDraft.status,
+      reason: stoppedReason,
+      draft: stoppedDraft,
+    }, { correlationId: `revalidation:${approval.id}`, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+    audit(state, "Approved Stock Office order stopped during final revalidation", `${draft.side} ${draft.symbol}: ${stoppedReason}; exact one-use approval consumed and no broker order was attempted.`);
+    writeState(state);
+    return {
+      draft: stoppedDraft,
+      approval: stoppedApproval,
+      liveOrderPlaced: false,
+      reconciliationRequired: false,
+      notificationDelivery: { sent: false, state: "ineligible", reason: "No broker order was recorded." },
+      notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []),
+    };
+  }
+  const current = normalizeStockOfficeState(state.stockOffice);
+  state.stockOffice = normalizeStockOfficeState({ ...current, tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)] });
+  approval.dispatchClaimId = claimed.claim.id;
+  approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+  approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+  approval.dispatchMode = options.dispatchMode || "direct_official_robinhood_mcp";
+  stockIntelligenceStore.recordOrderAudit({
+    correlationId: claimed.claim.id,
+    actorType: options.actorType || "WEB",
+    actorId: options.actorId || "",
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    symbol: draft.symbol,
+    side: draft.side,
+    action: "dispatch_claimed",
+    oldState: draft.status,
+    newState: claimed.draft.status,
+    reason: "One-use claim persisted before official broker review.",
+    telegramMessageId: options.telegramMessageId || "",
+  });
+  stockEventBus.publish("order.review_started", { proposalId: draft.sourceId || draft.id, approvalId: approval.id, symbol: draft.symbol, side: draft.side, status: "broker_review", draft: claimed.draft }, { correlationId: claimed.claim.id, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+  audit(state, "Stock Office direct dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} was persisted before any official Robinhood broker call.`);
+  writeState(state);
+
+  let brokerResult;
+  try {
+    brokerResult = await robinhoodMcpClient.executeApprovedEnvelope(claimed.claim.envelope);
+  } catch (error) {
+    brokerResult = { reviewPassed: false, warnings: [], placementAttempted: false, brokerOrderId: "", brokerState: "", reconciliation: { matched: false }, error: `Official Robinhood execution stopped before a verified placement: ${error.message}` };
+  }
+
+  const latestState = readState();
+  const latestCurrent = normalizeStockOfficeState(latestState.stockOffice);
+  const latestDraft = latestCurrent.tradeDrafts.find((item) => item.id === draft.id);
+  const approvalIndex = (latestState.approvals || []).findIndex((item) => item.id === approval.id);
+  if (!latestDraft || approvalIndex < 0) throw guardedError("The persisted dispatch state changed during broker execution; manual reconciliation is required.", 409);
+  const settled = settleApprovedDispatch(latestDraft, latestState.approvals[approvalIndex], brokerResult, claimed.claim.token, { trustedBrokerResult: true });
+  latestState.stockOffice = normalizeStockOfficeState({
+    ...latestCurrent,
+    tradeDrafts: [settled.draft, ...latestCurrent.tradeDrafts.filter((item) => item.id !== draft.id)],
+    continuousReview: {
+      ...latestCurrent.continuousReview,
+      activeDraftId: "",
+      activeApprovalId: "",
+      lastOutcome: settled.liveOrderPlaced ? "proposal_staged" : "failed_safe",
+      lastMessage: settled.liveOrderPlaced
+        ? `${draft.side} ${draft.symbol} was independently reconciled by Robinhood. Research continues on the next cycle.`
+        : `${draft.side} ${draft.symbol} stopped safely: ${settled.draft.lastDispatchError || "no independently verified order"}.`,
+    },
+  });
+  latestState.approvals[approvalIndex] = settled.approval;
+  stockIntelligenceStore.recordOrderAudit({
+    correlationId: claimed.claim.id,
+    actorType: options.actorType || "WEB",
+    actorId: options.actorId || "",
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    orderId: settled.draft.brokerOrderId || "",
+    symbol: draft.symbol,
+    side: draft.side,
+    action: settled.liveOrderPlaced ? "broker_reconciled" : "broker_stopped",
+    oldState: claimed.draft.status,
+    newState: settled.draft.status,
+    reason: settled.draft.lastDispatchError || "Official Robinhood result reconciled.",
+    brokerResponse: brokerResult,
+    error: settled.liveOrderPlaced ? "" : settled.draft.lastDispatchError,
+    telegramMessageId: options.telegramMessageId || "",
+  });
+  stockEventBus.publish(settled.liveOrderPlaced ? (settled.draft.status === "filled" ? "order.filled" : "order.submitted") : "order.rejected", {
+    proposalId: draft.sourceId || draft.id,
+    approvalId: approval.id,
+    orderId: settled.draft.brokerOrderId || "",
+    symbol: draft.symbol,
+    side: draft.side,
+    status: settled.draft.status,
+    reason: settled.draft.lastDispatchError || "",
+    draft: settled.draft,
+  }, { correlationId: claimed.claim.id, actorType: options.actorType || "WEB", actorId: options.actorId || "" });
+  audit(latestState, settled.liveOrderPlaced ? "Stock Office broker order independently reconciled" : "Stock Office direct dispatch stopped or needs reconciliation", settled.liveOrderPlaced ? `${draft.side} ${draft.symbol} matched official Robinhood order ${settled.draft.brokerOrderId}; exact one-use approval consumed.` : `${draft.side} ${draft.symbol}: ${settled.draft.lastDispatchError || "no independently verified order"}; exact one-use approval consumed and placement will not be retried.`);
+  writeState(latestState);
+  if (settled.liveOrderPlaced) {
+    const signal = stockIntelligenceStore.latestSignalForSymbol(draft.symbol);
+    stockIntelligenceStore.recordTradeJournal({
+      signalId: signal?.id || null,
+      proposalId: draft.sourceId || draft.id,
+      approvalId: approval.id,
+      brokerOrderId: settled.draft.brokerOrderId,
+      strategyVersion: signal?.strategyVersion || draft.tradePlan?.version || "unknown",
+      symbol: draft.symbol,
+      side: draft.side,
+      status: settled.draft.status,
+      quantity: draft.estimatedQuantity,
+      entryPrice: draft.side === "BUY" ? draft.referencePrice : null,
+      exitPrice: draft.side === "SELL" ? draft.referencePrice : null,
+      humanIntervention: `${options.actorType || "WEB"} Human Gate approval`,
+      openedAt: draft.side === "BUY" ? settled.draft.reconciliationObservedAt : null,
+      closedAt: draft.side === "SELL" && settled.draft.status === "filled" ? settled.draft.reconciliationObservedAt : null,
+      data: { draft: settled.draft, tradePlan: draft.tradePlan, riskDecision: draft.riskDecision },
+    });
+  }
+  const notificationDelivery = settled.liveOrderPlaced
+    ? await stockTelegramNotifier.notifyVerifiedTrade(settled.draft, latestState.approvals || []).catch((error) => ({ sent: false, state: "failed", reason: error.message }))
+    : { sent: false, state: "ineligible", reason: "No independently reconciled broker order was recorded." };
+  if (settled.liveOrderPlaced) {
+    audit(latestState, notificationDelivery.sent ? "Verified trade Telegram delivered" : "Verified trade Telegram not delivered", notificationDelivery.sent ? `${draft.side} ${draft.symbol} alert delivered after broker reconciliation.` : `No Telegram alert sent: ${notificationDelivery.reason || notificationDelivery.state}.`);
+    writeState(latestState);
+  }
+  return { draft: settled.draft, approval: settled.approval, liveOrderPlaced: settled.liveOrderPlaced, reconciliationRequired: settled.reconciliationRequired, notificationDelivery, notificationStatus: stockTelegramNotifier.publicStatus(latestState.approvals || []) };
+}
+
+async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpClient.currentBrokerSnapshot()) {
+  const state = readState();
+  const current = normalizeStockOfficeState(state.stockOffice);
+  const reconciled = reconcileOrderDrafts(current.tradeDrafts, brokerSnapshot, { now: now() });
+  const { changes } = reconciled;
+  if (!changes.length) return { changed: 0 };
+  state.stockOffice = normalizeStockOfficeState({ ...current, tradeDrafts: reconciled.drafts });
+  for (const change of changes) {
+    const { before, after } = change;
+    const eventType = after.status === "filled" ? "order.filled" : after.status === "cancelled" ? "order.cancelled" : after.status === "rejected" ? "order.rejected" : "order.updated";
+    stockIntelligenceStore.recordOrderAudit({
+      correlationId: `broker-order:${after.brokerOrderId}`,
+      actorType: "SYSTEM",
+      proposalId: after.sourceId || after.id,
+      approvalId: after.approvalId,
+      orderId: after.brokerOrderId,
+      symbol: after.symbol,
+      side: after.side,
+      action: "broker_state_reconciled",
+      oldState: before.brokerState || before.status,
+      newState: after.brokerState,
+      reason: "Official Robinhood order history changed state.",
+      brokerResponse: change.order,
+    });
+    const signal = stockIntelligenceStore.latestSignalForSymbol(after.symbol);
+    stockIntelligenceStore.recordTradeJournal({
+      signalId: signal?.id || null,
+      proposalId: after.sourceId || after.id,
+      approvalId: after.approvalId,
+      brokerOrderId: after.brokerOrderId,
+      strategyVersion: signal?.strategyVersion || after.tradePlan?.version || "unknown",
+      symbol: after.symbol,
+      side: after.side,
+      status: after.status,
+      quantity: after.estimatedQuantity,
+      entryPrice: after.side === "BUY" ? after.referencePrice : null,
+      exitPrice: after.side === "SELL" ? after.referencePrice : null,
+      humanIntervention: "Previously approved exact Human Gate order",
+      openedAt: after.side === "BUY" ? after.reconciliationObservedAt : null,
+      closedAt: after.side === "SELL" && after.status === "filled" ? after.reconciliationObservedAt : null,
+      updatedAt: after.updatedAt,
+      data: { order: change.order, draft: after },
+    });
+    stockEventBus.publish(eventType, {
+      proposalId: after.sourceId || after.id,
+      approvalId: after.approvalId,
+      orderId: after.brokerOrderId,
+      symbol: after.symbol,
+      side: after.side,
+      oldState: before.brokerState || before.status,
+      newState: after.brokerState,
+      status: after.status,
+      reason: "Official Robinhood order history changed state.",
+      draft: after,
+    }, { correlationId: `broker-order:${after.brokerOrderId}` });
+    audit(state, "Stock Office broker lifecycle reconciled", `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} changed from ${before.brokerState || before.status} to ${after.brokerState}.`);
+  }
+  writeState(state);
+  return { changed: changes.length, states: changes.map((item) => ({ orderId: item.after.brokerOrderId, state: item.after.brokerState })) };
+}
+
+function decideHumanGateRequest(approvalId, payload = {}) {
+  const state = readState();
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (!approval) throw guardedError("Approval request not found.", 404);
+  if (approval.status !== "pending") throw guardedError("Approval request is no longer pending.", 409);
+  const decision = ["approve", "approve_limited", "send_back", "reject", "block"].includes(payload.decision) ? payload.decision : "send_back";
+  if (decision === "approve_limited") {
+    if (!payload.grantedDetails || typeof payload.grantedDetails !== "object" || Array.isArray(payload.grantedDetails)) {
+      throw guardedError("A limited approval requires a structured grantedDetails scope.", 400);
+    }
+    const original = approval.originalDetails || approval.details || {};
+    const unknownKey = Object.keys(payload.grantedDetails).find((key) => !(key in original));
+    if (unknownKey) throw guardedError(`Limited approval contains an unknown scope field: ${unknownKey}.`, 400);
+    approval.grantedDetails = JSON.parse(JSON.stringify(payload.grantedDetails));
+    approval.grantedScopeNote = String(payload.exactScope || payload.note || "Operator granted a narrower structured scope.").slice(0, 2000);
+  } else if (decision === "approve") {
+    approval.grantedDetails = JSON.parse(JSON.stringify(approval.originalDetails || approval.details || {}));
+  }
+  approval.status = decision === "approve" || decision === "approve_limited" ? "approved" : decision === "reject" || decision === "block" ? "blocked" : "needs_revision";
+  approval.decision = decision;
+  approval.decisionNote = String(payload.note || payload.decisionNote || "").slice(0, 1000);
+  approval.decidedAt = now();
+  approval.decidedBy = payload.actorType === "TELEGRAM" ? "telegram" : "operator";
+  approval.decidedById = String(payload.actorId || "").slice(0, 160) || null;
+  approval.telegramMessageId = String(payload.telegramMessageId || "").slice(0, 160) || null;
+  audit(state, `Human Gate ${approval.status}`, `${approval.title}: ${approval.decisionNote || "No note."}`);
+
+  const mission = approval.missionId ? findAgent101Mission(state, approval.missionId) : null;
+  if (mission && !agent101MissionManager.TERMINAL_STATUSES.has(mission.status)) {
+    if (approval.status === "needs_revision") {
+      agent101MissionManager.transition(mission, "paused", { stage: "human_gate_revision", message: "Human Gate sent the requested action back for revision." });
+    } else if (approval.status === "blocked") {
+      agent101MissionManager.transition(mission, "blocked", { stage: "human_gate_blocked", message: "Human Gate blocked the requested action. The mission stopped without executing it." });
+    }
+    if (mission.threadId) {
+      const thread = findAgent101Thread(state, mission.threadId);
+      if (thread) {
+        const approvalMessage = (thread.messages || []).find((message) => message.metadata?.approvalId === approval.id);
+        if (approvalMessage) {
+          approvalMessage.status = approval.status === "approved" ? "complete" : approval.status === "needs_revision" ? "paused" : "blocked";
+          approvalMessage.updatedAt = now();
+        }
+        thread.status = mission.status === "blocked" ? "blocked" : mission.status === "paused" ? "paused" : thread.status;
+      }
+    }
+  }
+  writeState(state);
+
+  let resumedMission = null;
+  if (approval.status === "approved" && mission?.autoResume) {
+    const latestState = readState();
+    const latestMission = findAgent101Mission(latestState, mission.id);
+    if (latestMission && agent101MissionManager.resumable(latestMission, latestState.approvals || [])) resumedMission = resumeAgent101Mission(latestMission.id);
+  }
+  return { request: approval, mission: resumedMission };
+}
+
+function configuredPrintShopSearchProvider() {
+  if (ENV_BRAVE_API_KEY) return "brave";
+  if (ENV_SERP_API_KEY) return "serpapi";
+  const config = readAiProviderConfig();
+  const openAiStatus = agent101OpenAiStatus(config);
+  if (openAiStatus.configured && openAiStatus.mode === "live" && openAiStatus.status === "ready") return "openai_web_search";
+  return "";
+}
+
+function printShopSearchProviderModel(provider) {
+  if (provider !== "openai_web_search") return null;
+  const config = readAiProviderConfig();
+  return String(config.providers?.openai?.model || "").trim() || null;
+}
+
+function printShopDiscoveryScope({ runId, plan, provider, model }) {
+  const openAi = provider === "openai_web_search";
+  return {
+    officeId: "print-shop-office",
+    runId,
+    provider,
+    model: model || null,
+    planHash: plan.planHash,
+    geography: plan.brief.geography,
+    queryHashes: plan.queries.map((query) => query.queryHash),
+    maximumProviderRequests: openAi ? 1 : plan.maximumCalls,
+    maximumToolCalls: plan.maximumCalls,
+    maximumResultsPerCall: plan.maximumResultsPerCall,
+    maximumOpportunities: 8,
+    maximumOutputTokens: openAi ? 3200 : 0,
+    externalWebAccess: true,
+  };
+}
+
+function consumePrintShopDiscoveryApproval({ approvalId, run, provider, model }) {
+  const state = readState();
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (!approval || approval.id !== run.approvalId) {
+    throw guardedError("Human Gate approval does not match this discovery run.", 403);
+  }
+  if (approval.status !== "approved" || approval.actionType !== "agent101_product_discovery" || approval.officeId !== "print-shop-office") {
+    throw guardedError("Human Gate has not approved this exact opportunity discovery.", 403);
+  }
+  if (approval.expiresAt) {
+    const expiresAt = Date.parse(approval.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw guardedError("Human Gate approval expired before discovery ran.", 409);
+  }
+  if (approval.consumedAt || Number(approval.useCount || 0) >= 1) {
+    throw guardedError("Human Gate approval has already been used.", 409);
+  }
+  const expected = printShopDiscoveryScope({ runId: run.id, plan: run.plan, provider, model });
+  const granted = approval.grantedDetails || approval.originalDetails || approval.details || {};
+  const mismatch = Object.entries(expected).find(([key, value]) => JSON.stringify(granted[key] ?? null) !== JSON.stringify(value));
+  if (mismatch) throw guardedError(`Human Gate scope does not match the approved ${mismatch[0]}.`, 403);
+  if (JSON.stringify(run.scope || {}) !== JSON.stringify(expected)) {
+    throw guardedError("The persisted discovery scope changed after Human Gate review.", 409);
+  }
+  approval.useCount = Number(approval.useCount || 0) + 1;
+  approval.consumedAt = now();
+  approval.consumedBy = "print-shop-office";
+  audit(state, "Human Gate approval consumed", `${approval.title}: one bounded ${provider} discovery run started.`);
+  writeState(state);
+  return approval;
+}
+
+function consumePrintShopResearchApproval({ approvalId, request, provider }) {
+  const state = readState();
+  const currentQueryHash = crypto.createHash("sha256")
+    .update(`${String(request.query || "").toLowerCase()}|${String(request.geography || "").toLowerCase()}|${provider}`)
+    .digest("hex");
+  if (currentQueryHash !== request.queryHash) {
+    throw guardedError("The research query changed after Human Gate review.", 409);
+  }
+  const approval = (state.approvals || []).find((item) => item.id === approvalId);
+  if (!approval || approval.id !== request.approvalId) {
+    throw guardedError("Human Gate approval does not match this research request.", 403);
+  }
+  if (approval.status !== "approved" || approval.actionType !== "agent101_web_search" || approval.officeId !== "print-shop-office") {
+    throw guardedError("Human Gate has not approved this exact product search.", 403);
+  }
+  if (approval.expiresAt) {
+    const expiresAt = Date.parse(approval.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      throw guardedError("Human Gate approval expired before the search ran.", 409);
+    }
+  }
+  if (approval.consumedAt || Number(approval.useCount || 0) >= 1) {
+    throw guardedError("Human Gate approval has already been used.", 409);
+  }
+  const expected = {
+    officeId: "print-shop-office",
+    provider,
+    queryHash: request.queryHash,
+    geography: request.geography,
+    maximumCalls: 1,
+    maximumResults: 8,
+  };
+  const granted = approval.grantedDetails || approval.originalDetails || approval.details || {};
+  const mismatch = Object.entries(expected).find(([key, value]) => String(granted[key] ?? "") !== String(value));
+  if (mismatch) throw guardedError(`Human Gate scope does not match the approved ${mismatch[0]}.`, 403);
+  approval.useCount = Number(approval.useCount || 0) + 1;
+  approval.consumedAt = now();
+  approval.consumedBy = "print-shop-office";
+  audit(state, "Human Gate approval consumed", `${approval.title}: one bounded ${provider} search started.`);
+  writeState(state);
+  return approval;
+}
+
+async function fetchPrintShopResearchResults({ provider, query, geography }) {
+  const searchGeography = String(geography || "").toLowerCase() === "united states";
+  if (provider === "brave" && ENV_BRAVE_API_KEY) {
+    const endpoint = new URL("https://api.search.brave.com/res/v1/web/search");
+    endpoint.searchParams.set("q", query);
+    endpoint.searchParams.set("count", "8");
+    if (searchGeography) {
+      endpoint.searchParams.set("country", "us");
+      endpoint.searchParams.set("search_lang", "en");
+    }
+    const response = await fetch(endpoint, {
+      headers: { "x-subscription-token": ENV_BRAVE_API_KEY, accept: "application/json" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw guardedError(`Brave Search failed with status ${response.status}.`, 502);
+    return (data.web?.results || []).slice(0, 8).map((item) => ({
+      title: item.title,
+      url: item.url,
+      snippet: item.description,
+    }));
+  }
+  if (provider === "serpapi" && ENV_SERP_API_KEY) {
+    const endpoint = new URL("https://serpapi.com/search.json");
+    endpoint.searchParams.set("q", query);
+    endpoint.searchParams.set("api_key", ENV_SERP_API_KEY);
+    endpoint.searchParams.set("num", "8");
+    if (searchGeography) {
+      endpoint.searchParams.set("gl", "us");
+      endpoint.searchParams.set("hl", "en");
+    }
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(20_000) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw guardedError(`SerpAPI search failed with status ${response.status}.`, 502);
+    return (data.organic_results || []).slice(0, 8).map((item) => ({
+      title: item.title,
+      url: item.link,
+      snippet: item.snippet,
+    }));
+  }
+  if (provider === "openai_web_search") {
+    const queryHash = crypto.createHash("sha256").update(`${String(query).toLowerCase()}|${String(geography).toLowerCase()}`).digest("hex");
+    const plan = {
+      brief: {
+        laneId: "manual_research",
+        laneName: "Manual product research",
+        geography: geography || "United States",
+        objective: `Collect current cited observations about: ${query}`,
+      },
+      queries: [{ id: "manual-research", label: "Manual research", query, queryHash }],
+      planHash: crypto.createHash("sha256").update(queryHash).digest("hex"),
+      maximumCalls: 1,
+      maximumResultsPerCall: 8,
+    };
+    const result = await fetchOpenAiPrintShopDiscovery({ plan, maximumToolCalls: 1, maximumOutputTokens: 1800 });
+    return result.results.slice(0, 8).map((item) => ({ title: item.title, url: item.url, snippet: item.snippet }));
+  }
+  throw guardedError("No supported Print Shop search provider is configured.", 409);
+}
+
+function canonicalPrintShopExternalUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    parsed.username = "";
+    parsed.password = "";
+    parsed.hash = "";
+    [...parsed.searchParams.keys()].forEach((key) => {
+      if (/^(utm_|fbclid$|gclid$|mc_cid$|mc_eid$)/i.test(key)) parsed.searchParams.delete(key);
+    });
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function printShopDiscoveryStructuredSchema(plan) {
+  const queryIds = plan.queries.map((query) => query.id);
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      observations: {
+        type: "array",
+        maxItems: 18,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string", maxLength: 240 },
+            url: { type: "string", maxLength: 2000 },
+            summary: { type: "string", maxLength: 800 },
+            queryIds: { type: "array", minItems: 1, maxItems: queryIds.length, items: { type: "string", enum: queryIds } },
+          },
+          required: ["title", "url", "summary", "queryIds"],
+        },
+      },
+      opportunities: {
+        type: "array",
+        maxItems: 8,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string", maxLength: 100 },
+            problem: { type: "string", maxLength: 500 },
+            targetBuyer: { type: "string", maxLength: 240 },
+            suggestedTemplateId: { type: "string", enum: ["storage_tray", "label_plate", "spacer_block", "divider_set", "custom"] },
+            sourceUrls: { type: "array", minItems: 1, maxItems: 6, items: { type: "string", maxLength: 2000 } },
+          },
+          required: ["title", "problem", "targetBuyer", "suggestedTemplateId", "sourceUrls"],
+        },
+      },
+    },
+    required: ["observations", "opportunities"],
+  };
+}
+
+function openAiDiscoveryPrompt(plan) {
+  const angles = plan.queries.map((query) => `- ${query.id}: ${query.query}`).join("\n");
+  return [
+    "Run a current web research sweep for Agent 101's supervised Product Research Lab.",
+    `Research objective: ${plan.brief.objective}`,
+    `Geography: ${plan.brief.geography}`,
+    "Approved research angles:",
+    angles,
+    "Saved production constraints: Bambu Lab A1 mini; 180 x 180 x 180 mm factory volume; 176 x 176 x 176 mm conservative planning envelope; installed 0.4 mm nozzle; one color at a time; PLA, PETG, and TPU are preferred materials.",
+    "Look for recurring physical fit, organization, replacement, handling, display, or workflow problems that a small measured product might investigate.",
+    "Every observation must use a real URL consulted during this web-search response. Every opportunity must cite at least one of those exact URLs.",
+    "Treat each idea as a product hypothesis only. Do not claim or estimate demand, sales, competition, price, revenue, profit, unit economics, filament grams, print time, safety, commercial rights, dimensions, or printer fit.",
+    "Do not copy a protected branded design. Prefer customization, exact fit, simple single-color parts, or intentionally separate color parts.",
+    "Use concise source paraphrases, not long quotes. Return only the requested structured object.",
+  ].join("\n\n");
+}
+
+function openAiDiscoverySources(payload = {}) {
+  const sources = new Map();
+  const add = (value, title = "") => {
+    const url = canonicalPrintShopExternalUrl(value);
+    if (!url) return;
+    const existing = sources.get(url);
+    if (!existing || (!existing.title && title)) sources.set(url, { url, title: String(title || "").trim().slice(0, 240) });
+  };
+  for (const item of payload.output || []) {
+    for (const source of item?.action?.sources || []) add(source?.url, source?.title);
+    for (const content of item?.content || []) {
+      for (const annotation of content?.annotations || []) {
+        if (annotation?.type === "url_citation") add(annotation.url, annotation.title);
+      }
+    }
+  }
+  return sources;
+}
+
+async function fetchOpenAiPrintShopDiscovery({ plan, maximumToolCalls, maximumOutputTokens }) {
+  const config = readAiProviderConfig();
+  const key = keyFromConfig(config, "openai");
+  if (!key) throw guardedError("OpenAI web search is no longer configured.", 409);
+  const settings = config.providers.openai;
+  const requestBody = {
+    model: settings.model,
+    tools: [{
+      type: "web_search",
+      external_web_access: true,
+      search_context_size: "medium",
+      user_location: String(plan.brief.geography || "").toLowerCase() === "united states"
+        ? { type: "approximate", country: "US" }
+        : undefined,
+    }],
+    tool_choice: "required",
+    max_tool_calls: maximumToolCalls,
+    include: ["web_search_call.action.sources"],
+    max_output_tokens: maximumOutputTokens,
+    text: {
+      format: {
+        type: "json_schema",
+        name: "print_product_discovery",
+        strict: true,
+        schema: printShopDiscoveryStructuredSchema(plan),
+      },
+    },
+    input: [{ role: "user", content: openAiDiscoveryPrompt(plan) }],
+  };
+  if (!requestBody.tools[0].user_location) delete requestBody.tools[0].user_location;
+  const reservationId = reserveAiRequest("openai", settings.model, requestBody, maximumOutputTokens);
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(90_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = guardedError(payload.error?.message || `OpenAI web research failed with ${response.status}.`, response.status);
+      error.openAiCode = payload.error?.code || "";
+      throw error;
+    }
+    recordAiUsage(config, payload.usage || {}, { reservationId });
+    const consultedSources = openAiDiscoverySources(payload);
+    const parsed = safeJsonParse(extractJsonObjectText(extractOpenAiOutputText(payload)), null) || {};
+    const allQueryIds = plan.queries.map((query) => query.id);
+    const resultsByUrl = new Map();
+    for (const observation of Array.isArray(parsed.observations) ? parsed.observations : []) {
+      const url = canonicalPrintShopExternalUrl(observation?.url);
+      const consulted = consultedSources.get(url);
+      if (!url || !consulted) continue;
+      resultsByUrl.set(url, {
+        queryIds: (Array.isArray(observation.queryIds) ? observation.queryIds : []).filter((id) => allQueryIds.includes(id)),
+        title: String(observation.title || consulted.title || new URL(url).hostname).slice(0, 240),
+        url,
+        snippet: String(observation.summary || "").slice(0, 1200),
+        observationType: "provider_summary",
+      });
+    }
+    for (const source of consultedSources.values()) {
+      if (resultsByUrl.has(source.url)) continue;
+      resultsByUrl.set(source.url, {
+        queryIds: allQueryIds,
+        title: source.title || new URL(source.url).hostname,
+        url: source.url,
+        snippet: "Consulted by OpenAI web search for the approved research plan; no page excerpt was stored.",
+        observationType: "citation",
+      });
+    }
+    const maximumSources = plan.maximumCalls * plan.maximumResultsPerCall;
+    const results = [...resultsByUrl.values()]
+      .map((result) => ({ ...result, queryIds: result.queryIds.length ? result.queryIds : allQueryIds }))
+      .slice(0, maximumSources);
+    if (!results.length) throw guardedError("OpenAI web research returned no usable cited HTTP(S) sources.", 502);
+    const allowedUrls = new Set(results.map((result) => result.url));
+    const opportunities = (Array.isArray(parsed.opportunities) ? parsed.opportunities : []).slice(0, 8).map((opportunity) => ({
+      title: opportunity?.title,
+      problem: opportunity?.problem,
+      targetBuyer: opportunity?.targetBuyer,
+      suggestedTemplateId: opportunity?.suggestedTemplateId,
+      sourceUrls: (Array.isArray(opportunity?.sourceUrls) ? opportunity.sourceUrls : [])
+        .map(canonicalPrintShopExternalUrl)
+        .filter((url) => allowedUrls.has(url)),
+    })).filter((opportunity) => opportunity.sourceUrls.length);
+    const toolCallsUsed = (payload.output || []).filter((item) => item?.type === "web_search_call").length;
+    return {
+      results,
+      opportunities,
+      providerResponseId: String(payload.id || ""),
+      callsCompleted: 1,
+      toolCallsUsed,
+    };
+  } finally {
+    releaseAiUsageReservation(reservationId);
+  }
+}
+
+async function fetchPrintShopDiscoveryResults({ provider, plan, scope }) {
+  if (provider === "openai_web_search") {
+    return fetchOpenAiPrintShopDiscovery({
+      plan,
+      maximumToolCalls: scope.maximumToolCalls,
+      maximumOutputTokens: scope.maximumOutputTokens,
+    });
+  }
+  const results = [];
+  let callsCompleted = 0;
+  for (const query of plan.queries.slice(0, scope.maximumProviderRequests)) {
+    const observations = await fetchPrintShopResearchResults({
+      provider,
+      query: query.query,
+      geography: plan.brief.geography,
+    });
+    callsCompleted += 1;
+    observations.slice(0, scope.maximumResultsPerCall).forEach((result) => results.push({
+      ...result,
+      queryId: query.id,
+      observationType: "search_snippet",
+    }));
+  }
+  return { results, opportunities: [], providerResponseId: null, callsCompleted, toolCallsUsed: callsCompleted };
 }
 
 function createHumanGatePackage(payload = {}) {
@@ -3704,11 +9279,36 @@ function localAgent101ChatResponse(message, context = {}) {
     return buildClipsOfficeFollowupResponse(message, context);
   }
   if (isClipsOfficeIntakeRequest(text)) {
-    return buildClipsOfficeIntakeResponse(message);
+    return buildClipsOfficeIntakeResponse(message, context);
   }
   if (text.includes("codex") || text.includes("code") || text.includes("ui") || text.includes("fix") || text.includes("implement")) {
     return {
-      message: "Code plan ready: define the broken behavior, inspect the affected files first, patch only the scoped UI/backend path, run the app checks, then verify the exact screen or endpoint before shipping.",
+      message: formatAgent101ExecutiveReport({
+        title: "IMPLEMENTATION STATUS",
+        currentStatus: [
+          "Request classified as an internal implementation task.",
+          "External actions remain locked.",
+          "Human Gate is required only if the work touches credentials, publishing, spending, customer contact, or system settings.",
+        ],
+        keyFindings: [
+          "Primary leverage is a scoped code inspection before edits.",
+          "Likely affected systems: UI state, backend route, persistence, tests, and packaged Mac app if desktop behavior is involved.",
+          "Verification must prove the exact screen or endpoint changed.",
+        ],
+        risks: [
+          "Copy-only changes will not fix runtime behavior.",
+          "Unscoped refactors can destabilize working offices.",
+          "Secrets and external account actions must stay server-side and approval-gated.",
+        ],
+        recommendations: [
+          "Inspect repo docs, target files, related routes, and tests before patching.",
+          "Patch the smallest path that changes real behavior.",
+          "Run syntax, unit, endpoint, and packaged-app checks before calling it ready.",
+        ],
+        nextActions: [
+          "Create the implementation brief, patch the target path, run checks, and verify the local app.",
+        ],
+      }),
       taskType: "code_plan",
       suggestedActions: [
         { label: "Create Codex prompt", action: "create_codex_prompt", requiresApproval: false },
@@ -3733,28 +9333,34 @@ function localAgent101ChatResponse(message, context = {}) {
     };
   }
   if (text.includes("clip") || text.includes("capcut") || text.includes("tiktok") || text.includes("caption")) {
-    return {
-      message: "Clips plan ready: create three short hooks, list required raw footage/audio, prepare CapCut edit notes, draft captions, then send posting decisions to Human Gate. No upload or posting happens here.",
-      taskType: "clips",
-      suggestedActions: [
-        { label: "Create clips plan", action: "create_clips_plan", requiresApproval: false },
-        { label: "Package for approval", action: "package_for_approval", requiresApproval: true },
-      ],
-      requiresApproval: false,
-      riskLevel: "medium",
-      artifacts: [
-        {
-          type: "brief",
-          title: "Short-form clips draft package",
-          content: "Hooks, asset checklist, CapCut handoff notes, caption drafts, and Human Gate posting note.",
-        },
-      ],
-      logs: ["Agent 101 created a local clips plan."],
-    };
+    return buildClipOfficeExecutiveResponse(message, context);
   }
   if (text.includes("agent") || text.includes("blueprint") || text.includes("hire")) {
     return {
-      message: "Blueprint draft only: define the future agent role, allowed local tools, blocked permissions, approval requirements, eval checks, and budget. Human Gate must approve before any live agent exists.",
+      message: formatAgent101ExecutiveReport({
+        title: "AGENT BLUEPRINT STATUS",
+        currentStatus: [
+          "Request classified as future-agent planning.",
+          "Live agent activation is locked behind Human Gate.",
+          "Allowed work: role design, tool boundaries, evals, budget, and approval package.",
+        ],
+        keyFindings: [
+          "The highest-risk part is permission expansion, not drafting the blueprint.",
+          "A useful blueprint needs authority levels, blocked actions, success metrics, memory scope, and rollback rules.",
+        ],
+        risks: [
+          "Activating an agent without approval can bypass supervision.",
+          "Unbounded tools can expose accounts, files, money, or customer contact channels.",
+        ],
+        recommendations: [
+          "Draft the agent as a proposal-only operating spec.",
+          "Attach eval checks before any capability moves from draft to live.",
+          "Route activation, permissions, credentials, and external tools through Human Gate.",
+        ],
+        nextActions: [
+          "Create a proposed-agent blueprint with allowed tools, prohibited actions, eval gates, and approval scope.",
+        ],
+      }),
       taskType: "agent_blueprint",
       suggestedActions: [
         { label: "Propose new agent", action: "propose_new_agent", requiresApproval: true },
@@ -3774,7 +9380,25 @@ function localAgent101ChatResponse(message, context = {}) {
   }
   if (text.includes("blocked") || text.includes("cannot") || text.includes("can't")) {
     return {
-      message: "Blocked: publishing without approval, spending money, account changes, customer contact, ad actions, raw credential login automation, live agent creation, permission changes, and API key changes.",
+      message: formatAgent101ExecutiveReport({
+        title: "AUTHORITY STATUS",
+        currentStatus: [
+          "Safe internal analysis, planning, drafting, reporting, and local artifact work are available.",
+          "External execution remains locked by Human Gate.",
+        ],
+        keyFindings: [
+          "Blocked categories: publishing, spending, money movement, customer contact, account changes, credential automation, live agent creation, permission changes, API key changes, system-setting changes, file deletion, and external API actions.",
+        ],
+        risks: [
+          "Bypassing Human Gate would remove the audit trail and approval boundary.",
+        ],
+        recommendations: [
+          "Convert risky work into a scoped approval package with exact action, evidence, reversibility, and expiration.",
+        ],
+        nextActions: [
+          "Prepare the internal draft or create a Human Gate request for the exact external step.",
+        ],
+      }),
       taskType: "general",
       suggestedActions: [{ label: "Package for approval", action: "package_for_approval", requiresApproval: true }],
       requiresApproval: false,
@@ -3783,25 +9407,7 @@ function localAgent101ChatResponse(message, context = {}) {
       logs: ["Blocked action list returned."],
     };
   }
-  return {
-    message: "I can turn this into bounded supervised work: clarify the goal, list needed context, break it into steps, label risks, draft the output, and route anything risky to Human Gate.",
-    taskType: "general",
-    suggestedActions: [
-      { label: "Create task plan", action: "create_task_plan", requiresApproval: false },
-      { label: "Draft workflow", action: "draft_workflow", requiresApproval: false },
-      { label: "Package for approval", action: "package_for_approval", requiresApproval: true },
-    ],
-    requiresApproval: false,
-    riskLevel: "low",
-    artifacts: [
-      {
-        type: "plan",
-        title: "Bounded task plan",
-        content: "Goal, context needed, steps, risks, draft output, Human Gate check, and final log.",
-      },
-    ],
-    logs: ["Local Agent 101 response. No external API call was made."],
-  };
+  return buildGeneralExecutiveResponse(message, context);
 }
 
 async function handleAgent101Chat(payload = {}) {
@@ -3840,21 +9446,61 @@ async function handleAgent101Chat(payload = {}) {
     };
   }
 
+  const groundingState = readState();
+  let knowledgeContext = null;
+  try {
+    const status = obsidianStatusPayload();
+    if (status.initialized || status.connected) {
+      knowledgeContext = agentContextBuilder.buildAgentContext({
+        vaultPath: status.vaultPath,
+        state: groundingState,
+        agentId: "agent.1010",
+        threadId: payload.threadId || null,
+        officeId: payload.officeId || payload.office || payload.roomId || "depo-habitat",
+        includeTrace: false,
+      });
+    }
+  } catch {
+    knowledgeContext = null;
+  }
+  payload = {
+    ...payload,
+    context: {
+      operating: agent101Os.buildAgent101Context(groundingState, {
+        goal: message,
+        threadId: payload.threadId || null,
+        obsidianContext: knowledgeContext,
+      }),
+      knowledge: knowledgeContext,
+    },
+  };
+
   const config = readAiProviderConfig();
   const provider = sanitizeProvider(config.provider);
   const mode = isLocalProvider(provider) ? "demo" : sanitizeAiMode(config.mode);
-  const canUseOpenAi = provider === "openai" && mode === "live" && Boolean(keyFromConfig(config, "openai"));
-  if (!canUseOpenAi) {
+  const canUseLiveProvider = ["openai", "anthropic"].includes(provider) && mode === "live" && Boolean(keyFromConfig(config, provider));
+  if (!canUseLiveProvider) {
     return { ...localAgent101ChatResponse(message, payload), provider: "local_demo", mode: "demo" };
   }
 
   try {
-    const live = await callOpenAiAgent101(config, message, payload);
+    const live = provider === "anthropic"
+      ? await callAnthropicAgent101(config, message, payload)
+      : await callOpenAiAgent101(config, message, payload);
     if (shouldUseClipsOfficeIntake(message, payload, live)) {
       const contextualResponse = hasClipsOfficeChatContext(payload)
         ? buildClipsOfficeFollowupResponse(message, payload)
-        : buildClipsOfficeIntakeResponse(message);
+        : buildClipsOfficeIntakeResponse(message, payload);
       return { ...contextualResponse, provider, mode };
+    }
+    if (agent101MessageViolatesExecutiveStyle(live.message) || !agent101MessageHasExecutiveSections(live.message)) {
+      const guarded = localAgent101ChatResponse(message, payload);
+      return {
+        ...guarded,
+        logs: [...(guarded.logs || []), "Executive format guard replaced a noncompliant provider response."],
+        provider,
+        mode,
+      };
     }
     const riskyResponse = detectRiskyAction(
       [
@@ -3889,7 +9535,7 @@ async function handleAgent101Chat(payload = {}) {
     return { ...live, provider, mode };
   } catch (error) {
     logAiProviderError("agent101-chat", error);
-    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Live provider failed; Local Demo fallback used.";
+    const friendly = provider === "openai" ? safeAiErrorMessage(error) : "Anthropic could not complete the grounded Agent 101 response; Local Demo fallback was used.";
     recordAiProviderFailure(config, friendly);
     const state = readState();
     audit(state, "Agent 101 provider fallback", friendly);
@@ -4410,6 +10056,61 @@ function sendHtml(req, res, status, html, extraHeaders = {}) {
   res.end(html);
 }
 
+function sendRobinhoodOauthResultPage(req, res, result) {
+  const views = {
+    connected: {
+      status: 200,
+      eyebrow: "CONNECTION COMPLETE",
+      title: "Robinhood is connected",
+      message: "Return to Argentum. Stock Office will load the connected account automatically.",
+      tone: "#43d99b",
+    },
+    needs_refresh: {
+      status: 200,
+      eyebrow: "CONNECTION SAVED",
+      title: "Robinhood is connected",
+      message: "Return to Argentum and use Refresh account if the broker snapshot does not appear automatically.",
+      tone: "#f5c451",
+    },
+    connection_error: {
+      status: 400,
+      eyebrow: "CONNECTION NOT FINISHED",
+      title: "Robinhood did not connect",
+      message: "Return to Argentum and try Connect Robinhood again. No trade or money movement occurred.",
+      tone: "#ff7f8b",
+    },
+  };
+  const view = views[result] || views.connection_error;
+  sendHtml(req, res, view.status, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${view.title} | Argentum</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #edf5ff; background: radial-gradient(circle at 15% 15%, #12334b, transparent 34%), radial-gradient(circle at 85% 10%, #22205a, transparent 38%), #07101f; }
+    main { width: min(560px, 100%); padding: 34px; border: 1px solid #284968; border-radius: 22px; background: rgba(8, 20, 38, .9); box-shadow: 0 24px 80px rgba(0, 0, 0, .42); }
+    .mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 24px; border-radius: 14px; color: #06131d; background: ${view.tone}; font-size: 24px; font-weight: 900; }
+    .eyebrow { margin: 0 0 8px; color: ${view.tone}; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
+    h1 { margin: 0; font-size: clamp(28px, 6vw, 42px); line-height: 1.05; }
+    p { margin: 16px 0 0; color: #b9cbe0; font-size: 17px; line-height: 1.55; }
+    .safe { margin-top: 26px; padding-top: 18px; border-top: 1px solid #243a55; color: #8198b3; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">A</div>
+    <p class="eyebrow">${view.eyebrow}</p>
+    <h1>${view.title}</h1>
+    <p>${view.message}</p>
+    <p class="safe">You can close this window. Argentum never receives your Robinhood password.</p>
+  </main>
+</body>
+</html>`);
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -4489,7 +10190,7 @@ function issueSession(res, req, user, options = {}) {
     ...securityHeaders(req),
     "set-cookie": sessionCookie(req, token, sessionTtlMs),
     "cache-control": "no-store",
-    location: "/",
+    location: APP_MODE === "cloud" ? "/app" : "/",
   });
   res.end();
 }
@@ -4498,18 +10199,23 @@ async function handleSetup(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   const isRootRoute = url.pathname === "/";
   const isSetupRoute = url.pathname === "/setup";
-  if (!isRootRoute && !isSetupRoute) return false;
+  const setupRoute = APP_MODE === "cloud" ? isSetupRoute : isRootRoute || isSetupRoute;
+  if (!setupRoute) return false;
 
   const store = readAuthStore();
   if (activeUserCount(store) > 0) {
     if (isSetupRoute) {
-      redirect(res, currentSession(req) ? "/" : "/login", req);
+      redirect(res, currentSession(req) ? (APP_MODE === "cloud" ? "/app" : "/") : "/login", req);
       return true;
     }
     return false;
   }
 
   if (isSetupRoute && req.method === "GET") {
+    if (APP_MODE === "cloud") {
+      sendHtml(req, res, 200, setupPage());
+      return true;
+    }
     redirect(res, "/", req);
     return true;
   }
@@ -4545,11 +10251,11 @@ async function handleSetup(req, res) {
 async function handleLogin(req, res) {
   if (req.method === "GET" && req.url.startsWith("/login")) {
     if (activeUserCount(readAuthStore()) === 0) {
-      redirect(res, "/", req);
+      redirect(res, APP_MODE === "cloud" ? "/setup" : "/", req);
       return true;
     }
     if (currentSession(req)) {
-      redirect(res, "/", req);
+      redirect(res, APP_MODE === "cloud" ? "/app" : "/", req);
       return true;
     }
     sendHtml(req, res, 200, loginPage());
@@ -4561,7 +10267,7 @@ async function handleLogin(req, res) {
       if (req.url.startsWith("/api/login")) {
         sendJson(res, 409, { error: "Create the first admin login before signing in." });
       } else {
-        redirect(res, "/", req);
+        redirect(res, APP_MODE === "cloud" ? "/setup" : "/", req);
       }
       return true;
     }
@@ -4666,6 +10372,128 @@ function currentAccessUser(req) {
   };
 }
 
+function requireAdminAccess(req) {
+  const access = currentAccessUser(req);
+  if (!access?.user) throw guardedError("Authentication required", 401);
+  if (access.user.role !== "admin") throw guardedError("Admin access is required.", 403);
+  return access;
+}
+
+function requireLocalMode() {
+  if (APP_MODE !== "local") throw guardedError("Local desktop mode is not enabled.", 409);
+  ensureDataDir();
+  return localDatabaseStatus;
+}
+
+function readObsidianVaultPath() {
+  if (APP_MODE !== "local") return "";
+  requireLocalMode();
+  return localDatabase.getLocalSetting(DATA_DIR, "obsidianVaultPath", "") || "";
+}
+
+function normalizeStockSecIdentity(value) {
+  const identity = String(value || "").trim().replace(/\s+/g, " ").slice(0, 240);
+  const email = identity.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "";
+  const label = email ? identity.replace(email, "").trim().replace(/[-|,;]+$/, "").trim() : "";
+  if (!email || label.length < 2) {
+    throw guardedError("Enter an organization or operator name plus a monitored email, for example: Argentum Stock Office ops@example.com.", 400);
+  }
+  return identity;
+}
+
+function hydrateStockSecIdentity() {
+  if (process.env.STOCK_GURU_SEC_USER_AGENT || APP_MODE !== "local") return;
+  try {
+    const stored = localDatabase.getLocalSetting(DATA_DIR, "stockSecUserAgent", "");
+    if (stored) process.env.STOCK_GURU_SEC_USER_AGENT = normalizeStockSecIdentity(stored);
+  } catch {
+    // A missing local database or invalid old value keeps SEC intake safely disabled.
+  }
+}
+
+function stockSecSetupPayload() {
+  const configured = Boolean(String(process.env.STOCK_GURU_SEC_USER_AGENT || "").trim());
+  return {
+    configured,
+    status: configured ? "ready" : "setup_required",
+    storage: configured ? "local_database_server_only" : "not_configured",
+    transmittedTo: "SEC.gov automated filing requests only",
+  };
+}
+
+function configuredObsidianVaultPath() {
+  return readObsidianVaultPath() || obsidianVault.defaultVaultPath();
+}
+
+function obsidianStatusPayload() {
+  const configuredPath = readObsidianVaultPath();
+  const vaultPath = configuredPath || obsidianVault.defaultVaultPath();
+  return {
+    configured: Boolean(configuredPath),
+    defaultVaultPath: obsidianVault.defaultVaultPath(),
+    ...obsidianVault.vaultStatus(vaultPath),
+  };
+}
+
+function brainStartupStatusPayload() {
+  const configuredPath = readObsidianVaultPath();
+  const vaultPath = configuredPath || obsidianVault.defaultVaultPath();
+  const exists = fs.existsSync(vaultPath);
+  let writable = false;
+  if (exists) {
+    try {
+      fs.accessSync(vaultPath, fs.constants.R_OK | fs.constants.W_OK);
+      writable = true;
+    } catch {
+      writable = false;
+    }
+  }
+  const schema = exists ? obsidianVault.loadVaultSchema(vaultPath) : null;
+  let manifestLoaded = false;
+  let indexLoaded = false;
+  let validationStatus = "unavailable";
+  if (exists && writable) {
+    try {
+      const manifest = obsidianVault.rebuildEntityManifest(vaultPath);
+      manifestLoaded = Boolean(manifest.entities?.length);
+      const index = obsidianVault.rebuildSearchIndex(vaultPath);
+      indexLoaded = Boolean(index.notes?.length);
+      const validation = obsidianVault.validateVault(vaultPath);
+      validationStatus = validation.healthy ? "healthy" : "degraded";
+    } catch {
+      validationStatus = "degraded";
+    }
+  }
+  const lastBackupPath = brainBackup.latestBackup();
+  return {
+    vaultPath,
+    configured: Boolean(configuredPath),
+    exists,
+    writable,
+    schemaVersion: schema?.schemaVersion || null,
+    manifestLoaded,
+    indexLoaded,
+    validationStatus,
+    lastBackup: lastBackupPath || "",
+    status: exists && writable && schema?.schemaVersion === "2.0.0" && manifestLoaded && indexLoaded && validationStatus === "healthy"
+      ? "ready"
+      : configuredPath && !exists
+        ? "configured_missing"
+        : "degraded",
+  };
+}
+
+function appendAgent101CitationsToMessage(message, structured) {
+  const evidence = (structured?.evidence || []).slice(0, 6);
+  if (!message || !evidence.length) return message;
+  if (/^CITATIONS/m.test(message)) return message;
+  return `${message.trim()}\n\nCITATIONS\n${evidence.map((item, index) => `${index + 1}. ${item.title} (${item.canonicalPath || item.sourceId})`).join("\n")}`;
+}
+
+function currentRequestIsAdmin(req) {
+  return currentAccessUser(req)?.user?.role === "admin";
+}
+
 function requireStockOfficeAccess(req, capability = "view") {
   const access = currentAccessUser(req);
   if (!access?.user) throw guardedError("Session is no longer valid.", 401);
@@ -4678,12 +10506,65 @@ function requireStockOfficeAccess(req, capability = "view") {
     chat_write: "canPostChat",
     assistant: "canUseAssistant",
     sync: "canTriggerSync",
+    mirror_request: "canRequestMirrorApproval",
+    broker_view: "canViewWorkspace",
+    broker_connect: "canRequestBrokerConnection",
+    broker_guardrails: "canRequestGuardrailChange",
+    order_draft: "canDraftBrokerOrder",
+    order_approval: "canRequestOrderApproval",
   };
   const permissionKey = capabilityMap[capability] || "canViewWorkspace";
   if (!permissions[permissionKey]) {
     throw guardedError("You do not have permission to use this Stock Office action.", 403);
   }
   return { user: access.user, permissions };
+}
+
+function stockLogoSymbol(pathname = "") {
+  const match = String(pathname).match(/^\/api\/stock-office\/logos\/([A-Za-z0-9.-]{1,12})$/);
+  return match ? match[1].toUpperCase() : "";
+}
+
+function stockLogoPlaceholder(symbol) {
+  const label = String(symbol || "?").slice(0, 2);
+  const hue = [...symbol].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="hsl(${hue} 70% 48%)"/><stop offset="1" stop-color="hsl(${(hue + 46) % 360} 70% 26%)"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="39" fill="white" font-family="Arial,sans-serif" font-size="22" font-weight="700" text-anchor="middle">${label}</text></svg>`);
+}
+
+async function sendStockLogo(req, res, symbol) {
+  requireStockOfficeAccess(req, "view");
+  fs.mkdirSync(STOCK_LOGO_CACHE_DIR, { recursive: true });
+  const cachePath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.img`);
+  const metaPath = path.join(STOCK_LOGO_CACHE_DIR, `${symbol}.json`);
+  try {
+    const cached = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    const stat = fs.statSync(cachePath);
+    if (stat.isFile() && Date.now() - stat.mtimeMs <= STOCK_LOGO_MAX_AGE_MS && ["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(cached.contentType)) {
+      res.writeHead(200, { ...securityHeaders(req), "content-type": cached.contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "cache" });
+      res.end(fs.readFileSync(cachePath));
+      return;
+    }
+  } catch {}
+  try {
+    const response = await fetch(`https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png&size=96`, {
+      headers: { accept: "image/png,image/webp,image/svg+xml", "user-agent": "Argentum-Stock-Office/1.0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+    const body = Buffer.from(await response.arrayBuffer());
+    if (!response.ok || !["image/svg+xml", "image/png", "image/webp", "image/jpeg"].includes(contentType) || body.length < 64 || body.length > 1_000_000) {
+      throw new Error("logo unavailable");
+    }
+    const temporary = `${cachePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, body, { mode: 0o600 });
+    fs.renameSync(temporary, cachePath);
+    fs.writeFileSync(metaPath, `${JSON.stringify({ contentType, source: "parqet_symbol_logo", observedAt: now() })}\n`, { mode: 0o600 });
+    res.writeHead(200, { ...securityHeaders(req), "content-type": contentType, "cache-control": "private, max-age=86400", "x-argentum-logo-source": "parqet" });
+    res.end(body);
+  } catch {
+    res.writeHead(200, { ...securityHeaders(req), "content-type": "image/svg+xml", "cache-control": "private, max-age=300", "x-argentum-logo-source": "generated-fallback" });
+    res.end(stockLogoPlaceholder(symbol));
+  }
 }
 
 function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 60_000) {
@@ -4698,10 +10579,300 @@ function enforceStockOfficeRateLimit(req, action, maxRequests = 40, windowMs = 6
   }
 }
 
-function stockOfficeSnapshot(state, permissions) {
-  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state });
+function stockExecutionMode() {
+  return String(process.env.STOCK_GURU_EXECUTION_MODE || "paper").trim().toLowerCase() === "live" ? "live" : "paper";
+}
+
+function stockApprovalTtlMinutes() {
+  const value = Number(process.env.STOCK_GURU_APPROVAL_TTL_MINUTES);
+  return Number.isFinite(value) ? Math.max(1, Math.min(30, Math.round(value))) : 15;
+}
+
+function stockIntelligenceState() {
+  return {
+    opportunities: stockIntelligenceStore.listOpportunities(),
+    performance: stockIntelligenceStore.performanceReport(),
+    reports: {
+      overnight: stockIntelligenceStore.latestReport("overnight"),
+      morning: stockIntelligenceStore.latestReport("morning"),
+    },
+    mirror: stockIntelligenceStore.mirrorState(),
+  };
+}
+
+const STOCK_INTELLIGENCE_CACHE_MS = 15_000;
+let stockIntelligenceStateCache = null;
+let stockIntelligenceStateCachedAt = 0;
+
+function invalidateStockIntelligenceStateCache() {
+  stockIntelligenceStateCache = null;
+  stockIntelligenceStateCachedAt = 0;
+}
+
+function cachedStockIntelligenceState() {
+  if (stockIntelligenceStateCache && Date.now() - stockIntelligenceStateCachedAt < STOCK_INTELLIGENCE_CACHE_MS) {
+    return stockIntelligenceStateCache;
+  }
+  stockIntelligenceStateCache = stockIntelligenceState();
+  stockIntelligenceStateCachedAt = Date.now();
+  return stockIntelligenceStateCache;
+}
+
+function stockDecisionIntelligenceState() {
+  return {
+    opportunities: stockIntelligenceStore.listOpportunities(),
+    mirror: stockIntelligenceStore.mirrorState(),
+  };
+}
+
+function stockOfficeBrokerSnapshot(state, permissions) {
+  const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state, runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+  if (!(process.env.NODE_ENV === "test" && process.env.ARGENTUM_TEST_TRUST_BROKER_FIXTURE === "1")) {
+    const officialBroker = robinhoodMcpClient.currentBrokerSnapshot();
+    snapshot.broker = officialBroker;
+    snapshot.positions = officialBroker.positions;
+    snapshot.metrics = {
+      ...snapshot.metrics,
+      brokerPositions: officialBroker.positions.length,
+      openOrders: officialBroker.openOrders.length,
+      accountValue: officialBroker.accountValue,
+      buyingPower: officialBroker.buyingPower,
+    };
+  }
+  snapshot.executionMode = stockExecutionMode();
+  snapshot.killSwitch = evaluateTradingHalt(snapshot, state);
   snapshot.permissions = permissions || snapshot.permissions;
   return snapshot;
+}
+
+function stockOfficeSnapshot(state, permissions, options = {}) {
+  const snapshot = stockOfficeBrokerSnapshot(state, permissions);
+  snapshot.intelligence = options.cachedIntelligence ? cachedStockIntelligenceState() : stockIntelligenceState();
+  return snapshot;
+}
+
+function readStockShadowPortfolio(snapshot = {}) {
+  try {
+    const stat = fs.statSync(STOCK_SHADOW_FILE);
+    if (!stat.isFile() || stat.size > 2_000_000) return normalizeShadowPortfolio({}, { snapshot });
+    return normalizeShadowPortfolio(JSON.parse(fs.readFileSync(STOCK_SHADOW_FILE, "utf8")), { snapshot });
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock shadow portfolio read failed safely:", error.message);
+    return normalizeShadowPortfolio({}, { snapshot });
+  }
+}
+
+function writeStockShadowPortfolio(portfolio) {
+  fs.mkdirSync(path.dirname(STOCK_SHADOW_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SHADOW_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(portfolio, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SHADOW_FILE);
+}
+
+let stockShadowTimer = null;
+let stockSimulationTimer = null;
+let stockReadinessTimer = null;
+let stockTelegramPollTimer = null;
+let stockTelegramPollPromise = null;
+let stockContinuousReviewPromise = null;
+let stockReadinessBrokerSnapshotAt = "";
+let stockSimulationLabState = null;
+
+function stockReadinessIntervalMs() {
+  return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000);
+}
+
+async function runStockContinuousReview(result = {}) {
+  if (stockContinuousReviewPromise) return stockContinuousReviewPromise;
+  stockContinuousReviewPromise = processStockContinuousReview(result);
+  try {
+    return await stockContinuousReviewPromise;
+  } finally {
+    stockContinuousReviewPromise = null;
+  }
+}
+
+async function runStockReadinessCycle() {
+  if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+    const brokerSnapshot = await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+      stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Fast live-readiness refresh failed; execution remains closed." });
+      return null;
+    });
+    const snapshotAt = brokerSnapshot?.updatedAt || "";
+    if (snapshotAt && snapshotAt !== stockReadinessBrokerSnapshotAt) {
+      await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Fast Stock order reconciliation failed safely:", error.message));
+      stockReadinessBrokerSnapshotAt = snapshotAt;
+    }
+  }
+  return runStockContinuousReview({
+    status: "success",
+    completedAt: now(),
+    trigger: "live_readiness",
+  });
+}
+
+function simulationInteger(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function stockSimulationOptions() {
+  return {
+    intervalMs: simulationInteger(process.env.STOCK_SIMULATION_INTERVAL_MS, 10_000, 1_000, 60_000),
+    configurationsPerCandidate: simulationInteger(process.env.STOCK_SIMULATION_CONFIGURATIONS_PER_CANDIDATE, 64, 1, 256),
+    pathsPerConfiguration: simulationInteger(process.env.STOCK_SIMULATION_PATHS_PER_CONFIGURATION, 32, 1, 128),
+  };
+}
+
+function readStockSimulationLab() {
+  if (stockSimulationLabState) return stockSimulationLabState;
+  try {
+    const stat = fs.statSync(STOCK_SIMULATION_FILE);
+    if (!stat.isFile() || stat.size > 5_000_000) return null;
+    const persisted = JSON.parse(fs.readFileSync(STOCK_SIMULATION_FILE, "utf8"));
+    if (persisted?.mode !== "autonomous_local_stress_test" || !Array.isArray(persisted.results)) return null;
+    stockSimulationLabState = persisted;
+    return stockSimulationLabState;
+  } catch (error) {
+    if (error?.code !== "ENOENT") console.warn("Stock simulation state read failed safely:", error.message);
+    return null;
+  }
+}
+
+function writeStockSimulationLab(simulationLab) {
+  fs.mkdirSync(path.dirname(STOCK_SIMULATION_FILE), { recursive: true });
+  const temporaryPath = `${STOCK_SIMULATION_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(simulationLab, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporaryPath, STOCK_SIMULATION_FILE);
+}
+
+function refreshStockSimulationLab(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeBrokerSnapshot(state);
+  snapshot.intelligence = stockDecisionIntelligenceState();
+  const settings = stockSimulationOptions();
+  const previous = readStockSimulationLab() || {};
+  const ageMs = previous.lastCycleAt ? Date.now() - new Date(previous.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < settings.intervalMs - 50) return previous;
+  const plan = options.plan || buildCopyPortfolioPlan(snapshot);
+  const updated = {
+    ...runAutonomousSimulationCycle(plan, previous, settings),
+    persistedAt: previous.persistedAt || null,
+  };
+  stockSimulationLabState = updated;
+  const lastPersistedAt = previous.persistedAt ? new Date(previous.persistedAt).getTime() : 0;
+  const shouldPersist = options.persist === true
+    || !lastPersistedAt
+    || Date.now() - lastPersistedAt >= 30_000
+    || previous.sourceFingerprint !== updated.sourceFingerprint;
+  if (shouldPersist) {
+    stockSimulationLabState = { ...updated, persistedAt: now() };
+    writeStockSimulationLab(stockSimulationLabState);
+  }
+  return stockSimulationLabState;
+}
+
+function refreshStockShadowPortfolio(options = {}) {
+  const state = options.state || readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const existing = readStockShadowPortfolio(snapshot);
+  const ageMs = existing.lastCycleAt ? Date.now() - new Date(existing.lastCycleAt).getTime() : Number.POSITIVE_INFINITY;
+  if (!options.force && Number.isFinite(ageMs) && ageMs < 55_000) return existing;
+  const updated = runShadowPortfolioCycle(existing, snapshot);
+  writeStockShadowPortfolio(updated);
+  return updated;
+}
+
+function withPaperProposalReadiness(plan = {}, shadowPortfolio = {}, snapshot = {}) {
+  const proposals = (Array.isArray(plan.proposals) ? plan.proposals : []).map((proposal) => ({
+    ...proposal,
+    paperTest: paperProposalEligibility(shadowPortfolio, snapshot, proposal),
+  }));
+  return {
+    ...plan,
+    proposals,
+    summary: {
+      ...(plan.summary || {}),
+      paperReady: proposals.filter((proposal) => proposal.paperTest?.eligible).length,
+    },
+  };
+}
+
+function startStockShadowScheduler() {
+  if (process.env.NODE_ENV === "test" || stockShadowTimer) return stockShadowTimer;
+  try {
+    refreshStockShadowPortfolio({ force: true });
+  } catch (error) {
+    console.warn("Stock shadow portfolio startup cycle failed safely:", error.message);
+  }
+  const shadowTimer = setInterval(() => {
+    try {
+      refreshStockShadowPortfolio({ force: true });
+    } catch (error) {
+      console.warn("Stock shadow portfolio cycle failed safely:", error.message);
+    }
+  }, 60_000);
+  shadowTimer.unref();
+  stockShadowTimer = shadowTimer;
+  return stockShadowTimer;
+}
+
+function startStockSimulationScheduler() {
+  if (process.env.NODE_ENV === "test" || stockSimulationTimer) return stockSimulationTimer;
+  const settings = stockSimulationOptions();
+  try {
+    refreshStockSimulationLab({ force: true, persist: true });
+  } catch (error) {
+    console.warn("Stock autonomous simulation startup failed safely:", error.message);
+  }
+  const simulationTimer = setInterval(() => {
+    try {
+      refreshStockSimulationLab({ force: true });
+    } catch (error) {
+      console.warn("Stock autonomous simulation cycle failed safely:", error.message);
+    }
+  }, settings.intervalMs);
+  simulationTimer.unref();
+  stockSimulationTimer = simulationTimer;
+  return stockSimulationTimer;
+}
+
+function startStockReadinessScheduler() {
+  if (process.env.NODE_ENV === "test" || stockReadinessTimer) return stockReadinessTimer;
+  const intervalMs = stockReadinessIntervalMs();
+  Promise.resolve().then(runStockReadinessCycle).catch((error) => console.warn("Fast Stock readiness startup failed safely:", error.message));
+  const readinessTimer = setInterval(() => {
+    runStockReadinessCycle().catch((error) => console.warn("Fast Stock readiness cycle failed safely:", error.message));
+  }, intervalMs);
+  readinessTimer.unref();
+  stockReadinessTimer = readinessTimer;
+  return stockReadinessTimer;
+}
+
+function startStockTelegramPolling() {
+  if (process.env.NODE_ENV === "test" || APP_MODE !== "local" || stockTelegramPollTimer) return stockTelegramPollTimer;
+  const intervalMs = simulationInteger(process.env.STOCK_GURU_TELEGRAM_POLL_INTERVAL_MS, 2_000, 1_000, 30_000);
+  const poll = async () => {
+    if (stockTelegramPollPromise) return stockTelegramPollPromise;
+    stockTelegramPollPromise = (async () => {
+      const deliverySync = await syncPendingStockOrderHumanGateToTelegram()
+        .catch((error) => ({ checked: 0, sent: 0, state: "failed", reason: redactSensitiveText(error.message).slice(0, 300) }));
+      const updates = await stockTelegramNotifier.pollUpdates({ approvals: readState().approvals || [] });
+      return { deliverySync, updates };
+    })();
+    try {
+      return await stockTelegramPollPromise;
+    } finally {
+      stockTelegramPollPromise = null;
+    }
+  };
+  Promise.resolve().then(poll).catch((error) => console.warn("Telegram local polling failed safely:", error.message));
+  stockTelegramPollTimer = setInterval(() => {
+    poll().catch((error) => console.warn("Telegram local polling failed safely:", error.message));
+  }, intervalMs);
+  stockTelegramPollTimer.unref();
+  return stockTelegramPollTimer;
 }
 
 function stockOfficeErrorResponse(error) {
@@ -4724,7 +10895,7 @@ function stockOfficeQueryOptions(url) {
   };
 }
 
-function createStockOfficeSyncRun(snapshot) {
+function createStockOfficeSyncRun(snapshot, refresh = null) {
   const warnings = [
     ...snapshot.alerts.filter((alert) => alert.level !== "error").map((alert) => `${alert.title}: ${alert.body}`),
     ...snapshot.sources.filter((source) => source.status === "stale").map((source) => `${source.label}: ${source.summary}`),
@@ -4735,13 +10906,16 @@ function createStockOfficeSyncRun(snapshot) {
     .slice(0, 8);
   return {
     id: `stock-sync-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    mode: "local_file_rescan",
-    status: errors.length ? "partial" : "success",
+    mode: "evaluator_and_mirror_refresh",
+    status: errors.length || ["partial", "failed"].includes(refresh?.status) ? "partial" : "success",
     recordsImported: snapshot.records.length,
     changedRecords: 0,
     warnings,
     errors,
-    startedAt: now(),
+    refreshStatus: refresh?.status || "rescan_only",
+    refreshMessage: refresh?.message || "Local reports rescanned.",
+    liveOrdersPlaced: 0,
+    startedAt: refresh?.startedAt || now(),
     completedAt: now(),
   };
 }
@@ -4819,8 +10993,1137 @@ function deleteAccessUser(req, userIdToDelete, payload) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/print-shop/workspace") {
+    try {
+      const state = readState();
+      sendJson(res, 200, printShopWorkspace.publicSnapshot(PRINT_SHOP_DATA_ROOT, {
+        approvals: state.approvals || [],
+        searchProvider: configuredPrintShopSearchProvider(),
+      }));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/print-shop/candidates") {
+    try {
+      const payload = await readBody(req);
+      const candidate = printShopWorkspace.analyzeCandidate(PRINT_SHOP_DATA_ROOT, payload);
+      sendJson(res, 201, { candidate });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const printShopCandidateUpdateMatch = url.pathname.match(/^\/api\/print-shop\/candidates\/([^/]+)$/);
+  if (req.method === "PATCH" && printShopCandidateUpdateMatch) {
+    try {
+      const payload = await readBody(req);
+      const candidate = printShopWorkspace.updateCandidate(
+        PRINT_SHOP_DATA_ROOT,
+        decodeURIComponent(printShopCandidateUpdateMatch[1]),
+        payload,
+      );
+      sendJson(res, 200, { candidate });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const printShopGenerateMatch = url.pathname.match(/^\/api\/print-shop\/candidates\/([^/]+)\/generate$/);
+  if (req.method === "POST" && printShopGenerateMatch) {
+    try {
+      const payload = await readBody(req);
+      const result = printShopWorkspace.generateCandidateModel(
+        PRINT_SHOP_DATA_ROOT,
+        decodeURIComponent(printShopGenerateMatch[1]),
+        payload,
+      );
+      sendJson(res, 201, result);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/print-shop/discovery-runs") {
+    try {
+      const payload = await readBody(req);
+      const provider = configuredPrintShopSearchProvider();
+      if (!provider) {
+        throw guardedError("Product discovery is not connected. Configure OpenAI Live, BRAVE_API_KEY, or SERP_API_KEY server-side before requesting approval.", 409);
+      }
+      if (provider === "openai_web_search") {
+        const budget = aiUsageBudgetStatus(readAiProviderConfig());
+        if (budget.blocked) throw guardedError("OpenAI web research is blocked by the configured monthly AI budget.", 402);
+      }
+      const plan = printShopWorkspace.buildDiscoveryPlan({
+        laneId: payload.laneId,
+        geography: payload.geography || "United States",
+      });
+      const runId = `print-discovery-${crypto.randomUUID()}`;
+      const model = printShopSearchProviderModel(provider);
+      const scope = printShopDiscoveryScope({ runId, plan, provider, model });
+      const gate = createHumanGateRequest({
+        title: `Approve product-opportunity discovery: ${plan.brief.laneName}`,
+        actionType: "agent101_product_discovery",
+        officeId: "print-shop-office",
+        workflowId: "workflow-print-shop",
+        linkedId: `print-shop-discovery:${provider}:${model || "direct"}:${plan.planHash}`,
+        riskLevel: "medium",
+        details: scope,
+        evidence: `Agent 101 prepared ${plan.queries.length} bounded research angles for ${plan.brief.laneName}. This would disclose them to ${provider} and may consume paid API usage. No external call has run.`,
+        action: "Approve one bounded opportunity-discovery sweep. This does not authorize buying, printing, publishing, pricing, customer contact, or use of a third-party design.",
+        exactScope: provider === "openai_web_search"
+          ? `One OpenAI Responses request using at most ${scope.maximumToolCalls} web-search calls, at most ${scope.maximumOpportunities} source-linked research leads, and the exact saved plan hash ${plan.planHash}.`
+          : `${scope.maximumProviderRequests} exact ${provider} search calls with at most ${scope.maximumResultsPerCall} observations per call and the saved plan hash ${plan.planHash}.`,
+        expectedPostcondition: "Cited source observations and source-linked product hypotheses are saved. Demand, price, competition, fit, cost, safety, and commercial rights remain unmeasured.",
+        rollbackPlan: "Do not call the provider on any scope mismatch. The local discovery record can be dismissed without changing an external account.",
+      });
+      const run = printShopWorkspace.recordDiscoveryRun(PRINT_SHOP_DATA_ROOT, {
+        id: runId,
+        plan,
+        provider,
+        providerModel: model,
+        approvalId: gate.approval.id,
+        scope,
+      });
+      sendJson(res, 202, { run, approval: gate.approval, requiresApproval: true });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const printShopDiscoveryRunMatch = url.pathname.match(/^\/api\/print-shop\/discovery-runs\/([^/]+)\/run$/);
+  if (req.method === "POST" && printShopDiscoveryRunMatch) {
+    let consumed = false;
+    let run = null;
+    try {
+      const payload = await readBody(req);
+      const runId = decodeURIComponent(printShopDiscoveryRunMatch[1]);
+      run = printShopWorkspace.loadWorkspace(PRINT_SHOP_DATA_ROOT).discoveryRuns.find((item) => item.id === runId);
+      if (!run) throw guardedError("Print Shop discovery run not found.", 404);
+      if (["running", "complete", "partial", "failed", "interrupted"].includes(run.status)) {
+        throw guardedError("This opportunity-discovery run is already active or terminal.", 409);
+      }
+      const provider = configuredPrintShopSearchProvider();
+      const model = printShopSearchProviderModel(provider);
+      if (!provider || provider !== run.provider || (run.providerModel || null) !== (model || null)) {
+        throw guardedError("The approved discovery provider or model is no longer configured with the same scope.", 409);
+      }
+      consumePrintShopDiscoveryApproval({
+        approvalId: String(payload.approvalId || "").trim(),
+        run,
+        provider,
+        model,
+      });
+      consumed = true;
+      printShopWorkspace.startDiscoveryRun(PRINT_SHOP_DATA_ROOT, run.id);
+      const execution = await fetchPrintShopDiscoveryResults({ provider, plan: run.plan, scope: run.scope });
+      const completedRun = printShopWorkspace.completeDiscoveryRun(PRINT_SHOP_DATA_ROOT, run.id, {
+        provider,
+        ...execution,
+      });
+      sendJson(res, 200, {
+        run: completedRun,
+        sourceCount: completedRun.sourceObservationIds.length,
+        opportunityCount: completedRun.opportunityIds.length,
+      });
+    } catch (error) {
+      if (consumed && run) {
+        try {
+          printShopWorkspace.failDiscoveryRun(PRINT_SHOP_DATA_ROOT, run.id, error, { callsCompleted: 1 });
+        } catch {}
+      }
+      sendJson(res, error.status || (consumed ? 502 : 500), { error: error.message });
+    }
+    return;
+  }
+
+  const printShopOpportunityMatch = url.pathname.match(/^\/api\/print-shop\/opportunities\/([^/]+)$/);
+  if (req.method === "PATCH" && printShopOpportunityMatch) {
+    try {
+      const payload = await readBody(req);
+      const opportunity = printShopWorkspace.updateOpportunity(
+        PRINT_SHOP_DATA_ROOT,
+        decodeURIComponent(printShopOpportunityMatch[1]),
+        payload,
+      );
+      sendJson(res, 200, { opportunity });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const printShopOpportunityPromoteMatch = url.pathname.match(/^\/api\/print-shop\/opportunities\/([^/]+)\/promote$/);
+  if (req.method === "POST" && printShopOpportunityPromoteMatch) {
+    try {
+      const result = printShopWorkspace.promoteOpportunity(
+        PRINT_SHOP_DATA_ROOT,
+        decodeURIComponent(printShopOpportunityPromoteMatch[1]),
+      );
+      sendJson(res, 201, result);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/print-shop/research-requests") {
+    try {
+      const payload = await readBody(req);
+      const query = String(payload.query || "").trim().replace(/\s+/g, " ").slice(0, 240);
+      if (query.length < 3) throw guardedError("Enter a product research query.", 400);
+      const geography = String(payload.geography || "United States").trim().slice(0, 80);
+      const provider = configuredPrintShopSearchProvider();
+      if (!provider) {
+        throw guardedError("Product search is not connected. Configure BRAVE_API_KEY or SERP_API_KEY server-side before requesting approval.", 409);
+      }
+      const queryHash = crypto.createHash("sha256").update(`${query.toLowerCase()}|${geography.toLowerCase()}|${provider}`).digest("hex");
+      const details = {
+        officeId: "print-shop-office",
+        provider,
+        queryHash,
+        geography,
+        maximumCalls: 1,
+        maximumResults: 8,
+      };
+      const gate = createHumanGateRequest({
+        title: `Approve product research: ${query}`,
+        actionType: "agent101_web_search",
+        officeId: "print-shop-office",
+        workflowId: "workflow-print-shop",
+        linkedId: `print-shop-research:${queryHash}`,
+        riskLevel: "medium",
+        details,
+        evidence: "This search would disclose the recorded query to an external AI/search provider and may consume paid API usage. No provider call has run.",
+        action: "Approve one bounded external product-research call. This does not authorize buying, publishing, pricing, customer contact, or use of any third-party design license.",
+        exactScope: `One external research call for query \"${query}\" in ${geography}, returning at most 8 cited observations.`,
+        expectedPostcondition: "A source-linked research record is saved; unknown demand and commercial rights remain unknown unless a source directly supports them.",
+        rollbackPlan: "Do not call the provider on any scope mismatch. Research records can be archived locally without changing any external account.",
+      });
+      const request = printShopWorkspace.recordResearchRequest(PRINT_SHOP_DATA_ROOT, {
+        query,
+        geography,
+        provider,
+        queryHash,
+        approvalId: gate.approval.id,
+      });
+      sendJson(res, 202, { request, approval: gate.approval, requiresApproval: true });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const printShopResearchRunMatch = url.pathname.match(/^\/api\/print-shop\/research-requests\/([^/]+)\/run$/);
+  if (req.method === "POST" && printShopResearchRunMatch) {
+    let consumed = false;
+    let request = null;
+    try {
+      const payload = await readBody(req);
+      const requestId = decodeURIComponent(printShopResearchRunMatch[1]);
+      request = printShopWorkspace.loadWorkspace(PRINT_SHOP_DATA_ROOT).researchRequests.find((item) => item.id === requestId);
+      if (!request) throw guardedError("Print Shop research request not found.", 404);
+      if (["complete", "failed"].includes(request.status)) throw guardedError("This research request is already terminal.", 409);
+      const approvalId = String(payload.approvalId || "").trim();
+      const provider = configuredPrintShopSearchProvider();
+      if (!provider || provider !== request.provider) {
+        throw guardedError("The approved search provider is no longer configured with the same scope.", 409);
+      }
+      consumePrintShopResearchApproval({ approvalId, request, provider });
+      consumed = true;
+      const results = await fetchPrintShopResearchResults({
+        provider,
+        query: request.query,
+        geography: request.geography,
+      });
+      const completedRequest = printShopWorkspace.completeResearchRequest(PRINT_SHOP_DATA_ROOT, request.id, { provider, results });
+      sendJson(res, 200, { request: completedRequest, resultCount: completedRequest.sources.length });
+    } catch (error) {
+      if (consumed && request) {
+        try {
+          printShopWorkspace.failResearchRequest(PRINT_SHOP_DATA_ROOT, request.id, error);
+        } catch {}
+      }
+      sendJson(res, error.status || (consumed ? 502 : 500), { error: error.message });
+    }
+    return;
+  }
+
+  const printShopArtifactMatch = url.pathname.match(/^\/api\/print-shop\/artifacts\/([^/]+)\/download$/);
+  if (req.method === "GET" && printShopArtifactMatch) {
+    try {
+      const { artifact, absolutePath } = printShopWorkspace.artifactForDownload(
+        PRINT_SHOP_DATA_ROOT,
+        decodeURIComponent(printShopArtifactMatch[1]),
+      );
+      const fileName = `${String(artifact.name || "argentum-part").replace(/[^A-Za-z0-9._-]+/g, "-")}.stl`;
+      res.writeHead(200, {
+        ...securityHeaders(req),
+        "content-type": "model/stl",
+        "content-disposition": `attachment; filename=\"${fileName}\"`,
+        "content-length": fs.statSync(absolutePath).size,
+        "cache-control": "private, no-store",
+        "x-content-sha256": artifact.sha256,
+      });
+      fs.createReadStream(absolutePath).pipe(res);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/system/status") {
     sendJson(res, 200, currentSystemStatus());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/display/state") {
+    try {
+      requireAdminAccess(req);
+      const state = readState();
+      sendJson(res, 200, {
+        display: publicDisplayState(state),
+        snapshot: await buildArgentumDisplaySnapshot(state),
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/display/events") {
+    try {
+      await handleDisplayEvents(req, res);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/display/navigate") {
+    try {
+      requireAdminAccess(req);
+      const payload = await readBody(req);
+      const display = navigateDisplay(payload, "api");
+      sendJson(res, 200, { ok: true, display });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/hardware/display") {
+    try {
+      const state = readState();
+      const display = normalizeDisplayState(state.display || {});
+      const deviceId = displayDeviceId(url.searchParams.get("deviceId") || "");
+      const trusted = deviceId ? display.trustedControllers.some((controller) => controller.deviceId === deviceId) : false;
+      sendJson(res, 200, { display: publicDisplayState(state), trusted, pairingRequired: Boolean(deviceId && !trusted) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hardware/display/pairing/request") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, { ok: true, display: createDisplayPairingRequest(payload) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hardware/display/pairing/accept") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, { ok: true, action: "accept_pairing", ...acceptDisplayPairing(payload) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hardware/display/heartbeat") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, { ok: true, display: updateDisplayHeartbeat(payload, "hardware") });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && (url.pathname === "/api/hardware/display" || url.pathname === "/api/hardware/display/command")) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, { ok: true, ...handleHardwareDisplayCommand(payload) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/clipping-office/overview") {
+    sendJson(res, 200, buildClipOfficeDashboardSnapshot());
+    return;
+  }
+
+  if (req.method === "GET" && (url.pathname === "/api/local/status" || url.pathname === "/api/local/runtime")) {
+    try {
+      requireAdminAccess(req);
+      sendJson(res, 200, {
+        ...localRuntimeStatusPayload(),
+        secretStorage: {
+          keychainAvailable: secureSecrets.canUseKeychain(),
+          preferred: secureSecrets.canUseKeychain() ? "Mac Keychain" : "Encrypted local file",
+        },
+        controls: {
+          adminRoutesPublic: false,
+          authRequired: true,
+          humanGateRequired: true,
+          fileWorkspaceRequiresPermission: true,
+          autoLock: "Optional via session timeout",
+        },
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/local/audit") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      sendJson(res, 200, { events: localDatabase.listLocalAudit(DATA_DIR, url.searchParams.get("limit") || 100) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/local/jobs") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      sendJson(res, 200, { jobs: localDatabase.listAgentJobs(DATA_DIR, url.searchParams.get("limit") || 100) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/local/jobs") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const payload = await readBody(req);
+      sendJson(res, 201, createLocalAgentJob(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/local/jobs/run-next") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      sendJson(res, 200, runNextLocalAgentJob());
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && (url.pathname === "/api/local/files/workspaces" || url.pathname === "/api/local/file-workspaces")) {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      sendJson(res, 200, { workspaces: localDatabase.listFileWorkspaces(DATA_DIR) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && (url.pathname === "/api/local/files/workspaces" || url.pathname === "/api/local/file-workspaces")) {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const payload = await readBody(req);
+      sendJson(res, 201, { workspace: addLocalFileWorkspace(payload), workspaces: localDatabase.listFileWorkspaces(DATA_DIR) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const localWorkspaceMatch = url.pathname.match(/^\/api\/local\/file-workspaces\/([^/]+)$/);
+  if (req.method === "DELETE" && localWorkspaceMatch) {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const workspaceId = decodeURIComponent(localWorkspaceMatch[1]);
+      const workspace = localDatabase.getFileWorkspace(DATA_DIR, workspaceId);
+      if (workspace) {
+        localDatabase.logFileAccess(DATA_DIR, {
+          workspaceId,
+          action: "revoke_workspace",
+          filePath: workspace.folderPath,
+          allowed: true,
+          reason: "Operator removed folder workspace.",
+        });
+      }
+      sendJson(res, 200, { ...localDatabase.removeFileWorkspace(DATA_DIR, workspaceId), workspaces: localDatabase.listFileWorkspaces(DATA_DIR) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/local/secrets") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const payload = await readBody(req);
+      const provider = String(payload.provider || payload.name || "").trim().toLowerCase();
+      const value = String(payload.value || payload.apiKey || "").trim();
+      if (!provider || value.length < 8) throw guardedError("Choose a secret and enter a valid value.", 400);
+      const saved = secureSecrets.setSecret({ dataDir: DATA_DIR, provider, value, preferKeychain: true });
+      localDatabase.upsertSecretMetadata(DATA_DIR, provider, saved.storage, true);
+      if (["openai", "anthropic"].includes(provider)) {
+        const config = readAiProviderConfig();
+        config.keys = config.keys || {};
+        config.keys[provider] = {
+          storage: saved.storage,
+          configured: true,
+          updatedAt: saved.updatedAt,
+        };
+        writeAiProviderConfig(config);
+      }
+      if (isLocalConnectorSecretProvider(provider)) reloadClippingOfficeModuleFromLocalSecrets();
+      const state = readState();
+      audit(state, "Local secret saved", `${provider} saved to ${secureSecrets.publicStorageLabel(saved.storage)}.`);
+      writeState(state);
+      sendJson(res, 200, {
+        provider,
+        configured: true,
+        storage: secureSecrets.publicStorageLabel(saved.storage),
+        updatedAt: saved.updatedAt,
+        clippingOfficeReloaded: isLocalConnectorSecretProvider(provider),
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/local/secrets") {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const payload = await readBody(req);
+      const provider = String(payload.provider || payload.name || "").trim().toLowerCase();
+      if (!provider) throw guardedError("Choose a secret to remove.", 400);
+      const removed = secureSecrets.deleteSecret({ dataDir: DATA_DIR, provider });
+      localDatabase.upsertSecretMetadata(DATA_DIR, provider, removed.storage, false);
+      if (["openai", "anthropic"].includes(provider)) {
+        const config = readAiProviderConfig();
+        if (config.keys) delete config.keys[provider];
+        writeAiProviderConfig(config);
+      }
+      if (isLocalConnectorSecretProvider(provider)) reloadClippingOfficeModuleFromLocalSecrets();
+      const state = readState();
+      audit(state, "Local secret removed", `${provider} removed from local secure storage.`);
+      writeState(state);
+      sendJson(res, 200, {
+        provider,
+        configured: false,
+        storage: secureSecrets.publicStorageLabel(removed.storage),
+        updatedAt: removed.updatedAt,
+        clippingOfficeReloaded: isLocalConnectorSecretProvider(provider),
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/brain")) {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+      const status = obsidianStatusPayload();
+      const vaultPath = status.vaultPath || configuredObsidianVaultPath();
+      const dbPath = localDatabase.databasePath(DATA_DIR);
+
+      if (req.method === "GET" && url.pathname === "/api/brain/startup-status") {
+        sendJson(res, 200, brainStartupStatusPayload());
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/brain/health") {
+        const context = status.initialized || status.connected
+          ? agentContextBuilder.buildAgentContext({ vaultPath, state: readState(), agentId: "agent.1010", officeId: "office.clipping", projectId: "project.clip_office_production", includeTrace: false })
+          : null;
+        sendJson(res, 200, {
+          startup: brainStartupStatusPayload(),
+          vault: status,
+          database: { path: dbPath, available: Boolean(localDatabaseStatus?.available) },
+          conflicts: status.initialized || status.connected ? brainVerification.detectConflicts(vaultPath) : [],
+          context: context ? { contextHash: context.contextHash, tokenEstimate: context.tokenEstimate, excludedCount: context.excluded.length, citationCount: context.citations.length } : null,
+          backup: { latest: brainBackup.latestBackup() || "" },
+          gateway: { bridge: gatewayAdapter.bridgeConfig(process.env), credentials: gatewayAdapter.listGatewayCredentials(DATA_DIR).filter((credential) => credential.status === "active").length },
+        });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/verify") {
+        const report = brainVerification.verifyBrain({
+          vaultPath,
+          contextBuilder: (payload) => agentContextBuilder.buildAgentContext({ ...payload, vaultPath, state: readState() }),
+          skipBackup: true,
+        });
+        const state = readState();
+        audit(state, "Brain verification run", `Status ${report.status}, critical ${report.criticalCount}.`);
+        writeState(state);
+        sendJson(res, report.criticalCount ? 409 : 200, { report });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/backup") {
+        const manifest = brainBackup.createBrainBackup({ vaultPath, databasePath: dbPath, appConfigDir: DATA_DIR });
+        const state = readState();
+        audit(state, "Brain backup created", `${manifest.backupId} verified=${manifest.verified}`);
+        writeState(state);
+        sendJson(res, manifest.verified ? 200 : 409, { backup: manifest });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/backup/verify") {
+        const payload = await readBody(req);
+        const backupPath = payload.backupPath || brainBackup.latestBackup();
+        sendJson(res, 200, { verification: brainBackup.verifyBrainBackup(backupPath) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/restore/dry-run") {
+        const payload = await readBody(req);
+        const result = brainBackup.restoreDryRun({ backupPath: payload.backupPath || brainBackup.latestBackup(), vaultPath });
+        const state = readState();
+        audit(state, "Brain restore dry-run", result.backupPath);
+        writeState(state);
+        sendJson(res, 200, { restore: result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/restore") {
+        const payload = await readBody(req);
+        const result = brainBackup.restoreBackup({ backupPath: payload.backupPath, vaultPath, databasePath: dbPath, appConfigDir: DATA_DIR, confirmation: payload.confirmation });
+        const state = readState();
+        audit(state, "Brain restored", `${result.backupId} restored to ${result.vaultPath}.`);
+        writeState(state);
+        sendJson(res, 200, { restore: result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/context/agent101") {
+        const payload = await readBody(req);
+        const context = agentContextBuilder.buildAgentContext({ ...payload, vaultPath, state: readState(), agentId: payload.agentId || "agent.1010" });
+        const state = readState();
+        audit(state, "Agent 1010 context built", `${context.contextHash} with ${context.citations.length} citation(s).`);
+        writeState(state);
+        sendJson(res, 200, { context });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/brain/conflicts") {
+        sendJson(res, 200, { conflicts: brainVerification.detectConflicts(vaultPath) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/decisions") {
+        const payload = await readBody(req);
+        const decision = obsidianVault.createDecision(vaultPath, payload);
+        const state = readState();
+        audit(state, "Brain decision created", `${decision.id}: ${decision.path}`);
+        writeState(state);
+        sendJson(res, 201, decision);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/memory/proposals") {
+        const payload = await readBody(req);
+        const note = obsidianVault.createMemoryProposal(vaultPath, payload);
+        const state = readState();
+        audit(state, "Brain memory proposal created", note.path);
+        writeState(state);
+        sendJson(res, 201, { note });
+        return;
+      }
+
+      const correctionMatch = url.pathname.match(/^\/api\/brain\/memory\/([^/]+)\/correct$/);
+      if (req.method === "POST" && correctionMatch) {
+        const payload = await readBody(req);
+        const note = obsidianVault.createMemoryCorrection(vaultPath, decodeURIComponent(correctionMatch[1]), payload);
+        const state = readState();
+        audit(state, "Brain memory correction proposed", note.path);
+        writeState(state);
+        sendJson(res, 201, { note });
+        return;
+      }
+
+      const approveCorrectionMatch = url.pathname.match(/^\/api\/brain\/memory-corrections\/([^/]+)\/approve$/);
+      if (req.method === "POST" && approveCorrectionMatch) {
+        const payload = await readBody(req);
+        const note = obsidianVault.approveMemoryCorrection(vaultPath, decodeURIComponent(approveCorrectionMatch[1]), payload.oldRef || payload.oldId || payload.supersedes);
+        const state = readState();
+        audit(state, "Brain memory correction approved", note.path);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      const renameMatch = url.pathname.match(/^\/api\/brain\/entities\/([^/]+)\/rename$/);
+      if (req.method === "POST" && renameMatch) {
+        const payload = await readBody(req);
+        const note = obsidianVault.renameCanonicalEntity(vaultPath, decodeURIComponent(renameMatch[1]), payload.title);
+        const state = readState();
+        audit(state, "Brain canonical entity renamed", `${renameMatch[1]} -> ${note.path}`);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      const archiveMatch = url.pathname.match(/^\/api\/brain\/notes\/(.+)\/archive$/);
+      if (req.method === "POST" && archiveMatch) {
+        const payload = await readBody(req);
+        const note = obsidianVault.archiveNote(vaultPath, decodeURIComponent(archiveMatch[1]), payload.reason || "");
+        const state = readState();
+        audit(state, "Brain note archived", note.path);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/brain/gateway/credentials") {
+        const payload = await readBody(req);
+        const credential = gatewayAdapter.createGatewayCredential(DATA_DIR, payload);
+        const state = readState();
+        audit(state, "Gateway credential created", credential.credential.id);
+        writeState(state);
+        sendJson(res, 201, credential);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/brain/gateway/credentials") {
+        sendJson(res, 200, { credentials: gatewayAdapter.listGatewayCredentials(DATA_DIR) });
+        return;
+      }
+
+      const rotateCredentialMatch = url.pathname.match(/^\/api\/brain\/gateway\/credentials\/([^/]+)\/rotate$/);
+      if (req.method === "POST" && rotateCredentialMatch) {
+        const result = gatewayAdapter.rotateGatewayCredential(DATA_DIR, decodeURIComponent(rotateCredentialMatch[1]));
+        const state = readState();
+        audit(state, "Gateway credential rotated", result.credential.id);
+        writeState(state);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      const revokeCredentialMatch = url.pathname.match(/^\/api\/brain\/gateway\/credentials\/([^/]+)\/revoke$/);
+      if (req.method === "POST" && revokeCredentialMatch) {
+        const credential = gatewayAdapter.revokeGatewayCredential(DATA_DIR, decodeURIComponent(revokeCredentialMatch[1]));
+        const state = readState();
+        audit(state, "Gateway credential revoked", credential.id);
+        writeState(state);
+        sendJson(res, 200, { credential });
+        return;
+      }
+
+      sendJson(res, 404, { error: "Unknown Brain route" });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details || undefined });
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/gateway/v1")) {
+    try {
+      const denyRoute = /\/(vault\/write|tools\/execute|filesystem|env|sqlite)/.test(url.pathname)
+        || /^\/api\/gateway\/v1\/approvals\/[^/]+\/(decide|approve|reject)$/.test(url.pathname);
+      if (denyRoute) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.health);
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_denial", reason: "blocked_route", path: url.pathname });
+        throw guardedError("Gateway route is outside the read-only adapter boundary.", 403);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/gateway/v1/health") {
+        const auth = gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.health);
+        sendJson(res, 200, {
+          status: "ok",
+          requestId: auth.requestId,
+          adapter: "argentum-gateway-v1",
+          bridge: gatewayAdapter.bridgeConfig(process.env),
+          scopes: auth.credential.scopes,
+          brain: brainStartupStatusPayload(),
+        });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/gateway/v1/threads") {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.threadsRead);
+        sendJson(res, 200, { threads: publicAgent101ChatThreads(readState()) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/gateway/v1/threads") {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.threadsWrite);
+        const payload = await readBody(req);
+        const result = createAgent101ChatThread({ title: payload.title || "Gateway Agent 101 thread", roomId: "agent-office" });
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_request", route: "threads.create", threadId: result.thread.id });
+        sendJson(res, 201, { thread: result.thread });
+        return;
+      }
+
+      const gatewayThreadMatch = url.pathname.match(/^\/api\/gateway\/v1\/threads\/([^/]+)$/);
+      if (req.method === "GET" && gatewayThreadMatch) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.threadsRead);
+        const thread = findAgent101Thread(readState(), decodeURIComponent(gatewayThreadMatch[1]));
+        if (!thread) throw guardedError("Thread not found.", 404);
+        sendJson(res, 200, { thread: publicAgent101ChatThreads({ agent101ChatThreads: [thread] })[0] });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/gateway/v1/agent101/messages") {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.chat);
+        const payload = await readBody(req);
+        let threadId = payload.threadId;
+        if (!threadId) {
+          const created = createAgent101ChatThread({ title: `OpenClaw ${payload.externalSessionId || "session"}`, roomId: "agent-office" });
+          threadId = created.thread.id;
+        }
+        const result = await addAgent101ChatMessage(threadId, { content: payload.message, roomId: "agent-office", clientMessageId: payload.metadata?.clientMessageId || payload.externalSessionId || "" });
+        const thread = result.thread;
+        const lastAgent = (thread.messages || []).slice().reverse().find((message) => message.role === "agent" || message.role === "system");
+        let citations = lastAgent?.metadata?.evidence || [];
+        if (!citations.length) {
+          const brain = obsidianStatusPayload();
+          if (brain.initialized || brain.connected) {
+            citations = agentContextBuilder.buildAgentContext({ vaultPath: brain.vaultPath, state: readState(), threadId, agentId: "agent.1010", officeId: "office.clipping" }).citations;
+          }
+        }
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_request", route: "agent101.messages", threadId });
+        sendJson(res, 200, {
+          threadId,
+          messageId: lastAgent?.id || "",
+          status: thread.status === "waiting_approval" ? "waiting_approval" : result.error ? "failed" : "answered",
+          message: lastAgent?.content || "",
+          citations,
+          runId: result.run?.runId || null,
+          approvalIds: (thread.messages || []).filter((message) => message.metadata?.approvalId).map((message) => message.metadata.approvalId),
+          artifacts: lastAgent?.metadata?.artifacts || [],
+        });
+        return;
+      }
+
+      const gatewayThreadMessageMatch = url.pathname.match(/^\/api\/gateway\/v1\/threads\/([^/]+)\/messages$/);
+      if (req.method === "POST" && gatewayThreadMessageMatch) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.chat);
+        const payload = await readBody(req);
+        const threadId = decodeURIComponent(gatewayThreadMessageMatch[1]);
+        const result = await addAgent101ChatMessage(threadId, { content: payload.message || payload.content, roomId: "agent-office", clientMessageId: payload.clientMessageId || "" });
+        const lastAgent = (result.thread.messages || []).slice().reverse().find((message) => message.role === "agent" || message.role === "system");
+        let citations = lastAgent?.metadata?.evidence || [];
+        if (!citations.length) {
+          const brain = obsidianStatusPayload();
+          if (brain.initialized || brain.connected) citations = agentContextBuilder.buildAgentContext({ vaultPath: brain.vaultPath, state: readState(), threadId, agentId: "agent.1010", officeId: "office.clipping" }).citations;
+        }
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_request", route: "threads.messages", threadId });
+        sendJson(res, 200, { threadId, messageId: lastAgent?.id || "", status: result.thread.status === "waiting_approval" ? "waiting_approval" : "answered", message: lastAgent?.content || "", citations });
+        return;
+      }
+
+      const gatewayRunMatch = url.pathname.match(/^\/api\/gateway\/v1\/runs\/([^/]+)$/);
+      if (req.method === "GET" && gatewayRunMatch) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.runsRead);
+        const runId = decodeURIComponent(gatewayRunMatch[1]);
+        const state = readState();
+        const run = (state.agent101Runs || []).find((item) => item.id === runId || item.runId === runId);
+        if (!run) throw guardedError("Run not found.", 404);
+        sendJson(res, 200, { run });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/gateway/v1/approvals") {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.approvalsRead);
+        const approvals = (readState().approvals || []).filter((approval) => approval.status === "pending");
+        sendJson(res, 200, { approvals });
+        return;
+      }
+
+      const approvalNotifyMatch = url.pathname.match(/^\/api\/gateway\/v1\/approvals\/([^/]+)\/notify$/);
+      if (req.method === "POST" && approvalNotifyMatch) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.approvalsNotify);
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_request", route: "approvals.notify", approvalId: decodeURIComponent(approvalNotifyMatch[1]) });
+        sendJson(res, 200, { notified: true, approvalId: decodeURIComponent(approvalNotifyMatch[1]), decisionAllowed: false });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/gateway/v1/memory/search") {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.memorySearch);
+        const payload = await readBody(req);
+        const status = obsidianStatusPayload();
+        if (!status.initialized && !status.connected) throw guardedError("Brain is unavailable.", 503);
+        const results = obsidianVault.searchVault(status.vaultPath, payload.query || "", {
+          limit: Math.min(Number(payload.limit) || 10, 25),
+          business: payload.businessId || undefined,
+          includeDraft: false,
+          includeArchive: false,
+          includeRejected: false,
+          includeSuperseded: false,
+          includeExpired: false,
+        })
+          .filter((item) => ["approved", "active"].includes(String(item.status || "").toLowerCase()) || item.canonical)
+          .filter((item) => !payload.types?.length || payload.types.includes(item.type))
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            type: item.type,
+            snippet: item.snippet || item.excerpt,
+            confidence: item.confidence,
+            updatedAt: item.updatedAt,
+            citation: { sourceId: item.id, canonicalPath: item.path },
+          }));
+        gatewayAdapter.audit(DATA_DIR, { action: "gateway_request", route: "memory.search", count: results.length });
+        sendJson(res, 200, { results });
+        return;
+      }
+
+      const artifactMatch = url.pathname.match(/^\/api\/gateway\/v1\/artifacts\/([^/]+)\/summary$/);
+      if (req.method === "GET" && artifactMatch) {
+        gatewayAdapter.assertGatewayAuth(DATA_DIR, req, gatewayAdapter.REQUIRED_SCOPES.artifactsSummary);
+        const artifactId = decodeURIComponent(artifactMatch[1]);
+        const artifact = (readState().artifacts || []).find((item) => item.id === artifactId);
+        if (!artifact) throw guardedError("Artifact not found.", 404);
+        sendJson(res, 200, { artifact: { id: artifact.id, title: artifact.title, type: artifact.type, status: artifact.status, summary: artifact.summary, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt } });
+        return;
+      }
+
+      sendJson(res, 404, { error: "Unknown Gateway route" });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/obsidian")) {
+    try {
+      requireAdminAccess(req);
+      requireLocalMode();
+
+      const activeVaultPath = () => configuredObsidianVaultPath();
+      const requireObsidianVault = () => {
+        const status = obsidianStatusPayload();
+        if (!status.initialized && !status.connected) throw guardedError("Connect or initialize the Obsidian vault first.", 409);
+        return status;
+      };
+
+      if (req.method === "GET" && url.pathname === "/api/obsidian/status") {
+        sendJson(res, 200, obsidianStatusPayload());
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/settings") {
+        const payload = await readBody(req);
+        const vaultPath = path.resolve(String(payload.vaultPath || "").trim() || obsidianVault.defaultVaultPath());
+        localDatabase.setLocalSetting(DATA_DIR, "obsidianVaultPath", vaultPath);
+        const state = readState();
+        audit(state, "Obsidian vault path saved", vaultPath);
+        writeState(state);
+        sendJson(res, 200, obsidianStatusPayload());
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/init") {
+        const payload = await readBody(req);
+        const vaultPath = path.resolve(String(payload.vaultPath || readObsidianVaultPath() || obsidianVault.defaultVaultPath()));
+        localDatabase.setLocalSetting(DATA_DIR, "obsidianVaultPath", vaultPath);
+        const status = obsidianVault.initializeVault(vaultPath);
+        const state = readState();
+        audit(state, "Obsidian brain initialized", `Vault ready at ${status.vaultPath}.`);
+        writeState(state);
+        sendJson(res, 200, { ...status, configured: true, defaultVaultPath: obsidianVault.defaultVaultPath() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/migrate/dry-run") {
+        const payload = await readBody(req);
+        const vaultPath = path.resolve(String(payload.vaultPath || activeVaultPath()));
+        sendJson(res, 200, obsidianVault.migrateLegacyVault(vaultPath, { dryRun: true }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/migrate") {
+        const payload = await readBody(req);
+        const vaultPath = path.resolve(String(payload.vaultPath || activeVaultPath()));
+        localDatabase.setLocalSetting(DATA_DIR, "obsidianVaultPath", vaultPath);
+        const result = obsidianVault.migrateLegacyVault(vaultPath, { dryRun: false });
+        const state = readState();
+        audit(state, "Obsidian vault migrated", `Vault migrated at ${vaultPath}.`);
+        writeState(state);
+        sendJson(res, 200, { ...result, configured: true, defaultVaultPath: obsidianVault.defaultVaultPath() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/validate") {
+        const status = requireObsidianVault();
+        sendJson(res, 200, { validation: obsidianVault.validateVault(status.vaultPath), status: obsidianStatusPayload() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/reindex") {
+        const status = requireObsidianVault();
+        const indexes = obsidianVault.rebuildIndexes(status.vaultPath);
+        const validation = obsidianVault.validateVault(status.vaultPath);
+        sendJson(res, 200, { indexes, validation, status: obsidianStatusPayload() });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/obsidian/entities") {
+        const status = requireObsidianVault();
+        const type = url.searchParams.get("type");
+        const manifest = obsidianVault.rebuildEntityManifest(status.vaultPath);
+        const entities = type ? manifest.entities.filter((entity) => entity.type === type) : manifest.entities;
+        sendJson(res, 200, { schemaVersion: obsidianVault.SCHEMA_VERSION, entities });
+        return;
+      }
+
+      const entityMatch = url.pathname.match(/^\/api\/obsidian\/entities\/([^/]+)$/);
+      if (req.method === "GET" && entityMatch) {
+        const status = requireObsidianVault();
+        const id = decodeURIComponent(entityMatch[1]);
+        const entity = obsidianVault.resolveCanonicalEntity(status.vaultPath, id);
+        if (!entity) throw guardedError("Canonical entity not found.", 404);
+        sendJson(res, 200, { entity, note: obsidianVault.readNote(status.vaultPath, entity.path), related: obsidianVault.listRelatedEntities(status.vaultPath, id) });
+        return;
+      }
+
+      const backlinkMatch = url.pathname.match(/^\/api\/obsidian\/backlinks\/([^/]+)$/);
+      if (req.method === "GET" && backlinkMatch) {
+        const status = requireObsidianVault();
+        const id = decodeURIComponent(backlinkMatch[1]);
+        sendJson(res, 200, { backlinks: obsidianVault.listBacklinks(status.vaultPath, id) });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/obsidian/graph") {
+        const status = requireObsidianVault();
+        sendJson(res, 200, obsidianVault.graph(status.vaultPath, { includeWorking: url.searchParams.get("includeWorking") === "1" }));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/obsidian/daily-notes") {
+        const status = requireObsidianVault();
+        sendJson(res, 200, { notes: obsidianVault.recentDailyNotes(status.vaultPath, Number(url.searchParams.get("limit") || 7)) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/daily-note") {
+        const status = requireObsidianVault();
+        const payload = await readBody(req);
+        const note = obsidianVault.createOrUpdateDailyNote(status.vaultPath, payload);
+        const state = readState();
+        audit(state, "Obsidian daily note updated", note.path);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      if ((req.method === "POST" || req.method === "GET") && url.pathname === "/api/obsidian/search") {
+        const status = requireObsidianVault();
+        const payload = req.method === "POST" ? await readBody(req) : Object.fromEntries(url.searchParams.entries());
+        sendJson(res, 200, { results: obsidianVault.searchVault(status.vaultPath, payload.query || payload.q || "", payload) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/create") {
+        const status = requireObsidianVault();
+        const payload = await readBody(req);
+        const note = obsidianVault.createCanonicalNote(status.vaultPath, payload);
+        const state = readState();
+        audit(state, "Obsidian canonical note created", note.path);
+        writeState(state);
+        sendJson(res, 201, { note });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/tool") {
+        const status = requireObsidianVault();
+        const payload = await readBody(req);
+        const result = obsidianVault.openClawToolAction(status.vaultPath, payload.action, payload);
+        const state = readState();
+        audit(state, "Obsidian tool action", payload.action);
+        writeState(state);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if ((req.method === "POST" || req.method === "GET") && url.pathname === "/api/obsidian/context") {
+        const status = requireObsidianVault();
+        const payload = req.method === "POST" ? await readBody(req) : Object.fromEntries(url.searchParams.entries());
+        sendJson(res, 200, { context: obsidianVault.buildAgentContext(status.vaultPath, payload) });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/obsidian/memory/propose") {
+        const status = requireObsidianVault();
+        const payload = await readBody(req);
+        const note = obsidianVault.createMemoryProposal(status.vaultPath, payload);
+        const state = readState();
+        audit(state, "Obsidian memory proposed", note.path);
+        writeState(state);
+        sendJson(res, 201, { note });
+        return;
+      }
+
+      const approveMemoryMatch = url.pathname.match(/^\/api\/obsidian\/memory\/([^/]+)\/approve$/);
+      if (req.method === "POST" && approveMemoryMatch) {
+        const status = requireObsidianVault();
+        const note = obsidianVault.approveMemoryProposal(status.vaultPath, decodeURIComponent(approveMemoryMatch[1]));
+        const state = readState();
+        audit(state, "Obsidian memory approved", note.path);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      const rejectMemoryMatch = url.pathname.match(/^\/api\/obsidian\/memory\/([^/]+)\/reject$/);
+      if (req.method === "POST" && rejectMemoryMatch) {
+        const status = requireObsidianVault();
+        const payload = await readBody(req);
+        const note = obsidianVault.rejectMemoryProposal(status.vaultPath, decodeURIComponent(rejectMemoryMatch[1]), payload.reason || "");
+        const state = readState();
+        audit(state, "Obsidian memory rejected", note.path);
+        writeState(state);
+        sendJson(res, 200, { note });
+        return;
+      }
+
+      sendJson(res, 404, { error: "Unknown Obsidian route" });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
     return;
   }
 
@@ -4909,9 +12212,55 @@ async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/connectors/status") {
     try {
       const state = readState();
-      sendJson(res, 200, { connectors: publicConnectorStatuses(state) });
+      sendJson(res, 200, { connectors: publicConnectorStatuses(state, { includeAdminOnly: currentRequestIsAdmin(req) }) });
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-runtime/openclaw/status") {
+    try {
+      requireAdminAccess(req);
+      sendJson(res, 200, { status: openClawConnectorStatus(readState()) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-runtime/openclaw/models") {
+    try {
+      requireAdminAccess(req);
+      sendJson(res, 200, await listOpenClawModels());
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-runtime/openclaw/test") {
+    try {
+      requireAdminAccess(req);
+      sendJson(res, 200, await testOpenClawRuntime());
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-runtime/openclaw/run") {
+    try {
+      requireAdminAccess(req);
+      const payload = await readBody(req);
+      sendJson(res, 200, await runOpenClawAgentRequest(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, {
+        error: error.message,
+        code: error.code || undefined,
+        httpStatus: error.httpStatus || undefined,
+        configurationErrors: error.configurationErrors || undefined,
+      });
     }
     return;
   }
@@ -4919,6 +12268,7 @@ async function handleApi(req, res, url) {
   const connectorTestMatch = url.pathname.match(/^\/api\/connectors\/([^/]+)\/test$/);
   if (req.method === "POST" && connectorTestMatch) {
     try {
+      if (connectorTestMatch[1] === "openclaw") requireAdminAccess(req);
       sendJson(res, 200, await testConnector(connectorTestMatch[1]));
     } catch (error) {
       sendJson(res, error.status || 500, { error: error.message });
@@ -4937,10 +12287,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/agent101/tool-status") {
     const state = readState();
+    const includeOpenClaw = currentRequestIsAdmin(req);
     sendJson(res, 200, {
       agent101: agent101Model(state),
-      tools: publicToolConnections(state),
-      connectors: publicConnectorStatuses(state),
+      tools: publicToolConnections(state, { includeOpenClaw }),
+      connectors: publicConnectorStatuses(state, { includeAdminOnly: includeOpenClaw }),
       readiness: agent101Readiness(state),
     });
     return;
@@ -4953,6 +12304,107 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/agent101/openai-test") {
     sendJson(res, 200, await testAgent101OpenAi());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/studio/status") {
+    const state = readState();
+    const provider = currentAiProviderStatus();
+    sendJson(res, 200, {
+      status: "ready",
+      provider,
+      outputRoot: AGENT101_OUTPUT_ROOT,
+      projectWorkspace: agent101ProjectWorkspace.inspectWorkspace({ state, rootDir: ROOT }),
+      layout: state.agent101StudioLayout,
+      activeMissions: (state.agent101Missions || []).filter((mission) => agent101MissionManager.ACTIVE_STATUSES.has(mission.status)).length,
+      workerCount: agent101MissionWorkers.size,
+      safety: "supervised_human_gate",
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/project-workspace") {
+    const state = readState();
+    sendJson(res, 200, {
+      workspace: agent101ProjectWorkspace.inspectWorkspace({ state, rootDir: ROOT }),
+      layout: state.agent101StudioLayout,
+      proposals: (state.agent101EditProposals || []).slice(0, 50),
+    });
+    return;
+  }
+
+  const agent101ProjectEditMatch = url.pathname.match(/^\/api\/agent101\/project-edits\/([^/]+)$/);
+  if (req.method === "GET" && agent101ProjectEditMatch) {
+    try {
+      const state = readState();
+      const proposal = agent101ProjectWorkspace.editProposalPreview({
+        state,
+        rootDir: ROOT,
+        outputRoot: AGENT101_OUTPUT_ROOT,
+        proposalId: decodeURIComponent(agent101ProjectEditMatch[1]),
+      });
+      sendJson(res, 200, { proposal });
+    } catch (error) {
+      sendJson(res, /not found/i.test(error.message) ? 404 : 409, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/missions") {
+    const state = readState();
+    const threadId = String(url.searchParams.get("threadId") || "");
+    const status = String(url.searchParams.get("status") || "");
+    let missions = state.agent101Missions || [];
+    if (threadId) missions = missions.filter((mission) => mission.threadId === threadId);
+    if (status) missions = missions.filter((mission) => mission.status === status);
+    sendJson(res, 200, { missions: missions.map((mission) => publicAgent101Mission(mission, { includeEvents: false })) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/missions") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 201, { mission: createAgent101Mission(payload) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agent101MissionStreamMatch = url.pathname.match(/^\/api\/agent101\/missions\/([^/]+)\/stream$/);
+  if (req.method === "GET" && agent101MissionStreamMatch) {
+    try {
+      subscribeAgent101Mission(decodeURIComponent(agent101MissionStreamMatch[1]), req, res);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agent101MissionActionMatch = url.pathname.match(/^\/api\/agent101\/missions\/([^/]+)\/(resume|cancel)$/);
+  if (req.method === "POST" && agent101MissionActionMatch) {
+    try {
+      const missionId = decodeURIComponent(agent101MissionActionMatch[1]);
+      const mission = agent101MissionActionMatch[2] === "resume"
+        ? resumeAgent101Mission(missionId)
+        : cancelAgent101Mission(missionId);
+      sendJson(res, 200, { mission });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agent101MissionMatch = url.pathname.match(/^\/api\/agent101\/missions\/([^/]+)$/);
+  if (req.method === "GET" && agent101MissionMatch) {
+    try {
+      const state = readState();
+      const mission = findAgent101Mission(state, decodeURIComponent(agent101MissionMatch[1]));
+      if (!mission) throw guardedError("Agent 101 mission not found.", 404);
+      sendJson(res, 200, { mission: publicAgent101Mission(mission) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
     return;
   }
 
@@ -5180,6 +12632,539 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/agent101/operating-system") {
+    const state = readState();
+    sendJson(res, 200, agent101Os.publicOperatingSystemPayload(state));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/business/profile") {
+    const state = readState();
+    sendJson(res, 200, { profile: state.businessProfile, readiness: agent101Os.businessReadiness(state) });
+    return;
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/business/profile") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      const profile = agent101Os.updateBusinessProfile(state, payload);
+      audit(state, "Business profile updated", `Updated profile for ${profile.companyName || "Argentum"}.`);
+      writeState(state);
+      sendJson(res, 200, { profile, readiness: agent101Os.businessReadiness(state) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/business/readiness") {
+    const state = readState();
+    sendJson(res, 200, agent101Os.businessReadiness(state));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/business/goals") {
+    const state = readState();
+    sendJson(res, 200, { goals: state.businessProfile?.goals || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/business/goals") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      state.businessProfile.goals = Array.isArray(state.businessProfile.goals) ? state.businessProfile.goals : [];
+      const goal = {
+        id: `goal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        title: String(payload.title || payload.goal || "").trim().slice(0, 200),
+        status: String(payload.status || "active").slice(0, 40),
+        metric: payload.metric ? String(payload.metric).slice(0, 120) : "",
+        deadline: payload.deadline || null,
+        createdAt: now(),
+      };
+      if (!goal.title) throw guardedError("Goal title is required.", 400);
+      state.businessProfile.goals.unshift(goal);
+      audit(state, "Business goal added", goal.title);
+      writeState(state);
+      sendJson(res, 201, { goal, goals: state.businessProfile.goals });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/business/kpis") {
+    const state = readState();
+    sendJson(res, 200, { kpis: state.businessProfile?.kpis || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/business/kpis") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      state.businessProfile.kpis = Array.isArray(state.businessProfile.kpis) ? state.businessProfile.kpis : [];
+      const kpi = {
+        id: `kpi-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        label: String(payload.label || payload.title || "").trim().slice(0, 160),
+        value: payload.value ?? 0,
+        target: payload.target ?? "",
+        createdAt: now(),
+      };
+      if (!kpi.label) throw guardedError("KPI label is required.", 400);
+      state.businessProfile.kpis.unshift(kpi);
+      audit(state, "Business KPI added", kpi.label);
+      writeState(state);
+      sendJson(res, 201, { kpi, kpis: state.businessProfile.kpis });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/knowledge") {
+    const state = readState();
+    const status = String(url.searchParams.get("status") || "").trim();
+    const category = String(url.searchParams.get("category") || "").trim();
+    let items = state.businessKnowledge || [];
+    if (status) items = items.filter((item) => item.status === status);
+    if (category) items = items.filter((item) => item.category === category);
+    sendJson(res, 200, { knowledge: items });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/knowledge") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      const item = agent101Os.upsertKnowledgeItem(state, payload);
+      audit(state, "Knowledge item saved", `${item.title} (${item.status})`);
+      writeState(state);
+      sendJson(res, 201, { item });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/knowledge/search") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      sendJson(res, 200, { results: agent101Os.searchKnowledge(state, payload.query || payload.q || "", payload) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const knowledgeMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)$/);
+  if (knowledgeMatch) {
+    const knowledgeId = decodeURIComponent(knowledgeMatch[1]);
+    try {
+      const state = readState();
+      const item = (state.businessKnowledge || []).find((entry) => entry.id === knowledgeId);
+      if (!item) throw guardedError("Knowledge item not found.", 404);
+      if (req.method === "GET") {
+        sendJson(res, 200, { item });
+        return;
+      }
+      if (req.method === "PATCH") {
+        const payload = await readBody(req);
+        const updated = agent101Os.upsertKnowledgeItem(state, { ...item, ...payload, id: item.id, version: Number(item.version || 1) + 1 });
+        audit(state, "Knowledge item updated", updated.title);
+        writeState(state);
+        sendJson(res, 200, { item: updated });
+        return;
+      }
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+      return;
+    }
+  }
+
+  const knowledgeApproveMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/approve$/);
+  if (req.method === "POST" && knowledgeApproveMatch) {
+    const state = readState();
+    const item = agent101Os.approveKnowledgeItem(state, decodeURIComponent(knowledgeApproveMatch[1]), "operator");
+    if (!item) {
+      sendJson(res, 404, { error: "Knowledge item not found." });
+      return;
+    }
+    audit(state, "Knowledge approved", item.title);
+    writeState(state);
+    sendJson(res, 200, { item });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent101/memory") {
+    const state = readState();
+    sendJson(res, 200, {
+      memory: state.agent101MemoryRecords || [],
+      legacyMemory: state.memory || { working: [], shared: [], agent: [] },
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/memory/proposals") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      const record = {
+        id: `memory-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type: ["working", "episodic", "semantic", "procedural", "preference", "decision"].includes(payload.type) ? payload.type : "working",
+        title: String(payload.title || "Memory proposal").slice(0, 160),
+        content: String(payload.content || payload.body || "").slice(0, 6000),
+        source: String(payload.source || "operator").slice(0, 120),
+        sourceRecordIds: Array.isArray(payload.sourceRecordIds) ? payload.sourceRecordIds.slice(0, 20) : [],
+        confidence: Math.max(0, Math.min(1, Number(payload.confidence || 0.7))),
+        importance: ["low", "medium", "high"].includes(payload.importance) ? payload.importance : "medium",
+        status: "proposed",
+        approved: false,
+        approvedBy: null,
+        effectiveFrom: now(),
+        expiresAt: payload.expiresAt || null,
+        supersedes: payload.supersedes || null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      if (!record.content) throw guardedError("Memory proposal content is required.", 400);
+      state.agent101MemoryRecords.unshift(record);
+      audit(state, "Memory proposal created", record.title);
+      writeState(state);
+      sendJson(res, 201, { record });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const memoryDecisionMatch = url.pathname.match(/^\/api\/agent101\/memory\/([^/]+)\/(approve|reject)$/);
+  if (req.method === "POST" && memoryDecisionMatch) {
+    const [, memoryId, decision] = memoryDecisionMatch;
+    const state = readState();
+    const record = (state.agent101MemoryRecords || []).find((item) => item.id === decodeURIComponent(memoryId));
+    if (!record) {
+      sendJson(res, 404, { error: "Memory record not found." });
+      return;
+    }
+    record.status = decision === "approve" ? "approved" : "rejected";
+    record.approved = decision === "approve";
+    record.approvedBy = decision === "approve" ? "operator" : null;
+    record.updatedAt = now();
+    audit(state, `Memory ${record.status}`, record.title);
+    writeState(state);
+    sendJson(res, 200, { record });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/memory/search") {
+    try {
+      const payload = await readBody(req);
+      const q = String(payload.query || payload.q || "").toLowerCase();
+      const state = readState();
+      const results = (state.agent101MemoryRecords || []).filter((record) => {
+        if (!q) return true;
+        return `${record.title} ${record.content} ${record.type}`.toLowerCase().includes(q);
+      }).slice(0, Number(payload.limit || 20));
+      sendJson(res, 200, { results });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const runMatch = url.pathname.match(/^\/api\/agent101\/runs\/([^/]+)$/);
+  if (req.method === "GET" && runMatch) {
+    const state = readState();
+    const run = (state.agent101Runs || []).find((item) => item.id === decodeURIComponent(runMatch[1]));
+    if (!run) {
+      sendJson(res, 404, { error: "Agent 101 run not found." });
+      return;
+    }
+    sendJson(res, 200, { run, toolResults: (state.agent101ToolResults || []).filter((tool) => run.toolCalls?.some((call) => call.toolCallId === tool.toolCallId)), verificationResults: run.verificationResults || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent101/runs") {
+    try {
+      const payload = await readBody(req);
+      const result = await runAgent101FromRoot(payload);
+      sendJson(res, result.status === "error" ? 500 : 200, result);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const runActionMatch = url.pathname.match(/^\/api\/agent101\/runs\/([^/]+)\/(pause|resume|cancel|retry-step)$/);
+  if (req.method === "POST" && runActionMatch) {
+    const [, runIdRaw, action] = runActionMatch;
+    const state = readState();
+    const run = (state.agent101Runs || []).find((item) => item.id === decodeURIComponent(runIdRaw));
+    if (!run) {
+      sendJson(res, 404, { error: "Agent 101 run not found." });
+      return;
+    }
+    if (action === "pause") run.status = "waiting_input";
+    if (action === "resume") run.status = "running";
+    if (action === "cancel") run.status = "cancelled";
+    if (action === "retry-step") run.status = "queued";
+    run.updatedAt = now();
+    audit(state, `Agent 101 run ${action}`, run.id);
+    writeState(state);
+    sendJson(res, 200, { run });
+    return;
+  }
+
+  const agentTaskMatch = url.pathname.match(/^\/api\/agent101\/tasks\/([^/]+)$/);
+  if (req.method === "GET" && agentTaskMatch) {
+    const state = readState();
+    const contract = (state.agent101TaskContracts || []).find((item) => item.id === decodeURIComponent(agentTaskMatch[1]));
+    if (!contract) {
+      sendJson(res, 404, { error: "Agent 101 task contract not found." });
+      return;
+    }
+    sendJson(res, 200, { task: contract });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/offices") {
+    sendJson(res, 200, {
+      offices: Object.values(BUSINESS_OFFICES),
+      toolReadiness: publicConnectorStatuses(readState(), { includeAdminOnly: currentRequestIsAdmin(req) }),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/control-floor/infrastructure") {
+    try {
+      const snapshot = await controlFloorInfrastructureSnapshot(readState(), { includeAdminOnly: currentRequestIsAdmin(req) });
+      sendJson(res, 200, snapshot);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: "Project infrastructure could not be measured safely." });
+    }
+    return;
+  }
+
+  const officeMatch = url.pathname.match(/^\/api\/offices\/([^/]+)$/);
+  if (req.method === "GET" && officeMatch) {
+    const office = BUSINESS_OFFICES[decodeURIComponent(officeMatch[1])];
+    if (!office) {
+      sendJson(res, 404, { error: "Office not found." });
+      return;
+    }
+    const state = readState();
+    sendJson(res, 200, {
+      office,
+      tasks: (state.tasks || []).filter((task) => task.officeId === office.id || task.workflowId === office.workflowId),
+      artifacts: (state.artifacts || []).filter((artifact) => artifact.workflowId === office.workflowId),
+      approvals: (state.approvals || []).filter((approval) => approval.officeId === office.id || approval.workflowId === office.workflowId),
+    });
+    return;
+  }
+
+  const officeRunsMatch = url.pathname.match(/^\/api\/offices\/([^/]+)\/runs$/);
+  if (req.method === "GET" && officeRunsMatch) {
+    const office = BUSINESS_OFFICES[decodeURIComponent(officeRunsMatch[1])];
+    if (!office) {
+      sendJson(res, 404, { error: "Office not found." });
+      return;
+    }
+    const state = readState();
+    const runs = (state.agent101Runs || []).filter((run) => {
+      const contract = (state.agent101TaskContracts || []).find((item) => item.id === run.taskContractId);
+      return contract?.relatedOffices?.includes(office.id);
+    });
+    sendJson(res, 200, { office, runs });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-blueprints") {
+    sendJson(res, 200, { blueprints: readState().agentBlueprints || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-blueprints") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      const blueprint = {
+        id: `agent-blueprint-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        proposedName: String(payload.proposedName || payload.name || "Future Agent").slice(0, 120),
+        proposedRole: String(payload.proposedRole || payload.role || "Specialist").slice(0, 160),
+        businessPurpose: String(payload.businessPurpose || payload.purpose || "").slice(0, 1000),
+        responsibilities: Array.isArray(payload.responsibilities) ? payload.responsibilities.slice(0, 20) : [],
+        inputs: Array.isArray(payload.inputs) ? payload.inputs.slice(0, 20) : [],
+        outputs: Array.isArray(payload.outputs) ? payload.outputs.slice(0, 20) : [],
+        tools: Array.isArray(payload.tools) ? payload.tools.slice(0, 20) : [],
+        memoryScope: payload.memoryScope || "bounded",
+        authorityLevel: payload.authorityLevel || 1,
+        requiredApprovals: ["tool_review", "authority_review", "evaluation_pass", "human_gate"],
+        prohibitedActions: Array.from(agent101Os.RISKY_ACTION_TYPES),
+        evaluationSuite: payload.evaluationSuite || [],
+        riskLevel: payload.riskLevel || "medium",
+        status: "draft",
+        createdBy: "agent-101",
+        createdAt: now(),
+      };
+      state.agentBlueprints.unshift(blueprint);
+      audit(state, "Agent blueprint drafted", blueprint.proposedName);
+      writeState(state);
+      sendJson(res, 201, { blueprint });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const agentBlueprintMatch = url.pathname.match(/^\/api\/agent-blueprints\/([^/]+)(?:\/(test|request-approval))?$/);
+  if (agentBlueprintMatch) {
+    try {
+      const [, blueprintIdRaw, action] = agentBlueprintMatch;
+      const state = readState();
+      const blueprint = (state.agentBlueprints || []).find((item) => item.id === decodeURIComponent(blueprintIdRaw));
+      if (!blueprint) throw guardedError("Agent blueprint not found.", 404);
+      if (req.method === "PATCH" && !action) {
+        const payload = await readBody(req);
+        Object.assign(blueprint, payload, { id: blueprint.id, updatedAt: now() });
+        audit(state, "Agent blueprint updated", blueprint.proposedName);
+        writeState(state);
+        sendJson(res, 200, { blueprint });
+        return;
+      }
+      if (req.method === "POST" && action === "test") {
+        blueprint.status = "testing";
+        blueprint.lastTest = { status: "manual_eval_required", testedAt: now(), message: "Blueprint testing requires an evaluation suite before approval." };
+        writeState(state);
+        sendJson(res, 200, { blueprint, test: blueprint.lastTest });
+        return;
+      }
+      if (req.method === "POST" && action === "request-approval") {
+        const approval = {
+          id: `approval-blueprint-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title: `Review future agent blueprint: ${blueprint.proposedName}`,
+          actionType: "create_live_agent",
+          requestedAction: `Approve blueprint for possible future activation: ${blueprint.proposedName}`,
+          exactScope: "Blueprint review only. Does not activate the agent.",
+          reason: "Live agent activation requires Human Gate.",
+          risk: "high",
+          riskLevel: "high",
+          evidence: `Blueprint ID: ${blueprint.id}`,
+          reversible: false,
+          status: "pending",
+          createdBy: "agent-101",
+          createdAt: now(),
+        };
+        state.approvals.unshift(approval);
+        blueprint.status = "pending_approval";
+        writeState(state);
+        sendJson(res, 200, { blueprint, approval });
+        return;
+      }
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+      return;
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/human-gate/requests") {
+    const state = readState();
+    sendJson(res, 200, { requests: state.approvals || [] });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/human-gate/requests") {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, createHumanGatePackage(payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const humanGateDecisionMatch = url.pathname.match(/^\/api\/human-gate\/requests\/([^/]+)\/decision$/);
+  if (req.method === "POST" && humanGateDecisionMatch) {
+    try {
+      const payload = await readBody(req);
+      sendJson(res, 200, decideHumanGateRequest(decodeURIComponent(humanGateDecisionMatch[1]), payload));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/feedback") {
+    try {
+      const payload = await readBody(req);
+      const state = readState();
+      const result = agent101Os.addFeedback(state, payload);
+      audit(state, "Agent 101 feedback recorded", `${result.feedback.rating}: ${result.feedback.targetType}`);
+      writeState(state);
+      sendJson(res, 201, result);
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/evals") {
+    const state = readState();
+    sendJson(res, 200, {
+      promptVersion: agent101Os.AGENT_101_PROMPT_VERSION,
+      requiredCategories: ["truthfulness", "task_understanding", "planning", "tool_use", "business_quality", "safety", "memory", "completion"],
+      runs: state.agent101EvalRuns || [],
+      feedbackCases: state.agent101EvalCases || [],
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/evals/run") {
+    try {
+      const state = readState();
+      const evalRun = await agent101Os.runAgent101EvalSuite(state);
+      state.agent101EvalRuns.unshift(evalRun);
+      state.agent101EvalRuns = state.agent101EvalRuns.slice(0, 100);
+      audit(state, "Agent 101 eval run", `${evalRun.status}: ${evalRun.score}%`);
+      writeState(state);
+      sendJson(res, 200, { evalRun });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  const evalRunMatch = url.pathname.match(/^\/api\/evals\/runs\/([^/]+)$/);
+  if (req.method === "GET" && evalRunMatch) {
+    const state = readState();
+    const evalRun = (state.agent101EvalRuns || []).find((item) => item.id === decodeURIComponent(evalRunMatch[1]));
+    if (!evalRun) {
+      sendJson(res, 404, { error: "Eval run not found." });
+      return;
+    }
+    sendJson(res, 200, { evalRun });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/webhook") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-webhook", 120, 60_000);
+      const payload = await readBody(req);
+      const state = readState();
+      const result = await stockTelegramNotifier.processUpdate(payload, {
+        webhookSecret: req.headers["x-telegram-bot-api-secret-token"],
+        approvals: state.approvals || [],
+      });
+      sendJson(res, result.httpStatus || 200, { ok: result.accepted === true, status: result.status, duplicate: result.duplicate === true });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/stock-office/permissions") {
     try {
       const access = requireStockOfficeAccess(req, "view");
@@ -5195,8 +13180,68 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "overview", 80, 60_000);
       const access = requireStockOfficeAccess(req, "view");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
-      sendJson(res, 200, stockOverview(snapshot));
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
+      const brokerControl = brokerControlOverview(snapshot);
+      const notificationStatus = stockTelegramNotifier.publicStatus(readState().approvals || []);
+      sendJson(res, 200, {
+        ...stockOverview(snapshot),
+        intelligence: snapshot.intelligence,
+        systemHealth: stockIntelligenceStore.health({
+          executionMode: snapshot.executionMode,
+          executionBlocked: !brokerControl.liveReady,
+          sourceHealth: snapshot.sourceHealth,
+          providerHealth: snapshot.providerHealth,
+          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+          telegram: notificationStatus,
+        }),
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/events") {
+    try {
+      enforceStockOfficeRateLimit(req, "events", 12, 60_000);
+      requireStockOfficeAccess(req, "view");
+      res.writeHead(200, {
+        ...securityHeaders(req),
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const detach = stockEventBus.attachSse(res);
+      req.on("close", detach);
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/intelligence") {
+    try {
+      enforceStockOfficeRateLimit(req, "intelligence", 80, 60_000);
+      requireStockOfficeAccess(req, "view");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, undefined, { cachedIntelligence: true });
+      const brokerControl = brokerControlOverview(snapshot);
+      const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
+      sendJson(res, 200, {
+        ...snapshot.intelligence,
+        events: stockIntelligenceStore.recentEvents(80),
+        systemHealth: stockIntelligenceStore.health({
+          executionMode: snapshot.executionMode,
+          executionBlocked: !brokerControl.liveReady,
+          sourceHealth: snapshot.sourceHealth,
+          providerHealth: snapshot.providerHealth,
+          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+          telegram: notificationStatus,
+        }),
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5208,7 +13253,7 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "records", 80, 60_000);
       const access = requireStockOfficeAccess(req, "records");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
       sendJson(res, 200, {
         ...listStockRecords(snapshot, stockOfficeQueryOptions(url)),
         generatedAt: snapshot.generatedAt,
@@ -5226,7 +13271,7 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "record", 100, 60_000);
       const access = requireStockOfficeAccess(req, "records");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
       const record = getStockRecord(snapshot, decodeURIComponent(stockRecordMatch[1]));
       if (!record) throw guardedError("Stock Office record not found.", 404);
       sendJson(res, 200, {
@@ -5246,12 +13291,39 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "sources", 60, 60_000);
       const access = requireStockOfficeAccess(req, "sources");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
       sendJson(res, 200, {
         sources: snapshot.sources,
         sourceHealth: snapshot.sourceHealth,
+        secSetup: stockSecSetupPayload(),
         threatModel: snapshot.threatModel,
         workspace: snapshot.workspace,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/sources/sec-identity") {
+    try {
+      enforceStockOfficeRateLimit(req, "sec-identity", 6, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      requireLocalMode();
+      const payload = await readBody(req);
+      const identity = normalizeStockSecIdentity(payload.identity);
+      localDatabase.setLocalSetting(DATA_DIR, "stockSecUserAgent", identity);
+      process.env.STOCK_GURU_SEC_USER_AGENT = identity;
+      const intelligenceScheduler = stockIntelligenceScheduler.refreshConfiguration();
+      const state = readState();
+      audit(state, "Stock Office SEC contact configured", "A monitored SEC request identity was saved to the server-only local database. The value was not returned to the browser; the next bounded SEC research cycle may transmit it to SEC.gov.");
+      writeState(state);
+      sendJson(res, 200, {
+        secSetup: stockSecSetupPayload(),
+        intelligenceScheduler,
+        externalRequestMade: false,
+        liveOrderPlaced: false,
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -5264,8 +13336,857 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "activity", 80, 60_000);
       const access = requireStockOfficeAccess(req, "view");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions);
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
       sendJson(res, 200, { activity: snapshot.activity, syncRuns: snapshot.syncRuns, assistantRuns: snapshot.assistantRuns });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/mirror") {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror", 60, 60_000);
+      const access = requireStockOfficeAccess(req, "view");
+      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
+      sendJson(res, 200, { mirror: snapshot.mirror, mirrorIntelligence: snapshot.intelligence.mirror, safety: snapshot.workspace.safetyRule });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const mirrorSourceControlMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/sources\/([^/]+)$/);
+  if (req.method === "POST" && mirrorSourceControlMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror-source-control", 20, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const payload = await readBody(req);
+      const source = stockIntelligenceStore.setMirrorSourceState(decodeURIComponent(mirrorSourceControlMatch[1]), {
+        following: payload.following,
+        mirrorEnabled: payload.mirrorEnabled,
+        actorType: "WEB",
+        actorId: "local-owner",
+      });
+      invalidateStockIntelligenceStateCache();
+      if (!source) throw guardedError("Mirror source not found. Run a research refresh first.", 404);
+      stockEventBus.publish("mirror.source_control_changed", { sourceId: source.id, following: source.following, mirrorEnabled: source.mirrorEnabled, status: "updated" }, { actorType: "WEB", actorId: "local-owner" });
+      sendJson(res, 200, { source, mirrorIntelligence: stockIntelligenceStore.mirrorState(), safety: "Mirror controls affect research/proposal eligibility only. Human Gate and broker revalidation remain mandatory." });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/live") {
+    try {
+      enforceStockOfficeRateLimit(req, "live-portfolio", 150, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        // The browser can request a fresh display every second while the
+        // connector's own cache keeps external Robinhood reads at >= 5s.
+        const brokerSnapshot = await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+        const snapshotAt = brokerSnapshot?.updatedAt || "";
+        if (snapshotAt && snapshotAt !== stockReadinessBrokerSnapshotAt) {
+          await reconcileStockBrokerOrderLifecycle().catch(() => null);
+          stockReadinessBrokerSnapshotAt = snapshotAt;
+        }
+      }
+      const state = readState();
+      const snapshot = stockOfficeBrokerSnapshot(state, access.permissions);
+      const brokerControl = brokerControlOverview(snapshot);
+      sendJson(res, 200, {
+        brokerControl,
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        serverTime: now(),
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/broker-control") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-control", 80, 60_000);
+      const access = requireStockOfficeAccess(req, "broker_view");
+      if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
+        const brokerSnapshot = await robinhoodMcpClient.refreshIfStale(5_000).catch(() => null);
+        const snapshotAt = brokerSnapshot?.updatedAt || "";
+        if (snapshotAt && snapshotAt !== stockReadinessBrokerSnapshotAt) {
+          await reconcileStockBrokerOrderLifecycle().catch(() => null);
+          stockReadinessBrokerSnapshotAt = snapshotAt;
+        }
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions, { cachedIntelligence: true });
+      const tradeDrafts = snapshot.tradeDrafts
+        .map((draft) => tradeDraftWithApprovalState(draft, state.approvals || []))
+        .slice(0, 20);
+      const connectionApproval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      const guardrailApproval = (state.approvals || []).find((item) => item.actionType === "change_stock_trading_guardrails" && !item.consumedAt) || null;
+      const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
+      const brokerControl = brokerControlOverview(snapshot);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
+      const shadowPortfolio = refreshStockShadowPortfolio({ state });
+      const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
+        plan: buildCopyPortfolioPlan(snapshot),
+        review: normalizeStockOfficeState(state.stockOffice).continuousReview,
+        scheduler: intelligenceScheduler,
+        tradeDrafts,
+      }), shadowPortfolio, snapshot);
+      portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+      const simulationLab = readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true });
+      const notificationScope = stockTelegramNotifier.approvalScope();
+      const notificationApproval = notificationScope.destinationHash
+        ? (state.approvals || []).find((item) => {
+            const details = item.grantedDetails || item.originalDetails || item.details || {};
+            const eventTypes = Array.isArray(details.eventTypes) ? details.eventTypes : [];
+            return item.actionType === STOCK_TELEGRAM_APPROVAL_ACTION
+              && item.linkedId === `stock-office:telegram:${notificationScope.destinationHash}`
+              && notificationScope.eventTypes.every((type) => eventTypes.includes(type));
+          }) || null
+        : null;
+      const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
+      const systemHealth = stockIntelligenceStore.health({
+        executionMode: snapshot.executionMode,
+        executionBlocked: !brokerControl.liveReady,
+        sourceHealth: snapshot.sourceHealth,
+        providerHealth: snapshot.providerHealth,
+        broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+        telegram: notificationStatus,
+      });
+      sendJson(res, 200, {
+        brokerControl,
+        portfolioPlan,
+        intelligence: snapshot.intelligence,
+        systemHealth,
+        shadowPortfolio,
+        simulationLab,
+        intelligenceScheduler,
+        marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
+        notificationStatus,
+        notificationApproval: notificationApproval ? {
+          id: notificationApproval.id,
+          status: notificationApproval.status,
+          expiresAt: notificationApproval.expiresAt || null,
+          activatedAt: notificationApproval.activatedAt || null,
+        } : null,
+        robinhoodConnection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: connectionApproval ? {
+          id: connectionApproval.id,
+          status: connectionApproval.status,
+          consumedAt: connectionApproval.consumedAt || null,
+          expiresAt: connectionApproval.expiresAt || null,
+        } : null,
+        guardrailApproval: guardrailApproval ? {
+          id: guardrailApproval.id,
+          status: guardrailApproval.status,
+          expiresAt: guardrailApproval.expiresAt || null,
+          fingerprint: String(guardrailDetails.fingerprint || ""),
+          guardrails: normalizeGuardrails(guardrailDetails.guardrails || {}),
+        } : null,
+        guardrailsSource: snapshot.guardrailsSource,
+        tradeDrafts,
+        permissions: access.permissions,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockProposalDecisionMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/decline$/);
+  if (req.method === "POST" && stockProposalDecisionMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-decline", 30, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const portfolioPlan = buildCopyPortfolioPlan(snapshot);
+      const proposalId = decodeURIComponent(stockProposalDecisionMatch[1]);
+      const proposal = portfolioPlan.proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const decision = {
+        proposalId: proposal.id,
+        fingerprint: proposal.fingerprint,
+        symbol: proposal.symbol,
+        side: proposal.side,
+        decision: "declined",
+        decidedAt: now(),
+      };
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        proposalDecisions: [decision, ...current.proposalDecisions.filter((item) => item.proposalId !== proposal.id)],
+      });
+      audit(state, "Stock Office proposal declined", `${proposal.side} ${proposal.symbol} research proposal was dismissed locally; no Human Gate request, broker review, order, or money movement occurred.`);
+      writeState(state);
+      sendJson(res, 200, { decision, liveOrderPlaced: false, humanGateCreated: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockPaperProposalMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/paper-test$/);
+  if (req.method === "POST" && stockPaperProposalMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-paper-test", 20, 300_000);
+      requireStockOfficeAccess(req, "order_draft");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const proposalId = decodeURIComponent(stockPaperProposalMatch[1]);
+      const proposal = buildCopyPortfolioPlan(snapshot).proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Trade proposal is no longer current. Refresh Overview.", 409);
+      const result = applyPaperProposal(readStockShadowPortfolio(snapshot), snapshot, proposal);
+      if (result.action.outcome !== "filled") throw guardedError(result.action.reason || "Paper test is not currently eligible.", 409);
+      writeStockShadowPortfolio(result.portfolio);
+      audit(
+        state,
+        "Stock Office proposal paper-tested",
+        `${proposal.side} ${proposal.symbol} recorded a $${result.action.requestedDollars.toFixed(2)} simulated fill. No Robinhood call, money movement, Human Gate request, or live order occurred.`,
+      );
+      writeState(state);
+      const plan = withPaperProposalReadiness(buildCopyPortfolioPlan(snapshot), result.portfolio, snapshot);
+      sendJson(res, 200, {
+        action: result.action,
+        shadowPortfolio: result.portfolio,
+        portfolioPlan: plan,
+        liveOrderPlaced: false,
+        brokerCalled: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-configure", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.configure({ botToken: payload.botToken, chatId: payload.chatId }, state.approvals || []);
+      audit(state, "Stock Office Telegram configured", "Telegram destination and bot credentials were stored in local secure storage; values were not written to Argentum state or returned to the browser.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/stock-office/notifications/telegram/configure") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-remove", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const notificationStatus = stockTelegramNotifier.removeConfiguration(state.approvals || []);
+      audit(state, "Stock Office Telegram removed", "Telegram notifications were disabled and both local secure values were removed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-gate", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const scope = stockTelegramNotifier.approvalScope();
+      if (!scope.configured) throw guardedError("Configure the Telegram bot token and chat ID before requesting notification approval.", 409);
+      const approvalResult = createHumanGateRequest({
+        actionType: STOCK_TELEGRAM_APPROVAL_ACTION,
+        title: "Enable Stock Office Telegram command center",
+        riskLevel: "medium",
+        linkedId: `stock-office:telegram:${scope.destinationHash}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${scope.destination} is configured in local secure storage. No credential value is available to the browser.`,
+        action: "Allow Stock Office to send actionable approval cards, broker outcomes, source/broker failures, persisted night and morning reports, health replies, and operator-requested command responses to the one authorized Telegram destination.",
+        exactScope: "Telegram only, one configured private destination or an environment-allowlisted group user. Human Gate approvals reference immutable internal approval IDs and use the same one-use broker path as web approvals. No raw Telegram text can create an order. Ordinary rejected research candidates, unverified fills, and secret values are excluded.",
+        details: {
+          officeId: "stock-office",
+          channel: scope.channel,
+          destinationHash: scope.destinationHash,
+          eventTypes: STOCK_TELEGRAM_EVENT_TYPES,
+          automaticBrokerNotifications: true,
+          qualifiedProposalAlertsAuthorized: true,
+          remoteCommandsAuthorized: true,
+          reportsAuthorized: true,
+          brokerAndSourceFailureAlertsAuthorized: true,
+          rejectedResearchAlertsAuthorized: false,
+          blockedDraftsAuthorized: false,
+          paperTradesAuthorized: false,
+          customerContactAuthorized: false,
+        },
+        reversible: true,
+        expiresAt: new Date(Date.now() + 365 * DAY_MS).toISOString(),
+        expectedPostcondition: "The exact Telegram destination may receive only qualified Human Gate proposal alerts, verified broker order alerts, and requested connection tests.",
+        rollbackPlan: "Disable Telegram in Stock Office or remove its secure configuration immediately.",
+      });
+      sendJson(res, 200, { ...approvalResult, notificationStatus: stockTelegramNotifier.publicStatus(readState().approvals || []), liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/enable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-enable", 5, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval) throw guardedError("Approved Telegram notification request not found.", 404);
+      const result = stockTelegramNotifier.enable(approval, state.approvals || []);
+      approval.activatedAt = now();
+      approval.activatedBy = "stock-office";
+      audit(state, "Stock Office Telegram enabled", "The approved server-side Telegram channel can now send qualified Human Gate proposal alerts, broker-confirmed trade alerts, and operator-requested tests.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/disable") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-disable", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const result = stockTelegramNotifier.disable(state.approvals || []);
+      audit(state, "Stock Office Telegram disabled", "Automatic Telegram notifications were stopped; no broker or account setting changed.");
+      writeState(state);
+      sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/notifications/telegram/test") {
+    try {
+      enforceStockOfficeRateLimit(req, "telegram-test", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const state = readState();
+      const delivery = await stockTelegramNotifier.sendTest(state.approvals || []);
+      audit(state, delivery.sent ? "Stock Office Telegram test delivered" : "Stock Office Telegram test stopped", delivery.sent ? "One operator-requested Telegram test was delivered." : `No message sent: ${delivery.reason || delivery.state}.`);
+      writeState(state);
+      sendJson(res, delivery.sent ? 200 : 409, { delivery, notificationStatus: stockTelegramNotifier.publicStatus(state.approvals || []), liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/shadow/reset") {
+    try {
+      enforceStockOfficeRateLimit(req, "shadow-reset", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requestedCash = payload.startingCashDollars === undefined ? null : Number(payload.startingCashDollars);
+      if (requestedCash !== null && (!Number.isFinite(requestedCash) || requestedCash < 1 || requestedCash > 1_000_000)) {
+        throw guardedError("Paper starting cash must be between $1 and $1,000,000.", 400);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const shadowPortfolio = resetShadowPortfolio(snapshot, { startingCashDollars: requestedCash });
+      writeStockShadowPortfolio(shadowPortfolio);
+      audit(
+        state,
+        "Stock Office paper shadow portfolio reset",
+        `A fresh $${shadowPortfolio.initialCashDollars.toFixed(2)} simulated portfolio was created. No broker call, money movement, or live order occurred.`,
+      );
+      writeState(state);
+      sendJson(res, 200, { shadowPortfolio, liveOrderPlaced: false, brokerCalled: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/status") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-status", 80, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding") || null;
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        connectionApproval: approval ? {
+          id: approval.id,
+          status: approval.status,
+          consumedAt: approval.consumedAt || null,
+          expiresAt: approval.expiresAt || null,
+        } : null,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/oauth/start") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-oauth-start", 3, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.linkedId === "stock-office:robinhood-agentic-mcp:onboarding" && item.status === "approved" && !item.consumedAt);
+      if (!approval) throw guardedError("Approve the exact Robinhood connection request in Human Gate before starting OAuth.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      if (details.provider !== "robinhood_agentic_mcp" || details.accountScope !== "dedicated_agentic_account_only" || details.orderPlacementAuthorized !== false || details.moneyMovementAuthorized !== false) {
+        throw guardedError("The approved Robinhood connection scope does not match the required read-only Agentic-account onboarding contract.", 409);
+      }
+      const redirectUri = `http://127.0.0.1:${PORT}/api/stock-office/robinhood/oauth/callback`;
+      const started = await robinhoodMcpClient.beginAuthorization({ redirectUri, approvalId: approval.id });
+      approval.oauthStartedAt = now();
+      audit(state, "Robinhood OAuth handoff prepared", `Human Gate approval ${approval.id} opened only the official Robinhood OAuth flow; no order or money movement was authorized.`);
+      writeState(state);
+      sendJson(res, 200, { ...started, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/robinhood/oauth/callback") {
+    try {
+      const completed = await robinhoodMcpClient.completeAuthorization({
+        state: url.searchParams.get("state") || "",
+        code: url.searchParams.get("code") || "",
+      });
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === completed.approvalId);
+      if (!approval || approval.status !== "approved" || approval.consumedAt) {
+        robinhoodMcpClient.disconnect();
+        throw guardedError("The Robinhood connection approval is no longer valid. The local OAuth token was removed.", 409);
+      }
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = now();
+      approval.executionOutcome = "robinhood_oauth_connected";
+      let refreshError = "";
+      try {
+        await robinhoodMcpClient.refreshBrokerSnapshot();
+      } catch (error) {
+        refreshError = error.message;
+      }
+      audit(state, "Robinhood OAuth completed", refreshError
+        ? `Official OAuth completed, but the dedicated Agentic-account snapshot did not verify: ${refreshError}`
+        : "Official OAuth and the dedicated Agentic-account read-only snapshot verified; no order or money movement occurred.");
+      writeState(state);
+      sendRobinhoodOauthResultPage(req, res, refreshError ? "needs_refresh" : "connected");
+    } catch (error) {
+      sendRobinhoodOauthResultPage(req, res, "connection_error");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/robinhood/refresh") {
+    try {
+      enforceStockOfficeRateLimit(req, "robinhood-refresh", 12, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const broker = await robinhoodMcpClient.refreshBrokerSnapshot();
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        connection: robinhoodMcpClient.publicStatus(),
+        brokerControl: brokerControlOverview(snapshot),
+        broker: {
+          account: broker.account,
+          buyingPower: broker.buyingPower,
+          positions: broker.positions.length,
+          openOrders: broker.openOrders.length,
+          updatedAt: broker.updatedAt,
+        },
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/broker-connect/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-connect", 4, 300_000);
+      requireStockOfficeAccess(req, "broker_connect");
+      const snapshot = stockOfficeSnapshot(readState());
+      const control = brokerControlOverview(snapshot);
+      const approvalResult = createHumanGateRequest({
+        actionType: "connect_robinhood_agentic_mcp",
+        title: "Connect the dedicated Robinhood Agentic account",
+        riskLevel: "high",
+        linkedId: "stock-office:robinhood-agentic-mcp:onboarding",
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Robinhood Trading MCP is registered at ${control.endpoint}. Current connector status: ${control.connectorStatus}. Authentication is not treated as complete until a fresh account snapshot is returned.`,
+        action: "Authorize opening Robinhood's official OAuth/onboarding flow for a dedicated Agentic Trading account. This approval does not authorize a deposit, transfer, order, option trade, crypto trade, or event contract.",
+        exactScope: `Connect only the official Robinhood Trading MCP endpoint ${control.endpoint}, authenticate through Robinhood, and verify the dedicated Agentic account. No money movement or order placement is included.`,
+        details: {
+          officeId: "stock-office",
+          provider: "robinhood_agentic_mcp",
+          endpoint: control.endpoint,
+          accountScope: control.accountScope,
+          allowedResult: "fresh_read_only_account_snapshot",
+          orderPlacementAuthorized: false,
+          moneyMovementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Robinhood OAuth returns a fresh read-only Agentic-account snapshot and required MCP tool availability; no order is placed.",
+        rollbackPlan: "Disconnect the Robinhood Trading MCP from Robinhood or Codex and keep the live-order kill switch active.",
+      });
+      sendJson(res, 200, { ...approvalResult, brokerControl: control, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/human-gate") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails", 8, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const requested = normalizeGuardrails(payload);
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0) {
+        throw guardedError("Principal, maximum deployed capital, and per-order cap must be greater than zero.", 400);
+      }
+      if (requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Per-order cap must not exceed maximum deployed capital, and maximum deployed capital must not exceed principal.", 400);
+      }
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      const approvalResult = createHumanGateRequest({
+        actionType: "change_stock_trading_guardrails",
+        title: "Review Stock Office capital limits",
+        riskLevel: "high",
+        linkedId: `stock-office:guardrails:${fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `Requested principal $${requested.principalDollars.toFixed(2)}, maximum deployed $${requested.maxTotalDollars.toFixed(2)}, maximum order $${requested.maxOrderDollars.toFixed(2)}, cash reserve $${requested.cashReserveDollars.toFixed(2)}, daily loss lock ${(requested.dailyLossLimitPct * 100).toFixed(2)}%.`,
+        action: "Review these exact risk limits. Approval changes no Robinhood setting and moves no money by itself.",
+        exactScope: `Approve only guardrail fingerprint ${fingerprint}: ${JSON.stringify(requested)}. No deposit, transfer, account change, or broker order is included.`,
+        details: {
+          officeId: "stock-office",
+          fingerprint,
+          guardrails: requested,
+          moneyMovementAuthorized: false,
+          orderPlacementAuthorized: false,
+        },
+        reversible: true,
+        expectedPostcondition: "The exact capital-policy proposal is approved for a later controlled configuration apply; no external financial action occurs.",
+        rollbackPlan: "Reject or supersede this proposal before applying it; if later applied, create a new approval to restore prior limits.",
+      });
+      sendJson(res, 200, { ...approvalResult, guardrails: requested, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/guardrails/apply") {
+    try {
+      enforceStockOfficeRateLimit(req, "broker-guardrails-apply", 6, 300_000);
+      requireStockOfficeAccess(req, "broker_guardrails");
+      const payload = await readBody(req);
+      const state = readState();
+      const approval = (state.approvals || []).find((item) => item.id === String(payload.approvalId || ""));
+      if (!approval || approval.actionType !== "change_stock_trading_guardrails") throw guardedError("Approved capital-policy request not found.", 404);
+      if (approval.status !== "approved" || approval.consumedAt || Number(approval.useCount || 0) > 0) {
+        throw guardedError("Capital-policy approval is not approved and unused.", 409);
+      }
+      if (approval.expiresAt && new Date(approval.expiresAt).getTime() <= Date.now()) throw guardedError("Capital-policy approval expired.", 409);
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      const requested = normalizeGuardrails(details.guardrails || {});
+      const fingerprint = crypto.createHash("sha256").update(JSON.stringify(requested)).digest("hex");
+      if (!details.fingerprint || details.fingerprint !== fingerprint || approval.linkedId !== `stock-office:guardrails:${fingerprint}`) {
+        throw guardedError("Capital-policy approval fingerprint does not match the exact limits.", 409);
+      }
+      if (requested.principalDollars <= 0 || requested.maxTotalDollars <= 0 || requested.maxOrderDollars <= 0
+        || requested.maxOrderDollars > requested.maxTotalDollars || requested.maxTotalDollars > requested.principalDollars) {
+        throw guardedError("Approved capital limits are internally invalid.", 409);
+      }
+      const current = normalizeStockOfficeState(state.stockOffice);
+      const appliedAt = now();
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        activeGuardrails: requested,
+        guardrailsAppliedAt: appliedAt,
+        guardrailsApprovalId: approval.id,
+      });
+      approval.useCount = Number(approval.useCount || 0) + 1;
+      approval.consumedAt = appliedAt;
+      approval.executionOutcome = "stock_guardrails_applied_locally";
+      audit(state, "Stock Office capital limits applied", `Exact Human Gate fingerprint ${fingerprint} became the active local order policy. No deposit, transfer, broker setting, or order occurred.`);
+      writeState(state);
+      const snapshot = stockOfficeSnapshot(readState());
+      sendJson(res, 200, {
+        guardrails: snapshot.guardrails,
+        guardrailsSource: snapshot.guardrailsSource,
+        brokerControl: brokerControlOverview(snapshot),
+        portfolioPlan: buildCopyPortfolioPlan(snapshot),
+        approval: { id: approval.id, status: approval.status, consumedAt: approval.consumedAt },
+        moneyMoved: false,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/orders/draft") {
+    try {
+      enforceStockOfficeRateLimit(req, "order-draft", 20, 300_000);
+      const access = requireStockOfficeAccess(req, "order_draft");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draft = buildTradeDraft({
+        symbol: payload.symbol,
+        side: payload.side,
+        requestedDollars: payload.requestedDollars,
+        candidateId: payload.candidateId,
+      }, snapshot, { approvalTtlMinutes: stockApprovalTtlMinutes() });
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [draft, ...current.tradeDrafts.filter((item) => item.fingerprint !== draft.fingerprint)],
+      });
+      audit(state, "Stock Office order draft", `${draft.side} ${draft.symbol} $${draft.requestedDollars.toFixed(2)}: ${draft.status}; ${draft.blockers.length} blocker(s); no live order placed.`);
+      writeState(state);
+      sendJson(res, 200, {
+        draft,
+        brokerControl: brokerControlOverview(stockOfficeSnapshot(readState(), access.permissions)),
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockOrderGateMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockOrderGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-human-gate", 10, 300_000);
+      requireStockOfficeAccess(req, "order_approval");
+      const executionSession = marketSession();
+      if (process.env.NODE_ENV !== "test" && !executionSession.regular) {
+        throw guardedError(`${executionSession.label}. This regular-hours market order cannot enter Human Gate until the regular session is open. Research remains active.`, 409);
+      }
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === decodeURIComponent(stockOrderGateMatch[1]));
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      if (new Date(draft.expiresAt).getTime() <= Date.now()) throw guardedError("Order draft expired. Rebuild it with fresh market and broker data.", 409);
+      if (draft.status !== "ready_for_broker_review" || draft.blockers.length) {
+        throw guardedError(`Order draft is blocked: ${draft.blockers[0] || "fresh broker review is unavailable"}`, 409);
+      }
+      const { approvalResult, envelope } = createStockOrderApprovalRequest(draft);
+      const latestState = readState();
+      const current = normalizeStockOfficeState(latestState.stockOffice);
+      const awaitingDraft = tradeDraftWithApprovalState({
+        ...draft,
+        approvalId: approvalResult.approval.id,
+        status: "awaiting_human_gate",
+        updatedAt: now(),
+      }, [approvalResult.approval]);
+      latestState.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [awaitingDraft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      audit(latestState, "Stock Office order awaiting Human Gate", `${draft.side} ${draft.symbol} order fingerprint ${draft.fingerprint} is awaiting one-use approval; no live order placed.`);
+      writeState(latestState);
+      const matchingProposal = buildCopyPortfolioPlan(snapshot).proposals.find((proposal) => proposal.draftFingerprint === draft.fingerprint);
+      const notificationState = readState();
+      const notificationDelivery = await notifyStockOrderHumanGate(
+        awaitingDraft,
+        approvalResult.approval,
+        matchingProposal,
+        notificationState.approvals || [],
+      ).catch((error) => ({ sent: false, state: "failed", reason: redactSensitiveText(error.message).slice(0, 300) }));
+      const auditState = readState();
+      audit(auditState, notificationDelivery.sent ? "Qualified proposal Telegram delivered" : "Qualified proposal Telegram not delivered", notificationDelivery.sent
+        ? `${draft.side} ${draft.symbol} Human Gate approval card delivered.`
+        : `No proposal approval card sent: ${notificationDelivery.reason || notificationDelivery.state}.`);
+      writeState(auditState);
+      sendJson(res, 200, { ...approvalResult, draft: awaitingDraft, envelope, notificationDelivery, liveOrderPlaced: false });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockDirectExecuteMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/execute$/);
+  if (req.method === "POST" && stockDirectExecuteMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-direct-execute", 3, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const draftId = decodeURIComponent(stockDirectExecuteMatch[1]);
+      const execution = await executeApprovedStockDraft(draftId, {
+        permissions: access.permissions,
+        confirmationFingerprint: payload.confirmationFingerprint,
+      });
+      sendJson(res, 200, execution);
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+  const stockDispatchClaimMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/claim$/);
+  if (req.method === "POST" && stockDispatchClaimMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-claim", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchClaimMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approval = (state.approvals || []).find((item) => item.id === draft.approvalId)
+        || (state.approvals || []).find((item) => item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (!approval) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const claimed = claimApprovedDispatch(draft, approval, snapshot);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [claimed.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      approval.dispatchClaimId = claimed.claim.id;
+      approval.dispatchClaimedAt = claimed.draft.dispatchClaimedAt;
+      approval.dispatchClaimExpiresAt = claimed.claim.expiresAt;
+      audit(state, "Stock Office one-use dispatch claimed", `${draft.side} ${draft.symbol} claim ${claimed.claim.id} expires ${claimed.claim.expiresAt}; broker review required before any placement.`);
+      writeState(state);
+      sendJson(res, 200, {
+        claim: claimed.claim,
+        draft: claimed.draft,
+        liveOrderPlaced: false,
+        warning: "This claim is single-use. Run Robinhood review first and submit the result before expiry; never place on warnings or changed scope.",
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockDispatchResultMatch = url.pathname.match(/^\/api\/stock-office\/orders\/([^/]+)\/dispatch\/result$/);
+  if (req.method === "POST" && stockDispatchResultMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "order-dispatch-result", 6, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const payload = await readBody(req);
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const draftId = decodeURIComponent(stockDispatchResultMatch[1]);
+      const draft = snapshot.tradeDrafts.find((item) => item.id === draftId);
+      if (!draft) throw guardedError("Order draft not found.", 404);
+      const approvalIndex = (state.approvals || []).findIndex((item) => item.id === draft.approvalId || item.linkedId === `stock-office:order:${draft.fingerprint}`);
+      if (approvalIndex < 0) throw guardedError("Exact Human Gate order approval not found.", 409);
+      const settled = settleApprovedDispatch(draft, state.approvals[approvalIndex], payload, payload.claimToken);
+      const current = normalizeStockOfficeState(state.stockOffice);
+      state.stockOffice = normalizeStockOfficeState({
+        ...current,
+        tradeDrafts: [settled.draft, ...current.tradeDrafts.filter((item) => item.id !== draft.id)],
+      });
+      state.approvals[approvalIndex] = settled.approval;
+      audit(
+        state,
+        settled.liveOrderPlaced ? "Stock Office broker order recorded" : "Stock Office dispatch stopped safely",
+        settled.liveOrderPlaced
+          ? `${draft.side} ${draft.symbol} reconciled to broker order ${settled.draft.brokerOrderId}; one-use approval consumed.`
+          : `${draft.side} ${draft.symbol} stopped after broker review or incomplete placement evidence; no live order recorded; one-use approval consumed.`,
+      );
+      writeState(state);
+      sendJson(res, 200, {
+        draft: settled.draft,
+        approval: settled.approval,
+        liveOrderPlaced: settled.liveOrderPlaced,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockMirrorGateMatch = url.pathname.match(/^\/api\/stock-office\/mirror\/([^/]+)\/human-gate$/);
+  if (req.method === "POST" && stockMirrorGateMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "mirror-gate", 10, 300_000);
+      const access = requireStockOfficeAccess(req, "mirror_request");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const candidate = getMirrorCandidate(snapshot, decodeURIComponent(stockMirrorGateMatch[1]));
+      if (!candidate) throw guardedError("Copy Trader candidate not found.", 404);
+      if (snapshot.mirror.stale) throw guardedError("Copy Trader plan is stale. Refresh the public signal and current price before Human Gate review.", 409);
+      if (!candidate.humanGateEligible || candidate.status !== "paper_ready") {
+        throw guardedError("Only a fresh paper-ready mirror candidate can be sent to Human Gate.", 409);
+      }
+      if (!candidate.sourceUrl || !candidate.fingerprint) {
+        throw guardedError("Mirror candidate provenance is incomplete.", 409);
+      }
+      const mirrorNotionalLabel = `$${Number(candidate.mirrorNotionalDollars || 0).toFixed(2)}`;
+      const approvalResult = createHumanGateRequest({
+        actionType: "review_trade_plan",
+        title: `Review copy-mirror plan: ${candidate.side} ${candidate.symbol}`,
+        riskLevel: "high",
+        linkedId: `stock-mirror:${candidate.fingerprint}`,
+        officeId: "stock-office",
+        workflowId: "workflow-stock-watch",
+        evidence: `${candidate.traderName} public signal from ${candidate.sourceName}. Reported transaction ${candidate.transactionAt}; disclosed ${candidate.disclosedAt}; disclosure lag ${candidate.disclosureLagHours.toFixed(1)}h; current-price drift ${candidate.priceDriftPct === null ? "unknown" : `${(candidate.priceDriftPct * 100).toFixed(2)}%`}; provenance ${candidate.sourceUrl}.`,
+        action: `Review a capped ${mirrorNotionalLabel} ${candidate.side} ${candidate.symbol} mirror plan. This plan-review approval records the decision only and is not an order approval.`,
+        exactScope: `Review only: ${candidate.side} ${candidate.symbol}, maximum ${mirrorNotionalLabel}, source fingerprint ${candidate.fingerprint}. No order placement, money movement, account change, event-contract trade, or recurring authorization is included.`,
+        details: {
+          officeId: "stock-office",
+          candidateId: candidate.id,
+          fingerprint: candidate.fingerprint,
+          symbol: candidate.symbol,
+          side: candidate.side,
+          maxNotionalDollars: candidate.mirrorNotionalDollars,
+          sourceName: candidate.sourceName,
+          sourceUrl: candidate.sourceUrl,
+          disclosureLagHours: candidate.disclosureLagHours,
+          priceDriftPct: candidate.priceDriftPct,
+          executionAvailable: false,
+        },
+        reversible: true,
+        expectedPostcondition: "Human Gate records an operator decision on this exact mirror plan. No broker order is submitted.",
+        rollbackPlan: "No external rollback is needed because this review route performs no broker action; reject or expire the review record.",
+      });
+      sendJson(res, 200, { ...approvalResult, candidate, liveOrderPlaced: false });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5371,19 +14292,53 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "sync", 8, 300_000);
       const access = requireStockOfficeAccess(req, "sync");
+      const refresh = await stockGuruRefreshManager.refresh({ stockRoot: resolveStockRoot(ROOT) });
+      stockIntelligenceScheduler.recordManualRefresh(refresh);
       const state = readState();
       const snapshot = stockOfficeSnapshot(state, access.permissions);
-      const syncRun = createStockOfficeSyncRun(snapshot);
+      const syncRun = createStockOfficeSyncRun(snapshot, refresh);
       const current = normalizeStockOfficeState(state.stockOffice);
       state.stockOffice = normalizeStockOfficeState({
         ...current,
         lastLocalSyncAt: syncRun.completedAt,
         syncRuns: [syncRun, ...current.syncRuns],
       });
-      audit(state, "Stock Office local sync", `Rescanned ${syncRun.recordsImported} Stock Guru record(s) in read-only mode.`);
+      audit(state, "Stock Office data refresh", `Refresh ${refresh.status}; loaded ${syncRun.recordsImported} Stock Guru record(s); 0 live orders placed.`);
       writeState(state);
-      const updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
-      sendJson(res, 200, { syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 20 }) });
+      let updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      if (["success", "partial"].includes(refresh.status)) {
+        const persisted = stockIntelligenceStore.ingestSnapshot(updatedSnapshot, {
+          status: refresh.status,
+          startedAt: refresh.startedAt,
+          completedAt: refresh.completedAt,
+          nextScheduledAt: stockIntelligenceScheduler.getStatus().nextRunAt,
+          cycleType: marketSession(new Date(refresh.completedAt || Date.now())).status,
+          trigger: "manual_refresh",
+        });
+        stockEventBus.publish("research.completed", {
+          runId: persisted.runId,
+          status: refresh.status,
+          symbolsScanned: persisted.opportunities.length,
+          reportTypes: Object.keys(persisted.reports || {}),
+        }, { correlationId: persisted.correlationId });
+        updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
+      }
+      sendJson(res, 200, { refresh, syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 30 }) });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/stock-office/refresh-status") {
+    try {
+      enforceStockOfficeRateLimit(req, "refresh-status", 240, 300_000);
+      requireStockOfficeAccess(req, "sources");
+      sendJson(res, 200, {
+        refresh: stockGuruRefreshManager.getStatus(),
+        intelligenceScheduler: stockIntelligenceScheduler.getStatus(),
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -5393,6 +14348,27 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/state") {
     sendJson(res, 200, readState());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/human-gate/pending") {
+    const state = readState();
+    const approvals = (state.approvals || [])
+      .filter((approval) => approval?.status === "pending")
+      .map((approval) => ({
+        id: String(approval.id || ""),
+        title: redactSensitiveText(approval.title || "Approval required"),
+        action: redactSensitiveText(approval.action || "Operator review required."),
+        exactScope: redactSensitiveText(approval.exactScope || "Only this recorded action is included."),
+        evidence: redactSensitiveText(approval.evidence || "No additional evidence was attached."),
+        risk: String(approval.risk || approval.riskLevel || "medium"),
+        riskLevel: String(approval.riskLevel || approval.risk || "medium"),
+        officeId: String(approval.officeId || ""),
+        workflowId: String(approval.workflowId || ""),
+        createdAt: approval.createdAt || null,
+      }))
+      .slice(0, 50);
+    sendJson(res, 200, { approvals, pending: approvals.length, generatedAt: now() });
     return;
   }
 
@@ -5537,6 +14513,21 @@ async function handleApi(req, res, url) {
   const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/(approve|revise|block)$/);
   if (req.method === "POST" && approvalMatch) {
     const [, approvalId, action] = approvalMatch;
+    const currentState = readState();
+    const supervisedApproval = currentState.approvals.find((item) => item.id === approvalId && (
+      item.missionId
+      || (item.officeId === "print-shop-office" && item.actionType === "agent101_web_search")
+    ));
+    if (supervisedApproval) {
+      try {
+        const decision = action === "approve" ? "approve" : action === "revise" ? "send_back" : "block";
+        decideHumanGateRequest(approvalId, { decision });
+        sendJson(res, 200, readState());
+      } catch (error) {
+        sendJson(res, error.status || 500, { error: error.message });
+      }
+      return;
+    }
     const state = readState();
     const approval = state.approvals.find((item) => item.id === approvalId);
     if (!approval) {
@@ -5571,7 +14562,41 @@ async function handleApi(req, res, url) {
       }
     }
     writeState(state);
-    sendJson(res, 200, state);
+    if (approval.officeId === "stock-office") {
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      stockIntelligenceStore.recordApproval(approval, { proposalId: details.draftId || details.candidateId || "", actorType: "WEB" });
+      stockEventBus.publish(approval.status === "approved" ? "trade.approved" : approval.status === "blocked" ? "trade.rejected" : "trade.approval_revised", {
+        approvalId: approval.id,
+        proposalId: details.draftId || details.candidateId || "",
+        symbol: details.executionEnvelope?.args?.symbol || details.symbol || "",
+        decision: action,
+        status: approval.status,
+      }, { actorType: "WEB", id: `web:${action}:${approval.id}` });
+    }
+    if (action === "approve" && approval.actionType === "place_robinhood_equity_order") {
+      const details = approval.grantedDetails || approval.originalDetails || approval.details || {};
+      try {
+        const execution = await executeApprovedStockDraft(String(details.draftId || ""), { dispatchMode: "human_gate_approval" });
+        const latest = readState();
+        const latestApproval = (latest.approvals || []).find((item) => item.id === approval.id);
+        if (latestApproval) {
+          latestApproval.executionOutcome = execution.liveOrderPlaced ? "broker_order_reconciled" : "broker_execution_stopped";
+          latestApproval.executionDraftId = execution.draft?.id || null;
+          latestApproval.executionBrokerOrderId = execution.draft?.brokerOrderId || null;
+          writeState(latest);
+        }
+      } catch (error) {
+        const latest = readState();
+        const latestApproval = (latest.approvals || []).find((item) => item.id === approval.id);
+        if (latestApproval) {
+          latestApproval.executionOutcome = "broker_execution_stopped";
+          latestApproval.executionError = redactSensitiveText(error.message || "The approved order stopped during final revalidation.").slice(0, 500);
+          audit(latest, "Approved Stock Office order stopped safely", latestApproval.executionError);
+          writeState(latest);
+        }
+      }
+    }
+    sendJson(res, 200, readState());
     return;
   }
 
@@ -5586,7 +14611,7 @@ async function handleApi(req, res, url) {
 }
 
 function serveStatic(req, res, url) {
-  let filePath = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
+  let filePath = url.pathname === "/" || url.pathname === "/app" ? "/index.html" : decodeURIComponent(url.pathname);
   filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   const absolutePath = path.join(ROOT, filePath);
 
@@ -5604,7 +14629,13 @@ function serveStatic(req, res, url) {
     }
     const extension = path.extname(absolutePath);
     const type = mimeTypes[extension] || "application/octet-stream";
-    const cacheControl = [".html", ".css", ".js"].includes(extension) ? "no-store" : "private, max-age=300";
+    const cacheControl = extension === ".html"
+      ? "no-store"
+      : APP_MODE === "local" && [".css", ".js"].includes(extension)
+        ? "private, max-age=60"
+        : [".css", ".js"].includes(extension)
+          ? "no-store"
+          : "private, max-age=300";
     res.writeHead(200, {
       ...securityHeaders(req),
       "content-type": type,
@@ -5614,9 +14645,136 @@ function serveStatic(req, res, url) {
   });
 }
 
+const PUBLIC_WEBSITE_ROUTES = new Map([
+  ["/terms", "terms.html"],
+  ["/terms/", "terms.html"],
+  ["/privacy", "privacy.html"],
+  ["/privacy/", "privacy.html"],
+  ["/support", "support.html"],
+  ["/support/", "support.html"],
+  ["/website.css", "website.css"],
+  ["/og.png", "og.png"],
+  ["/robots.txt", "robots.txt"],
+  ["/site.webmanifest", "site.webmanifest"],
+]);
+
+function publicWebsiteFile(url) {
+  if (APP_MODE === "cloud" && url.pathname === "/") return path.join(PUBLIC_SITE_DIR, "index.html");
+  if (url.pathname === "/favicon.svg") return path.join(ROOT, "desktop", "argentum-icon.svg");
+  const routeFile = PUBLIC_WEBSITE_ROUTES.get(url.pathname);
+  if (routeFile) return path.join(PUBLIC_SITE_DIR, routeFile);
+  if (/^\/[A-Za-z0-9._-]+\.txt$/.test(url.pathname)) {
+    return path.join(PUBLIC_SITE_DIR, path.basename(url.pathname));
+  }
+  return "";
+}
+
+function publicRequestOrigin(req) {
+  const forwardedProtocol = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
+  const protocol = ["http", "https"].includes(forwardedProtocol)
+    ? forwardedProtocol
+    : req.socket?.encrypted
+      ? "https"
+      : "http";
+  const forwardedHost = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  const host = /^[A-Za-z0-9.-]+(?::\d{1,5})?$/.test(forwardedHost) ? forwardedHost : "127.0.0.1";
+  return `${protocol}://${host}`;
+}
+
+function handlePublicWebsite(req, res, url) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const absolutePath = publicWebsiteFile(url);
+  if (!absolutePath) return false;
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, {
+        ...securityHeaders(req),
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    const body = extension === ".html"
+      ? Buffer.from(data.toString("utf8").replaceAll("{{PUBLIC_ORIGIN}}", publicRequestOrigin(req)))
+      : data;
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": extension === ".html" ? "no-store" : "public, max-age=3600",
+    });
+    res.end(req.method === "HEAD" ? undefined : body);
+  });
+  return true;
+}
+
 let clippingOfficeModulePromise = null;
+let clippingOfficeRuntimeKey = "";
+
+async function prewarmLocalOffices() {
+  startStockShadowScheduler();
+  startStockSimulationScheduler();
+  startStockReadinessScheduler();
+  startStockTelegramPolling();
+  stockIntelligenceScheduler.start();
+  if (APP_MODE !== "local") return [];
+  // Clipping Office recovery resumes live media workers. Load it when its route is opened
+  // instead of competing with the first visible desktop page at application startup.
+  return Promise.allSettled([
+    Promise.resolve().then(() => recoverAgent101Missions()),
+    Promise.resolve().then(() => {
+      const snapshot = loadStockOfficeSnapshot({ rootDir: ROOT, state: readState(), runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+      return stockOverview(snapshot);
+    }),
+  ]);
+}
+
+async function shutdownLocalOffices() {
+  await stockIntelligenceScheduler.stop();
+  if (stockShadowTimer) clearInterval(stockShadowTimer);
+  if (stockSimulationTimer) clearInterval(stockSimulationTimer);
+  if (stockReadinessTimer) clearInterval(stockReadinessTimer);
+  if (stockTelegramPollTimer) clearInterval(stockTelegramPollTimer);
+  stockShadowTimer = null;
+  stockSimulationTimer = null;
+  stockReadinessTimer = null;
+  stockTelegramPollTimer = null;
+  stockTelegramPollPromise = null;
+  stockReadinessBrokerSnapshotAt = "";
+  if (!clippingOfficeModulePromise) return { clippingOffice: "not_loaded" };
+  const clippingOffice = await clippingOfficeModulePromise.catch(() => null);
+  if (!clippingOffice || typeof clippingOffice.shutdownRuntime !== "function") {
+    return { clippingOffice: "unavailable" };
+  }
+  return { clippingOffice: await clippingOffice.shutdownRuntime() };
+}
+
+function clippingOfficeAgent101BridgeTarget(method = "GET", pathname = "") {
+  if (!pathname.startsWith(CLIPPING_OFFICE_AGENT101_BRIDGE)) return "";
+  const target = `/api/agent101${pathname.slice(CLIPPING_OFFICE_AGENT101_BRIDGE.length)}`;
+  if (target === "/api/agent101/chats" && ["GET", "POST"].includes(method)) return target;
+  if (/^\/api\/agent101\/chats\/[^/]+$/.test(target) && method === "GET") return target;
+  if (/^\/api\/agent101\/chats\/[^/]+\/messages$/.test(target) && method === "POST") return target;
+  return "";
+}
 
 async function handleClippingOffice(req, res, url) {
+  const agent101Target = clippingOfficeAgent101BridgeTarget(req.method, url.pathname);
+  if (agent101Target) {
+    const originalUrl = req.url;
+    const bridgedUrl = new URL(`${agent101Target}${url.search || ""}`, `http://${req.headers.host || "127.0.0.1"}`);
+    req.url = `${agent101Target}${url.search || ""}`;
+    try {
+      await handleApi(req, res, bridgedUrl);
+    } finally {
+      req.url = originalUrl;
+    }
+    return;
+  }
+
   if (url.pathname === CLIPPING_OFFICE_MOUNT) {
     res.writeHead(302, {
       ...securityHeaders(req),
@@ -5627,10 +14785,7 @@ async function handleClippingOffice(req, res, url) {
     return;
   }
 
-  if (!clippingOfficeModulePromise) {
-    clippingOfficeModulePromise = import(pathToFileURL(CLIPPING_OFFICE_SERVER).href);
-  }
-  const clippingOffice = await clippingOfficeModulePromise;
+  const clippingOffice = await clippingOfficeModule();
   const originalUrl = req.url;
   const strippedPath = url.pathname.slice(CLIPPING_OFFICE_MOUNT.length) || "/";
   req.url = `${strippedPath}${url.search || ""}`;
@@ -5639,6 +14794,44 @@ async function handleClippingOffice(req, res, url) {
   } finally {
     req.url = originalUrl;
   }
+}
+
+function handleDisplayApp(req, res, url) {
+  const strippedPath = url.pathname === DISPLAY_APP_MOUNT
+    ? "/"
+    : url.pathname.slice(DISPLAY_APP_MOUNT.length) || "/";
+  let filePath = strippedPath === "/" ? "/index.html" : decodeURIComponent(strippedPath);
+  filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const absolutePath = path.join(DISPLAY_APP_DIR, filePath);
+
+  if (!absolutePath.startsWith(DISPLAY_APP_DIR)) {
+    res.writeHead(403, { ...securityHeaders(req), "content-type": "text/plain; charset=utf-8" });
+    res.end("Forbidden");
+    return;
+  }
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, { ...securityHeaders(req), "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": extension === ".html"
+        ? "no-store"
+        : APP_MODE === "local" && [".css", ".js"].includes(extension)
+          ? "private, max-age=60"
+          : [".css", ".js"].includes(extension)
+            ? "no-store"
+            : "private, max-age=300",
+      ...(extension === ".html" ? { "x-argentum-display": "monitor-3" } : {}),
+    });
+    res.end(data);
+  });
 }
 
 function handleStockOfficeApp(req, res, url) {
@@ -5674,23 +14867,155 @@ function handleStockOfficeApp(req, res, url) {
     res.writeHead(200, {
       ...securityHeaders(req),
       "content-type": type,
-      "cache-control": [".html", ".css", ".js"].includes(extension) ? "no-store" : "private, max-age=300",
+      "cache-control": extension === ".html"
+        ? "no-store"
+        : APP_MODE === "local" && [".css", ".js"].includes(extension)
+          ? "private, max-age=60"
+          : [".css", ".js"].includes(extension)
+            ? "no-store"
+            : "private, max-age=300",
     });
     res.end(data);
   });
 }
 
-ensureState();
-readAuthStore();
+function handlePrintShopOfficeApp(req, res, url) {
+  if (url.pathname === PRINT_SHOP_OFFICE_MOUNT) {
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      location: `${PRINT_SHOP_OFFICE_MOUNT}/`,
+      "cache-control": "no-store",
+    });
+    res.end();
+    return;
+  }
 
-const server = http.createServer(async (req, res) => {
+  const strippedPath = url.pathname.slice(PRINT_SHOP_OFFICE_MOUNT.length) || "/";
+  let filePath = strippedPath === "/" ? "/index.html" : decodeURIComponent(strippedPath);
+  filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const absolutePath = path.join(PRINT_SHOP_OFFICE_APP_DIR, filePath);
+
+  if (!absolutePath.startsWith(PRINT_SHOP_OFFICE_APP_DIR)) {
+    res.writeHead(403, { ...securityHeaders(req), "content-type": "text/plain; charset=utf-8" });
+    res.end("Forbidden");
+    return;
+  }
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, { ...securityHeaders(req), "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": extension === ".html"
+        ? "no-store"
+        : APP_MODE === "local" && [".css", ".js"].includes(extension)
+          ? "private, max-age=60"
+          : [".css", ".js"].includes(extension)
+            ? "no-store"
+            : "private, max-age=300",
+      ...(extension === ".html" ? { "x-argentum-office-id": "print-shop-office" } : {}),
+    });
+    res.end(data);
+  });
+}
+
+function handleBusinessOfficeApp(req, res, url, mountPath, officeId) {
+  if (url.pathname === mountPath) {
+    res.writeHead(302, {
+      ...securityHeaders(req),
+      location: `${mountPath}/`,
+      "cache-control": "no-store",
+    });
+    res.end();
+    return;
+  }
+
+  const strippedPath = url.pathname.slice(mountPath.length) || "/";
+  let filePath = strippedPath === "/" ? "/index.html" : decodeURIComponent(strippedPath);
+  filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const absolutePath = path.join(BUSINESS_OFFICE_APP_DIR, filePath);
+
+  if (!absolutePath.startsWith(BUSINESS_OFFICE_APP_DIR)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+
+  fs.readFile(absolutePath, (error, data) => {
+    if (error) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return;
+    }
+    const extension = path.extname(absolutePath);
+    const type = mimeTypes[extension] || "application/octet-stream";
+    const headers = {
+      ...securityHeaders(req),
+      "content-type": type,
+      "cache-control": extension === ".html"
+        ? "no-store"
+        : APP_MODE === "local" && [".css", ".js"].includes(extension)
+          ? "private, max-age=60"
+          : [".css", ".js"].includes(extension)
+            ? "no-store"
+            : "private, max-age=300",
+    };
+    if (extension === ".html") headers["x-argentum-office-id"] = officeId;
+    res.writeHead(200, headers);
+    res.end(data);
+  });
+}
+
+async function handleArgentumRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  const shouldBypassClippingOfficeAuth = APP_MODE === "local" || (LOCAL_OFFICE_BYPASS && localRuntime.isLocalHost(url.hostname));
+  const isLocalRobinhoodOauthCallback = APP_MODE === "local"
+    && req.method === "GET"
+    && localRuntime.isLocalHost(url.hostname)
+    && url.pathname === "/api/stock-office/robinhood/oauth/callback";
+  const isTelegramWebhook = req.method === "POST"
+    && url.pathname === "/api/stock-office/notifications/telegram/webhook";
+  const isLocalHardwareDisplayRoute = APP_MODE === "local"
+    && localRuntime.isLocalHost(url.hostname)
+    && url.pathname.startsWith("/api/hardware/display");
   try {
     assertTrustedOrigin(req);
+    if (handlePublicWebsite(req, res, url)) {
+      return;
+    }
     if (await handleSetup(req, res)) {
       return;
     }
     if (await handleLogin(req, res)) {
+      return;
+    }
+    if (shouldBypassClippingOfficeAuth && url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {
+      await handleClippingOffice(req, res, url);
+      return;
+    }
+    if (url.pathname.startsWith("/api/gateway/v1")) {
+      await handleApi(req, res, url);
+      return;
+    }
+    // Robinhood returns here from another browser origin, so the normal Argentum
+    // SameSite session cookie may be absent. The callback remains protected by the
+    // in-memory one-use OAuth state, PKCE verifier, and approved Human Gate request.
+    if (isLocalRobinhoodOauthCallback) {
+      await handleApi(req, res, url);
+      return;
+    }
+    if (isTelegramWebhook) {
+      await handleApi(req, res, url);
+      return;
+    }
+    if (isLocalHardwareDisplayRoute) {
+      await handleApi(req, res, url);
       return;
     }
     if (!currentSession(req)) {
@@ -5701,12 +15026,34 @@ const server = http.createServer(async (req, res) => {
       redirect(res, "/login", req);
       return;
     }
+    const logoSymbol = stockLogoSymbol(url.pathname);
+    if (req.method === "GET" && logoSymbol) {
+      await sendStockLogo(req, res, logoSymbol);
+      return;
+    }
+    if (url.pathname === "/app/") {
+      redirect(res, "/app", req);
+      return;
+    }
+    if (url.pathname === DISPLAY_APP_MOUNT || url.pathname.startsWith(`${DISPLAY_APP_MOUNT}/`)) {
+      handleDisplayApp(req, res, url);
+      return;
+    }
     if (url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {
       await handleClippingOffice(req, res, url);
       return;
     }
     if (url.pathname.startsWith(STOCK_OFFICE_MOUNT)) {
       handleStockOfficeApp(req, res, url);
+      return;
+    }
+    if (url.pathname === PRINT_SHOP_OFFICE_MOUNT || url.pathname.startsWith(`${PRINT_SHOP_OFFICE_MOUNT}/`)) {
+      handlePrintShopOfficeApp(req, res, url);
+      return;
+    }
+    const businessOfficeMount = Object.keys(BUSINESS_OFFICE_APP_MOUNTS).find((mountPath) => url.pathname === mountPath || url.pathname.startsWith(`${mountPath}/`));
+    if (businessOfficeMount) {
+      handleBusinessOfficeApp(req, res, url, businessOfficeMount, BUSINESS_OFFICE_APP_MOUNTS[businessOfficeMount]);
       return;
     }
     if (url.pathname.startsWith("/api/")) {
@@ -5717,8 +15064,68 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Server error" });
   }
-});
+}
 
-server.listen(PORT, HOST, () => {
-  console.log(`Argentum is running on ${HOST}:${PORT}`);
-});
+function createArgentumServer() {
+  return http.createServer(handleArgentumRequest);
+}
+
+ensureState();
+readAuthStore();
+
+if (require.main === module) {
+  const server = createArgentumServer();
+  let standaloneShutdownPromise = null;
+  const shutdownStandaloneServer = () => {
+    if (standaloneShutdownPromise) return standaloneShutdownPromise;
+    standaloneShutdownPromise = (async () => {
+      await Promise.race([
+        Promise.resolve(shutdownLocalOffices()).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          server.closeAllConnections?.();
+          resolve();
+        }, 2500);
+        server.close(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    })().finally(() => process.exit(0));
+    return standaloneShutdownPromise;
+  };
+  process.on("message", (message) => {
+    if (message?.type === "argentum:shutdown") shutdownStandaloneServer();
+  });
+  process.once("SIGTERM", shutdownStandaloneServer);
+  process.once("SIGINT", shutdownStandaloneServer);
+  server.listen(PORT, HOST, () => {
+    localRuntime.assertLocalListening(server, APP_MODE);
+    console.log(`Argentum OS is running in ${APP_MODE} mode on ${HOST}:${PORT}`);
+    prewarmLocalOffices().catch(() => {});
+    process.send?.({ type: "argentum:backend-ready", host: HOST, port: PORT });
+  });
+}
+
+module.exports = {
+  APP_MODE,
+  DATA_DIR,
+  HOST,
+  PORT,
+  createArgentumServer,
+  createAgent101Mission,
+  cancelAgent101Mission,
+  executeAgent101Mission,
+  recoverAgent101Missions,
+  handleArgentumRequest,
+  localRuntimeStatusPayload,
+  prewarmLocalOffices,
+  stockIntelligenceScheduler,
+  startStockShadowScheduler,
+  startStockSimulationScheduler,
+  startStockReadinessScheduler,
+  startStockTelegramPolling,
+  shutdownLocalOffices,
+};

@@ -1,0 +1,9 @@
+{
+  "name": "Argentum",
+  "short_name": "Argentum",
+  "description": "Supervised content operations with Clipping Office.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#080a0c",
+  "theme_color": "#080a0c"
+}

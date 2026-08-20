@@ -1,0 +1,362 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const appRoot = path.join(__dirname, "..", "apps", "stock-office");
+
+test("Stock Office responds immediately with a bounded startup screen", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+  const shellScript = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  const shellStyles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+
+  assert.match(html, /id="stockOfficePreloader"[^]*Opening your market workspace/);
+  assert.match(html, /id="stockPreloadMessage"/);
+  assert.match(script, /function updateStockOfficePreloader/);
+  assert.match(script, /function finishStockOfficePreloader/);
+  assert.match(script, /screen\.remove\(\);\n\s+document\.body\.classList\.add\("stock-office-ready"\)/);
+  assert.match(script, /6_500/);
+  assert.match(script, /\.finally\(finishStockOfficePreloader\)/);
+  assert.match(styles, /\.stock-office-preloader/);
+  assert.match(styles, /body:not\(\.stock-office-ready\) \[data-argentum-human-gate\]/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(shellScript, /a\[href\^="\/apps\/stock-office\/"\]/);
+  assert.match(shellScript, /window\.location\.assign\(href\)/);
+  assert.match(shellStyles, /\.stock-office-launch-screen\.visible/);
+});
+
+test("Stock Office UI exposes a real refresh outcome and useful filter feedback", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /id="syncButton"[^>]*>Update market data<\/button>/);
+  assert.match(html, /Filter records/);
+  assert.match(html, /refreshFeedback[^]*aria-live="polite"/);
+  assert.match(html, /filterFeedback[^]*aria-live="polite"/);
+  assert.match(script, /\/api\/stock-office\/refresh-status/);
+  assert.match(script, /No records match these filters/);
+  assert.match(script, /Loaded \$\{count\} evaluator record/);
+  assert.match(script, /button\.textContent = "Filter records"/);
+  assert.doesNotMatch(script, /stock-guru copy-refresh-sec|continuous watcher/);
+  assert.doesNotMatch(`${html}\n${script}`, /scanner\/evaluator outside Argentum|Sync local files/);
+});
+
+test("Stock Office uses a compact left navigation shell instead of a repeated office hero", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /class="stock-sidebar"/);
+  assert.match(html, /data-stock-nav="overview"/);
+  assert.match(html, /data-stock-nav="trade"/);
+  assert.match(html, /data-stock-view="mirror"/);
+  assert.match(html, /data-stock-nav="mirror"[^]*<span>Research<\/span>/);
+  assert.match(html, /data-stock-nav="portfolio"[^]*<span>Simulation<\/span>/);
+  assert.match(script, /function setStockView/);
+  assert.match(script, /history\.replaceState/);
+  assert.doesNotMatch(html, /<h1>Stock Guru Office<\/h1>/);
+  assert.doesNotMatch(html, /class="hero-panel"/);
+});
+
+test("Stock Office UI keeps broker actions compact while preserving guarded order controls", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(html, /class="trade-account-bar"/);
+  assert.match(html, /id="tradeAccountMetrics"/);
+  assert.match(html, /New order/);
+  assert.match(html, /Review order/);
+  assert.match(html, /Trading limits/);
+  assert.match(html, /Advanced limits/);
+  assert.match(html, /class="trade-workspace"/);
+  assert.match(html, /id="brokerOnboarding" hidden/);
+  assert.match(html, /id="overviewEquity"/);
+  assert.match(html, /id="overviewPositions"/);
+  assert.match(html, /Best opportunities/);
+  assert.match(html, /Market workers/);
+  assert.match(html, /id="marketWorkers"/);
+  assert.match(html, /id="operationsToggle"[^>]*>Minimize<\/button>/);
+  assert.match(html, /id="overviewOperationsSummary"/);
+  assert.match(html, /Trade risk/);
+  assert.match(html, /Daily trades/);
+  assert.match(html, /id="cashReserveDollars"/);
+  assert.match(html, /Apply approved limits/);
+  assert.doesNotMatch(html, /No password scraping|No API path|Human Gate stays on|Read first|App session/);
+  assert.match(script, /\/api\/stock-office\/broker-control/);
+  assert.match(script, /\/api\/stock-office\/orders\/draft/);
+  assert.match(script, /\/api\/stock-office\/guardrails\/human-gate/);
+  assert.match(script, /\/api\/stock-office\/guardrails\/apply/);
+  assert.match(script, /portfolioPlan/);
+  assert.match(script, /renderOverviewDashboard/);
+  assert.match(script, /renderMarketWorkers/);
+  assert.match(script, /marketWorkers/);
+  assert.match(script, /Official Robinhood total/);
+  assert.match(script, /\["Buying power"/);
+  assert.match(script, /\["Cash"/);
+  assert.match(script, /\["Stocks"/);
+  assert.match(script, /\["Pending"/);
+  assert.match(script, /\["Unsettled"/);
+  assert.match(html, /Strategy stress lab/);
+  assert.match(html, /continuously tested\. No manual start buttons/);
+  assert.match(script, /shadowPortfolio/);
+  assert.match(script, /simulationLab/);
+  assert.match(script, /strategyConfigurationsPerSecond/);
+  assert.match(script, /scenarioPathsPerSecond/);
+  assert.match(script, /testing automatically/);
+  assert.match(script, /\/api\/stock-office\/shadow\/reset/);
+  assert.doesNotMatch(`${html}\n${script}`, /data-simulation-test|Simulate now/);
+  assert.match(html, /Market data freshness/);
+  assert.match(html, /This loop cannot place orders/);
+  assert.match(script, /intelligenceScheduler/);
+  assert.match(script, /SEC Form 4/);
+  assert.match(script, /SEC 13F/);
+  assert.match(script, /Continuous refresh active/);
+  assert.match(script, /Send exact order to Human Gate/);
+  assert.match(script, /Prepare 2-minute Robinhood handoff/);
+  assert.match(script, /Complete Robinhood OAuth on desktop/);
+  assert.match(script, /\/api\/stock-office\/robinhood\/oauth\/start/);
+  assert.match(script, /openRobinhoodOAuth/);
+  assert.match(script, /Robinhood opened\. Approve it there, then return here\./);
+  assert.match(script, /Robinhood did not finish the link/);
+  assert.match(script, /oauthReturnStatus/);
+  assert.doesNotMatch(script, /window\.location\.href = payload\.authorizationUrl/);
+  assert.match(script, /\/api\/stock-office\/robinhood\/refresh/);
+  assert.match(script, /Review and execute once with Robinhood/);
+  assert.match(script, /\/dispatch\/execute/);
+  assert.match(script, /Final action-time confirmation/);
+  assert.match(script, /Copy exact Robinhood job/);
+  assert.match(script, /\/dispatch\/claim/);
+  assert.match(script, /\/dispatch\/result/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
+  assert.match(script, /window\.setInterval\(tickLivePortfolio, 1_000\)/);
+  assert.match(script, /api\("\/api\/stock-office\/live"\)/);
+  assert.match(script, /window\.setInterval\(pollLivePortfolio, 1_000\)/);
+  assert.match(script, /window\.setInterval\(pollBrokerControl, 15_000\)/);
+  assert.doesNotMatch(script.match(/function brokerHandoffJob[\s\S]*?\n\}/)?.[0] || "", /claim\.token/);
+  assert.match(script, /toolContract\.registered/);
+  assert.match(script, /No settled buying power\. Add funds in Robinhood, then refresh\./);
+  assert.match(script, /function setInputValue/);
+  assert.match(script, /target\.hidden = true/);
+  assert.doesNotMatch(`${html}\n${script}`, /Robinhood password|enter your Robinhood login/i);
+});
+
+test("Overview shows branded, evidence-backed trade proposals without promising profit timing", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+
+  assert.match(html, /id="tradeProposalsTitle">Trade proposals/);
+  assert.match(html, /id="overviewProposalList"/);
+  assert.match(html, /id="overviewTradeReadiness"/);
+  assert.match(html, /id="overviewLiveClock"/);
+  assert.match(html, /Company logos provided by Parqet/);
+  assert.match(script, /\/api\/stock-office\/logos\/\$\{encodeURIComponent\(safeSymbol\)\}/);
+  assert.match(script, /data-proposal-approve/);
+  assert.match(script, /data-proposal-review/);
+  assert.doesNotMatch(script, /data-proposal-paper/);
+  const overviewRenderer = script.match(/function renderTradeProposals\(\)[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(overviewRenderer, /paper-test|data-simulation-test/);
+  assert.match(script, /New real order/);
+  assert.match(script, /REAL ORDERS/);
+  assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
+  assert.match(script, /const qualifiedCandidates = actionCandidates\.filter\(\(proposal\) => proposal\.draftEligible \|\| realOrderStates\.has\(proposal\.reviewState\)\)/);
+  assert.match(script, /const visible = \[\.\.\.qualifiedCandidates\]/);
+  assert.match(script, /No trade meets \$\{escapeHtml\(requiredScore\)\}\/100 yet/);
+  assert.match(script, /Closest now:/);
+  assert.match(script, /Fresh market scans run about every/);
+  assert.doesNotMatch(script, /const visible = \[\.\.\.actionCandidates\]/);
+  assert.match(script, /Current blocker:/);
+  assert.match(script, /stock-office:operations-collapsed/);
+  assert.doesNotMatch(script, /blockers\.slice\(0, 3\)\.join/);
+  assert.match(script, /data-proposal-decline/);
+  assert.match(script, /expandedProposalResearch: new Set\(\)/);
+  assert.match(script, /state\.expandedProposalResearch\.has\(proposal\.id\) \? "open" : ""/);
+  assert.match(script, /document\.addEventListener\("toggle"/);
+  assert.match(script, /\/human-gate/);
+  assert.match(script, /No broker review or order has occurred/);
+  assert.match(script, /No profit date can be estimated reliably/);
+  assert.match(styles, /\.company-logo/);
+  assert.match(styles, /\.overview-proposal-list/);
+  assert.match(html, /id="quickOrderDialog"/);
+  assert.match(script, /Run checks & send to Human Gate/);
+  assert.match(html, /id="secIdentityForm"/);
+  assert.match(script, /sources\/sec-identity/);
+});
+
+test("Stock Office runs fast local readiness checks between full market-data scans", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+
+  assert.match(server, /STOCK_GURU_READINESS_INTERVAL_MS/);
+  assert.match(server, /STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000/);
+  assert.match(server, /stockReadinessBrokerSnapshotAt/);
+  assert.match(server, /function startStockReadinessScheduler/);
+  assert.match(server, /trigger: "live_readiness"/);
+  assert.match(server, /startStockReadinessScheduler\(\)/);
+  assert.match(script, /decisionCadenceSeconds/);
+  assert.match(script, /live checks ·/);
+});
+
+test("Stock Office keeps one-second live updates lightweight and avoids idle repaints", () => {
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const shellScript = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  const shellStyles = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const intelligenceStore = fs.readFileSync(path.join(__dirname, "..", "services", "stock-intelligence-store.js"), "utf8");
+  const localDatabase = fs.readFileSync(path.join(__dirname, "..", "services", "local-database.js"), "utf8");
+  const tickRenderer = script.match(/function tickLivePortfolio\(\)[\s\S]*?\n\}/)?.[0] || "";
+  const liveRoute = server.slice(
+    server.indexOf('url.pathname === "/api/stock-office/live"'),
+    server.indexOf('url.pathname === "/api/stock-office/broker-control"'),
+  );
+
+  assert.doesNotMatch(tickRenderer, /renderOverviewDashboard|renderMirror/);
+  assert.match(script, /function renderActiveStockView/);
+  assert.match(script, /fingerprint === state\.liveAccountFingerprint/);
+  assert.match(script, /fingerprint === state\.workspacePayloadFingerprint/);
+  assert.match(liveRoute, /stockOfficeBrokerSnapshot/);
+  assert.doesNotMatch(liveRoute, /buildCopyPortfolioPlan|refreshStockSimulationLab|intelligence: snapshot\.intelligence/);
+  assert.match(server, /STOCK_SIMULATION_INTERVAL_MS, 10_000/);
+  assert.match(server, /const snapshot = stockOfficeBrokerSnapshot\(state\);\n  snapshot\.intelligence = stockDecisionIntelligenceState\(\);/);
+  assert.match(server, /const STOCK_INTELLIGENCE_CACHE_MS = 15_000/);
+  assert.match(server, /options\.cachedIntelligence \? cachedStockIntelligenceState\(\) : stockIntelligenceState\(\)/);
+  assert.match(script, /window\.setInterval\(pollBrokerControl, 15_000\)/);
+  assert.match(shellStyles, /\.stars-a,[\s\S]*\.station-map \*::after \{\n  animation: none !important;/);
+  assert.match(shellScript, /function renderActiveWorkspaceView/);
+  assert.match(shellScript, /activeWorkspaceView = viewName/);
+  const shellRenderer = shellScript.match(/function render\(\)[\s\S]*?\n\}/)?.[0] || "";
+  const clippingLoader = shellScript.match(/async function loadClippingOfficeOverview[\s\S]*?\n\}/)?.[0] || "";
+  const clippingPoller = shellScript.match(/function startClippingOfficeOverviewPolling[\s\S]*?\n\}/)?.[0] || "";
+  const agentPresence = shellScript.match(/function startOfficeAgentPresence\(\)[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(shellRenderer, /renderControlFloorDashboard|renderApprovals|renderArtifacts|renderMemory|renderAudit/);
+  assert.doesNotMatch(clippingLoader, /renderControlFloorDashboard/);
+  assert.doesNotMatch(clippingPoller, /floorIsVisible/);
+  assert.match(clippingPoller, /if \(!clippingOfficeModalIsOpen\(\)\) return/);
+  assert.match(shellScript, /\}, 15_000\);/);
+  assert.doesNotMatch(agentPresence, /setInterval|setTimeout|animateOfficeAgentTransit/);
+  assert.match(intelligenceStore, /const outcomesBySignal = new Map\(\)/);
+  assert.doesNotMatch(intelligenceStore, /outcomes\.all\(row\.id\)/);
+  assert.match(localDatabase, /idx_stock_signal_journal_observed/);
+  assert.match(localDatabase, /idx_stock_signal_outcomes_signal_due/);
+});
+
+test("Stock Office UI exposes secure approval-gated Telegram alerts for verified broker events", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+
+  assert.match(html, /id="telegramConfigForm"/);
+  assert.match(html, /Stored in Mac Keychain/);
+  assert.match(html, /Request approval/);
+  assert.match(html, /Enable approved alerts/);
+  assert.match(script, /notifications\/telegram\/configure/);
+  assert.match(script, /notifications\/telegram\/human-gate/);
+  assert.match(script, /notifications\/telegram\/enable/);
+  assert.match(script, /telegramAction\("test"\)/);
+  assert.doesNotMatch(script, /STOCK_GURU_TELEGRAM_BOT_TOKEN/);
+  assert.match(server, /controlTransport: APP_MODE === "local" \? "local_polling" : "webhook"/);
+  assert.match(server, /startStockTelegramPolling\(\)/);
+  assert.match(server, /function syncPendingStockOrderHumanGateToTelegram/);
+  assert.match(server, /await syncPendingStockOrderHumanGateToTelegram\(\)/);
+  assert.match(server, /function notifyStockOrderHumanGate/);
+  assert.match(server, /if \(value\) stockTelegramSecretCache\.set\(provider, value\)/);
+  assert.doesNotMatch(server, /subscribe\("risk\.blocked", \(event\) => stockTelegramNotifier/);
+});
+
+test("Research combines no-look-ahead copy evidence, consensus, and explicit source controls", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+
+  assert.match(html, /RESEARCH \+ COPY TRADING/);
+  assert.match(html, /Research center/);
+  assert.match(html, /Methods &amp; evidence/);
+  assert.match(html, /Traders &amp; funds/);
+  assert.match(html, /Multi-source matches/);
+  assert.match(html, /Source events/);
+  assert.match(html, /LIVE RESEARCH FLOW/);
+  assert.match(html, /Stock conveyor/);
+  assert.match(html, /id="mirrorCandidates" class="research-conveyor"/);
+  assert.match(script, /knowledgeSummary\.measuredOutcomes/);
+  assert.match(script, /function renderResearchConveyor/);
+  assert.match(script, /function researchCycleIsRunning/);
+  assert.match(script, /manualRefreshRunning: false/);
+  assert.match(script, /return state\.manualRefreshRunning/);
+  assert.doesNotMatch(script, /return state\.refresh\?\.status === "running"/);
+  assert.match(script, /state\.manualRefreshRunning = true/);
+  assert.match(script, /state\.manualRefreshRunning = false/);
+  assert.match(script, /refresh\.status === "idle"/);
+  assert.match(script, /panel\.hidden = true/);
+  assert.match(script, /pollRefreshStatus\(\);/);
+  assert.doesNotMatch(script, /researchConveyorMotion\.timer = window\.setInterval/);
+  assert.match(script, /prefers-reduced-motion: reduce/);
+  assert.match(script, /stopResearchConveyorMotion\(\)/);
+  assert.match(script, /function researchLoopIsActive/);
+  assert.match(script, /function researchProgress/);
+  assert.match(script, /progressSymbols/);
+  assert.match(script, /currentTicker/);
+  assert.match(script, /prepareResearchConveyorLoop/);
+  assert.match(script, /universeTotal/);
+  assert.match(script, /sweepCompleted/);
+  assert.match(script, /data-conveyor-copy-status/);
+  assert.match(script, /function tickResearchConveyorCountdown/);
+  assert.doesNotMatch(script, /Belt stopped/);
+  assert.match(script, /Loading the next exchange-wide batch/);
+  assert.match(styles, /@keyframes research-conveyor-flow/);
+  assert.match(styles, /research-conveyor\[data-motion="moving"\]/);
+  assert.doesNotMatch(styles, /research-conveyor-scanner > i/);
+  assert.doesNotMatch(styles, /research-conveyor-scanner[\s\S]{0,260}border-inline/);
+  assert.match(html, /Run extra scan/);
+  assert.match(script, /window\.setInterval\(pollRefreshStatus, 400\)/);
+  assert.match(script, /No matured outcomes/);
+  assert.match(script, /candidateId/);
+  assert.match(script, /brokerPositionRequired/);
+  assert.match(script, /data-mirror-follow/);
+  assert.match(script, /data-mirror-enable/);
+  assert.match(script, /mirror\/sources/);
+  assert.match(script, /Copy on/);
+  assert.match(script, /Symbols researched/);
+  assert.match(script, /Ready for gate/);
+  assert.match(script, /Scenario tests/);
+  assert.match(script, /Paper outcomes/);
+  assert.match(script, /isCurrentCopyCandidate/);
+  assert.doesNotMatch(script, /planSummary\.sells \|\| candidates\.filter/);
+  assert.match(script, /data-proposal-drawer/);
+  assert.match(script, /Send to Human Gate/);
+  assert.doesNotMatch(html, /Research candidates/);
+  assert.doesNotMatch(script, /researchCandidateCards/);
+  assert.doesNotMatch(script, /No current copy signal/);
+  assert.match(html, /Market workers/);
+});
+
+test("production UI labels unavailable values and never hardcodes a live portfolio or fake score", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  assert.match(html, /id="executionModePill"[^>]*>Checking live orders/);
+  assert.match(script, /buyingPower === null \? "—"/);
+  assert.match(script, /scores\.mirror \?\? "—"/);
+  assert.match(script, /No qualified opportunity/);
+  assert.match(script, /new EventSource\("\/api\/stock-office\/events", \{ withCredentials: true \}\)/);
+  assert.match(html, /id="intelligenceDrawer"/);
+  assert.doesNotMatch(script, /const\s+(?:portfolioValue|buyingPower|aiScore)\s*=\s*\d+/);
+});
+
+test("Performance and provider health views render only persisted measured state", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+  assert.match(html, /data-stock-nav="performance"/);
+  assert.match(html, /data-stock-view="performance"/);
+  assert.match(html, /MEASURED OUTCOMES ONLY/);
+  assert.match(html, /id="providerHealthList"/);
+  assert.match(script, /state\.intelligence\?\.performance/);
+  assert.match(script, /Insufficient sample/);
+  assert.match(script, /signalEquityCurve/);
+  assert.match(script, /returnDistribution/);
+  assert.match(script, /Human-reviewed changes only/);
+  assert.match(script, /\["high_priority", "candidate"\]\.includes\(item\.status\)/);
+  assert.match(styles, /\.performance-console/);
+  assert.match(styles, /\.provider-health-list/);
+  assert.doesNotMatch(`${html}\n${script}`, /demo performance|sample equity curve|fake history/i);
+});

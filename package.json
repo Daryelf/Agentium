@@ -3,18 +3,85 @@
   "version": "0.1.0",
   "private": true,
   "description": "Argentum supervised AI operating company prototype with Depo as the first visible agent.",
+  "main": "desktop/main.js",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.106.0",
     "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
-    "playwright": "1.61.0"
+    "playwright": "1.61.0",
+    "screenshot-desktop": "^1.15.4",
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "ws": "^8.21.0"
   },
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "start": "node server.js",
-    "check": "node --check server.js && node --check script.js && node --check services/stock-office.js",
+    "start:local": "APP_MODE=local HOST=127.0.0.1 node server.js",
+    "dev:local": "APP_MODE=local HOST=127.0.0.1 npx electron .",
+    "build:mac": "APP_MODE=local electron-builder --mac && node scripts/normalize-mac-artifacts.js",
+    "check": "node --check server.js && node --check script.js && node --check human-gate-bubble.js && node --check services/stock-office.js && node --check services/stock-guru-refresh.js && node --check services/stock-intelligence-scheduler.js && node --check services/stock-market-workers.js && node --check services/stock-continuous-review.js && node --check services/stock-telegram-notifier.js && node --check services/stock-broker-control.js && node --check services/stock-portfolio-risk.js && node --check services/stock-trading-halt.js && node --check services/stock-performance-analytics.js && node --check services/stock-shadow-portfolio.js && node --check services/stock-strategy-config.js && node --check services/stock-opportunity-scoring.js && node --check services/robinhood-mcp-client.js && node --check apps/stock-office/stock-office.js && node --check services/print-shop-workspace.js && node --check apps/print-shop-office/print-shop.js && node --check apps/display/display.js && node --check services/agent101-operating-system.js && node --check services/agent101-mission-manager.js && node --check services/agent101-project-workspace.js && node --check services/openclaw-runtime.js && node --check services/local-runtime.js && node --check services/local-database.js && node --check services/secure-secrets.js && node --check services/obsidian-vault.js && node --check services/brain-backup.js && node --check services/brain-verification.js && node --check services/agent-context-builder.js && node --check services/gateway-adapter.js && node --check desktop/main.js && node --check desktop/stock-guru-workspace.js && node --check desktop/preload.js && node --check evals/agent101/run-agent101-evals.js && node --check scripts/clip-office-validation.js && node --check scripts/compact-clipping-state-memory.mjs && node --check scripts/vault-cli.js && node --check scripts/brain-cli.js && node --check scripts/openclaw-bridge-cli.js && node --check \"CLIPPING OFFICE /server.js\" && node --check \"CLIPPING OFFICE /services/agent-tools.js\" && node --check \"CLIPPING OFFICE /services/audio-energy.js\" && node --check \"CLIPPING OFFICE /services/caption-intelligence.js\" && node --check \"CLIPPING OFFICE /services/editor-production-readiness.js\" && node --check \"CLIPPING OFFICE /services/clip-moment-intelligence.js\" && node --check \"CLIPPING OFFICE /services/human-interest-signals.js\" && node --check \"CLIPPING OFFICE /services/rolling-media-buffer.js\" && node --check \"CLIPPING OFFICE /services/editor-frame-intelligence.js\" && node --check \"CLIPPING OFFICE /services/media-signal-detector.js\" && node --check \"CLIPPING OFFICE /services/vision-gate.js\" && node --check \"CLIPPING OFFICE /services/capcut-controller.js\" && node --check \"CLIPPING OFFICE /services/capcut-desktop.js\" && node --check \"CLIPPING OFFICE /services/capcut-runner.js\" && node --check \"CLIPPING OFFICE /services/capcut-macro-storage.js\" && node --check \"CLIPPING OFFICE /services/state-memory.js\" && node --check \"CLIPPING OFFICE /public/app.js\" && node --check \"CLIPPING OFFICE /scripts/capcut-agent-smoke.mjs\"",
+    "smoke": "npm run smoke:agent101 && npm run smoke:capcut",
+    "smoke:agent101": "node \"CLIPPING OFFICE /scripts/agent101-smoke.mjs\"",
+    "smoke:capcut": "node \"CLIPPING OFFICE /scripts/capcut-agent-smoke.mjs\"",
+    "vault:init": "APP_MODE=local node scripts/vault-cli.js init",
+    "vault:migrate": "APP_MODE=local node scripts/vault-cli.js migrate",
+    "vault:migrate:dry-run": "APP_MODE=local node scripts/vault-cli.js migrate:dry-run",
+    "vault:validate": "APP_MODE=local node scripts/vault-cli.js validate",
+    "vault:reindex": "APP_MODE=local node scripts/vault-cli.js reindex",
+    "brain:backup": "APP_MODE=local node scripts/brain-cli.js backup",
+    "brain:backup:verify": "APP_MODE=local node scripts/brain-cli.js backup:verify",
+    "brain:restore:dry-run": "APP_MODE=local node scripts/brain-cli.js restore:dry-run",
+    "brain:restore": "APP_MODE=local node scripts/brain-cli.js restore",
+    "brain:verify": "APP_MODE=local node scripts/brain-cli.js verify",
+    "openclaw:bridge:check": "APP_MODE=local node scripts/openclaw-bridge-cli.js check",
+    "openclaw:bridge:test": "APP_MODE=local OPENCLAW_BRIDGE_ENABLED=true OPENCLAW_BRIDGE_MODE=test node scripts/openclaw-bridge-cli.js test",
+    "openclaw:bridge:disable": "APP_MODE=local node scripts/openclaw-bridge-cli.js disable",
+    "validate:clip-office": "node scripts/clip-office-validation.js",
+    "eval:agent101": "node evals/agent101/run-agent101-evals.js",
     "test": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.argentum.os",
+    "productName": "Argentum OS",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "desktop/argentum-icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "files": [
+      "desktop/**/*",
+      "server.js",
+      "script.js",
+      "styles.css",
+      "index.html",
+      "human-gate-bubble.js",
+      "human-gate-bubble.css",
+      "assets/**/*",
+      "agents/**/*",
+      "apps/**/*",
+      "CLIPPING OFFICE /**/*",
+      "!CLIPPING OFFICE /Clips/**/*",
+      "!CLIPPING OFFICE /data/**/*",
+      "!CLIPPING OFFICE /uploads/**/*",
+      "!CLIPPING OFFICE /outputs/**/*",
+      "!CLIPPING OFFICE /browser-profile/**/*",
+      "!CLIPPING OFFICE /browser-downloads/**/*",
+      "services/**/*",
+      "docs/**/*",
+      "argentum-knowledge/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.js"
+    }
   }
 }

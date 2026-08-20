@@ -78,7 +78,7 @@ Electron:
 
 Electron stores window placement preferences in `~/Library/Application Support/Argentum OS/monitor-display-config.json`. It prefers the saved display signature, then the configured `preferredDisplay`, then an external display, then the primary display.
 
-By default the Electron display window is fixed for Monitor 3 use: borderless fullscreen, kiosk-locked, not movable, not resizable, not minimizable, and always above normal windows on that display. If macOS or another app tries to move it out of place, Argentum reasserts the Monitor 3 bounds and fullscreen mode.
+By default the Electron display window is fixed for Monitor 3 use: borderless, physical-screen-sized, not movable, not resizable, not minimizable, hidden from the task switcher where supported, and always above normal windows on that display. Argentum uses a screen-saver-level display shield instead of relying only on native macOS fullscreen Spaces, then reasserts the Monitor 3 bounds and topmost mode twice per second. If macOS or another app tries to move, hide, resize, or switch over it, Argentum pulls the display window back over Monitor 3.
 
 The normal escape hatch is quitting Argentum OS. For development only, `monitor-display-config.json` can set `kiosk`, `alwaysOnTop`, or `preventClose` to `false` before launching the app.
 

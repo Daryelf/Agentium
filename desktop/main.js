@@ -76,6 +76,7 @@ const CLIPPING_AUTOMATION_RESTART_BASE_MS = 1000;
 const CLIPPING_AUTOMATION_RESTART_MAX_MS = 30000;
 const CLIPPING_AUTOMATION_STABLE_RESET_MS = 60000;
 const MAX_FINISHED_CLIP_BYTES = 1024 * 1024 * 1024;
+const DISPLAY_WINDOW_RECLAIM_MS = 500;
 
 app.setName("Argentum OS");
 
@@ -145,6 +146,9 @@ function normalizeDisplayWindowConfig(value = {}) {
 function enforceDisplayWindowMode(targetWindow, targetDisplay, config = {}) {
   if (!targetWindow || targetWindow.isDestroyed()) return;
   const bounds = targetDisplay.bounds || targetDisplay.workArea || screen.getPrimaryDisplay().bounds;
+  if (typeof targetWindow.setFullScreenable === "function") {
+    targetWindow.setFullScreenable(false);
+  }
   targetWindow.setBounds({
     x: Math.round(bounds.x),
     y: Math.round(bounds.y),
@@ -159,12 +163,21 @@ function enforceDisplayWindowMode(targetWindow, targetDisplay, config = {}) {
   if (typeof targetWindow.setClosable === "function") {
     targetWindow.setClosable(config.preventClose === false);
   }
+  if (typeof targetWindow.setSkipTaskbar === "function") {
+    targetWindow.setSkipTaskbar(true);
+  }
   if (config.alwaysOnTop !== false) {
-    targetWindow.setAlwaysOnTop(true, "screen-saver");
+    targetWindow.setAlwaysOnTop(true, "screen-saver", 1);
     targetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
-  if (config.kiosk !== false) targetWindow.setKiosk(true);
-  else if (config.fullscreen !== false) targetWindow.setFullScreen(true);
+  if (config.fullscreen !== false && typeof targetWindow.setSimpleFullScreen === "function") {
+    targetWindow.setSimpleFullScreen(config.fullscreen !== false);
+  } else if (config.fullscreen !== false) {
+    targetWindow.setFullScreen(true);
+  }
+  if (typeof targetWindow.moveTop === "function") {
+    targetWindow.moveTop();
+  }
 }
 
 function readDisplayWindowConfig() {
@@ -856,10 +869,11 @@ function createDisplayWindow(options = {}) {
     title: "Argentum Monitor 3",
     icon: appIconPath(),
     backgroundColor: "#05070d",
-    frame: config.kiosk === false && config.fullscreen === false,
-    fullscreen: config.fullscreen !== false,
-    kiosk: config.kiosk !== false,
-    fullscreenable: true,
+    frame: false,
+    fullscreen: false,
+    simpleFullscreen: config.fullscreen !== false,
+    kiosk: false,
+    fullscreenable: false,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -868,7 +882,7 @@ function createDisplayWindow(options = {}) {
     alwaysOnTop: config.alwaysOnTop !== false,
     autoHideMenuBar: true,
     focusable: true,
-    skipTaskbar: false,
+    skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -880,23 +894,34 @@ function createDisplayWindow(options = {}) {
   });
 
   let displayModeReassertTimer = null;
+  const reclaimDisplayWindow = (shouldFocus = false) => {
+    if (isShuttingDown || !displayWindow || displayWindow.isDestroyed()) return;
+    enforceDisplayWindowMode(displayWindow, targetDisplay, config);
+    if (displayWindow.isMinimized()) displayWindow.restore();
+    if (!displayWindow.isVisible()) displayWindow.showInactive();
+    if (typeof displayWindow.moveTop === "function") displayWindow.moveTop();
+    if (shouldFocus) {
+      displayWindow.show();
+      app.focus({ steal: true });
+      displayWindow.focus();
+    }
+  };
   const scheduleDisplayModeReassert = () => {
     if (isShuttingDown || !displayWindow || displayWindow.isDestroyed()) return;
     if (displayModeReassertTimer) clearTimeout(displayModeReassertTimer);
     displayModeReassertTimer = setTimeout(() => {
       displayModeReassertTimer = null;
-      if (isShuttingDown || !displayWindow || displayWindow.isDestroyed()) return;
-      enforceDisplayWindowMode(displayWindow, targetDisplay, config);
-      if (displayWindow.isMinimized()) displayWindow.restore();
-      if (!displayWindow.isVisible()) displayWindow.showInactive();
+      reclaimDisplayWindow(false);
     }, 80);
   };
+  const displayModeReclaimInterval = setInterval(() => reclaimDisplayWindow(false), DISPLAY_WINDOW_RECLAIM_MS);
+  if (typeof displayModeReclaimInterval.unref === "function") displayModeReclaimInterval.unref();
 
-  enforceDisplayWindowMode(displayWindow, targetDisplay, config);
+  reclaimDisplayWindow(false);
 
   displayWindow.once("ready-to-show", () => {
     if (!displayWindow || displayWindow.isDestroyed()) return;
-    enforceDisplayWindowMode(displayWindow, targetDisplay, config);
+    reclaimDisplayWindow(options.focus !== false);
     if (options.focus === false) {
       displayWindow.showInactive();
     } else {
@@ -917,6 +942,7 @@ function createDisplayWindow(options = {}) {
   displayWindow.on("blur", scheduleDisplayModeReassert);
   displayWindow.on("closed", () => {
     if (displayModeReassertTimer) clearTimeout(displayModeReassertTimer);
+    clearInterval(displayModeReclaimInterval);
     displayWindow = null;
   });
   displayWindow.webContents.on("will-navigate", (event, url) => {

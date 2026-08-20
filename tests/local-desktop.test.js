@@ -535,10 +535,15 @@ test("Electron exposes a separate Monitor 3 display launcher", () => {
   assert.match(mainSource, /kiosk: true/);
   assert.match(mainSource, /alwaysOnTop: true/);
   assert.match(mainSource, /preventClose: true/);
-  assert.match(mainSource, /setKiosk\(true\)/);
-  assert.match(mainSource, /setAlwaysOnTop\(true, "screen-saver"\)/);
+  assert.match(mainSource, /DISPLAY_WINDOW_RECLAIM_MS/);
+  assert.match(mainSource, /simpleFullscreen: config\.fullscreen !== false/);
+  assert.match(mainSource, /setSimpleFullScreen\(config\.fullscreen !== false\)/);
+  assert.match(mainSource, /setAlwaysOnTop\(true, "screen-saver", 1\)/);
   assert.match(mainSource, /setVisibleOnAllWorkspaces\(true, \{ visibleOnFullScreen: true \}\)/);
   assert.match(mainSource, /setResizable\(false\)/);
+  assert.match(mainSource, /setSkipTaskbar\(true\)/);
+  assert.match(mainSource, /moveTop/);
+  assert.match(mainSource, /setInterval\(\(\) => reclaimDisplayWindow\(false\), DISPLAY_WINDOW_RECLAIM_MS\)/);
   assert.match(mainSource, /displayWindow\.on\("close"/);
   assert.match(mainSource, /displayWindow\.on\("leave-full-screen"/);
   assert.match(mainSource, /if \(displayWindow && !displayWindow\.isDestroyed\(\)\) displayWindow\.destroy\(\)/);

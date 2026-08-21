@@ -4,6 +4,7 @@ set -euo pipefail
 ARGENTUM_APP_EXECUTABLE="${ARGENTUM_APP_EXECUTABLE:-/Applications/Argentum OS.app/Contents/MacOS/Argentum OS}"
 ARGENTUM_APP_ARCHIVE="${ARGENTUM_APP_ARCHIVE:-/Applications/Argentum OS.app/Contents/Resources/app.asar}"
 ARGENTUM_SERVER_ENTRY="${ARGENTUM_SERVER_ENTRY:-/Applications/Argentum OS.app/Contents/Resources/app.asar/server.js}"
+ARGENTUM_WORKSPACE_HELPER="${ARGENTUM_WORKSPACE_HELPER:-/Applications/Argentum OS.app/Contents/Resources/app.asar/desktop/stock-guru-workspace.js}"
 ARGENTUM_LOCAL_DATA_DIR="${ARGENTUM_LOCAL_DATA_DIR:-/Users/ceo/Library/Application Support/Argentum OS}"
 ARGENTUM_STOCK_RUNTIME_DIR="${STOCK_GURU_RUNTIME_DIR:-/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime}"
 ARGENTUM_DESKTOP_PROCESS_PATTERN="^/Applications/Argentum OS\.app/Contents/MacOS/Argentum OS$"
@@ -43,11 +44,34 @@ stop_background() {
   background_pid=""
 }
 
+sync_stock_runtime() {
+  env \
+    ELECTRON_RUN_AS_NODE=1 \
+    ARGENTUM_WORKSPACE_HELPER="$ARGENTUM_WORKSPACE_HELPER" \
+    ARGENTUM_LOCAL_DATA_DIR="$ARGENTUM_LOCAL_DATA_DIR" \
+    ARGENTUM_STOCK_RUNTIME_DIR="$ARGENTUM_STOCK_RUNTIME_DIR" \
+    "$ARGENTUM_APP_EXECUTABLE" -e '
+      const fs = require("node:fs");
+      const helper = require(process.env.ARGENTUM_WORKSPACE_HELPER);
+      const userDataPath = process.env.ARGENTUM_LOCAL_DATA_DIR;
+      const runtimePath = process.env.ARGENTUM_STOCK_RUNTIME_DIR;
+      const sourcePath = helper.readPersistedWorkspace(userDataPath);
+      if (sourcePath && fs.existsSync(sourcePath)) {
+        helper.materializeStockGuruRuntime({ sourcePath, userDataPath, reuseExisting: true });
+      }
+      if (!helper.isStockGuruWorkspace(runtimePath)) process.exit(2);
+    '
+}
+
 start_background() {
   # server.js lives inside app.asar, so verify the archive itself instead of
   # asking the shell to stat a virtual path inside the Electron archive.
   if [[ ! -x "$ARGENTUM_APP_EXECUTABLE" || ! -f "$ARGENTUM_APP_ARCHIVE" ]]; then
     log "Argentum OS application runtime is unavailable; waiting for installation."
+    return
+  fi
+  if ! sync_stock_runtime; then
+    log "Managed Stock Guru runtime is unavailable; waiting for the portable source or a valid managed copy."
     return
   fi
   log "Starting the headless Stock Office backend on 127.0.0.1:5173."
@@ -61,6 +85,7 @@ start_background() {
     ARGENTUM_LOCAL_OFFICE_BYPASS=1 \
     ARGENTUM_BACKGROUND_AGENT=1 \
     ARGENTUM_LOCAL_DATA_DIR="$ARGENTUM_LOCAL_DATA_DIR" \
+    STOCK_GURU_PATH="$ARGENTUM_STOCK_RUNTIME_DIR" \
     STOCK_GURU_RUNTIME_DIR="$ARGENTUM_STOCK_RUNTIME_DIR" \
     ARGENTUM_CODEX_CONFIG_PATH="/Users/ceo/.codex/config.toml" \
     "$ARGENTUM_APP_EXECUTABLE" "$ARGENTUM_SERVER_ENTRY" &

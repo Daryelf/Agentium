@@ -8762,6 +8762,13 @@ async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpC
       reason: reconciliationReason,
       draft: after,
     }, { correlationId: `broker-order:${after.brokerOrderId}` });
+    if (after.status === "filled") {
+      const notificationDelivery = await stockTelegramNotifier.notifyVerifiedTrade(after, state.approvals || [])
+        .catch((error) => ({ sent: false, state: "failed", reason: error.message }));
+      audit(state, notificationDelivery.sent ? "Reconciled trade Telegram delivered" : "Reconciled trade Telegram not delivered", notificationDelivery.sent
+        ? `${after.side} ${after.symbol} alert delivered after official history reconciliation.`
+        : `Reconciled ${after.side} ${after.symbol} Telegram alert did not send: ${notificationDelivery.reason || notificationDelivery.state}.`);
+    }
     audit(state, "Stock Office broker lifecycle reconciled", change.reason === "ambiguous_placement_reconciled"
       ? `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} was uniquely matched in official Robinhood history; no placement retry occurred.`
       : `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} changed from ${before.brokerState || before.status} to ${after.brokerState}.`);

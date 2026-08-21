@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ARGENTUM_APP_EXECUTABLE="${ARGENTUM_APP_EXECUTABLE:-/Applications/Argentum OS.app/Contents/MacOS/Argentum OS}"
+ARGENTUM_APP_ARCHIVE="${ARGENTUM_APP_ARCHIVE:-/Applications/Argentum OS.app/Contents/Resources/app.asar}"
 ARGENTUM_SERVER_ENTRY="${ARGENTUM_SERVER_ENTRY:-/Applications/Argentum OS.app/Contents/Resources/app.asar/server.js}"
 ARGENTUM_LOCAL_DATA_DIR="${ARGENTUM_LOCAL_DATA_DIR:-/Users/ceo/Library/Application Support/Argentum OS}"
 ARGENTUM_STOCK_RUNTIME_DIR="${STOCK_GURU_RUNTIME_DIR:-/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime}"
@@ -43,7 +44,9 @@ stop_background() {
 }
 
 start_background() {
-  if [[ ! -x "$ARGENTUM_APP_EXECUTABLE" || ! -f "$ARGENTUM_SERVER_ENTRY" ]]; then
+  # server.js lives inside app.asar, so verify the archive itself instead of
+  # asking the shell to stat a virtual path inside the Electron archive.
+  if [[ ! -x "$ARGENTUM_APP_EXECUTABLE" || ! -f "$ARGENTUM_APP_ARCHIVE" ]]; then
     log "Argentum OS application runtime is unavailable; waiting for installation."
     return
   fi

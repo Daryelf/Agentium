@@ -12,6 +12,7 @@ from .market_calendar import market_clock
 
 
 DEFAULT_DAILY_BUDGETS = {
+    "MASSIVE": 500,
     "TWELVE_DATA": 800,
     "FMP": 1_000,
     "ALPHA_VANTAGE": 25,

@@ -244,13 +244,18 @@ function createStockTraderResearchAgent(options = {}) {
   function providerEnvironment() {
     const payload = readJson(path.join(mainRuntimeRoot, "data", "provider_keys.json"), fsImpl, {}) || {};
     const mapping = {
+      massive_api_key: "STOCK_GURU_MASSIVE_API_KEY",
       twelve_data_api_key: "STOCK_GURU_TWELVE_DATA_API_KEY",
       fmp_api_key: "STOCK_GURU_FMP_API_KEY",
       alpha_vantage_api_key: "STOCK_GURU_ALPHA_VANTAGE_API_KEY",
       fred_api_key: "STOCK_GURU_FRED_API_KEY",
     };
     return Object.fromEntries(Object.entries(mapping)
-      .map(([key, envName]) => [envName, String(environment[envName] || payload[key] || "").trim()])
+      .map(([key, envName]) => [envName, String(
+        key === "massive_api_key"
+          ? environment.MASSIVE_API_KEY || environment[envName] || payload[key] || ""
+          : environment[envName] || payload[key] || "",
+      ).trim()])
       .filter(([, value]) => value));
   }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import io
@@ -51,9 +51,12 @@ TWELVE_DATA_API_KEY_ENV = "STOCK_GURU_TWELVE_DATA_API_KEY"
 FMP_API_KEY_ENV = "STOCK_GURU_FMP_API_KEY"
 ALPHA_VANTAGE_API_KEY_ENV = "STOCK_GURU_ALPHA_VANTAGE_API_KEY"
 FRED_API_KEY_ENV = "STOCK_GURU_FRED_API_KEY"
+MASSIVE_API_KEY_ENV = "MASSIVE_API_KEY"
+STOCK_GURU_MASSIVE_API_KEY_ENV = "STOCK_GURU_MASSIVE_API_KEY"
 TWELVE_DATA_URL = "https://api.twelvedata.com"
 FMP_URL = "https://financialmodelingprep.com/stable"
 ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
+MASSIVE_URL = "https://api.massive.com"
 STOOQ_URL = "https://stooq.com/q/d/l/"
 PRICE_ADJUSTMENT_POLICY = "split_and_dividend_adjusted_ohlc_when_supported"
 
@@ -68,6 +71,7 @@ class MarketData:
 
 @dataclass(frozen=True)
 class ProviderKeys:
+    massive_api_key: str = ""
     twelve_data_api_key: str = ""
     fmp_api_key: str = ""
     alpha_vantage_api_key: str = ""
@@ -75,7 +79,7 @@ class ProviderKeys:
 
     @property
     def has_any(self) -> bool:
-        return bool(self.twelve_data_api_key or self.fmp_api_key or self.alpha_vantage_api_key or self.fred_api_key)
+        return bool(self.massive_api_key or self.twelve_data_api_key or self.fmp_api_key or self.alpha_vantage_api_key or self.fred_api_key)
 
 
 class ProviderErrors(list[str]):
@@ -106,13 +110,15 @@ def load_provider_keys(path: Path = PROVIDER_KEYS_PATH, *, env: Mapping[str, str
         except Exception:
             payload = {}
 
-    def pick(name: str, env_name: str) -> str:
-        env_value = str(values.get(env_name, "") or "").strip()
-        if env_value:
-            return env_value
+    def pick(name: str, *env_names: str) -> str:
+        for env_name in env_names:
+            env_value = str(values.get(env_name, "") or "").strip()
+            if env_value:
+                return env_value
         return str(payload.get(name, "") or "").strip()
 
     return ProviderKeys(
+        massive_api_key=pick("massive_api_key", MASSIVE_API_KEY_ENV, STOCK_GURU_MASSIVE_API_KEY_ENV),
         twelve_data_api_key=pick("twelve_data_api_key", TWELVE_DATA_API_KEY_ENV),
         fmp_api_key=pick("fmp_api_key", FMP_API_KEY_ENV),
         alpha_vantage_api_key=pick("alpha_vantage_api_key", ALPHA_VANTAGE_API_KEY_ENV),
@@ -339,6 +345,82 @@ def fetch_json(url: str, *, headers: Mapping[str, str] | None = None, timeout: f
         return json.loads(response.read().decode("utf-8"))
 
 
+def massive_history_window(period: str, *, now: datetime | None = None) -> tuple[str, str]:
+    """Convert yfinance-style periods into a bounded Massive aggregate range."""
+    at = now or datetime.now(timezone.utc)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    end = at.astimezone(timezone.utc).date()
+    trading_rows = outputsize_for_period(period)
+    # Include weekends and a holiday cushion so the requested trading-row count
+    # remains available without asking Massive for an unbounded date range.
+    calendar_days = min(36_500, max(10, int(trading_rows * 1.55) + 10))
+    start = end - timedelta(days=calendar_days)
+    return start.isoformat(), end.isoformat()
+
+
+def build_massive_history_url(symbol: str, *, period: str, interval: str, api_key: str) -> str:
+    if interval not in {"1d", "1day"}:
+        raise ValueError("Massive history currently supports daily bars in the canonical provider chain.")
+    start, end = massive_history_window(period)
+    encoded_symbol = urllib.parse.quote(symbol, safe="")
+    query = urllib.parse.urlencode(
+        {
+            "adjusted": "true",
+            "sort": "asc",
+            "limit": min(50_000, max(2, outputsize_for_period(period))),
+            "apiKey": api_key,
+        }
+    )
+    return f"{MASSIVE_URL}/v2/aggs/ticker/{encoded_symbol}/range/1/day/{start}/{end}?{query}"
+
+
+def frame_from_massive_payload(symbol: str, payload: object) -> pd.DataFrame:
+    if not isinstance(payload, Mapping) or str(payload.get("status") or "").upper() not in {"OK", "DELAYED"}:
+        return pd.DataFrame()
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return pd.DataFrame()
+    records = []
+    for item in results:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            timestamp = datetime.fromtimestamp(float(item.get("t")) / 1000, tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError):
+            continue
+        records.append(
+            {
+                "datetime": timestamp,
+                "open": item.get("o"),
+                "high": item.get("h"),
+                "low": item.get("l"),
+                "close": item.get("c"),
+                "volume": item.get("v"),
+            }
+        )
+    return frame_from_ohlcv_records(symbol, records)
+
+
+def download_massive_history(symbols: list[str], *, period: str, interval: str, api_key: str) -> pd.DataFrame:
+    if not api_key or not supports_provider_history(interval):
+        return pd.DataFrame()
+    frames: list[pd.DataFrame] = []
+    for symbol in symbols:
+        try:
+            payload = fetch_json(build_massive_history_url(symbol, period=period, interval=interval, api_key=api_key))
+        except Exception:
+            continue
+        frame = frame_from_massive_payload(symbol, payload)
+        if not frame.empty:
+            frames.append(frame)
+        time.sleep(0.05)
+    if not frames:
+        return pd.DataFrame()
+    combined = pd.concat(frames, axis=1).sort_index()
+    return combined.loc[:, ~combined.columns.duplicated()]
+
+
 def build_twelve_data_history_url(symbols: list[str], *, period: str, interval: str, api_key: str) -> str:
     query = urllib.parse.urlencode(
         {
@@ -497,7 +579,7 @@ def download_provider_history(symbols: list[str], *, period: str, interval: str)
     def attempt(provider: str, fetcher) -> pd.DataFrame:
         started = datetime.now(timezone.utc)
         error: str | None = None
-        request_units = len(symbols) if provider in {"FMP", "ALPHA_VANTAGE"} else 1
+        request_units = len(symbols) if provider in {"MASSIVE", "FMP", "ALPHA_VANTAGE"} else 1
         budget = reserve_provider_budget(provider, request_units)
         if not budget.allowed:
             result = pd.DataFrame()
@@ -528,6 +610,11 @@ def download_provider_history(symbols: list[str], *, period: str, interval: str)
             errors.selected_provider = provider
         return result
 
+    if keys.massive_api_key:
+        history = attempt("MASSIVE", lambda: download_massive_history(symbols, period=period, interval=interval, api_key=keys.massive_api_key))
+        if not history.empty:
+            return history, errors
+        errors.append("Massive returned no data")
     if keys.twelve_data_api_key:
         history = attempt("TWELVE_DATA", lambda: download_twelve_data_history(symbols, period=period, interval=interval, api_key=keys.twelve_data_api_key))
         if not history.empty:
@@ -715,6 +802,7 @@ def download_history(
         if selected_attempt:
             selected_latency_ms = selected_attempt.latency_ms
         endpoint = {
+            "MASSIVE": "v2/aggs/ticker/range",
             "TWELVE_DATA": "time_series",
             "FMP": "historical-price-eod/full",
             "ALPHA_VANTAGE": "TIME_SERIES_DAILY",
@@ -837,6 +925,7 @@ def download_history(
         metadata={
             "price_adjustment_policy": PRICE_ADJUSTMENT_POLICY,
             "provider_adjustment": "auto_adjusted" if selected_provider in {"YAHOO_CHART", "YFINANCE"}
+            else "split_adjusted" if selected_provider == "MASSIVE"
             else "record_adjusted_when_available" if selected_provider in {"TWELVE_DATA", "FMP", "ALPHA_VANTAGE"}
             else "unverified_provider_adjustment" if selected_provider == "STOOQ"
             else "cached_from_recorded_provenance",
@@ -1097,11 +1186,46 @@ def latest_prices_from_fmp(symbols: list[str], *, api_key: str) -> Dict[str, flo
     return {ticker: price for ticker, price in prices.items() if price > 0}
 
 
+def latest_prices_from_massive(symbols: list[str], *, api_key: str) -> Dict[str, float]:
+    prices: Dict[str, float] = {}
+    for symbol in symbols:
+        encoded = urllib.parse.quote(symbol, safe="")
+        query = urllib.parse.urlencode({"apiKey": api_key})
+        try:
+            payload = fetch_json(f"{MASSIVE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{encoded}?{query}")
+        except Exception:
+            continue
+        ticker = payload.get("ticker") if isinstance(payload, Mapping) else None
+        if not isinstance(ticker, Mapping):
+            continue
+        candidates = [
+            ticker.get("lastTrade", {}).get("p") if isinstance(ticker.get("lastTrade"), Mapping) else None,
+            ticker.get("min", {}).get("c") if isinstance(ticker.get("min"), Mapping) else None,
+            ticker.get("day", {}).get("c") if isinstance(ticker.get("day"), Mapping) else None,
+        ]
+        price = None
+        for value in candidates:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                price = parsed
+                break
+        if price is not None:
+            prices[symbol] = price
+        time.sleep(0.05)
+    return prices
+
+
 def latest_prices(tickers: Iterable[str]) -> Dict[str, float]:
     symbols = normalize_tickers(tickers)
     keys = load_provider_keys()
     prices: Dict[str, float] = {}
     remaining = list(symbols)
+    if keys.massive_api_key and remaining and reserve_provider_budget("MASSIVE", len(remaining)).allowed:
+        prices.update(latest_prices_from_massive(remaining, api_key=keys.massive_api_key))
+        remaining = [symbol for symbol in remaining if symbol not in prices]
     if keys.twelve_data_api_key and remaining and reserve_provider_budget("TWELVE_DATA", 1).allowed:
         prices.update(latest_prices_from_twelve_data(remaining, api_key=keys.twelve_data_api_key))
         remaining = [symbol for symbol in remaining if symbol not in prices]

@@ -367,6 +367,57 @@ test("allocated-capital, daily-loss, daily-trade, concentration, and stop-risk l
   assert.match(buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 15 }, wideStop, { now: "2026-08-10T17:00:00.000Z" }).blockers.join(" "), /risk-per-trade sizing/i);
 });
 
+test("owned symbols stay in position management and cannot become duplicate BUY proposals", () => {
+  const position = { symbol: "NET", quantity: 0.1, sharesAvailableForSells: 0.1, currentPrice: 100 };
+  const current = snapshot({
+    broker: { ...snapshot().broker, positions: [position] },
+    positions: [position],
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const duplicate = buildTradeDraft({ symbol: "NET", side: "BUY", requestedDollars: 5 }, current, { now: "2026-08-10T17:00:00.000Z" });
+
+  assert.equal(plan.proposals.some((proposal) => proposal.symbol === "NET" && proposal.side === "BUY"), false);
+  assert.ok(plan.proposals.find((proposal) => proposal.symbol === "NET" && proposal.side === "HOLD"));
+  assert.equal(duplicate.status, "blocked");
+  assert.equal(duplicate.checks.find((check) => check.name === "new_position_only").passed, false);
+  assert.match(duplicate.blockers.join(" "), /already owned/i);
+});
+
+test("ranked BUY proposals share one deployable-capital pool", () => {
+  const net = snapshot().records[0];
+  const aapl = {
+    ...net,
+    id: "ticker-AAPL",
+    ticker: "AAPL",
+    score: 95,
+    currentPrice: 200,
+    entryZone: "199-201",
+    stopLoss: 190,
+    target1: 220,
+    invalidationRule: "Exit if AAPL closes below 190 or the setup breaks.",
+  };
+  const current = snapshot({
+    broker: { ...snapshot().broker, buyingPower: "$15.00" },
+    records: [net, aapl],
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const aaplProposal = plan.proposals.find((proposal) => proposal.symbol === "AAPL" && proposal.side === "BUY");
+  const netProposal = plan.proposals.find((proposal) => proposal.symbol === "NET" && proposal.side === "BUY");
+  const qualifiedBuys = plan.proposals.filter((proposal) => proposal.side === "BUY" && proposal.draftEligible);
+
+  assert.ok(aaplProposal);
+  assert.ok(netProposal);
+  assert.equal(aaplProposal.draftEligible, true);
+  assert.equal(aaplProposal.requestedDollars, 5);
+  assert.equal(aaplProposal.capitalAllocation.strategyDeployableBeforeDollars, 5);
+  assert.equal(aaplProposal.capitalAllocation.strategyDeployableAfterDollars, 0);
+  assert.equal(netProposal.draftEligible, false);
+  assert.match(netProposal.blockers.join(" "), /buying power|remaining deployable capital/i);
+  assert.equal(qualifiedBuys.reduce((sum, proposal) => sum + proposal.requestedDollars, 0), 5);
+  assert.equal(plan.summary.plannedBuyDollars, 5);
+  assert.equal(plan.summary.strategyDeployableRemainingDollars, 0);
+});
+
 test("missing official day P&L or order history evidence blocks new entries but not owned-position exits", () => {
   const position = { symbol: "NET", quantity: 0.2, sharesAvailableForSells: 0.2, currentPrice: 100 };
   const current = snapshot({

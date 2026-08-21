@@ -67,12 +67,13 @@ For automation or cron-style use, prefer the repo wrapper instead of whatever `p
 
 Optional provider keys can be stored in [`/Users/ceo/Documents/stocks/data/provider_keys.json`](/Users/ceo/Documents/stocks/data/provider_keys.json) or passed through env vars:
 
+- `MASSIVE_API_KEY` (Railway name; `STOCK_GURU_MASSIVE_API_KEY` is also accepted locally)
 - `STOCK_GURU_TWELVE_DATA_API_KEY`
 - `STOCK_GURU_FMP_API_KEY`
 - `STOCK_GURU_ALPHA_VANTAGE_API_KEY`
 - `STOCK_GURU_FRED_API_KEY`
 
-Daily OHLCV uses Twelve Data, FMP, Alpha Vantage for small batches, Yahoo Chart/yfinance, then the keyless Stooq deep fallback. The numerical policy is split- and dividend-adjusted OHLC whenever the provider exposes an adjusted close; Yahoo/yfinance are explicitly auto-adjusted. Provider adjustment provenance, fallback path, quality, rotating spot-verification, request-unit budgets, and cache hit rate are persisted without credential values. A provider disagreement above 0.5% produces `DATA_CONFLICT`; missing or stale data never becomes a neutral zero.
+Daily OHLCV uses Massive first when configured, then Twelve Data, FMP, Alpha Vantage for small batches, Yahoo Chart/yfinance, and the keyless Stooq deep fallback. Massive aggregate bars are requested with split adjustment enabled. The broader numerical policy is split- and dividend-adjusted OHLC whenever the provider exposes an adjusted close; Yahoo/yfinance are explicitly auto-adjusted. Provider adjustment provenance, fallback path, quality, rotating spot-verification, request-unit budgets, and cache hit rate are persisted without credential values. A provider disagreement above 0.5% produces `DATA_CONFLICT`; missing or stale data never becomes a neutral zero. Override Massive's conservative request ledger with `STOCK_GURU_PROVIDER_MASSIVE_DAILY_BUDGET` only when the provider plan supports the higher volume.
 
 The canonical market clock is `America/New_York` and includes NYSE holidays and 1:00 PM early closes. Sessions are `PRE_MARKET`, `REGULAR`, `AFTER_HOURS`, `OVERNIGHT`, and `WEEKEND_HOLIDAY`.
 

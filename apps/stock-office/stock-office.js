@@ -677,7 +677,10 @@ function renderOverviewDashboard() {
     ["Candidates", opportunities.filter((item) => item.status === "candidate").length],
     ["Sources", totalSources ? `${sourceHealth.ready || 0}/${totalSources}` : sourceHealth.ready ?? 0],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
-  const topSetups = opportunities.filter((item) => ["high_priority", "candidate"].includes(item.status)).slice(0, 5);
+  const ownedSymbols = new Set(positions.map((position) => normalizedResearchSymbol(position.symbol)).filter(Boolean));
+  const topSetups = opportunities
+    .filter((item) => ["high_priority", "candidate"].includes(item.status) && !ownedSymbols.has(normalizedResearchSymbol(item.symbol)))
+    .slice(0, 5);
   $("#overviewTopSetups").innerHTML = topSetups.length
     ? topSetups.map((item) => `<article data-opportunity-status="${escapeHtml(item.status)}"><span class="overview-setup-company">${logoMarkup(item.symbol)}</span><span>${escapeHtml(String(item.aiScore ?? "—"))}</span><span>${escapeHtml(item.thesis?.setup || "Researching")}</span><em>${escapeHtml(item.change?.trend || item.confidence || "—")}</em><button type="button" data-opportunity-drawer="${escapeHtml(item.id)}">Research</button></article>`).join("")
     : `<div class="overview-empty-row"><strong>No qualified opportunity</strong><span>No symbol currently meets the persisted research threshold.</span></div>`;
@@ -829,6 +832,8 @@ function renderTradeProposals() {
   const executionLive = String(state.brokerControl?.executionMode || "PAPER").toUpperCase() === "LIVE";
   const accountVerified = state.brokerControl?.authenticationVerified === true;
   const buyingPower = Number(state.brokerControl?.buyingPowerDollars);
+  const strategyDeployable = Number(state.portfolioPlan?.capital?.availableForNewBuys);
+  const plannedBuyDollars = Number(summary.plannedBuyDollars || 0);
   const latestStoppedDraft = state.tradeDrafts.find((draft) => ["review_rejected", "reconciliation_required", "unknown_reconciling", "expired", "rejected", "cancelled"].includes(draft.status) && draft.lastDispatchError);
   $("#overviewProposalCount").textContent = pendingGate
     ? `${pendingGate} in Human Gate`
@@ -838,7 +843,9 @@ function renderTradeProposals() {
         ? `${qualifiedNow} qualified · next regular session`
         : "0 qualified";
   $("#overviewTradeReadiness").innerHTML = `
-    <div class="overview-readiness-metric"><small>BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
+    <div class="overview-readiness-metric"><small>BROKER BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
+    <div class="overview-readiness-metric"><small>STRATEGY DEPLOYABLE</small><strong>${escapeHtml(Number.isFinite(strategyDeployable) ? formatMoney(strategyDeployable) : "Unavailable")}</strong></div>
+    <div class="overview-readiness-metric"><small>RANKED BUY PLAN</small><strong>${escapeHtml(formatMoney(plannedBuyDollars))}</strong></div>
       <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
         <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : qualifiedNow ? "Waiting for regular session" : "Waiting for a qualified trade")}</strong></span>
     </div>
@@ -896,6 +903,7 @@ function renderTradeProposals() {
             <p><strong>Setup</strong>${escapeHtml(research.setupType || "Evaluator review")} · score ${escapeHtml(research.score ?? "—")} · ${escapeHtml(research.marketCondition || "market condition unavailable")}</p>
             <p><strong>Plan</strong>Entry ${escapeHtml(research.entryZone || "reprice before order")} · stop ${escapeHtml(outlookValue(outlook.stopPrice))}${Number.isFinite(Number(outlook.stopScenarioDollars)) ? ` · ${escapeHtml(formatMoney(outlook.stopScenarioDollars))} downside scenario` : ""} · ${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p>
             <p><strong>Exit plan</strong>${escapeHtml(proposal.exitPlan?.complete ? "Complete before purchase" : "Incomplete — BUY blocked")} · target ${escapeHtml(outlookValue(proposal.exitPlan?.target || outlook.targetPrice))} · ${escapeHtml(proposal.exitPlan?.reviewCadence || "Re-evaluate on every fresh market-data cycle before broker review.")}</p>
+            <p><strong>Capital allocation</strong>${escapeHtml(proposal.capitalAllocation ? [`${formatMoney(proposal.capitalAllocation.brokerBuyingPowerDollars)} broker buying power`, `${formatMoney(proposal.capitalAllocation.strategyDeployableBeforeDollars)} strategy deployable before this idea`, `${formatMoney(proposal.capitalAllocation.allocatedDollars)} allocated`, `${formatMoney(proposal.capitalAllocation.strategyDeployableAfterDollars)} left`].join(" · ") : "No new capital allocation is attached to this action.")}</p>
             <p><strong>Projected sell timing</strong>${escapeHtml(outlook.timingNote || outlook.horizonLabel || "No reliable exit time is available yet.")}</p>
             <p><strong>Evidence depth</strong>${escapeHtml(`${research.checksPassed ?? 0}/${research.checksTotal ?? 0} live checks · ${research.evidenceCompleteness === null || research.evidenceCompleteness === undefined ? "completeness unavailable" : `${Math.round(Number(research.evidenceCompleteness) * 100)}% evidence`} · ${research.dataQualityScore === null || research.dataQualityScore === undefined ? "data quality unavailable" : `${Math.round(Number(research.dataQualityScore))}% data quality`}`)}</p>
             <p><strong>Company / catalyst</strong>${escapeHtml([research.company?.name, research.company?.sector, research.company?.recommendation, research.company?.catalystSummary?.methodology].filter(Boolean).join(" · ") || "Structured company research is not available yet.")}</p>

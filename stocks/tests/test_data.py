@@ -7,12 +7,16 @@ from stock_guru.provider_budget import ProviderBudgetDecision
 
 from stock_guru.data import (
     ProviderErrors,
+    ProviderKeys,
     PRICE_ADJUSTMENT_POLICY,
     cache_telemetry_path,
     default_cache_ttl_seconds,
     download_history,
+    download_massive_history,
+    download_provider_history,
     download_stooq_history,
     download_twelve_data_history,
+    latest_prices_from_massive,
     frame_from_chart_payload,
     history_cache_key,
     latest_prices_from_twelve_data,
@@ -202,12 +206,13 @@ def test_history_cache_key_is_stable_for_symbol_order() -> None:
 def test_load_provider_keys_prefers_env_over_file(tmp_path) -> None:
     path = tmp_path / "provider_keys.json"
     path.write_text(
-        '{"twelve_data_api_key":"file-twelve","fmp_api_key":"file-fmp","alpha_vantage_api_key":"file-alpha","fred_api_key":"file-fred"}'
+        '{"massive_api_key":"file-massive","twelve_data_api_key":"file-twelve","fmp_api_key":"file-fmp","alpha_vantage_api_key":"file-alpha","fred_api_key":"file-fred"}'
     )
 
     keys = load_provider_keys(
         path,
         env={
+            "MASSIVE_API_KEY": "env-massive",
             "STOCK_GURU_TWELVE_DATA_API_KEY": "env-twelve",
             "STOCK_GURU_FMP_API_KEY": "",
             "STOCK_GURU_ALPHA_VANTAGE_API_KEY": "env-alpha",
@@ -215,6 +220,7 @@ def test_load_provider_keys_prefers_env_over_file(tmp_path) -> None:
         },
     )
 
+    assert keys.massive_api_key == "env-massive"
     assert keys.twelve_data_api_key == "env-twelve"
     assert keys.fmp_api_key == "file-fmp"
     assert keys.alpha_vantage_api_key == "env-alpha"
@@ -245,6 +251,60 @@ def test_download_twelve_data_history_parses_batch_payload(monkeypatch) -> None:
     assert ("Close", "AAPL") in frame.columns
     assert ("Volume", "MSFT") in frame.columns
     assert frame[("Close", "MSFT")].iloc[-1] == 200.5
+
+
+def test_download_massive_history_parses_adjusted_aggregate_bars(monkeypatch) -> None:
+    observed_urls = []
+
+    def fake_fetch(url, **_kwargs):
+        observed_urls.append(url)
+        return {
+            "status": "OK",
+            "ticker": "AAPL",
+            "results": [
+                {"t": 1_780_272_000_000, "o": 100, "h": 103, "l": 99, "c": 102, "v": 1_250_000},
+            ],
+        }
+
+    monkeypatch.setattr("stock_guru.data.fetch_json", fake_fetch)
+    frame = download_massive_history(["AAPL"], period="1mo", interval="1d", api_key="massive-token")
+
+    assert frame[("Close", "AAPL")].iloc[-1] == 102
+    assert frame[("Volume", "AAPL")].iloc[-1] == 1_250_000
+    assert "/v2/aggs/ticker/AAPL/range/1/day/" in observed_urls[0]
+    assert "adjusted=true" in observed_urls[0]
+
+
+def test_configured_massive_is_the_first_daily_history_provider(monkeypatch) -> None:
+    frame = sample_frame()
+    monkeypatch.setattr("stock_guru.data.load_provider_keys", lambda: ProviderKeys(massive_api_key="massive-token", twelve_data_api_key="twelve-token"))
+    monkeypatch.setattr("stock_guru.data.download_massive_history", lambda *_args, **_kwargs: frame)
+    monkeypatch.setattr(
+        "stock_guru.data.download_twelve_data_history",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Massive success should stop the fallback chain.")),
+    )
+
+    history, errors = download_provider_history(["AAPL"], period="1mo", interval="1d")
+
+    assert history.equals(frame)
+    assert errors.selected_provider == "MASSIVE"
+    assert [attempt.provider for attempt in errors.attempts] == ["MASSIVE"]
+
+
+def test_latest_prices_from_massive_uses_current_snapshot_not_previous_day(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "stock_guru.data.fetch_json",
+        lambda *_args, **_kwargs: {
+            "status": "OK",
+            "ticker": {
+                "lastTrade": {"p": "123.45"},
+                "day": {"c": 123.40},
+                "prevDay": {"c": 119.00},
+            },
+        },
+    )
+
+    assert latest_prices_from_massive(["AAPL"], api_key="massive-token") == {"AAPL": 123.45}
 
 
 def test_latest_prices_from_twelve_data_reads_batch_quotes(monkeypatch) -> None:

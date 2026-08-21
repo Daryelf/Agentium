@@ -1891,6 +1891,7 @@ def doctor(
     providers = [
         name
         for name, enabled in [
+            ("Massive", bool(provider_keys.massive_api_key)),
             ("Twelve Data", bool(provider_keys.twelve_data_api_key)),
             ("FMP", bool(provider_keys.fmp_api_key)),
             ("Alpha Vantage", bool(provider_keys.alpha_vantage_api_key)),

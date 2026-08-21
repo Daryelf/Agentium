@@ -453,7 +453,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   const mirror = input.candidateId
     ? (snapshot.mirror?.candidates || []).find((item) => item.id === input.candidateId) || null
     : null;
-  const position = (snapshot.positions || []).find((item) => item.symbol === symbol) || null;
+  const position = (control.positions || snapshot.positions || []).find((item) => normalizeSymbol(item.symbol) === symbol) || null;
   const referencePrice = finiteNumber(mirror?.currentPrice ?? record?.currentPrice ?? position?.currentPrice, 0);
   const estimatedQuantity = referencePrice > 0 ? Math.floor((requestedDollars / referencePrice) * 1_000_000) / 1_000_000 : 0;
   const capital = control.capital;
@@ -508,6 +508,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   addCheck(checks, blockers, "open_orders", !conflictingOpenOrder, `An active broker order already exists for ${symbol || "this symbol"}; reconcile it first.`);
 
   if (side === "BUY") {
+    addCheck(checks, blockers, "new_position_only", !position, `${symbol || "This symbol"} is already owned; Stock Office manages it under Positions and will not create an accidental scale-in BUY.`);
     addCheck(checks, blockers, "valid_setup", record?.status === "valid_setup", "BUY requires a current valid evaluator setup.");
     addCheck(checks, blockers, "entry_score", finiteNumber(record?.score, 0) >= guardrails.minEntryScore, `BUY score must be at least ${guardrails.minEntryScore}.`);
     addCheck(checks, blockers, "complete_exit_plan", exitPlan?.complete === true, exitPlan?.complete
@@ -651,13 +652,44 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   const positionBySymbol = Object.fromEntries((control.positions || []).map((position) => [normalizeSymbol(position.symbol), position]));
   const opportunityBySymbol = Object.fromEntries((snapshot.intelligence?.opportunities || []).map((opportunity) => [normalizeSymbol(opportunity.symbol), opportunity]));
   const mirrorSourcePolicy = Object.fromEntries((snapshot.intelligence?.mirror?.sources || []).map((source) => [String(source.id || ""), source]));
+  const buyCandidates = [];
+  let plannedBuyDollars = 0;
+  const planningSnapshot = () => {
+    if (plannedBuyDollars <= 0) return snapshot;
+    const broker = snapshot.broker || {};
+    const openOrders = Array.isArray(broker.openOrders)
+      ? broker.openOrders
+      : (Array.isArray(broker.orders) ? broker.orders.filter(orderIsActive) : []);
+    return {
+      ...snapshot,
+      broker: {
+        ...broker,
+        openOrders: [
+          ...openOrders,
+          {
+            orderId: "argentum-ranked-proposal-reserve",
+            symbol: "PLAN",
+            side: "BUY",
+            state: "pending",
+            dollarAmount: roundedMoney(plannedBuyDollars),
+            planned: true,
+          },
+        ],
+      },
+    };
+  };
   const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, opportunity: suppliedOpportunity = null, reasons = [], researchOnly = false }) => {
+    symbol = normalizeSymbol(symbol);
     const key = `${side}:${symbol}`;
     if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= MAX_PORTFOLIO_PROPOSALS) return;
+    if (side === "BUY" && positionBySymbol[symbol]) return;
     seen.add(key);
     const record = recordBySymbol[symbol] || null;
+    const currentSnapshot = side === "BUY" ? planningSnapshot() : snapshot;
+    const currentControl = side === "BUY" ? brokerControlOverview(currentSnapshot, { now: at }) : control;
+    const allocationAvailableBefore = side === "BUY" ? finiteNumber(currentControl.capital.availableForNewBuys, 0) : 0;
     const orderDollars = side === "BUY"
-      ? riskSizedBuyRequest(requestedDollars, record, control, guardrails)
+      ? riskSizedBuyRequest(requestedDollars, record, currentControl, guardrails)
       : requestedDollars;
     if (orderDollars <= 0) return;
     const draft = buildTradeDraft({
@@ -665,7 +697,9 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       side,
       requestedDollars: orderDollars,
       candidateId: candidate?.id,
-    }, snapshot, { now: at });
+    }, currentSnapshot, { now: at });
+    const draftEligible = !researchOnly && draft.status === "ready_for_broker_review" && draft.blockers.length === 0;
+    if (side === "BUY" && draftEligible) plannedBuyDollars = roundedMoney(plannedBuyDollars + orderDollars);
     const opportunity = suppliedOpportunity || opportunityBySymbol[symbol] || null;
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
@@ -736,7 +770,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       opportunityStatus: opportunity?.status || "",
       opportunityTrend: opportunity?.change?.trend || "",
       evidence: Array.isArray(opportunity?.evidence) ? opportunity.evidence : [],
-      draftEligible: !researchOnly && draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
+      draftEligible,
       actionable: !researchOnly,
       researchOnly,
       recommendation: researchOnly,
@@ -796,6 +830,16 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       tradePlan: draft.tradePlan,
       exitPlan: draft.tradePlan?.exitPlan || null,
       capitalAfterDollars: draft.capitalAfterDollars,
+      capitalAllocation: side === "BUY" ? {
+        brokerBuyingPowerDollars: currentControl.buyingPowerDollars,
+        strategyDeployableBeforeDollars: roundedMoney(allocationAvailableBefore),
+        alreadyReservedByHigherRankedProposalsDollars: roundedMoney(plannedBuyDollars - (draftEligible ? orderDollars : 0)),
+        allocatedDollars: draftEligible ? roundedMoney(orderDollars) : 0,
+        strategyDeployableAfterDollars: roundedMoney(Math.max(0, allocationAvailableBefore - (draftEligible ? orderDollars : 0))),
+        cashReserveDollars: guardrails.cashReserveDollars,
+        maximumDeployedDollars: guardrails.maxTotalDollars,
+        bindingCaps: Array.isArray(draft.riskDecision?.bindingCaps) ? draft.riskDecision.bindingCaps : [],
+      } : null,
     });
   };
   const pushHoldReview = ({ symbol, position, record = null }) => {
@@ -862,8 +906,9 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   };
 
   const pushResearchRecommendation = ({ symbol, record, opportunity }) => {
+    symbol = normalizeSymbol(symbol);
     const status = String(opportunity?.status || record?.status || "").toLowerCase();
-    if (!symbol || !record || !["high_priority", "candidate", "monitoring", "watch", "review", "rejected", "reject"].includes(status)) return;
+    if (!symbol || !record || positionBySymbol[symbol] || !["high_priority", "candidate", "monitoring", "watch", "review", "rejected", "reject"].includes(status)) return;
     const requested = Math.min(
       guardrails.maxOrderDollars,
       finiteNumber(control.capital.maxPositionDollars, 0) > 0
@@ -894,14 +939,15 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   });
   for (const candidate of mirrorCandidates) {
     if (candidate.assetType !== "equity" || !["BUY", "SELL"].includes(candidate.side)) continue;
-    const position = positionBySymbol[candidate.symbol];
+    const symbol = normalizeSymbol(candidate.symbol);
+    const position = positionBySymbol[symbol];
     if (candidate.side === "SELL") {
       const signalEligible = candidate.status === "paper_ready" || candidate.brokerPositionRequired === true;
       if (!signalEligible || !position) continue;
       const holdingValue = finiteNumber(position.sharesAvailableForSells ?? position.quantity, 0) * finiteNumber(position.currentPrice, 0);
       pushProposal({
         kind: "copy_exit",
-        symbol: candidate.symbol,
+        symbol,
         side: "SELL",
         requestedDollars: Math.min(holdingValue, guardrails.maxOrderDollars),
         candidate,
@@ -912,12 +958,13 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     if (candidate.status !== "paper_ready" || !candidate.humanGateEligible) continue;
     const sourcePolicy = mirrorSourcePolicy[candidate.sourceId];
     if (!sourcePolicy || !sourcePolicy.following || !sourcePolicy.mirrorEnabled) continue;
-    pushProposal({
+    buyCandidates.push({
       kind: "copy_entry",
-      symbol: candidate.symbol,
+      symbol,
       side: "BUY",
       requestedDollars: Math.min(candidate.mirrorNotionalDollars, guardrails.maxOrderDollars),
       candidate,
+      priorityScore: finiteNumber(candidate.rankingScore, 0) * 100,
       reasons: [`${candidate.traderName} disclosed a purchase.`, `Evidence-weighted rank ${(finiteNumber(candidate.rankingScore, 0) * 100).toFixed(1)}%.`],
     });
   }
@@ -955,7 +1002,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
 
   for (const record of snapshot.records || []) {
     if (proposals.length >= MAX_PORTFOLIO_PROPOSALS) break;
-    if (record.status !== "valid_setup" || !record.dataFresh || seen.has(`BUY:${record.ticker}`)) continue;
+    const symbol = normalizeSymbol(record.ticker);
+    if (record.status !== "valid_setup" || !record.dataFresh || positionBySymbol[symbol] || seen.has(`BUY:${symbol}`)) continue;
     // Keep a risk-sized research proposal visible even when the account has no
     // deployable cash. buildTradeDraft() will then surface the buying-power
     // blocker instead of making the idea disappear from Overview.
@@ -965,14 +1013,19 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         ? finiteNumber(control.capital.maxPositionDollars, guardrails.maxOrderDollars)
         : guardrails.maxOrderDollars,
     );
-    pushProposal({
+    buyCandidates.push({
       kind: "native_entry",
-      symbol: record.ticker,
+      symbol,
       side: "BUY",
       requestedDollars: requested,
+      priorityScore: finiteNumber(opportunityBySymbol[symbol]?.overallScore, finiteNumber(record.score, 0)),
       reasons: [`Evaluator score ${record.score ?? "unknown"}.`, record.mainRisk || "Fresh risk review required."],
     });
   }
+
+  buyCandidates
+    .sort((a, b) => finiteNumber(b.priorityScore, 0) - finiteNumber(a.priorityScore, 0) || a.symbol.localeCompare(b.symbol))
+    .forEach(({ priorityScore: _priorityScore, ...proposal }) => pushProposal(proposal));
 
   // Keep strong research visible even when a quote, account, or hard gate is
   // not ready for a live order. These cards are recommendations only; the
@@ -1012,6 +1065,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       researchRecommendations: proposals.filter((item) => item.researchOnly === true).length,
       copySignalsObserved: finiteNumber(mirrorSummary.signalsReceived, 0),
       copyWatchers: finiteNumber(mirrorImporter.enabledEntries, 0) + finiteNumber(mirrorImporter13f.enabledEntries, 0),
+      plannedBuyDollars: roundedMoney(plannedBuyDollars),
+      strategyDeployableRemainingDollars: roundedMoney(Math.max(0, control.capital.availableForNewBuys - plannedBuyDollars)),
     },
     proposals,
     warnings: [

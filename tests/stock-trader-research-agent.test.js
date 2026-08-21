@@ -95,7 +95,7 @@ test("a trader signal deploys an isolated measured research job with no broker a
     stockRoot: fixture.stockRoot,
     runtimeRoot: fixture.stockRoot,
     spawnImpl: artifactSpawn(calls),
-    env: {},
+    env: { MASSIVE_API_KEY: "railway-injected-test-key" },
     timeoutMs: 2_000,
   });
   t.after(() => agent.stop());
@@ -120,6 +120,7 @@ test("a trader signal deploys an isolated measured research job with no broker a
   assert.deepEqual(calls.map((call) => call.args[2]), ["evaluate", "intraday-context", "research"]);
   assert.equal(calls.every((call) => call.options.shell === false), true);
   assert.equal(calls.every((call) => call.options.env.STOCK_GURU_RUNTIME_DIR.includes(job.id)), true);
+  assert.equal(calls.every((call) => call.options.env.STOCK_GURU_MASSIVE_API_KEY === "railway-injected-test-key"), true);
   assert.equal(JSON.stringify(calls).match(/robinhood|broker|place.?order|transfer/gi), null);
   assert.equal(job.brokerCalled, false);
   assert.equal(job.liveOrdersPlaced, 0);

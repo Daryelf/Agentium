@@ -199,6 +199,10 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /Send \$\{escapeHtml\(proposal\.side\)\} \$\{escapeHtml\(formatMoney\(proposal\.requestedDollars\)\)\} to Human Gate/);
   assert.match(script, /const qualifiedCandidates = actionCandidates\.filter\(\(proposal\) => proposal\.draftEligible \|\| realOrderStates\.has\(proposal\.reviewState\)\)/);
   assert.match(script, /const visible = \[\.\.\.tradeEligibleNow\]/);
+  assert.match(script, /BROKER BUYING POWER/);
+  assert.match(script, /STRATEGY DEPLOYABLE/);
+  assert.match(script, /RANKED BUY PLAN/);
+  assert.match(script, /Capital allocation/);
   assert.match(script, /No qualified trade is ready yet/);
   assert.match(script, /Research stays in the Research view/);
   assert.doesNotMatch(overviewRenderer, /researchOnly \?\? researchOnly/);
@@ -424,7 +428,7 @@ test("Performance and provider health views render only persisted measured state
   assert.match(script, /signalEquityCurve/);
   assert.match(script, /returnDistribution/);
   assert.match(script, /Human-reviewed changes only/);
-  assert.match(script, /\["high_priority", "candidate"\]\.includes\(item\.status\)/);
+  assert.match(script, /ownedSymbols\.has\(normalizedResearchSymbol\(item\.symbol\)\)/);
   assert.match(styles, /\.performance-console/);
   assert.match(styles, /\.provider-health-list/);
   assert.doesNotMatch(`${html}\n${script}`, /demo performance|sample equity curve|fake history/i);

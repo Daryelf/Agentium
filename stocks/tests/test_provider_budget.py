@@ -31,6 +31,11 @@ def test_fred_has_a_small_daily_macro_refresh_budget() -> None:
     assert provider_budget("FRED", {}) == 20
 
 
+def test_massive_has_a_conservative_overridable_request_budget() -> None:
+    assert provider_budget("MASSIVE", {}) == 500
+    assert provider_budget("MASSIVE", {"STOCK_GURU_PROVIDER_MASSIVE_DAILY_BUDGET": "2500"}) == 2500
+
+
 def test_provider_budget_tracks_and_enforces_market_session_caps(tmp_path) -> None:
     path = tmp_path / "provider_budgets.json"
     env = {

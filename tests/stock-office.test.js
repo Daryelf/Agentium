@@ -332,6 +332,42 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");
 });
 
+test("provider health follows the current serving feed instead of dormant fallback failures", () => {
+  const { root, stockRoot } = makeWorkspace();
+  writeJson(path.join(stockRoot, "data/provider_health.json"), {
+    version: 2,
+    updated_at: "2026-06-19T11:59:00Z",
+    serving_provider: "MASSIVE",
+    serving_checked_at: "2026-06-19T11:59:00Z",
+    providers: {
+      MASSIVE: {
+        provider: "MASSIVE",
+        status: "HEALTHY",
+        last_status: "success",
+        last_checked_at: "2026-06-19T11:59:00Z",
+        last_success_at: "2026-06-19T11:59:00Z",
+        requested_symbols: ["BAC", "NET"],
+        returned_symbols: ["BAC", "NET"],
+      },
+      FMP: {
+        provider: "FMP",
+        status: "DEGRADED",
+        last_status: "budget_exhausted",
+        last_checked_at: "2026-06-19T11:40:00Z",
+        requested_symbols: ["BAC"],
+        returned_symbols: [],
+      },
+    },
+  });
+
+  const snapshot = loadStockOfficeSnapshot({ rootDir: root, now: "2026-06-19T12:00:00.000Z" });
+
+  assert.equal(snapshot.providerHealth.status, "HEALTHY");
+  assert.equal(snapshot.providerHealth.servingProvider, "MASSIVE");
+  assert.equal(snapshot.providerHealth.fallbackDegraded, 1);
+  assert.equal(snapshot.providerHealth.providers[0].serving, true);
+});
+
 test("Stock Office prefers newer generated reports from the writable runtime overlay", () => {
   const { root } = makeWorkspace();
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "argentum-stock-overlay-"));

@@ -199,6 +199,12 @@ function formatMoney(value) {
   return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(number);
 }
 
+function formatSignedMoney(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Unknown";
+  return `${number > 0 ? "+" : ""}${formatMoney(number)}`;
+}
+
 function formatPercent(value, digits = 1) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Unknown";
@@ -1009,74 +1015,135 @@ function performanceRanking(items = []) {
   }).join("");
 }
 
-function performanceCurveMarkup(points = []) {
-  if (!points.length) return `<div class="performance-empty">Insufficient historical sample.</div>`;
-  const width = 720;
-  const height = 210;
-  const padding = 18;
-  const values = points.map((point) => Number(point.equity)).filter(Number.isFinite);
-  const minimum = Math.min(1, ...values);
-  const maximum = Math.max(1, ...values);
-  const range = Math.max(0.01, maximum - minimum);
-  const coordinates = points.map((point, index) => {
-    const x = padding + (points.length === 1 ? 0.5 : index / (points.length - 1)) * (width - padding * 2);
-    const y = padding + (1 - (Number(point.equity) - minimum) / range) * (height - padding * 2);
-    return { x, y, ...point };
-  });
+function portfolioCurveMarkup(points = [], markers = [], goal = 150) {
+  if (!points.length) return `<div class="performance-empty">Waiting for the first verified Robinhood portfolio snapshot.</div>`;
+  const width = 1080;
+  const height = 350;
+  const left = 62;
+  const right = 34;
+  const top = 26;
+  const bottom = 46;
+  const values = points.map((point) => Number(point.accountValue)).filter(Number.isFinite);
+  const maximum = Math.max(goal * 1.08, ...values.map((value) => value * 1.08), 1);
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const coordinates = points.map((point, index) => ({
+    ...point,
+    x: points.length === 1 ? width - right : left + (index / (points.length - 1)) * plotWidth,
+    y: top + (1 - Number(point.accountValue) / maximum) * plotHeight,
+  }));
   const path = coordinates.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const baselineY = padding + (1 - (1 - minimum) / range) * (height - padding * 2);
-  const latest = points[points.length - 1];
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Measured signal equity curve">
-    <defs><linearGradient id="performanceArea" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#22d3ee" stop-opacity=".32"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient></defs>
-    <line x1="${padding}" y1="${baselineY.toFixed(2)}" x2="${width - padding}" y2="${baselineY.toFixed(2)}" class="performance-baseline"/>
-    ${coordinates.length > 1 ? `<path d="${path} L${coordinates[coordinates.length - 1].x.toFixed(2)},${height - padding} L${coordinates[0].x.toFixed(2)},${height - padding} Z" class="performance-area"/>` : ""}
-    <path d="${path}" class="performance-line"/>
-    <circle cx="${coordinates[coordinates.length - 1].x.toFixed(2)}" cy="${coordinates[coordinates.length - 1].y.toFixed(2)}" r="4" class="performance-point"/>
-  </svg><div class="performance-curve-caption"><span>${escapeHtml(points[0].at ? formatTime(points[0].at) : "First sample")}</span><strong class="${Number(latest.equity) >= 1 ? "positive" : "negative"}">${escapeHtml(formatPercent(Number(latest.equity) - 1, 2))}</strong><span>${escapeHtml(latest.at ? formatTime(latest.at) : "Latest sample")}</span></div>`;
+  const goalY = top + (1 - goal / maximum) * plotHeight;
+  const latest = coordinates[coordinates.length - 1];
+  const firstTimestamp = Date.parse(points[0].observedAt || "");
+  const lastTimestamp = Date.parse(latest.observedAt || "");
+  const markerMarkup = markers.slice(-12).map((marker, index) => {
+    const timestamp = Date.parse(marker.at || "");
+    let point = latest;
+    if (Number.isFinite(timestamp) && Number.isFinite(firstTimestamp) && Number.isFinite(lastTimestamp) && lastTimestamp > firstTimestamp) {
+      point = coordinates.reduce((best, candidate) => Math.abs(Date.parse(candidate.observedAt) - timestamp) < Math.abs(Date.parse(best.observedAt) - timestamp) ? candidate : best, coordinates[0]);
+    }
+    const symbol = String(marker.symbol || "").toUpperCase().replace(/[^A-Z0-9.^-]/g, "").slice(0, 12);
+    if (!symbol) return "";
+    const offsetX = ((index % 5) - 2) * 20;
+    const offsetY = 20 + Math.floor(index / 5) * 28;
+    const x = Math.max(left + 16, Math.min(width - right - 16, point.x + offsetX));
+    const y = Math.max(top + 18, point.y - offsetY);
+    return `<g class="portfolio-trade-marker"><line x1="${x}" y1="${y + 13}" x2="${point.x}" y2="${point.y}"/><circle cx="${x}" cy="${y}" r="15"/><image href="/api/stock-office/logos/${encodeURIComponent(symbol)}" x="${x - 11}" y="${y - 11}" width="22" height="22" preserveAspectRatio="xMidYMid slice"/><title>${escapeHtml(`${symbol} · ${marker.side || "HOLD"}`)}</title></g>`;
+  }).join("");
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const value = maximum * ratio;
+    const y = top + (1 - ratio) * plotHeight;
+    return `<line x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" class="portfolio-gridline"/><text x="${left - 10}" y="${y + 4}" text-anchor="end" class="portfolio-axis-label">${escapeHtml(formatMoney(value))}</text>`;
+  }).join("");
+  const area = coordinates.length > 1 ? `<path d="${path} L${latest.x},${height - bottom} L${coordinates[0].x},${height - bottom} Z" class="performance-area"/>` : "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Official portfolio value toward the 150 dollar goal">
+    <defs><linearGradient id="performanceArea" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#22d3ee" stop-opacity=".38"/><stop offset=".8" stop-color="#2563eb" stop-opacity=".05"/><stop offset="1" stop-color="#2563eb" stop-opacity="0"/></linearGradient></defs>
+    ${grid}
+    <line x1="${left}" y1="${goalY}" x2="${width - right}" y2="${goalY}" class="portfolio-goal-line"/>
+    <text x="${width - right}" y="${Math.max(14, goalY - 9)}" text-anchor="end" class="portfolio-goal-label">GOAL ${escapeHtml(formatMoney(goal))}</text>
+    ${area}<path d="${path}" class="performance-line"/>
+    <circle cx="${latest.x}" cy="${latest.y}" r="6" class="performance-point"/><circle cx="${latest.x}" cy="${latest.y}" r="13" class="performance-point-pulse"/>
+    ${markerMarkup}
+    <g class="portfolio-current-label"><rect x="${Math.max(left, latest.x - 88)}" y="${Math.min(height - bottom - 38, latest.y + 14)}" width="88" height="27" rx="8"/><text x="${Math.max(left, latest.x - 44)}" y="${Math.min(height - bottom - 20, latest.y + 32)}" text-anchor="middle">${escapeHtml(formatMoney(latest.accountValue))}</text></g>
+  </svg><div class="performance-curve-caption"><span>${escapeHtml(points[0].observedAt ? formatTime(points[0].observedAt) : "First snapshot")}</span><strong>${escapeHtml(points.length === 1 ? "Recording live history" : `${points.length} verified snapshots`)}</strong><span>${escapeHtml(latest.observedAt ? formatTime(latest.observedAt) : "Now")}</span></div>`;
+}
+
+function performanceAllocationMarkup(items = []) {
+  const usable = items.filter((item) => Number(item.value) > 0);
+  const total = usable.reduce((sum, item) => sum + Number(item.value), 0);
+  if (!total) return `<div class="performance-empty">Allocation appears after a verified account snapshot.</div>`;
+  const colors = ["#22d3ee", "#6366f1", "#34d399", "#f59e0b", "#f472b6", "#38bdf8"];
+  let cursor = 0;
+  const slices = usable.map((item, index) => {
+    const start = cursor;
+    cursor += Number(item.value) / total * 360;
+    return `${colors[index % colors.length]} ${start.toFixed(2)}deg ${cursor.toFixed(2)}deg`;
+  });
+  return `<div class="allocation-wrap"><div class="allocation-donut" style="--allocation:${slices.join(",")}"><span><strong>${escapeHtml(formatMoney(total))}</strong><small>deployed + cash</small></span></div><div class="allocation-legend">${usable.map((item, index) => `<article><i style="--tone:${colors[index % colors.length]}"></i><span>${escapeHtml(item.symbol || item.key)}</span><strong>${escapeHtml(formatMoney(item.value))}</strong></article>`).join("")}</div></div>`;
 }
 
 function renderPerformance() {
   const performance = state.intelligence?.performance || {};
   const summary = performance.summary || {};
-  const measured = Number(summary.measuredSignals || 0);
-  const sufficient = measured >= 20;
+  const series = performance.series || {};
+  const broker = state.brokerControl || {};
+  const brokerValue = numericMoney(broker.accountValueDollars);
+  const goal = Number(summary.capitalGoal || getCapitalGoal() || DEFAULT_CAPITAL_GOAL_DOLLARS);
+  const curve = Array.isArray(series.portfolioEquityCurve) ? [...series.portfolioEquityCurve] : [];
+  if (brokerValue !== null && brokerValue > 0) {
+    const observedAt = broker.snapshotUpdatedAt || new Date().toISOString();
+    const latest = curve[curve.length - 1];
+    if (!latest || latest.observedAt !== observedAt || Number(latest.accountValue) !== brokerValue) {
+      curve.push({ observedAt, accountValue: brokerValue, cashValue: numericMoney(broker.cashDollars), investedValue: numericMoney(broker.equityValueDollars), buyingPower: numericMoney(broker.buyingPowerDollars), dayPnl: numericMoney(broker.dayPnlDollars), goalValue: goal, positions: broker.positions || [] });
+    }
+  }
+  const latest = curve[curve.length - 1] || null;
+  const currentValue = numericMoney(summary.currentPortfolioValue) ?? numericMoney(latest?.accountValue);
+  const buyingPower = numericMoney(summary.buyingPower) ?? numericMoney(broker.buyingPowerDollars);
+  const dayPnl = numericMoney(summary.dayPnl) ?? numericMoney(broker.dayPnlDollars);
+  const change = numericMoney(summary.portfolioChangeDollars);
+  const progress = Number.isFinite(currentValue) && goal > 0 ? currentValue / goal : null;
+  const gap = Number.isFinite(currentValue) ? Math.max(0, goal - currentValue) : null;
   const sampleState = $("#performanceSampleState");
   if (!sampleState) return;
-  sampleState.textContent = sufficient ? `${measured} measured signals` : `Insufficient sample · ${measured}/20`;
-  sampleState.dataset.status = sufficient ? "ready" : "limited";
+  sampleState.textContent = latest?.observedAt ? `Live broker · ${formatTime(latest.observedAt)}` : "Waiting for official account";
+  sampleState.dataset.status = latest ? "ready" : "limited";
   $("#performanceTopline").innerHTML = [
-    ["Signals", summary.totalSignals || 0],
-    ["Measured", measured],
-    ["Win rate", measured ? formatPercent(summary.winRate, 1) : "—"],
-    ["Avg winner", measured ? formatPercent(summary.averageWinnerPct, 2) : "—"],
-    ["Avg loser", measured ? formatPercent(summary.averageLoserPct, 2) : "—"],
-    ["Expectancy", measured ? formatPercent(summary.expectancyPct, 2) : "—"],
-    ["Average R", Number.isFinite(Number(summary.averageRMultiple)) ? Number(summary.averageRMultiple).toFixed(2) : "—"],
-    ["Profit factor", Number.isFinite(Number(summary.profitFactor)) ? Number(summary.profitFactor).toFixed(2) : "—"],
-    ["Max drawdown", measured ? formatPercent(summary.maximumDrawdownPct, 2) : "—"],
-    ["Realized P&L", formatMoney(summary.realizedBrokerPnl || 0)],
-    ["Broker trades", summary.brokerTrades || 0],
-  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
-  const curve = performance.series?.signalEquityCurve || [];
-  $("#performanceCurve").innerHTML = performanceCurveMarkup(curve);
-  $("#performanceCurveMeta").textContent = curve.length ? `${curve.length} immutable outcomes` : "No matured outcomes";
-  const distribution = performance.series?.returnDistribution || [];
-  const maxBucket = Math.max(1, ...distribution.map((item) => Number(item.count || 0)));
-  $("#performanceDistribution").innerHTML = distribution.length
-    ? distribution.map((item) => `<article><span>${escapeHtml(item.label)}</span><i><b style="width:${Math.max(2, (Number(item.count || 0) / maxBucket) * 100).toFixed(1)}%"></b></i><strong>${escapeHtml(item.count)}</strong></article>`).join("")
-    : `<div class="performance-empty">Insufficient historical sample.</div>`;
-  $("#performanceStrategies").innerHTML = performanceRanking(performance.attribution?.byStrategy || []);
-  $("#performanceRegimes").innerHTML = performanceRanking(performance.attribution?.byRegime || []);
-  $("#performanceSectors").innerHTML = performanceRanking(performance.attribution?.bySector || []);
-  $("#performanceFeatures").innerHTML = performanceRanking(performance.attribution?.byFeatureSet || []);
-  const governance = performance.strategyGovernance || {};
-  $("#strategyGovernanceStatus").textContent = governance.autoActivationAllowed === false ? "Human-reviewed changes only" : "Governance unavailable";
-  const versions = governance.versions || [];
-  const proposals = governance.proposals || [];
-  $("#strategyVersions").innerHTML = [
-    ...versions.map((item) => `<article><span><i data-status="${escapeHtml(item.status)}"></i><strong>${escapeHtml(item.version)}</strong><small>${escapeHtml(item.status)}</small></span><em>${escapeHtml(item.activatedAt ? formatTime(item.activatedAt) : "Not activated")}</em></article>`),
-    ...proposals.map((item) => `<article class="pending"><span><i data-status="pending"></i><strong>${escapeHtml(item.proposedVersion)}</strong><small>${escapeHtml(item.status.replaceAll("_", " "))}</small></span><em>${escapeHtml(item.createdAt ? formatTime(item.createdAt) : "Pending review")}</em></article>`),
-  ].join("") || `<div class="performance-empty">The deployed strategy will appear after the next persisted research cycle.</div>`;
+    ["Portfolio", Number.isFinite(currentValue) ? formatMoney(currentValue) : "—", "primary"],
+    ["Goal", formatMoney(goal), "goal"],
+    ["Remaining", gap === null ? "—" : formatMoney(gap), ""],
+    ["Progress", progress === null ? "—" : formatPercent(progress, 1), ""],
+    ["Buying power", buyingPower === null ? "—" : formatMoney(buyingPower), ""],
+    ["Today P&L", dayPnl === null ? "—" : formatSignedMoney(dayPnl), dayPnl > 0 ? "positive" : dayPnl < 0 ? "negative" : ""],
+    ["Tracked change", change === null ? "—" : formatSignedMoney(change), change > 0 ? "positive" : change < 0 ? "negative" : ""],
+  ].map(([label, value, tone]) => `<span class="${escapeHtml(tone)}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
+  $("#performanceCurve").innerHTML = portfolioCurveMarkup(curve, series.activityMarkers || [], goal);
+  $("#performanceCurveMeta").textContent = curve.length > 1 ? `${curve.length} persisted broker snapshots` : curve.length ? "Live recording started" : "Waiting for official snapshot";
+  let allocation = Array.isArray(series.allocation) ? series.allocation : [];
+  if (!allocation.length && latest) {
+    allocation = [
+      ...(Number(latest.cashValue) > 0 ? [{ key: "Cash", symbol: "CASH", value: latest.cashValue }] : []),
+      ...(latest.positions || []).map((position) => ({ key: position.symbol, symbol: position.symbol, value: Number(position.marketValue) || Number(position.quantity || position.sharesAvailableForSells || 0) * Number(position.currentPrice || 0) })),
+    ];
+  }
+  $("#performanceAllocation").innerHTML = performanceAllocationMarkup(allocation);
+  const holdings = Array.isArray(series.holdings) && series.holdings.length ? series.holdings : (latest?.positions || []).map((position) => {
+    const quantity = Number(position.quantity || position.sharesAvailableForSells || 0);
+    const currentPrice = Number(position.currentPrice || 0);
+    const averageBuyPrice = Number(position.averageBuyPrice || 0);
+    const pnl = averageBuyPrice > 0 ? quantity * (currentPrice - averageBuyPrice) : null;
+    return { symbol: position.symbol, marketValue: quantity * currentPrice, unrealizedPnl: pnl, returnPct: averageBuyPrice > 0 ? (currentPrice - averageBuyPrice) / averageBuyPrice : null };
+  });
+  const maxMove = Math.max(0.01, ...holdings.map((item) => Math.abs(Number(item.returnPct || 0))));
+  $("#performanceHoldings").innerHTML = holdings.length ? holdings.map((item) => {
+    const move = Number(item.returnPct);
+    const tone = move > 0 ? "positive" : move < 0 ? "negative" : "neutral";
+    const width = Math.max(3, Math.abs(move || 0) / maxMove * 100);
+    return `<article class="holding-contribution ${tone}"><div>${logoMarkup(item.symbol)}</div><strong>${escapeHtml(formatMoney(item.marketValue || 0))}</strong><span><i style="width:${width.toFixed(1)}%"></i></span><em>${Number.isFinite(move) ? escapeHtml(formatPercent(move, 2)) : "—"} · ${Number.isFinite(Number(item.unrealizedPnl)) ? escapeHtml(formatSignedMoney(item.unrealizedPnl)) : "—"}</em></article>`;
+  }).join("") : `<div class="performance-empty">No verified equity positions.</div>`;
+  const markers = Array.isArray(series.activityMarkers) ? series.activityMarkers : [];
+  $("#performanceActivity").innerHTML = markers.length ? markers.slice(-8).reverse().map((item) => `<article><div>${logoMarkup(item.symbol)}</div><span data-side="${escapeHtml(String(item.side || "HOLD").toLowerCase())}">${escapeHtml(item.side || "HOLD")}</span><time>${escapeHtml(item.at ? formatTime(item.at) : "—")}</time></article>`).join("") : `<div class="performance-empty">Owned-position icons appear on the curve; filled trade markers accumulate here.</div>`;
 }
 
 function brokerStatusLabel(value, toolContract = {}) {
@@ -2638,6 +2705,7 @@ async function pollLivePortfolio() {
     state.brokerControl = payload.brokerControl || state.brokerControl;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
     if (state.activeView === "overview") renderOverviewDashboard();
+    if (state.activeView === "performance") renderPerformance();
     if (state.activeView === "trade") renderBrokerControl();
     if (state.activeView === "sources") renderSources();
   } catch (_error) {

@@ -1216,6 +1216,7 @@ function summarizeSourceHealth(sources) {
 }
 
 function normalizeProviderHealth(data, source) {
+  const servingName = String(data?.serving_provider || "").toUpperCase();
   const rawProviders = isPlainObject(data?.providers) ? Object.values(data.providers) : [];
   const providers = rawProviders.map((item) => {
     if (!isPlainObject(item)) return null;
@@ -1236,18 +1237,40 @@ function normalizeProviderHealth(data, source) {
       interval: redactSensitiveText(String(item.interval || "")).slice(0, 20),
       requestedSymbols: (Array.isArray(item.requested_symbols) ? item.requested_symbols : []).map((value) => String(value).toUpperCase().replace(/[^A-Z0-9.^-]/g, "").slice(0, 12)).filter(Boolean).slice(0, 100),
       returnedSymbols: (Array.isArray(item.returned_symbols) ? item.returned_symbols : []).map((value) => String(value).toUpperCase().replace(/[^A-Z0-9.^-]/g, "").slice(0, 12)).filter(Boolean).slice(0, 100),
+      serving: String(item.provider || "").toUpperCase() === servingName,
     };
-  }).filter(Boolean).sort((a, b) => a.provider.localeCompare(b.provider));
+  }).filter(Boolean);
+  let servingProvider = providers.find((item) => item.serving) || null;
+  if (!servingProvider) {
+    servingProvider = providers
+      .filter((item) => item.status === "HEALTHY" && item.returnedSymbols.length)
+      .sort((a, b) => Date.parse(b.lastSuccessAt || "") - Date.parse(a.lastSuccessAt || ""))[0] || null;
+    if (servingProvider) servingProvider.serving = true;
+  }
+  providers.sort((a, b) => Number(b.serving) - Number(a.serving) || a.provider.localeCompare(b.provider));
   const healthy = providers.filter((item) => item.status === "HEALTHY").length;
   const degraded = providers.filter((item) => item.status !== "HEALTHY").length;
-  const status = source?.stale ? "STALE" : !providers.length ? "UNKNOWN" : healthy === providers.length ? "HEALTHY" : healthy ? "DEGRADED" : "OFFLINE";
+  const servingCheckedAt = safeDate(data?.serving_checked_at) || servingProvider?.lastSuccessAt || null;
+  const servingFresh = Boolean(servingProvider && servingProvider.status === "HEALTHY" && servingProvider.returnedSymbols.length);
+  const status = source?.stale
+    ? "STALE"
+    : !providers.length
+      ? "UNKNOWN"
+      : servingFresh
+        ? "HEALTHY"
+        : healthy
+          ? "DEGRADED"
+          : "OFFLINE";
   return {
     available: Boolean(source?.exists && providers.length),
     status,
     updatedAt: safeDate(data?.updated_at) || source?.generatedAt || source?.lastModified || null,
     healthy,
     degraded,
+    fallbackDegraded: providers.filter((item) => !item.serving && item.status !== "HEALTHY").length,
     total: providers.length,
+    servingProvider: servingProvider?.provider || null,
+    servingCheckedAt,
     providers,
   };
 }

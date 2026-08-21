@@ -478,12 +478,12 @@ def build_provenance(
 
 def read_provider_health(path: Path) -> dict[str, object]:
     if not path.exists():
-        return {"version": 1, "updated_at": None, "providers": {}}
+        return {"version": 2, "updated_at": None, "serving_provider": None, "providers": {}}
     try:
         payload = json.loads(path.read_text())
     except Exception:
-        return {"version": 1, "updated_at": None, "providers": {}}
-    return payload if isinstance(payload, dict) else {"version": 1, "updated_at": None, "providers": {}}
+        return {"version": 2, "updated_at": None, "serving_provider": None, "providers": {}}
+    return payload if isinstance(payload, dict) else {"version": 2, "updated_at": None, "serving_provider": None, "providers": {}}
 
 
 def record_provider_attempt(path: Path, attempt: ProviderAttempt) -> None:
@@ -498,9 +498,10 @@ def record_provider_attempt(path: Path, attempt: ProviderAttempt) -> None:
     successes = int(prior.get("successes", 0) or 0) + (1 if attempt.status == "success" else 0)
     failures = int(prior.get("failures", 0) or 0) + (1 if attempt.status != "success" else 0)
     total = successes + failures
+    succeeded = attempt.status == "success" and bool(attempt.returned_symbols)
     providers[attempt.provider] = {
         "provider": attempt.provider,
-        "status": "HEALTHY" if attempt.status == "success" else "DEGRADED",
+        "status": "HEALTHY" if succeeded else "DEGRADED",
         "last_status": attempt.status,
         "last_checked_at": attempt.completed_at,
         "last_success_at": attempt.completed_at if attempt.status == "success" else prior.get("last_success_at"),
@@ -515,7 +516,10 @@ def record_provider_attempt(path: Path, attempt: ProviderAttempt) -> None:
         "requested_symbols": list(attempt.requested_symbols),
         "returned_symbols": list(attempt.returned_symbols),
     }
-    payload["version"] = 1
+    if succeeded:
+        payload["serving_provider"] = attempt.provider
+        payload["serving_checked_at"] = attempt.completed_at
+    payload["version"] = 2
     payload["updated_at"] = attempt.completed_at
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")

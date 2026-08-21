@@ -415,21 +415,26 @@ test("production UI labels unavailable values and never hardcodes a live portfol
   assert.doesNotMatch(script, /const\s+(?:portfolioValue|buyingPower|aiScore)\s*=\s*\d+/);
 });
 
-test("Performance and provider health views render only persisted measured state", () => {
+test("Performance and provider health views render only persisted broker state", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
   const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
   assert.match(html, /data-stock-nav="performance"/);
   assert.match(html, /data-stock-view="performance"/);
-  assert.match(html, /MEASURED OUTCOMES ONLY/);
+  assert.match(html, /PORTFOLIO COMMAND/);
+  assert.match(html, /Portfolio value → \$150 goal/);
+  assert.match(html, /id="performanceAllocation"/);
+  assert.match(html, /id="performanceHoldings"/);
+  assert.match(html, /id="performanceActivity"/);
   assert.match(html, /id="providerHealthList"/);
   assert.match(script, /state\.intelligence\?\.performance/);
-  assert.match(script, /Insufficient sample/);
-  assert.match(script, /signalEquityCurve/);
-  assert.match(script, /returnDistribution/);
-  assert.match(script, /Human-reviewed changes only/);
+  assert.match(script, /portfolioEquityCurve/);
+  assert.match(script, /activityMarkers/);
+  assert.match(script, /Waiting for the first verified Robinhood portfolio snapshot/);
   assert.match(script, /ownedSymbols\.has\(normalizedResearchSymbol\(item\.symbol\)\)/);
   assert.match(styles, /\.performance-console/);
+  assert.match(styles, /\.allocation-donut/);
   assert.match(styles, /\.provider-health-list/);
+  assert.doesNotMatch(html, /Return buckets|Signal combinations|Strategy versions/);
   assert.doesNotMatch(`${html}\n${script}`, /demo performance|sample equity curve|fake history/i);
 });

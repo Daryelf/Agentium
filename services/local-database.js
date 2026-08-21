@@ -509,6 +509,26 @@ function initializeLocalDatabase(dataDirOrOptions) {
             ON stock_signal_outcomes(signal_id, due_at ASC);
         `,
       },
+      {
+        id: "007_stock_portfolio_snapshots",
+        sql: `
+          CREATE TABLE IF NOT EXISTS stock_portfolio_snapshots (
+            id TEXT PRIMARY KEY,
+            observed_at TEXT NOT NULL,
+            account_value REAL NOT NULL,
+            cash_value REAL,
+            invested_value REAL,
+            buying_power REAL,
+            day_pnl REAL,
+            realized_pnl REAL,
+            unrealized_pnl REAL,
+            goal_value REAL NOT NULL,
+            positions_json TEXT NOT NULL DEFAULT '[]'
+          );
+          CREATE INDEX IF NOT EXISTS idx_stock_portfolio_snapshots_observed
+            ON stock_portfolio_snapshots(observed_at DESC);
+        `,
+      },
     ];
 
     migrations.forEach((migration) => {

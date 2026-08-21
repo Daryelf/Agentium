@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260821-18" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260821-19" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260821-23" defer></script>
+    <script src="./stock-office.js?v=20260821-24" defer></script>
   </head>
   <body>
     <div id="stockOfficePreloader" class="stock-office-preloader" role="status" aria-live="polite" aria-label="Opening Stock Office">
@@ -171,30 +171,19 @@
         <section class="stock-view" data-stock-view="performance" hidden>
           <section class="performance-console">
             <header class="performance-head">
-              <div><span>MEASURED OUTCOMES ONLY</span><h2>Performance</h2></div>
-              <strong id="performanceSampleState">Loading history</strong>
+              <div><span>PORTFOLIO COMMAND</span><h2>Performance</h2></div>
+              <strong id="performanceSampleState">Loading broker history</strong>
             </header>
             <div id="performanceTopline" class="performance-topline"></div>
-            <div class="performance-grid">
-              <section class="performance-panel performance-curve-panel">
-                <div class="performance-section-head"><div><span>SIGNAL EQUITY</span><h3>Measured opportunity outcomes</h3></div><small id="performanceCurveMeta">No samples</small></div>
-                <div id="performanceCurve" class="performance-curve"></div>
-              </section>
-              <section class="performance-panel">
-                <div class="performance-section-head"><div><span>DISTRIBUTION</span><h3>Return buckets</h3></div></div>
-                <div id="performanceDistribution" class="performance-distribution"></div>
-              </section>
-            </div>
-            <div class="performance-attribution-grid">
-              <section class="performance-panel"><div class="performance-section-head"><div><span>ATTRIBUTION</span><h3>Strategies</h3></div></div><div id="performanceStrategies" class="performance-ranking"></div></section>
-              <section class="performance-panel"><div class="performance-section-head"><div><span>CONTEXT</span><h3>Regimes</h3></div></div><div id="performanceRegimes" class="performance-ranking"></div></section>
-              <section class="performance-panel"><div class="performance-section-head"><div><span>CONTEXT</span><h3>Sectors</h3></div></div><div id="performanceSectors" class="performance-ranking"></div></section>
-              <section class="performance-panel"><div class="performance-section-head"><div><span>FEATURE SETS</span><h3>Signal combinations</h3></div></div><div id="performanceFeatures" class="performance-ranking"></div></section>
-            </div>
-            <section class="performance-panel strategy-governance-panel">
-              <div class="performance-section-head"><div><span>CONTROLLED LEARNING</span><h3>Strategy versions</h3></div><strong id="strategyGovernanceStatus">No automatic changes</strong></div>
-              <div id="strategyVersions" class="strategy-version-list"></div>
+            <section class="performance-goal-stage">
+              <div class="performance-section-head"><div><span>LIVE ACCOUNT TRAJECTORY</span><h3>Portfolio value → $150 goal</h3></div><small id="performanceCurveMeta">Waiting for official snapshot</small></div>
+              <div id="performanceCurve" class="performance-curve"></div>
             </section>
+            <div class="performance-visual-grid">
+              <section class="performance-visual performance-allocation"><div class="performance-section-head"><div><span>CAPITAL MAP</span><h3>Allocation</h3></div></div><div id="performanceAllocation"></div></section>
+              <section class="performance-visual performance-holdings"><div class="performance-section-head"><div><span>LIVE POSITIONS</span><h3>Growth contribution</h3></div></div><div id="performanceHoldings"></div></section>
+              <section class="performance-visual performance-activity"><div class="performance-section-head"><div><span>TRADE MARKERS</span><h3>Portfolio activity</h3></div></div><div id="performanceActivity"></div></section>
+            </div>
           </section>
         </section>
 

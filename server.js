@@ -10850,6 +10850,26 @@ function stockOfficeSnapshot(state, permissions, options = {}) {
   return snapshot;
 }
 
+function recordOfficialPortfolioSnapshot(brokerControl = {}) {
+  try {
+    return stockIntelligenceStore.recordPortfolioSnapshot({
+      observedAt: brokerControl.snapshotUpdatedAt || now(),
+      accountValue: brokerControl.accountValueDollars,
+      cashValue: brokerControl.cashDollars,
+      investedValue: brokerControl.equityValueDollars,
+      buyingPower: brokerControl.buyingPowerDollars,
+      dayPnl: brokerControl.dayPnlDollars,
+      realizedPnl: brokerControl.realizedPnlDollars,
+      unrealizedPnl: brokerControl.unrealizedPnlDollars,
+      goalValue: 150,
+      positions: brokerControl.positions,
+    });
+  } catch (error) {
+    console.warn("Official portfolio history write failed safely:", error.message);
+    return null;
+  }
+}
+
 function readStockShadowPortfolio(snapshot = {}) {
   try {
     const stat = fs.statSync(STOCK_SHADOW_FILE);
@@ -13650,6 +13670,7 @@ async function handleApi(req, res, url) {
       const state = readState();
       const snapshot = stockOfficeBrokerSnapshot(state, access.permissions);
       const brokerControl = brokerControlOverview(snapshot);
+      recordOfficialPortfolioSnapshot(brokerControl);
       sendJson(res, 200, {
         brokerControl,
         robinhoodConnection: robinhoodMcpClient.publicStatus(),
@@ -13683,6 +13704,11 @@ async function handleApi(req, res, url) {
       const guardrailApproval = (state.approvals || []).find((item) => item.actionType === "change_stock_trading_guardrails" && !item.consumedAt) || null;
       const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
       const brokerControl = brokerControlOverview(snapshot);
+      recordOfficialPortfolioSnapshot(brokerControl);
+      const intelligence = {
+        ...snapshot.intelligence,
+        performance: stockIntelligenceStore.performanceReport(),
+      };
       const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
       const shadowPortfolio = refreshStockShadowPortfolio({ state });
       const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
@@ -13708,12 +13734,12 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         brokerControl,
         portfolioPlan,
-        intelligence: snapshot.intelligence,
+        intelligence,
         systemHealth,
         shadowPortfolio,
         simulationLab,
         intelligenceScheduler,
-        marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
+        marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence }),
         flowManagers: getStockFlowManagerSupervisor().getStatus(),
         notificationStatus,
         notificationApproval: notificationApproval ? {

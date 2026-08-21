@@ -1138,7 +1138,9 @@ def intraday_context(
     symbols = resolve_tickers(tickers)[:25]
     now = datetime.now().astimezone()
     try:
-        intraday_data = download_history(analysis_symbols(symbols), period="5d", interval="1m", prefer_cache=False)
+        intraday_symbols = analysis_symbols(symbols)
+        intraday_data = download_history(intraday_symbols, period="5d", interval="1m", prefer_cache=True, cache_max_age_seconds=8 * 60)
+        intraday_data = overlay_latest_closes(intraday_data, latest_prices(intraday_symbols))
         daily_symbols = list(dict.fromkeys([*analysis_symbols(symbols), *SECTOR_ETFS]))
         daily_data = download_history(daily_symbols, period="1y", interval="1d", prefer_cache=True, cache_max_age_seconds=6 * 60 * 60)
     except RuntimeError as exc:

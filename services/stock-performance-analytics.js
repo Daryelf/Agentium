@@ -58,10 +58,110 @@ function featureKey(signal) {
   return strong.length ? strong.slice(0, 4).join("+") : "NO_STRONG_COMPONENT_SET";
 }
 
+function normalizePortfolioSnapshots(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const accountValue = finite(item.accountValue);
+    const observedTimestamp = Date.parse(item.observedAt || "");
+    const observedAt = Number.isFinite(observedTimestamp) ? new Date(observedTimestamp).toISOString() : null;
+    if (accountValue === null || accountValue <= 0 || !observedAt) return null;
+    return {
+      id: item.id || null,
+      observedAt,
+      accountValue: rounded(accountValue, 2),
+      cashValue: rounded(item.cashValue, 2),
+      investedValue: rounded(item.investedValue, 2),
+      buyingPower: rounded(item.buyingPower, 2),
+      dayPnl: rounded(item.dayPnl, 2),
+      realizedPnl: rounded(item.realizedPnl, 2),
+      unrealizedPnl: rounded(item.unrealizedPnl, 2),
+      goalValue: rounded(item.goalValue, 2) || 150,
+      positions: Array.isArray(item.positions) ? item.positions : [],
+    };
+  }).filter(Boolean).sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt)).slice(-1000);
+}
+
+function portfolioAnalytics(snapshots, trades) {
+  const latest = snapshots[snapshots.length - 1] || null;
+  const first = snapshots[0] || null;
+  const goal = latest?.goalValue || 150;
+  const accountValue = latest?.accountValue ?? null;
+  const changeDollars = latest && first ? rounded(latest.accountValue - first.accountValue, 2) : null;
+  const changePct = latest && first && first.accountValue > 0 ? rounded(changeDollars / first.accountValue) : null;
+  const latestPositions = Array.isArray(latest?.positions) ? latest.positions : [];
+  const allocation = [
+    ...(finite(latest?.cashValue) !== null && Number(latest.cashValue) > 0 ? [{ key: "Cash", symbol: "CASH", value: rounded(latest.cashValue, 2) }] : []),
+    ...latestPositions.map((position) => ({
+      key: String(position.symbol || "UNKNOWN").toUpperCase(),
+      symbol: String(position.symbol || "").toUpperCase(),
+      value: rounded(position.marketValue, 2),
+    })).filter((item) => item.symbol && item.value !== null && item.value > 0),
+  ];
+  const holdings = latestPositions.map((position) => {
+    const quantity = finite(position.quantity);
+    const currentPrice = finite(position.currentPrice);
+    const averageBuyPrice = finite(position.averageBuyPrice);
+    const marketValue = finite(position.marketValue);
+    const unrealizedPnl = finite(position.unrealizedPnl) ?? (
+      quantity !== null && currentPrice !== null && averageBuyPrice !== null
+        ? quantity * (currentPrice - averageBuyPrice)
+        : null
+    );
+    const cost = quantity !== null && averageBuyPrice !== null ? quantity * averageBuyPrice : null;
+    return {
+      symbol: String(position.symbol || "").toUpperCase(),
+      quantity: rounded(quantity, 6),
+      currentPrice: rounded(currentPrice, 2),
+      marketValue: rounded(marketValue, 2),
+      unrealizedPnl: rounded(unrealizedPnl, 2),
+      returnPct: cost && unrealizedPnl !== null ? rounded(unrealizedPnl / cost) : null,
+    };
+  }).filter((item) => item.symbol);
+  const tradeMarkers = trades.flatMap((trade) => {
+    const symbol = String(trade.symbol || "").toUpperCase();
+    if (!symbol) return [];
+    const markers = [];
+    if (trade.openedAt || trade.createdAt) markers.push({ symbol, side: String(trade.side || "BUY").toUpperCase(), at: trade.openedAt || trade.createdAt, status: trade.status || "recorded" });
+    if (trade.closedAt) markers.push({ symbol, side: "SELL", at: trade.closedAt, status: trade.status || "closed" });
+    return markers;
+  }).filter((item) => Number.isFinite(Date.parse(item.at))).slice(-50);
+  const heldSymbols = new Set(tradeMarkers.map((item) => item.symbol));
+  for (const position of latestPositions) {
+    const symbol = String(position.symbol || "").toUpperCase();
+    if (symbol && !heldSymbols.has(symbol) && latest) tradeMarkers.push({ symbol, side: "HOLD", at: latest.observedAt, status: "owned" });
+  }
+  return {
+    summary: {
+      portfolioSnapshots: snapshots.length,
+      currentPortfolioValue: accountValue,
+      startPortfolioValue: first?.accountValue ?? null,
+      portfolioChangeDollars: changeDollars,
+      portfolioChangePct: changePct,
+      capitalGoal: goal,
+      goalGapDollars: accountValue === null ? null : rounded(Math.max(0, goal - accountValue), 2),
+      goalProgressPct: accountValue === null || goal <= 0 ? null : rounded(Math.min(1, accountValue / goal)),
+      cashValue: latest?.cashValue ?? null,
+      investedValue: latest?.investedValue ?? null,
+      buyingPower: latest?.buyingPower ?? null,
+      dayPnl: latest?.dayPnl ?? null,
+      realizedPnl: latest?.realizedPnl ?? null,
+      unrealizedPnl: latest?.unrealizedPnl ?? null,
+      lastPortfolioObservedAt: latest?.observedAt ?? null,
+    },
+    series: {
+      portfolioEquityCurve: snapshots,
+      allocation,
+      holdings,
+      activityMarkers: tradeMarkers.slice(-50),
+    },
+  };
+}
+
 function calculatePerformance(input = {}) {
   const signals = Array.isArray(input.signals) ? input.signals : [];
   const trades = Array.isArray(input.trades) ? input.trades : [];
   const approvals = Array.isArray(input.approvals) ? input.approvals : [];
+  const portfolioSnapshots = normalizePortfolioSnapshots(input.portfolioSnapshots);
+  const portfolio = portfolioAnalytics(portfolioSnapshots, trades);
   const samples = signals.map((signal) => {
     const outcome = preferredOutcome(signal);
     if (!outcome) return null;
@@ -115,6 +215,7 @@ function calculatePerformance(input = {}) {
     generatedAt: input.generatedAt || new Date().toISOString(),
     scope: "persisted_live_research_signals",
     summary: {
+      ...portfolio.summary,
       totalSignals: signals.length,
       actionableSignals: signals.filter((signal) => signal.state === "ACTIONABLE").length,
       measuredSignals: samples.length,
@@ -148,6 +249,7 @@ function calculatePerformance(input = {}) {
       worstSector: bySector.length ? bySector[bySector.length - 1] : null,
     },
     series: {
+      ...portfolio.series,
       signalEquityCurve,
       returnDistribution,
     },

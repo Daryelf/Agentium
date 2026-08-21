@@ -79,8 +79,48 @@ test("stock intelligence migration creates durable command-center tables", (t) =
     "stock_mirror_events", "stock_mirror_consensus", "stock_telegram_events", "stock_system_events",
     "stock_risk_decisions", "stock_order_audit", "stock_worker_heartbeats",
     "stock_signal_journal", "stock_signal_price_observations", "stock_signal_outcomes", "stock_trade_journal",
-    "stock_strategy_versions", "stock_strategy_change_proposals",
+    "stock_strategy_versions", "stock_strategy_change_proposals", "stock_portfolio_snapshots",
   ]) assert.equal(tables.has(name), true, `${name} should exist`);
+});
+
+test("official portfolio snapshots persist one latest observation per minute", (t) => {
+  const fixture = tempStore("2026-08-21T14:00:00.000Z");
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  fixture.store.recordPortfolioSnapshot({
+    observedAt: "2026-08-21T14:00:10.000Z",
+    accountValue: 67,
+    cashValue: 45,
+    investedValue: 22,
+    buyingPower: 45,
+    goalValue: 150,
+    positions: [{ symbol: "SPCX", quantity: 1, currentPrice: 22, averageBuyPrice: 23 }],
+  });
+  fixture.store.recordPortfolioSnapshot({
+    observedAt: "2026-08-21T14:00:50.000Z",
+    accountValue: 68,
+    cashValue: 45,
+    investedValue: 23,
+    buyingPower: 45,
+    goalValue: 150,
+    positions: [{ symbol: "SPCX", quantity: 1, currentPrice: 23, averageBuyPrice: 23 }],
+  });
+  fixture.store.recordPortfolioSnapshot({
+    observedAt: "2026-08-21T14:01:05.000Z",
+    accountValue: 69,
+    cashValue: 45,
+    investedValue: 24,
+    buyingPower: 45,
+    goalValue: 150,
+    positions: [{ symbol: "SPCX", quantity: 1, currentPrice: 24, averageBuyPrice: 23 }],
+  });
+
+  const history = fixture.store.portfolioSnapshotHistory();
+  assert.equal(history.length, 2);
+  assert.equal(history[0].accountValue, 68);
+  assert.equal(history[1].positions[0].marketValue, 24);
+  const performance = fixture.store.performanceReport();
+  assert.equal(performance.summary.currentPortfolioValue, 69);
+  assert.equal(performance.series.portfolioEquityCurve.length, 2);
 });
 
 test("market-closed research persists and continuing a thesis keeps first-seen history", (t) => {

@@ -227,6 +227,14 @@ def test_load_provider_keys_prefers_env_over_file(tmp_path) -> None:
     assert keys.fred_api_key == "env-fred"
 
 
+def test_load_provider_keys_uses_argentum_keychain_for_massive_when_local_sources_are_empty(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("stock_guru.data.read_argentum_keychain_secret", lambda provider: "keychain-massive" if provider == "stock_guru_massive_api_key" else "")
+
+    keys = load_provider_keys(tmp_path / "missing.json")
+
+    assert keys.massive_api_key == "keychain-massive"
+
+
 def test_download_twelve_data_history_parses_batch_payload(monkeypatch) -> None:
     monkeypatch.setattr(
         "stock_guru.data.fetch_json",
@@ -292,19 +300,29 @@ def test_configured_massive_is_the_first_daily_history_provider(monkeypatch) -> 
 
 
 def test_latest_prices_from_massive_uses_current_snapshot_not_previous_day(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "stock_guru.data.fetch_json",
-        lambda *_args, **_kwargs: {
+    observed_urls = []
+
+    def fake_fetch(url, **_kwargs):
+        observed_urls.append(url)
+        return {
             "status": "OK",
-            "ticker": {
+            "tickers": [{
+                "ticker": "AAPL",
                 "lastTrade": {"p": "123.45"},
                 "day": {"c": 123.40},
                 "prevDay": {"c": 119.00},
-            },
-        },
+            }],
+        }
+
+    monkeypatch.setattr(
+        "stock_guru.data.fetch_json",
+        fake_fetch,
     )
 
     assert latest_prices_from_massive(["AAPL"], api_key="massive-token") == {"AAPL": 123.45}
+    assert len(observed_urls) == 1
+    assert "/v2/snapshot/locale/us/markets/stocks/tickers?" in observed_urls[0]
+    assert "tickers=AAPL" in observed_urls[0]
 
 
 def test_latest_prices_from_twelve_data_reads_batch_quotes(monkeypatch) -> None:

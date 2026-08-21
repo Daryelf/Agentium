@@ -7,6 +7,7 @@ import json
 import io
 import os
 from pathlib import Path
+import subprocess
 import time
 from typing import Callable, Dict, Iterable, Mapping
 import urllib.error
@@ -59,6 +60,8 @@ ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
 MASSIVE_URL = "https://api.massive.com"
 STOOQ_URL = "https://stooq.com/q/d/l/"
 PRICE_ADJUSTMENT_POLICY = "split_and_dividend_adjusted_ohlc_when_supported"
+ARGENTUM_KEYCHAIN_SERVICE = "Argentum OS"
+ARGENTUM_MASSIVE_SECRET_PROVIDER = "stock_guru_massive_api_key"
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,23 @@ def _record_provider_attempt(attempt: ProviderAttempt) -> None:
         return
 
 
+def read_argentum_keychain_secret(provider: str) -> str:
+    if os.environ.get("ARGENTUM_DISABLE_KEYCHAIN") == "true" or not Path("/usr/bin/security").exists():
+        return ""
+    account = f"argentum.{provider.lower()}.api_key"
+    try:
+        result = subprocess.run(
+            ["/usr/bin/security", "find-generic-password", "-s", ARGENTUM_KEYCHAIN_SERVICE, "-a", account, "-w"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip()
+
+
 def load_provider_keys(path: Path = PROVIDER_KEYS_PATH, *, env: Mapping[str, str] | None = None) -> ProviderKeys:
     values = dict(env or os.environ)
     payload: dict[str, object] = {}
@@ -117,8 +137,12 @@ def load_provider_keys(path: Path = PROVIDER_KEYS_PATH, *, env: Mapping[str, str
                 return env_value
         return str(payload.get(name, "") or "").strip()
 
+    massive_api_key = pick("massive_api_key", MASSIVE_API_KEY_ENV, STOCK_GURU_MASSIVE_API_KEY_ENV)
+    if not massive_api_key and env is None:
+        massive_api_key = read_argentum_keychain_secret(ARGENTUM_MASSIVE_SECRET_PROVIDER)
+
     return ProviderKeys(
-        massive_api_key=pick("massive_api_key", MASSIVE_API_KEY_ENV, STOCK_GURU_MASSIVE_API_KEY_ENV),
+        massive_api_key=massive_api_key,
         twelve_data_api_key=pick("twelve_data_api_key", TWELVE_DATA_API_KEY_ENV),
         fmp_api_key=pick("fmp_api_key", FMP_API_KEY_ENV),
         alpha_vantage_api_key=pick("alpha_vantage_api_key", ALPHA_VANTAGE_API_KEY_ENV),
@@ -200,23 +224,28 @@ def save_history_cache(
     if history.empty:
         return
     cache_path, meta_path = history_cache_paths(symbols, period=period, interval=interval, cache_dir=cache_dir)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    history.to_pickle(cache_path)
-    meta_path.write_text(
-        json.dumps(
-            {
-                "symbols": symbols,
-                "period": period,
-                "interval": interval,
-                "cached_at": datetime.now(timezone.utc).isoformat(),
-                "provenance": provenance.to_dict() if provenance else None,
-                "quality": quality.to_dict() if quality else None,
-            },
-            indent=2,
-            sort_keys=True,
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        history.to_pickle(cache_path)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "symbols": symbols,
+                    "period": period,
+                    "interval": interval,
+                    "cached_at": datetime.now(timezone.utc).isoformat(),
+                    "provenance": provenance.to_dict() if provenance else None,
+                    "quality": quality.to_dict() if quality else None,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
         )
-        + "\n"
-    )
+    except OSError:
+        # Valid market data remains usable if a portable/read-only source tree
+        # cannot accept cache writes. Installed runtimes use a writable overlay.
+        return
     record_cache_event("write", cache_dir=cache_dir)
 
 
@@ -610,7 +639,8 @@ def download_provider_history(symbols: list[str], *, period: str, interval: str)
             errors.selected_provider = provider
         return result
 
-    if keys.massive_api_key:
+    massive_history_limit = _bounded_env_integer("STOCK_GURU_MASSIVE_HISTORY_MAX_SYMBOLS", 25, 1, 250)
+    if keys.massive_api_key and len(symbols) <= massive_history_limit:
         history = attempt("MASSIVE", lambda: download_massive_history(symbols, period=period, interval=interval, api_key=keys.massive_api_key))
         if not history.empty:
             return history, errors
@@ -1187,16 +1217,23 @@ def latest_prices_from_fmp(symbols: list[str], *, api_key: str) -> Dict[str, flo
 
 
 def latest_prices_from_massive(symbols: list[str], *, api_key: str) -> Dict[str, float]:
+    if not symbols or not api_key:
+        return {}
     prices: Dict[str, float] = {}
-    for symbol in symbols:
-        encoded = urllib.parse.quote(symbol, safe="")
-        query = urllib.parse.urlencode({"apiKey": api_key})
-        try:
-            payload = fetch_json(f"{MASSIVE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{encoded}?{query}")
-        except Exception:
-            continue
-        ticker = payload.get("ticker") if isinstance(payload, Mapping) else None
+    query = urllib.parse.urlencode({"tickers": ",".join(symbols), "apiKey": api_key})
+    try:
+        payload = fetch_json(f"{MASSIVE_URL}/v2/snapshot/locale/us/markets/stocks/tickers?{query}", timeout=30)
+    except Exception:
+        return {}
+    tickers = payload.get("tickers") if isinstance(payload, Mapping) else None
+    if not isinstance(tickers, list):
+        return {}
+    requested = set(symbols)
+    for ticker in tickers:
         if not isinstance(ticker, Mapping):
+            continue
+        symbol = str(ticker.get("ticker") or ticker.get("T") or "").upper()
+        if symbol not in requested:
             continue
         candidates = [
             ticker.get("lastTrade", {}).get("p") if isinstance(ticker.get("lastTrade"), Mapping) else None,
@@ -1214,7 +1251,6 @@ def latest_prices_from_massive(symbols: list[str], *, api_key: str) -> Dict[str,
                 break
         if price is not None:
             prices[symbol] = price
-        time.sleep(0.05)
     return prices
 
 
@@ -1223,8 +1259,24 @@ def latest_prices(tickers: Iterable[str]) -> Dict[str, float]:
     keys = load_provider_keys()
     prices: Dict[str, float] = {}
     remaining = list(symbols)
-    if keys.massive_api_key and remaining and reserve_provider_budget("MASSIVE", len(remaining)).allowed:
-        prices.update(latest_prices_from_massive(remaining, api_key=keys.massive_api_key))
+    if keys.massive_api_key and remaining:
+        started = datetime.now(timezone.utc)
+        massive_budget = reserve_provider_budget("MASSIVE", 1)
+        massive_prices = latest_prices_from_massive(remaining, api_key=keys.massive_api_key) if massive_budget.allowed else {}
+        completed = datetime.now(timezone.utc)
+        _record_provider_attempt(ProviderAttempt(
+            provider="MASSIVE",
+            status="success" if massive_prices else "budget_exhausted" if not massive_budget.allowed else "no_data",
+            started_at=started.isoformat(),
+            completed_at=completed.isoformat(),
+            latency_ms=max(0, round((completed - started).total_seconds() * 1000)),
+            data_type="LATEST_PRICE_SNAPSHOT",
+            interval="snapshot",
+            requested_symbols=tuple(remaining),
+            returned_symbols=tuple(sorted(massive_prices)),
+            error=None if massive_prices else massive_budget.reason if not massive_budget.allowed else "Massive snapshot returned no data",
+        ))
+        prices.update(massive_prices)
         remaining = [symbol for symbol in remaining if symbol not in prices]
     if keys.twelve_data_api_key and remaining and reserve_provider_budget("TWELVE_DATA", 1).allowed:
         prices.update(latest_prices_from_twelve_data(remaining, api_key=keys.twelve_data_api_key))

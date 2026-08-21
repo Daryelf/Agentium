@@ -15,6 +15,7 @@ const BLOCKED_SIGNAL_HISTORY_PER_SYMBOL = 6;
 const RESEARCH_HISTORY_RETENTION_INTERVAL_MS = 6 * 60 * 60_000;
 const SIGNAL_OUTCOME_LOOKBACK_MS = 6 * 24 * 60 * 60_000;
 const SIGNAL_OUTCOME_BATCH_PER_HORIZON = 500;
+const PORTFOLIO_SNAPSHOT_BUCKET_MS = 60_000;
 const SIGNAL_OUTCOME_HORIZONS = Object.freeze([
   ["5m", 5 * 60_000],
   ["15m", 15 * 60_000],
@@ -28,6 +29,16 @@ const SIGNAL_OUTCOME_HORIZONS = Object.freeze([
 function clamp(value, minimum = 0, maximum = 100) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : null;
+}
+
+function finiteNumber(value, fallback = null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function money(value, fallback = null) {
+  const number = finiteNumber(value, fallback);
+  return number === null ? null : Math.round(number * 100) / 100;
 }
 
 function safeDate(value, fallback = null) {
@@ -692,6 +703,77 @@ function createStockIntelligenceStore(options = {}) {
     }
   }
 
+  function portfolioSnapshotHistory(limit = 500) {
+    const db = open();
+    try {
+      const rows = db.prepare(`SELECT id, observed_at AS observedAt, account_value AS accountValue,
+        cash_value AS cashValue, invested_value AS investedValue, buying_power AS buyingPower,
+        day_pnl AS dayPnl, realized_pnl AS realizedPnl, unrealized_pnl AS unrealizedPnl,
+        goal_value AS goalValue, positions_json AS positionsJson
+        FROM stock_portfolio_snapshots ORDER BY observed_at DESC LIMIT ?`).all(Math.max(1, Math.min(2000, Number(limit) || 500)));
+      return rows.reverse().map((row) => ({
+        ...row,
+        positions: parseJson(row.positionsJson, []),
+        positionsJson: undefined,
+      }));
+    } finally {
+      db.close();
+    }
+  }
+
+  function recordPortfolioSnapshot(input = {}) {
+    const observedAt = safeDate(input.observedAt, nowFn().toISOString());
+    const accountValue = money(input.accountValue);
+    if (accountValue === null || accountValue <= 0) return null;
+    const positions = (Array.isArray(input.positions) ? input.positions : []).map((position) => {
+      const symbol = shortText(position?.symbol, 12).toUpperCase().replace(/[^A-Z0-9.^-]/g, "");
+      const quantity = finiteNumber(position?.quantity ?? position?.sharesAvailableForSells, 0);
+      const currentPrice = money(position?.currentPrice ?? position?.current_price);
+      const averageBuyPrice = money(position?.averageBuyPrice ?? position?.average_buy_price);
+      const marketValue = money(position?.marketValue ?? position?.market_value, currentPrice === null ? null : quantity * currentPrice);
+      if (!symbol || quantity <= 0 || currentPrice === null) return null;
+      return {
+        symbol,
+        quantity,
+        currentPrice,
+        averageBuyPrice,
+        marketValue,
+        unrealizedPnl: money(position?.unrealizedPnl ?? position?.unrealized_pnl, averageBuyPrice === null ? null : quantity * (currentPrice - averageBuyPrice)),
+      };
+    }).filter(Boolean);
+    const investedValue = money(input.investedValue, positions.reduce((sum, position) => sum + (position.marketValue || 0), 0));
+    const snapshot = {
+      id: `stock-portfolio-${fingerprint(timeBucket(observedAt, PORTFOLIO_SNAPSHOT_BUCKET_MS)).slice(0, 32)}`,
+      observedAt,
+      accountValue,
+      cashValue: money(input.cashValue),
+      investedValue,
+      buyingPower: money(input.buyingPower),
+      dayPnl: money(input.dayPnl),
+      realizedPnl: money(input.realizedPnl),
+      unrealizedPnl: money(input.unrealizedPnl),
+      goalValue: money(input.goalValue, 150),
+      positions,
+    };
+    const db = open();
+    try {
+      db.prepare(`INSERT INTO stock_portfolio_snapshots
+        (id, observed_at, account_value, cash_value, invested_value, buying_power, day_pnl, realized_pnl, unrealized_pnl, goal_value, positions_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at, account_value=excluded.account_value,
+          cash_value=excluded.cash_value, invested_value=excluded.invested_value, buying_power=excluded.buying_power,
+          day_pnl=excluded.day_pnl, realized_pnl=excluded.realized_pnl, unrealized_pnl=excluded.unrealized_pnl,
+          goal_value=excluded.goal_value, positions_json=excluded.positions_json`).run(
+        snapshot.id, snapshot.observedAt, snapshot.accountValue, snapshot.cashValue, snapshot.investedValue,
+        snapshot.buyingPower, snapshot.dayPnl, snapshot.realizedPnl, snapshot.unrealizedPnl,
+        snapshot.goalValue, JSON.stringify(snapshot.positions),
+      );
+      return snapshot;
+    } finally {
+      db.close();
+    }
+  }
+
   function performanceReport() {
     const db = open();
     try {
@@ -705,7 +787,7 @@ function createStockIntelligenceStore(options = {}) {
         actor_id AS actorId, status, decided_at AS decidedAt, created_at AS createdAt
         FROM stock_trade_approvals ORDER BY created_at DESC LIMIT 1000`).all();
       return {
-        ...calculatePerformance({ signals: signalJournal(1000), trades, approvals, generatedAt: nowFn().toISOString() }),
+        ...calculatePerformance({ signals: signalJournal(1000), trades, approvals, portfolioSnapshots: portfolioSnapshotHistory(1000), generatedAt: nowFn().toISOString() }),
         strategyGovernance: strategyGovernance(),
       };
     } finally {
@@ -1432,10 +1514,12 @@ function createStockIntelligenceStore(options = {}) {
     listOpportunities,
     mirrorState,
     performanceReport,
+    portfolioSnapshotHistory,
     proposeStrategyChange,
     recentEvents,
     recordApproval,
     recordOrderAudit,
+    recordPortfolioSnapshot,
     recordRiskDecision,
     recordTradeJournal,
     recordSystemEvent,

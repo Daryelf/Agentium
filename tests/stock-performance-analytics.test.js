@@ -54,3 +54,22 @@ test("performance analytics calculates real persisted signal outcomes and attrib
 test("maximum drawdown compounds the measured return sequence", () => {
   assert.equal(maximumDrawdown([0.1, -0.2, 0.05]), -0.2);
 });
+
+test("performance analytics builds the goal curve and allocation only from persisted broker snapshots", () => {
+  const result = calculatePerformance({
+    portfolioSnapshots: [
+      { observedAt: "2026-08-21T14:00:00.000Z", accountValue: 65, cashValue: 50, investedValue: 15, buyingPower: 50, goalValue: 150, positions: [{ symbol: "SPCX", quantity: 1, currentPrice: 15, averageBuyPrice: 16, marketValue: 15, unrealizedPnl: -1 }] },
+      { observedAt: "2026-08-21T15:00:00.000Z", accountValue: 67, cashValue: 45, investedValue: 22, buyingPower: 45, dayPnl: 1, goalValue: 150, positions: [{ symbol: "SPCX", quantity: 1, currentPrice: 22, averageBuyPrice: 16, marketValue: 22, unrealizedPnl: 6 }] },
+    ],
+    trades: [{ symbol: "SPCX", side: "BUY", status: "filled", openedAt: "2026-08-21T14:10:00.000Z" }],
+  });
+
+  assert.equal(result.summary.currentPortfolioValue, 67);
+  assert.equal(result.summary.portfolioChangeDollars, 2);
+  assert.equal(result.summary.capitalGoal, 150);
+  assert.equal(result.summary.goalGapDollars, 83);
+  assert.equal(result.series.portfolioEquityCurve.length, 2);
+  assert.deepEqual(result.series.allocation.map((item) => item.symbol), ["CASH", "SPCX"]);
+  assert.equal(result.series.holdings[0].returnPct, 0.375);
+  assert.equal(result.series.activityMarkers[0].symbol, "SPCX");
+});

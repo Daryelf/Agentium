@@ -10,6 +10,9 @@ from stock_guru.market_data_quality import (
     DataHealthState,
     assess_market_data,
     compare_provider_closes,
+    ProviderAttempt,
+    read_provider_health,
+    record_provider_attempt,
 )
 
 
@@ -134,3 +137,35 @@ def test_repeated_context_symbol_issue_is_charged_once_at_batch_level() -> None:
     assert report.score == 95
     assert report.analysis_status == AnalysisDataStatus.DATA_PARTIAL
     assert report.is_usable is True
+
+
+def test_successful_provider_attempt_marks_the_feed_that_is_actually_serving_data(tmp_path) -> None:
+    path = tmp_path / "provider_health.json"
+    record_provider_attempt(path, ProviderAttempt(
+        provider="MASSIVE",
+        status="success",
+        started_at="2026-08-21T14:00:00+00:00",
+        completed_at="2026-08-21T14:00:01+00:00",
+        latency_ms=1000,
+        data_type="LATEST_PRICE_SNAPSHOT",
+        interval="snapshot",
+        requested_symbols=("AAPL", "MSFT"),
+        returned_symbols=("AAPL", "MSFT"),
+    ))
+    record_provider_attempt(path, ProviderAttempt(
+        provider="FMP",
+        status="budget_exhausted",
+        started_at="2026-08-21T14:00:02+00:00",
+        completed_at="2026-08-21T14:00:02+00:00",
+        latency_ms=0,
+        data_type="OHLCV_HISTORY",
+        interval="1d",
+        requested_symbols=("AAPL",),
+        error="budget exhausted",
+    ))
+
+    health = read_provider_health(path)
+    assert health["version"] == 2
+    assert health["serving_provider"] == "MASSIVE"
+    assert health["providers"]["MASSIVE"]["status"] == "HEALTHY"
+    assert health["providers"]["FMP"]["status"] == "DEGRADED"

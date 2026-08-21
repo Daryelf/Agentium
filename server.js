@@ -8706,6 +8706,16 @@ async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpC
   state.stockOffice = normalizeStockOfficeState({ ...current, tradeDrafts: reconciled.drafts });
   for (const change of changes) {
     const { before, after } = change;
+    const reconciliationReason = change.reason === "ambiguous_placement_reconciled"
+      ? "A previously ambiguous placement was uniquely matched in official Robinhood order history without retrying it."
+      : "Official Robinhood order history changed state.";
+    const approval = (state.approvals || []).find((item) => item.id === after.approvalId);
+    if (approval && change.reason === "ambiguous_placement_reconciled") {
+      approval.executionOutcome = "broker_order_reconciled";
+      approval.executionBrokerOrderId = after.brokerOrderId;
+      approval.executionError = "";
+      approval.reconciledAt = after.reconciliationObservedAt || after.updatedAt;
+    }
     const eventType = after.status === "filled" ? "order.filled" : after.status === "cancelled" ? "order.cancelled" : after.status === "rejected" ? "order.rejected" : "order.updated";
     stockIntelligenceStore.recordOrderAudit({
       correlationId: `broker-order:${after.brokerOrderId}`,
@@ -8718,7 +8728,7 @@ async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpC
       action: "broker_state_reconciled",
       oldState: before.brokerState || before.status,
       newState: after.brokerState,
-      reason: "Official Robinhood order history changed state.",
+      reason: reconciliationReason,
       brokerResponse: change.order,
     });
     const signal = stockIntelligenceStore.latestSignalForSymbol(after.symbol);
@@ -8731,7 +8741,7 @@ async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpC
       symbol: after.symbol,
       side: after.side,
       status: after.status,
-      quantity: after.estimatedQuantity,
+      quantity: Number.isFinite(Number(change.order?.quantity)) ? Number(change.order.quantity) : after.estimatedQuantity,
       entryPrice: after.side === "BUY" ? after.referencePrice : null,
       exitPrice: after.side === "SELL" ? after.referencePrice : null,
       humanIntervention: "Previously approved exact Human Gate order",
@@ -8749,10 +8759,12 @@ async function reconcileStockBrokerOrderLifecycle(brokerSnapshot = robinhoodMcpC
       oldState: before.brokerState || before.status,
       newState: after.brokerState,
       status: after.status,
-      reason: "Official Robinhood order history changed state.",
+      reason: reconciliationReason,
       draft: after,
     }, { correlationId: `broker-order:${after.brokerOrderId}` });
-    audit(state, "Stock Office broker lifecycle reconciled", `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} changed from ${before.brokerState || before.status} to ${after.brokerState}.`);
+    audit(state, "Stock Office broker lifecycle reconciled", change.reason === "ambiguous_placement_reconciled"
+      ? `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} was uniquely matched in official Robinhood history; no placement retry occurred.`
+      : `${after.side} ${after.symbol} order ••••${String(after.brokerOrderId).slice(-4)} changed from ${before.brokerState || before.status} to ${after.brokerState}.`);
   }
   writeState(state);
   return { changed: changes.length, states: changes.map((item) => ({ orderId: item.after.brokerOrderId, state: item.after.brokerState })) };
@@ -14876,7 +14888,11 @@ async function handleApi(req, res, url) {
         const latest = readState();
         const latestApproval = (latest.approvals || []).find((item) => item.id === approval.id);
         if (latestApproval) {
-          latestApproval.executionOutcome = execution.liveOrderPlaced ? "broker_order_reconciled" : "broker_execution_stopped";
+          latestApproval.executionOutcome = execution.liveOrderPlaced
+            ? "broker_order_reconciled"
+            : execution.reconciliationRequired
+              ? "placement_outcome_unverified"
+              : "broker_execution_stopped";
           latestApproval.executionDraftId = execution.draft?.id || null;
           latestApproval.executionBrokerOrderId = execution.draft?.brokerOrderId || null;
           writeState(latest);

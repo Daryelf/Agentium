@@ -55,11 +55,12 @@ function parsedRewardRisk(value) {
 }
 
 function completeBuyExitPlan(record = {}, referencePrice = 0) {
+  const source = record && typeof record === "object" ? record : {};
   const entry = finiteNumber(referencePrice, 0);
-  const stop = finiteNumber(record.stopLoss, 0);
-  const target = finiteNumber(record.target1, 0);
-  const entryZone = String(record.entryZone || "").trim();
-  const invalidationRule = String(record.invalidationRule || "").trim();
+  const stop = finiteNumber(source.stopLoss, 0);
+  const target = finiteNumber(source.target1, 0);
+  const entryZone = String(source.entryZone || "").trim();
+  const invalidationRule = String(source.invalidationRule || "").trim();
   const missing = [];
   if (entry <= 0) missing.push("fresh entry reference");
   if (!entryZone) missing.push("entry zone");

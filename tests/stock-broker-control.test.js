@@ -262,6 +262,19 @@ test("a BUY cannot reach Human Gate without a complete pre-purchase exit plan", 
   assert.match(draft.blockers.join(" "), /complete pre-purchase sell plan/i);
 });
 
+test("a missing research record fails closed without crashing final revalidation", () => {
+  const missingRecord = snapshot({ records: [] });
+  const draft = buildTradeDraft(
+    { symbol: "NET", side: "BUY", requestedDollars: 10 },
+    missingRecord,
+    { now: "2026-08-10T17:00:00.000Z" },
+  );
+
+  assert.equal(draft.status, "blocked");
+  assert.equal(draft.checks.find((check) => check.name === "complete_exit_plan").passed, false);
+  assert.match(draft.blockers.join(" "), /plan evidence is unavailable|complete pre-purchase sell plan/i);
+});
+
 test("a near-threshold BUY can request advisory risk review only after every other gate and exit-plan check passes", () => {
   const current = snapshot({ records: [{ ...snapshot().records[0], score: 80 }] });
   const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });

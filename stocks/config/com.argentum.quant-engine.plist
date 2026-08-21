@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.argentum.quant-engine</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime/.launch-venv/bin/python</string>
+    <string>-m</string>
+    <string>stock_guru.quant.operations</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/ceo/Library/Logs/Argentum/quant-engine.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ceo/Library/Logs/Argentum/quant-engine.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STOCK_GURU_OPERATING_MODE</key>
+    <string>OBSERVE</string>
+    <key>STOCK_GURU_RUNTIME_DIR</key>
+    <string>/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime</string>
+  </dict>
+</dict>
+</plist>

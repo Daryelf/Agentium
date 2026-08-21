@@ -8,6 +8,7 @@ const {
   createStockTelegramNotifier,
   formatVerifiedTradeMessage,
   formatQualifiedProposalMessage,
+  formatResearchRecommendationMessage,
   secretHash,
 } = require("../services/stock-telegram-notifier");
 
@@ -159,6 +160,28 @@ test("qualified proposal alert requires a pending exact Human Gate request and i
   const payload = JSON.parse(requests[0].options.body);
   assert.equal(payload.reply_markup.inline_keyboard[0][0].callback_data, `hg:a:${gate.id}`);
   assert.equal(payload.reply_markup.inline_keyboard[1][0].callback_data, `wt:${proposal.fingerprint.slice(0, 48)}`);
+});
+
+test("research recommendations stay out of Telegram approval alerts", async () => {
+  const { notifier, requests } = fixture();
+  notifier.configure({ botToken: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", chatId: "-1001234567890" });
+  const approval = approvalFor(notifier.approvalScope());
+  notifier.enable(approval, [approval]);
+  const proposal = {
+    id: "portfolio-proposal-net",
+    fingerprint: "c".repeat(64),
+    symbol: "NET",
+    side: "BUY",
+    researchOnly: true,
+    opportunityStatus: "candidate",
+    research: { score: 78, confidenceScore: 66, mainReason: "Trend and volume are aligned." },
+    outlook: { targetPrice: 110, stopPrice: 95 },
+  };
+  const sent = await notifier.notifyResearchRecommendations([proposal], { phase: "evaluator_complete" }, [approval]);
+  assert.equal(sent.sent, false);
+  assert.equal(sent.state, "suppressed_research_only");
+  assert.equal(requests.length, 0);
+  assert.match(formatResearchRecommendationMessage([proposal]), /NET/);
 });
 
 test("a failed Human Gate alert retries after a cooldown and still delivers only once", async () => {

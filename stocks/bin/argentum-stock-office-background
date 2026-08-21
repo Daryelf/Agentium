@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ARGENTUM_APP_EXECUTABLE="${ARGENTUM_APP_EXECUTABLE:-/Applications/Argentum OS.app/Contents/MacOS/Argentum OS}"
+ARGENTUM_SERVER_ENTRY="${ARGENTUM_SERVER_ENTRY:-/Applications/Argentum OS.app/Contents/Resources/app.asar/server.js}"
+ARGENTUM_LOCAL_DATA_DIR="${ARGENTUM_LOCAL_DATA_DIR:-/Users/ceo/Library/Application Support/Argentum OS}"
+ARGENTUM_STOCK_RUNTIME_DIR="${STOCK_GURU_RUNTIME_DIR:-/Users/ceo/Library/Application Support/Argentum OS/stock-guru-runtime}"
+ARGENTUM_DESKTOP_PROCESS_PATTERN="^/Applications/Argentum OS\.app/Contents/MacOS/Argentum OS$"
+
+background_pid=""
+
+log() {
+  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+}
+
+desktop_app_running() {
+  /usr/bin/pgrep -f -x "$ARGENTUM_DESKTOP_PROCESS_PATTERN" >/dev/null 2>&1
+}
+
+background_running() {
+  [[ -n "$background_pid" ]] && kill -0 "$background_pid" >/dev/null 2>&1
+}
+
+stop_background() {
+  if ! background_running; then
+    background_pid=""
+    return
+  fi
+  log "Stopping the headless Stock Office backend because the desktop app owns the runtime."
+  kill -TERM "$background_pid" >/dev/null 2>&1 || true
+  for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if ! kill -0 "$background_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if kill -0 "$background_pid" >/dev/null 2>&1; then
+    log "Headless Stock Office backend did not stop within five seconds; terminating the exact child process."
+    kill -KILL "$background_pid" >/dev/null 2>&1 || true
+  fi
+  wait "$background_pid" >/dev/null 2>&1 || true
+  background_pid=""
+}
+
+start_background() {
+  if [[ ! -x "$ARGENTUM_APP_EXECUTABLE" || ! -f "$ARGENTUM_SERVER_ENTRY" ]]; then
+    log "Argentum OS application runtime is unavailable; waiting for installation."
+    return
+  fi
+  log "Starting the headless Stock Office backend on 127.0.0.1:5173."
+  env \
+    ELECTRON_RUN_AS_NODE=1 \
+    APP_MODE=local \
+    HOST=127.0.0.1 \
+    PORT=5173 \
+    ARGENTUM_LOCAL_PORT=5173 \
+    LOCAL_BACKEND_PORT=5173 \
+    ARGENTUM_LOCAL_OFFICE_BYPASS=1 \
+    ARGENTUM_BACKGROUND_AGENT=1 \
+    ARGENTUM_LOCAL_DATA_DIR="$ARGENTUM_LOCAL_DATA_DIR" \
+    STOCK_GURU_RUNTIME_DIR="$ARGENTUM_STOCK_RUNTIME_DIR" \
+    ARGENTUM_CODEX_CONFIG_PATH="/Users/ceo/.codex/config.toml" \
+    "$ARGENTUM_APP_EXECUTABLE" "$ARGENTUM_SERVER_ENTRY" &
+  background_pid="$!"
+}
+
+shutdown() {
+  stop_background
+  exit 0
+}
+
+trap shutdown TERM INT
+
+log "Stock Office background supervisor started."
+while true; do
+  if desktop_app_running; then
+    stop_background
+  elif ! background_running; then
+    if [[ -n "$background_pid" ]]; then
+      wait "$background_pid" >/dev/null 2>&1 || true
+      log "Headless Stock Office backend exited safely; scheduling a guarded restart."
+      background_pid=""
+    fi
+    start_background
+  fi
+  sleep 1
+done

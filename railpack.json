@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "22",
+    "python": "3.11"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "...",
+        "python -m venv stocks/.venv",
+        "stocks/.venv/bin/python -m pip install --upgrade pip",
+        "stocks/.venv/bin/python -m pip install ./stocks"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "npm start"
+  }
+}

@@ -20,8 +20,9 @@ const {
 } = require("./services/stock-office");
 const { createStockGuruRefreshManager } = require("./services/stock-guru-refresh");
 const { createStockIntelligenceScheduler } = require("./services/stock-intelligence-scheduler");
-const { createStockIntelligenceStore } = require("./services/stock-intelligence-store");
+const { createStockIntelligenceStore, easternDay } = require("./services/stock-intelligence-store");
 const { createStockEventBus } = require("./services/stock-event-bus");
+const { createStockTraderResearchAgent } = require("./services/stock-trader-research-agent");
 const { reconcileOrderDrafts } = require("./services/stock-order-lifecycle");
 const { evaluateTradingHalt } = require("./services/stock-trading-halt");
 const { buildStockMarketWorkers, marketSession } = require("./services/stock-market-workers");
@@ -74,6 +75,7 @@ const DATA_DIR = localRuntime.resolveDataDir(ROOT, process.env);
 const STOCK_SHADOW_FILE = path.join(DATA_DIR, "stock-shadow-portfolio.json");
 const STOCK_SIMULATION_FILE = path.join(DATA_DIR, "stock-simulation-lab.json");
 const STOCK_INTELLIGENCE_STATUS_FILE = path.join(DATA_DIR, "stock-intelligence-scheduler.json");
+const STOCK_TRADER_RESEARCH_STATE_FILE = path.join(DATA_DIR, "stock-trader-research-agents.json");
 const STOCK_GURU_RUNTIME_ROOT = path.resolve(process.env.STOCK_GURU_RUNTIME_DIR || path.join(DATA_DIR, "stock-guru-runtime"));
 const STOCK_LOGO_CACHE_DIR = path.join(DATA_DIR, "company-logos");
 const STOCK_LOGO_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -136,13 +138,28 @@ const LEGACY_DEFAULT_USERNAME = "admin";
 const LEGACY_DEFAULT_PASSWORD = "password";
 const loginAttempts = new Map();
 const stockOfficeRateBuckets = new Map();
-const stockGuruRefreshManager = createStockGuruRefreshManager({ runtimeRoot: STOCK_GURU_RUNTIME_ROOT });
+const stockGuruRefreshManager = createStockGuruRefreshManager({
+  runtimeRoot: STOCK_GURU_RUNTIME_ROOT,
+  // Evaluator output is useful before the slower news and filing stages
+  // finish. Publish a research-only checkpoint for the Research view; only
+  // fully qualified proposals can enter the approval and Telegram path.
+  onCommandCompleted: ({ command, runId }) => command?.name === "evaluate"
+    ? publishStockResearchCheckpoint({ runId, phase: "evaluator_complete" })
+    : null,
+});
 const stockIntelligenceStore = createStockIntelligenceStore({ dataDir: DATA_DIR });
 const stockEventBus = createStockEventBus({
   persist: (event) => {
     stockIntelligenceStore.recordSystemEvent(event);
     invalidateStockIntelligenceStateCache();
   },
+});
+const stockTraderResearchAgent = createStockTraderResearchAgent({
+  dataDir: DATA_DIR,
+  stockRoot: resolveStockRoot(ROOT),
+  runtimeRoot: STOCK_GURU_RUNTIME_ROOT,
+  stateFile: STOCK_TRADER_RESEARCH_STATE_FILE,
+  onChange: () => invalidateStockIntelligenceStateCache(),
 });
 const stockIntelligenceScheduler = createStockIntelligenceScheduler({
   refreshManager: stockGuruRefreshManager,
@@ -154,6 +171,7 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
     if (["success", "partial"].includes(result.status)) {
       try {
         const intelligenceSnapshot = stockOfficeSnapshot(readState());
+        stockTraderResearchAgent.enqueueFromSnapshot(intelligenceSnapshot);
         const persisted = stockIntelligenceStore.ingestSnapshot(intelligenceSnapshot, {
           status: result.status,
           startedAt: schedulerStatus.lastStartedAt,
@@ -7972,6 +7990,44 @@ function stockOrderNotificationProposal(draft = {}, preferredProposal = null) {
   };
 }
 
+async function publishStockResearchCheckpoint({ runId = "", phase = "evaluator_complete" } = {}) {
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state);
+  const plan = buildCopyPortfolioPlan(snapshot);
+  const recommendations = (plan.proposals || [])
+    .filter((proposal) => proposal.researchOnly === true || (proposal.kind === "native_entry" && proposal.side === "BUY"))
+    .map((proposal) => proposal.researchOnly === true ? proposal : {
+      ...proposal,
+      researchOnly: true,
+      recommendation: true,
+      research: {
+        ...(proposal.research || {}),
+        recommendation: proposal.research?.recommendation || "preliminary research review",
+      },
+    })
+    .sort((a, b) => Number(b.research?.score || b.rankingScore || 0) - Number(a.research?.score || a.rankingScore || 0))
+    .slice(0, 6);
+  const checkpointId = `research.recommendations_ready:${runId || crypto.createHash("sha256").update(JSON.stringify(recommendations.map((item) => item.fingerprint))).digest("hex").slice(0, 24)}`;
+  stockEventBus.publish("research.recommendations_ready", {
+    runId,
+    phase,
+    recommendationCount: recommendations.length,
+    symbols: recommendations.map((proposal) => proposal.symbol),
+    researchOnly: true,
+    message: recommendations.length
+      ? `${recommendations.length} research recommendation${recommendations.length === 1 ? "" : "s"} is available before the full evidence cycle completes.`
+      : "The evaluator checkpoint completed; no recommendation currently passed the research floor.",
+  }, { id: checkpointId });
+  return {
+    recommendations: recommendations.length,
+    delivery: {
+      sent: false,
+      state: "suppressed_research_only",
+      reason: "Research-only recommendations stay in Stock Office Research; Telegram is reserved for qualified Human Gate trade alerts.",
+    },
+  };
+}
+
 async function notifyStockOrderHumanGate(draft, approval, preferredProposal = null, approvals = null) {
   const currentApprovals = Array.isArray(approvals) ? approvals : (readState().approvals || []);
   return stockTelegramNotifier.notifyQualifiedProposal(
@@ -10592,6 +10648,7 @@ function stockIntelligenceState() {
   return {
     opportunities: stockIntelligenceStore.listOpportunities(),
     performance: stockIntelligenceStore.performanceReport(),
+    daily: stockDailyIntelligenceSummary(),
     reports: {
       overnight: stockIntelligenceStore.latestReport("overnight"),
       morning: stockIntelligenceStore.latestReport("morning"),
@@ -10623,6 +10680,66 @@ function stockDecisionIntelligenceState() {
     opportunities: stockIntelligenceStore.listOpportunities(),
     mirror: stockIntelligenceStore.mirrorState(),
   };
+}
+
+function stockAlgorithmTestSummary(simulationLab = {}) {
+  const recentCycles = Array.isArray(simulationLab.recentCycles) ? simulationLab.recentCycles : [];
+  const day = easternDay(new Date());
+  return {
+    status: simulationLab.mode === "autonomous_local_stress_test" ? String(simulationLab.status || "waiting") : "waiting",
+    cyclesToday: recentCycles.filter((cycle) => cycle.completedAt && easternDay(new Date(cycle.completedAt)) === day).length,
+    totalCycles: Number(simulationLab.cycleCount || 0),
+    lastCycleAt: simulationLab.lastCycleAt || null,
+    candidatesTested: Number(simulationLab.candidatesTested || 0),
+    strategyConfigurations: Number(simulationLab.strategyConfigurations || 0),
+    scenarioPaths: Number(simulationLab.scenarioPaths || 0),
+    strategyConfigurationsPerSecond: Number(simulationLab.strategyConfigurationsPerSecond || 0),
+    scenarioPathsPerSecond: Number(simulationLab.scenarioPathsPerSecond || 0),
+    durationMs: Number(simulationLab.durationMs || 0),
+  };
+}
+
+function stockDailyIntelligenceSummary() {
+  return {
+    ...stockIntelligenceStore.dailySummary(),
+    algorithmTests: stockAlgorithmTestSummary(readStockSimulationLab() || {}),
+  };
+}
+
+function stockBackgroundWorkerStatus(scheduler = {}) {
+  const active = scheduler.enabled === true && Boolean(scheduler.running || scheduler.handoffPending || scheduler.nextRunAt || scheduler.lastCompletedAt);
+  return {
+    status: active ? "running" : scheduler.enabled === false ? "blocked" : "starting",
+    independentOfView: true,
+    detail: active
+      ? "Server worker is scheduled while Argentum is open; Stock Office view is not required."
+      : "Waiting for the server worker to start.",
+    lastCompletedAt: scheduler.lastCompletedAt || null,
+    nextRunAt: scheduler.nextRunAt || null,
+  };
+}
+
+function stockAgentStatus(state = {}) {
+  const rawStatus = String(state.agent101?.status || state.agent?.status || "active").toLowerCase();
+  const attention = /offline|error|failed|blocked|unavailable/.test(rawStatus);
+  return {
+    status: attention ? "attention" : "connected",
+    detail: attention ? "Agent 101 needs attention." : "Agent 101 is available in supervised mode.",
+  };
+}
+
+function stockOfficeSystemHealth({ snapshot, brokerControl, notificationStatus, scheduler, state }) {
+  const health = stockIntelligenceStore.health({
+    executionMode: snapshot.executionMode,
+    executionBlocked: !brokerControl.liveReady,
+    sourceHealth: snapshot.sourceHealth,
+    providerHealth: snapshot.providerHealth,
+    broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
+    telegram: notificationStatus,
+  });
+  health.agent = stockAgentStatus(state);
+  health.backgroundWorker = stockBackgroundWorkerStatus(scheduler);
+  return health;
 }
 
 function stockOfficeBrokerSnapshot(state, permissions) {
@@ -13180,20 +13297,15 @@ async function handleApi(req, res, url) {
     try {
       enforceStockOfficeRateLimit(req, "overview", 80, 60_000);
       const access = requireStockOfficeAccess(req, "view");
-      const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions, { cachedIntelligence: true });
       const brokerControl = brokerControlOverview(snapshot);
-      const notificationStatus = stockTelegramNotifier.publicStatus(readState().approvals || []);
+      const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
       sendJson(res, 200, {
         ...stockOverview(snapshot),
         intelligence: snapshot.intelligence,
-        systemHealth: stockIntelligenceStore.health({
-          executionMode: snapshot.executionMode,
-          executionBlocked: !brokerControl.liveReady,
-          sourceHealth: snapshot.sourceHealth,
-          providerHealth: snapshot.providerHealth,
-          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
-          telegram: notificationStatus,
-        }),
+        systemHealth: stockOfficeSystemHealth({ snapshot, brokerControl, notificationStatus, scheduler: intelligenceScheduler, state }),
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -13230,17 +13342,11 @@ async function handleApi(req, res, url) {
       const snapshot = stockOfficeSnapshot(state, undefined, { cachedIntelligence: true });
       const brokerControl = brokerControlOverview(snapshot);
       const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
+      const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
       sendJson(res, 200, {
         ...snapshot.intelligence,
         events: stockIntelligenceStore.recentEvents(80),
-        systemHealth: stockIntelligenceStore.health({
-          executionMode: snapshot.executionMode,
-          executionBlocked: !brokerControl.liveReady,
-          sourceHealth: snapshot.sourceHealth,
-          providerHealth: snapshot.providerHealth,
-          broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
-          telegram: notificationStatus,
-        }),
+        systemHealth: stockOfficeSystemHealth({ snapshot, brokerControl, notificationStatus, scheduler: intelligenceScheduler, state }),
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -13350,7 +13456,32 @@ async function handleApi(req, res, url) {
       enforceStockOfficeRateLimit(req, "mirror", 60, 60_000);
       const access = requireStockOfficeAccess(req, "view");
       const snapshot = stockOfficeSnapshot(readState(), access.permissions, { cachedIntelligence: true });
-      sendJson(res, 200, { mirror: snapshot.mirror, mirrorIntelligence: snapshot.intelligence.mirror, safety: snapshot.workspace.safetyRule });
+      sendJson(res, 200, {
+        mirror: snapshot.mirror,
+        mirrorIntelligence: snapshot.intelligence.mirror,
+        traderResearch: stockTraderResearchAgent.getState(),
+        safety: snapshot.workspace.safetyRule,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const traderResearchRetryMatch = url.pathname.match(/^\/api\/stock-office\/trader-research\/([^/]+)\/retry$/);
+  if (req.method === "POST" && traderResearchRetryMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "trader-research-retry", 12, 300_000);
+      requireStockOfficeAccess(req, "sync");
+      const job = stockTraderResearchAgent.retry(decodeURIComponent(traderResearchRetryMatch[1]));
+      if (!job) throw guardedError("Trader research job not found.", 404);
+      sendJson(res, 200, {
+        job,
+        traderResearch: stockTraderResearchAgent.getState(),
+        brokerCalled: false,
+        liveOrderPlaced: false,
+      });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
       sendJson(res, response.status, response.payload);
@@ -13452,14 +13583,7 @@ async function handleApi(req, res, url) {
           }) || null
         : null;
       const notificationStatus = stockTelegramNotifier.publicStatus(state.approvals || []);
-      const systemHealth = stockIntelligenceStore.health({
-        executionMode: snapshot.executionMode,
-        executionBlocked: !brokerControl.liveReady,
-        sourceHealth: snapshot.sourceHealth,
-        providerHealth: snapshot.providerHealth,
-        broker: { authenticationVerified: brokerControl.authenticationVerified, updatedAt: brokerControl.snapshotUpdatedAt },
-        telegram: notificationStatus,
-      });
+      const systemHealth = stockOfficeSystemHealth({ snapshot, brokerControl, notificationStatus, scheduler: intelligenceScheduler, state });
       sendJson(res, 200, {
         brokerControl,
         portfolioPlan,
@@ -13617,8 +13741,8 @@ async function handleApi(req, res, url) {
         officeId: "stock-office",
         workflowId: "workflow-stock-watch",
         evidence: `${scope.destination} is configured in local secure storage. No credential value is available to the browser.`,
-        action: "Allow Stock Office to send actionable approval cards, broker outcomes, source/broker failures, persisted night and morning reports, health replies, and operator-requested command responses to the one authorized Telegram destination.",
-        exactScope: "Telegram only, one configured private destination or an environment-allowlisted group user. Human Gate approvals reference immutable internal approval IDs and use the same one-use broker path as web approvals. No raw Telegram text can create an order. Ordinary rejected research candidates, unverified fills, and secret values are excluded.",
+        action: "Allow Stock Office to send research-only recommendation summaries, actionable approval cards, broker outcomes, source/broker failures, persisted night and morning reports, health replies, and operator-requested command responses to the one authorized Telegram destination.",
+        exactScope: "Telegram only, one configured private destination or an environment-allowlisted group user. Research recommendation alerts are read-only summaries with WATCH and RESEARCH controls; they never create an order or Human Gate approval. Human Gate approvals reference immutable internal approval IDs and use the same one-use broker path as web approvals. No raw Telegram text can create an order. Ordinary rejected research candidates, unverified fills, and secret values are excluded.",
         details: {
           officeId: "stock-office",
           channel: scope.channel,
@@ -13626,6 +13750,7 @@ async function handleApi(req, res, url) {
           eventTypes: STOCK_TELEGRAM_EVENT_TYPES,
           automaticBrokerNotifications: true,
           qualifiedProposalAlertsAuthorized: true,
+          researchRecommendationAlertsAuthorized: true,
           remoteCommandsAuthorized: true,
           reportsAuthorized: true,
           brokerAndSourceFailureAlertsAuthorized: true,
@@ -13636,7 +13761,7 @@ async function handleApi(req, res, url) {
         },
         reversible: true,
         expiresAt: new Date(Date.now() + 365 * DAY_MS).toISOString(),
-        expectedPostcondition: "The exact Telegram destination may receive only qualified Human Gate proposal alerts, verified broker order alerts, and requested connection tests.",
+        expectedPostcondition: "The exact Telegram destination may receive research-only recommendation summaries, qualified Human Gate proposal alerts, verified broker order alerts, and requested connection tests.",
         rollbackPlan: "Disable Telegram in Stock Office or remove its secure configuration immediately.",
       });
       sendJson(res, 200, { ...approvalResult, notificationStatus: stockTelegramNotifier.publicStatus(readState().approvals || []), liveOrderPlaced: false, messageSent: false });
@@ -13658,7 +13783,7 @@ async function handleApi(req, res, url) {
       const result = stockTelegramNotifier.enable(approval, state.approvals || []);
       approval.activatedAt = now();
       approval.activatedBy = "stock-office";
-      audit(state, "Stock Office Telegram enabled", "The approved server-side Telegram channel can now send qualified Human Gate proposal alerts, broker-confirmed trade alerts, and operator-requested tests.");
+      audit(state, "Stock Office Telegram enabled", "The approved server-side Telegram channel can now send research recommendation alerts, qualified Human Gate proposal alerts, broker-confirmed trade alerts, and operator-requested tests.");
       writeState(state);
       sendJson(res, 200, { notificationStatus: result.status, liveOrderPlaced: false, messageSent: false });
     } catch (error) {
@@ -14321,6 +14446,7 @@ async function handleApi(req, res, url) {
           symbolsScanned: persisted.opportunities.length,
           reportTypes: Object.keys(persisted.reports || {}),
         }, { correlationId: persisted.correlationId });
+        stockTraderResearchAgent.enqueueFromSnapshot(updatedSnapshot);
         updatedSnapshot = stockOfficeSnapshot(readState(), access.permissions);
       }
       sendJson(res, 200, { refresh, syncRun, overview: stockOverview(updatedSnapshot), records: listStockRecords(updatedSnapshot, { pageSize: 30 }) });
@@ -14720,6 +14846,7 @@ async function prewarmLocalOffices() {
   startStockReadinessScheduler();
   startStockTelegramPolling();
   stockIntelligenceScheduler.start();
+  stockTraderResearchAgent.start();
   if (APP_MODE !== "local") return [];
   // Clipping Office recovery resumes live media workers. Load it when its route is opened
   // instead of competing with the first visible desktop page at application startup.
@@ -14734,6 +14861,7 @@ async function prewarmLocalOffices() {
 
 async function shutdownLocalOffices() {
   await stockIntelligenceScheduler.stop();
+  await stockTraderResearchAgent.stop();
   if (stockShadowTimer) clearInterval(stockShadowTimer);
   if (stockSimulationTimer) clearInterval(stockSimulationTimer);
   if (stockReadinessTimer) clearInterval(stockReadinessTimer);
@@ -15123,6 +15251,7 @@ module.exports = {
   localRuntimeStatusPayload,
   prewarmLocalOffices,
   stockIntelligenceScheduler,
+  stockTraderResearchAgent,
   startStockShadowScheduler,
   startStockSimulationScheduler,
   startStockReadinessScheduler,

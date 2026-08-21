@@ -12,6 +12,7 @@ const BROKER_SNAPSHOT_FRESH_MINUTES = 5;
 const ORDER_DRAFT_TTL_MINUTES = 15;
 const DISPATCH_CLAIM_TTL_MINUTES = 2;
 const MAX_ORDER_DRAFTS = 80;
+const MAX_PORTFOLIO_PROPOSALS = 18;
 const FINAL_NON_TRADE_STATES = new Set(["cancelled", "canceled", "rejected", "failed", "expired"]);
 const FINAL_ORDER_STATES = new Set([...FINAL_NON_TRADE_STATES, "filled", "complete", "completed"]);
 const REQUIRED_EQUITY_TOOLS = [
@@ -35,6 +36,12 @@ function safeDate(value) {
 function finiteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function moneyNumber(value) {
@@ -614,9 +621,9 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   const positionBySymbol = Object.fromEntries((control.positions || []).map((position) => [normalizeSymbol(position.symbol), position]));
   const opportunityBySymbol = Object.fromEntries((snapshot.intelligence?.opportunities || []).map((opportunity) => [normalizeSymbol(opportunity.symbol), opportunity]));
   const mirrorSourcePolicy = Object.fromEntries((snapshot.intelligence?.mirror?.sources || []).map((source) => [String(source.id || ""), source]));
-  const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, reasons = [] }) => {
+  const pushProposal = ({ kind, symbol, side, requestedDollars, candidate = null, opportunity: suppliedOpportunity = null, reasons = [], researchOnly = false }) => {
     const key = `${side}:${symbol}`;
-    if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= 12) return;
+    if (!symbol || requestedDollars <= 0 || seen.has(key) || proposals.length >= MAX_PORTFOLIO_PROPOSALS) return;
     seen.add(key);
     const record = recordBySymbol[symbol] || null;
     const orderDollars = side === "BUY"
@@ -629,7 +636,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       requestedDollars: orderDollars,
       candidateId: candidate?.id,
     }, snapshot, { now: at });
-    const opportunity = opportunityBySymbol[symbol] || null;
+    const opportunity = suppliedOpportunity || opportunityBySymbol[symbol] || null;
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
       kind,
@@ -639,8 +646,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       sourceId: candidate?.fingerprint || draft.sourceId,
       draftFingerprint: draft.fingerprint,
     };
-    const targetPrice = finiteNumber(record?.target1, null);
-    const stopPrice = finiteNumber(record?.stopLoss, null);
+    const targetPrice = nullableNumber(record?.target1);
+    const stopPrice = nullableNumber(record?.stopLoss);
     const targetReturnPct = side === "BUY" && targetPrice !== null && draft.referencePrice > 0
       ? (targetPrice - draft.referencePrice) / draft.referencePrice
       : null;
@@ -664,24 +671,37 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       traderName: candidate?.traderName || "",
       rankingScore: finiteNumber(candidate?.rankingScore, finiteNumber((snapshot.records || []).find((item) => item.ticker === symbol)?.score, 0) / 100),
       scores: opportunity ? {
-        ai: finiteNumber(opportunity.aiScore, null),
-        technical: finiteNumber(opportunity.technicalScore, null),
-        mirror: finiteNumber(opportunity.mirrorScore, null),
-        catalyst: finiteNumber(opportunity.catalystScore, null),
-        risk: finiteNumber(opportunity.riskScore, null),
+        ai: nullableNumber(opportunity.aiScore),
+        technical: nullableNumber(opportunity.technicalScore),
+        mirror: nullableNumber(opportunity.mirrorScore),
+        catalyst: nullableNumber(opportunity.catalystScore),
+        risk: nullableNumber(opportunity.riskScore),
+        market: nullableNumber(opportunity.marketContext?.score),
+        relativeStrength: nullableNumber(opportunity.regimeContext?.relativeStrength?.score),
+        fundamentals: nullableNumber(opportunity.scoreFormula?.components?.find?.((item) => item.name === "fundamentals")?.score),
+        dataQuality: nullableNumber(opportunity.dataQualityScore),
+        confidence: nullableNumber(opportunity.confidenceScore),
         formula: opportunity.scoreFormula || null,
       } : null,
       opportunityId: opportunity?.id || "",
       opportunityStatus: opportunity?.status || "",
       opportunityTrend: opportunity?.change?.trend || "",
       evidence: Array.isArray(opportunity?.evidence) ? opportunity.evidence : [],
-      draftEligible: draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
+      draftEligible: !researchOnly && draft.status === "ready_for_broker_review" && draft.blockers.length === 0,
+      actionable: !researchOnly,
+      researchOnly,
+      recommendation: researchOnly,
       blockers: draft.blockers,
       reasons: [...new Set(reasons)].slice(0, 6),
       research: {
         setupType: String(record?.setupType || (candidate ? "Attributable public signal" : "Evaluator review")).slice(0, 100),
-        score: finiteNumber(record?.score, null),
+        score: nullableNumber(record?.score),
         confidence: String(record?.confidence || (candidate?.rankingScore ? "evidence weighted" : "unknown")).slice(0, 60),
+        confidenceScore: nullableNumber(opportunity?.confidenceScore),
+        evidenceCompleteness: nullableNumber(opportunity?.evidenceCompleteness),
+        dataQualityScore: nullableNumber(opportunity?.dataQualityScore ?? record?.dataQualityScore),
+        recommendation: researchOnly ? String(opportunity?.status || record?.status || "monitoring").replaceAll("_", " ") : "qualified trade review",
+        state: String(opportunity?.state || "RESEARCH").slice(0, 40),
         mainReason: String(record?.mainReason || reasons[0] || "Proposal passed the currently available evidence checks.").slice(0, 260),
         mainRisk: String(record?.mainRisk || candidate?.delayReason || "Market price and thesis can change before execution.").slice(0, 260),
         marketCondition: String(record?.marketCondition || "").slice(0, 120),
@@ -696,6 +716,12 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
         lastResearchedAt: opportunity?.lastResearchedAt || record?.lastUpdated || null,
         nextReviewAt: opportunity?.nextReviewAt || null,
         scoreTrend: opportunity?.change || null,
+        company: opportunity?.company || null,
+        news: Array.isArray(opportunity?.news) ? opportunity.news.slice(0, 6) : [],
+        marketContext: opportunity?.marketContext || null,
+        regimeContext: opportunity?.regimeContext || null,
+        hardGates: Array.isArray(opportunity?.hardGates) ? opportunity.hardGates : [],
+        evidence: Array.isArray(opportunity?.evidence) ? opportunity.evidence.slice(0, 8) : [],
       },
       outlook: {
         horizonLabel,
@@ -722,8 +748,8 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
     if (!symbol || currentPrice <= 0 || quantity <= 0 || seen.has(key) || proposals.length >= 12) return;
     seen.add(key);
     const positionValue = roundedMoney(currentPrice * quantity);
-    const targetPrice = finiteNumber(position?.target1 ?? record?.target1, null);
-    const stopPrice = finiteNumber(position?.stopLoss ?? record?.stopLoss, null);
+    const targetPrice = nullableNumber(position?.target1 ?? record?.target1);
+    const stopPrice = nullableNumber(position?.stopLoss ?? record?.stopLoss);
     const proposalCore = {
       accountIdentityHash: snapshot.broker?.accountIdentityHash || "",
       kind: "position_hold",
@@ -775,6 +801,33 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       referencePrice: currentPrice,
       riskSizedMaxDollars: 0,
       capitalAfterDollars: control.capital.committedDollars,
+    });
+  };
+
+  const pushResearchRecommendation = ({ symbol, record, opportunity }) => {
+    const status = String(opportunity?.status || record?.status || "").toLowerCase();
+    if (!symbol || !record || !["high_priority", "candidate", "monitoring", "watch", "review", "rejected", "reject"].includes(status)) return;
+    const requested = Math.min(
+      guardrails.maxOrderDollars,
+      finiteNumber(control.capital.maxPositionDollars, 0) > 0
+        ? finiteNumber(control.capital.maxPositionDollars, guardrails.maxOrderDollars)
+        : guardrails.maxOrderDollars,
+    );
+    const score = nullableNumber(opportunity?.overallScore) ?? nullableNumber(record.score);
+    pushProposal({
+      kind: "research_recommendation",
+      symbol,
+      side: "BUY",
+      requestedDollars: requested,
+      opportunity,
+      researchOnly: true,
+      reasons: [
+        `${status.replaceAll("_", " ")} research candidate · score ${score === null ? "unavailable" : Math.round(score)}.`,
+        ["rejected", "reject"].includes(status)
+          ? "Research only: the current evidence did not pass the live execution gate."
+          : "Fresh evaluator evidence needs a final live check.",
+        record.mainReason || opportunity?.thesis?.reason || "Fresh evaluator evidence needs a final live check.",
+      ],
     });
   };
 
@@ -844,7 +897,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
   }
 
   for (const record of snapshot.records || []) {
-    if (proposals.length >= 12) break;
+    if (proposals.length >= MAX_PORTFOLIO_PROPOSALS) break;
     if (record.status !== "valid_setup" || !record.dataFresh || seen.has(`BUY:${record.ticker}`)) continue;
     // Keep a risk-sized research proposal visible even when the account has no
     // deployable cash. buildTradeDraft() will then surface the buying-power
@@ -862,6 +915,16 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       requestedDollars: requested,
       reasons: [`Evaluator score ${record.score ?? "unknown"}.`, record.mainRisk || "Fresh risk review required."],
     });
+  }
+
+  // Keep strong research visible even when a quote, account, or hard gate is
+  // not ready for a live order. These cards are recommendations only; the
+  // qualified selector below never stages them automatically.
+  for (const record of snapshot.records || []) {
+    if (proposals.length >= MAX_PORTFOLIO_PROPOSALS) break;
+    const symbol = normalizeSymbol(record.ticker);
+    if (!symbol || seen.has(`BUY:${symbol}`)) continue;
+    pushResearchRecommendation({ symbol, record, opportunity: opportunityBySymbol[symbol] || null });
   }
 
   proposals.sort((a, b) => {
@@ -889,6 +952,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       copyEntries: proposals.filter((item) => item.kind === "copy_entry").length,
       copyExits: proposals.filter((item) => item.kind === "copy_exit").length,
       riskExits: proposals.filter((item) => ["risk_exit", "profit_exit", "strategy_exit_review"].includes(item.kind)).length,
+      researchRecommendations: proposals.filter((item) => item.researchOnly === true).length,
       copySignalsObserved: finiteNumber(mirrorSummary.signalsReceived, 0),
       copyWatchers: finiteNumber(mirrorImporter.enabledEntries, 0) + finiteNumber(mirrorImporter13f.enabledEntries, 0),
     },

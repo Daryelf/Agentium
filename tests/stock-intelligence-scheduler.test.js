@@ -56,7 +56,7 @@ test("market cadence distinguishes active weekday hours from quiet hours in New 
   assert.equal(marketWindow(new Date("2026-08-09T14:00:00.000Z")).active, false);
 });
 
-test("market-hours research defaults to a one-minute cadence", () => {
+test("market-state research uses bounded defaults instead of hammering providers", () => {
   const scheduler = createStockIntelligenceScheduler({
     refreshManager: { refresh: async () => successResult(), getStatus: () => ({}) },
     environment: {},
@@ -65,14 +65,14 @@ test("market-hours research defaults to a one-minute cadence", () => {
     clearTimeoutImpl: () => {},
     allowInTests: true,
   });
-  assert.equal(scheduler.start().activeCadenceMinutes, 1);
+  assert.equal(scheduler.start().activeCadenceMinutes, 3);
   assert.deepEqual(cadenceConfig({}), {
-    activeMinutes: 1,
-    quietMinutes: 1,
-    premarketMinutes: 1,
-    afterHoursMinutes: 1,
-    overnightMinutes: 1,
-    weekendMinutes: 1,
+    activeMinutes: 3,
+    quietMinutes: 30,
+    premarketMinutes: 5,
+    afterHoursMinutes: 15,
+    overnightMinutes: 30,
+    weekendMinutes: 240,
     form4Minutes: 60,
     form13Minutes: 1440,
     newsMinutes: 30,
@@ -80,7 +80,7 @@ test("market-hours research defaults to a one-minute cadence", () => {
   });
 });
 
-test("continuous research hands off immediately after every successful scan", async () => {
+test("continuous research waits for the market-state cadence after a successful scan", async () => {
   const clock = createClock();
   const timers = createTimers();
   const scheduler = createStockIntelligenceScheduler({
@@ -99,7 +99,7 @@ test("continuous research hands off immediately after every successful scan", as
   });
 
   await scheduler.runNow({ trigger: "test" });
-  assert.equal(timers.scheduled.at(-1).delay, 100);
+  assert.equal(timers.scheduled.at(-1).delay, 60_000);
 });
 
 test("scheduler shutdown waits for the active refresh manager to stop", async () => {

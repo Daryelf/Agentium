@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.DS_Store
+
+# Stock Guru runtime state is generated per installation/deployment. Never
+# upload broker snapshots, provider credentials, market caches, reports, or
+# approval state as source code.
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep

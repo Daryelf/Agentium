@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ARGENTUM_QUANT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ARGENTUM_QUANT_PYTHON="$ARGENTUM_QUANT_ROOT/.venv/bin/python"
+
+if [[ ! -x "$ARGENTUM_QUANT_PYTHON" ]]; then
+  echo "Argentum quant runtime is missing: $ARGENTUM_QUANT_PYTHON" >&2
+  exit 1
+fi
+
+cd "$ARGENTUM_QUANT_ROOT"
+export PYTHONPATH="$ARGENTUM_QUANT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+export STOCK_GURU_OPERATING_MODE="${STOCK_GURU_OPERATING_MODE:-OBSERVE}"
+exec "$ARGENTUM_QUANT_PYTHON" -m stock_guru.quant.operations

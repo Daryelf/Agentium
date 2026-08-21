@@ -1,19 +1,20 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { marketWindow } = require("./stock-market-calendar");
 
 const VERSION = 1;
 const MAX_HISTORY = 40;
-const DEFAULT_ACTIVE_MINUTES = 1;
-const DEFAULT_QUIET_MINUTES = 1;
+const DEFAULT_ACTIVE_MINUTES = 3;
+const DEFAULT_QUIET_MINUTES = 30;
 const DEFAULT_FORM4_MINUTES = 60;
 const DEFAULT_13F_MINUTES = 24 * 60;
 const DEFAULT_NEWS_MINUTES = 30;
-const DEFAULT_PREMARKET_MINUTES = 1;
-const DEFAULT_AFTER_HOURS_MINUTES = 1;
-const DEFAULT_OVERNIGHT_MINUTES = 1;
-const DEFAULT_WEEKEND_MINUTES = 1;
+const DEFAULT_PREMARKET_MINUTES = 5;
+const DEFAULT_AFTER_HOURS_MINUTES = 15;
+const DEFAULT_OVERNIGHT_MINUTES = 30;
+const DEFAULT_WEEKEND_MINUTES = 240;
 const DEFAULT_STARTUP_DELAY_MS = 250;
-const CONTINUOUS_HANDOFF_MS = 100;
+const MINIMUM_SCHEDULE_DELAY_MS = 100;
 const FAILED_RETRY_MS = 5_000;
 
 function safeDate(value) {
@@ -59,24 +60,6 @@ function normalizeHistory(entries = []) {
     liveOrdersPlaced: 0,
     brokerCalled: false,
   })).slice(-MAX_HISTORY);
-}
-
-function marketWindow(at = new Date(), timeZone = "America/New_York") {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(at).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
-  const weekday = !["Sat", "Sun"].includes(parts.weekday);
-  const minutes = Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
-  const active = weekday && minutes >= 8 * 60 && minutes < 18 * 60;
-  if (!weekday) return { active: false, label: "weekend_research", session: "weekend" };
-  if (minutes >= 570 && minutes < 960) return { active, label: "market_open", session: "regular" };
-  if (minutes >= 240 && minutes < 570) return { active, label: "premarket_research", session: "premarket" };
-  if (minutes >= 960 && minutes < 1200) return { active, label: "after_hours_research", session: "afterhours" };
-  return { active, label: "night_research", session: "overnight" };
 }
 
 function cadenceConfig(environment = {}) {
@@ -255,7 +238,7 @@ function createStockIntelligenceScheduler(options = {}) {
     if (stopped || !status.enabled || (testRuntime && !allowInTests)) return;
     if (timer) clearTimeoutImpl(timer);
     const at = nowFn();
-    const delay = Math.max(CONTINUOUS_HANDOFF_MS, delayMs === null ? cadenceMs(at) : delayMs);
+    const delay = Math.max(MINIMUM_SCHEDULE_DELAY_MS, delayMs === null ? cadenceMs(at) : delayMs);
     status.marketWindow = marketWindow(at).label;
     status.nextRunAt = new Date(at.getTime() + delay).toISOString();
     persist();
@@ -314,7 +297,7 @@ function createStockIntelligenceScheduler(options = {}) {
       return publicStatus(false);
     })().finally(() => {
       activePromise = null;
-      schedule(status.lastResult.status === "failed" ? FAILED_RETRY_MS : CONTINUOUS_HANDOFF_MS);
+      schedule(status.lastResult.status === "failed" ? FAILED_RETRY_MS : null);
     });
     return activePromise;
   }
@@ -342,7 +325,7 @@ function createStockIntelligenceScheduler(options = {}) {
       completedAt: at.toISOString(),
     }]);
     persist();
-    schedule(CONTINUOUS_HANDOFF_MS);
+    schedule();
     return publicStatus();
   }
 

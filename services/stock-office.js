@@ -1113,10 +1113,42 @@ function normalizeCopyImportStatus(data, source) {
     holdingChangesFound: 0,
     unmappedChanges: 0,
     resolvedSignalsImported: 0,
+    researchSignals: [],
     liveOrdersPlaced: 0,
     warnings: [],
   };
   if (!isPlainObject(data)) return empty;
+  const researchSignals = (Array.isArray(data.research_signals) ? data.research_signals : [])
+    .slice(0, 120)
+    .map((item, index) => {
+      if (!isPlainObject(item)) return null;
+      const rawSymbol = String(item.symbol || "").toUpperCase().slice(0, 80);
+      const tickerResolved = item.ticker_resolved === true && /^[A-Z][A-Z0-9.-]{0,11}$/.test(rawSymbol);
+      const identifier = String(item.security_identifier || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+      const issuerName = redactSensitiveText(String(item.issuer_name || "")).slice(0, 200);
+      const traderName = redactSensitiveText(String(item.trader_name || "Unknown institutional manager")).slice(0, 180);
+      if (!issuerName || !identifier) return null;
+      return {
+        id: String(item.id || `sec13f-research-${index + 1}`).slice(0, 180),
+        sourceId: "sec_13f",
+        traderName,
+        issuerName,
+        titleOfClass: redactSensitiveText(String(item.title_of_class || "")).slice(0, 120),
+        symbol: tickerResolved ? rawSymbol : "",
+        tickerResolved,
+        securityIdentifier: identifier,
+        side: String(item.side || "OBSERVE").toUpperCase().slice(0, 12),
+        previousShares: clampNumber(item.previous_shares, 0, Number.MAX_SAFE_INTEGER, 0),
+        currentShares: clampNumber(item.current_shares, 0, Number.MAX_SAFE_INTEGER, 0),
+        shareDelta: clampNumber(item.share_delta, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 0),
+        asFiledValue: clampNumber(item.as_filed_value, 0, Number.MAX_SAFE_INTEGER, 0),
+        disclosedAt: safeDate(item.disclosed_at),
+        observedAt: safeDate(item.observed_at),
+        sourceUrl: safePublicUrl(item.source_url),
+        notes: redactSensitiveText(String(item.notes || "")).slice(0, 1000),
+      };
+    })
+    .filter(Boolean);
   return {
     available: true,
     generatedAt: safeDate(data.generated_at) || source?.generatedAt || source?.lastModified || null,
@@ -1130,6 +1162,7 @@ function normalizeCopyImportStatus(data, source) {
     holdingChangesFound: clampNumber(data.holding_changes_found, 0, 1_000_000, 0),
     unmappedChanges: clampNumber(data.unmapped_changes, 0, 1_000_000, 0),
     resolvedSignalsImported: clampNumber(data.resolved_signals_imported, 0, 100_000, data.signals_imported || 0),
+    researchSignals,
     liveOrdersPlaced: clampNumber(data.live_orders_placed, 0, 1_000_000, 0),
     warnings: (Array.isArray(data.warnings) ? data.warnings : []).map((item) => redactSensitiveText(item).slice(0, 400)).filter(Boolean).slice(0, 12),
   };
@@ -1147,11 +1180,15 @@ function normalizeCopyTraderWatchers(data) {
       return {
         id: `${filingType.toLowerCase().replaceAll(" ", "-")}:${cik}`,
         name,
+        traderName: redactSensitiveText(String(entry.trader_name || name)).slice(0, 120),
+        firmName: redactSensitiveText(String(entry.firm_name || name)).slice(0, 180),
+        strategy: redactSensitiveText(String(entry.strategy || (filingType === "13F" ? "Quarterly institutional holdings" : "Insider transactions"))).slice(0, 180),
         cik: cik.padStart(10, "0"),
         filingType,
         enabled: entry.enabled !== false,
         copyEligible: filingType === "Form 4",
         researchOnly: filingType === "13F",
+        researchAgentEnabled: entry.research_agent_enabled !== false,
         identityUrl: safePublicUrl(entry.identity_url),
       };
     })

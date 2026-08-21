@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "sec_form4": [],
+  "sec_13f": [
+    {
+      "cik": "0001067983",
+      "label": "Berkshire Hathaway Inc. - associated with Warren Buffett",
+      "trader_name": "Warren Buffett",
+      "firm_name": "Berkshire Hathaway Inc.",
+      "strategy": "Concentrated long-term value investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001067983",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001350694",
+      "label": "Bridgewater Associates, LP",
+      "trader_name": "Ray Dalio",
+      "firm_name": "Bridgewater Associates, LP",
+      "strategy": "Global macro and risk-balanced institutional investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001350694",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001336528",
+      "label": "Pershing Square Capital Management, L.P.",
+      "trader_name": "Bill Ackman",
+      "firm_name": "Pershing Square Capital Management, L.P.",
+      "strategy": "Concentrated activist investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001336528",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001649339",
+      "label": "Scion Asset Management, LLC",
+      "trader_name": "Michael Burry",
+      "firm_name": "Scion Asset Management, LLC",
+      "strategy": "Contrarian and special-situations investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001649339",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001536411",
+      "label": "Duquesne Family Office LLC",
+      "trader_name": "Stanley Druckenmiller",
+      "firm_name": "Duquesne Family Office LLC",
+      "strategy": "Top-down macro and concentrated equity investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001536411",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001029160",
+      "label": "Soros Fund Management LLC",
+      "trader_name": "George Soros",
+      "firm_name": "Soros Fund Management LLC",
+      "strategy": "Global macro and event-driven investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001029160",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001656456",
+      "label": "Appaloosa LP",
+      "trader_name": "David Tepper",
+      "firm_name": "Appaloosa LP",
+      "strategy": "Distressed, macro, and concentrated equity investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001656456",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001697748",
+      "label": "ARK Investment Management LLC",
+      "trader_name": "Cathie Wood",
+      "firm_name": "ARK Investment Management LLC",
+      "strategy": "Disruptive-innovation thematic investing",
+      "research_agent_enabled": true,
+      "enabled": true,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001697748",
+      "cusip_ticker_map": {}
+    }
+  ]
+}

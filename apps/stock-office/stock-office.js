@@ -21,6 +21,7 @@ const state = {
   intelligence: null,
   systemHealth: null,
   mirrorIntelligence: null,
+  traderResearch: null,
   notificationStatus: null,
   notificationApproval: null,
   robinhoodConnection: null,
@@ -34,6 +35,7 @@ const state = {
   brokerPolling: false,
   livePortfolioPolling: false,
   refreshStatusPolling: false,
+  traderResearchPolling: false,
   workspacePayloadFingerprint: "",
   liveAccountFingerprint: "",
   hasRendered: false,
@@ -41,18 +43,10 @@ const state = {
   activeView: "overview",
 };
 
-const $ = (selector) => document.querySelector(selector);
+const DEFAULT_CAPITAL_BASE_DOLLARS = 75;
+const DEFAULT_CAPITAL_GOAL_DOLLARS = 150;
 
-const researchConveyorMotion = {
-  animationEpoch: window.performance?.now?.() || Date.now(),
-  candidates: [],
-  completionTimer: null,
-  lastCompletedAt: "",
-  lastTicker: "",
-  proposals: [],
-  queue: [],
-  queueKey: "",
-};
+const $ = (selector) => document.querySelector(selector);
 
 const stockOfficePreloader = {
   startedAt: window.performance?.now?.() || Date.now(),
@@ -145,8 +139,8 @@ function setStockView(requestedView, options = {}) {
   $("#viewTitle").textContent = title;
   $("#syncButton").hidden = view === "trade";
   renderExecutionModePill();
-  if (view !== "mirror") stopResearchConveyorMotion();
   if (state.hasRendered) renderActiveStockView();
+  if (view === "mirror") pollTraderResearch();
   if (options.updateHash !== false) history.replaceState(null, "", `#${view}`);
   if (options.scroll !== false) $(".stock-main").scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -203,6 +197,16 @@ function formatCount(value) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: number >= 1_000 ? 1 : 0 }).format(number);
 }
 
+function formatResearchDuration(value) {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "—";
+  if (milliseconds < 1_000) return milliseconds < 100 ? "<0.1s" : `${(milliseconds / 1_000).toFixed(1)}s`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+  const minutes = Math.floor(milliseconds / 60_000);
+  const seconds = Math.floor((milliseconds % 60_000) / 1_000);
+  return `${minutes}m ${seconds}s`;
+}
+
 function formatBrokerPercent(value, digits = 2) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
@@ -219,7 +223,8 @@ function logoMarkup(symbol, name = "", options = {}) {
 }
 
 function outlookValue(value, fallback = "—") {
-  return value === null || value === undefined || !Number.isFinite(Number(value)) ? fallback : formatMoney(value);
+  const number = Number(value);
+  return value === null || value === undefined || !Number.isFinite(number) || number <= 0 ? fallback : formatMoney(number);
 }
 
 function formatCadence(minutes) {
@@ -234,9 +239,18 @@ function formatCadence(minutes) {
 function getCapitalGoal() {
   try {
     const value = Number(window.localStorage.getItem("argentum.stockOffice.capitalGoalDollars"));
-    return Number.isFinite(value) && value > 0 ? value : null;
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_CAPITAL_GOAL_DOLLARS;
   } catch {
-    return null;
+    return DEFAULT_CAPITAL_GOAL_DOLLARS;
+  }
+}
+
+function getCapitalGoalBase() {
+  try {
+    const value = Number(window.localStorage.getItem("argentum.stockOffice.capitalGoalBaseDollars"));
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_CAPITAL_BASE_DOLLARS;
+  } catch {
+    return DEFAULT_CAPITAL_BASE_DOLLARS;
   }
 }
 
@@ -251,28 +265,40 @@ function getCapitalGoalHorizon() {
 
 function renderCapitalGoalPlanner() {
   const buyingPower = numericMoney(state.brokerControl?.buyingPowerDollars);
+  const baseInput = $("#capitalGoalBaseDollars");
   const goalInput = $("#capitalGoalDollars");
   const horizonInput = $("#capitalGoalHorizon");
-  if (!goalInput || !horizonInput) return;
+  if (!baseInput || !goalInput || !horizonInput) return;
+  const savedBase = getCapitalGoalBase();
   const savedGoal = getCapitalGoal();
   const horizon = getCapitalGoalHorizon();
+  if (savedBase && !baseInput.value) baseInput.value = savedBase;
   if (savedGoal && !goalInput.value) goalInput.value = savedGoal;
   horizonInput.value = horizon ? String(horizon) : "";
   $("#capitalGoalBuyingPower").textContent = buyingPower === null ? "Unavailable" : formatMoney(buyingPower);
   $("#capitalGoalAvailable").textContent = buyingPower === null ? "—" : formatMoney(Math.max(0, buyingPower - (numericMoney(state.brokerControl?.committedDollars) || 0)));
-  const amount = Number(goalInput.value || savedGoal || 0);
+  const base = Number(baseInput.value || savedBase || 0);
+  const target = Number(goalInput.value || savedGoal || 0);
   const estimate = $("#capitalGoalEstimate");
   if (!estimate) return;
-  if (!amount) {
-    estimate.innerHTML = "<strong>Set an amount to see scenarios.</strong>";
+  if (!base || !target) {
+    estimate.innerHTML = "<strong>Set starting capital and a target to see the required math.</strong>";
     return;
   }
+  if (target < base) {
+    estimate.innerHTML = "<strong>Target must be at least the planned starting capital.</strong>";
+    return;
+  }
+  const requiredGain = target - base;
+  const requiredPct = base > 0 ? requiredGain / base : null;
+  const requiredReturnLabel = requiredPct === null ? "unavailable" : `${(requiredPct * 100).toFixed(1)}%`;
   if (!horizon) {
-    estimate.innerHTML = `<div><strong>Open-ended goal tracking</strong><span>${escapeHtml(formatMoney(amount))} target · no deadline</span></div><small>The system will keep researching and report progress without forcing a return or time estimate.</small>`;
+    estimate.innerHTML = `<div><strong>Open-ended goal tracking</strong><span>${escapeHtml(formatMoney(base))} planned capital → ${escapeHtml(formatMoney(target))} target</span></div><div class="capital-goal-required"><span><small>Required gain</small><strong>${escapeHtml(formatMoney(requiredGain))}</strong></span><span><small>Required change</small><strong>${escapeHtml(requiredReturnLabel)}</strong></span></div><small>The system will keep researching, rerun the numbers, and report measured progress. This is a target, not a profit promise.</small>`;
     return;
   }
-  const growth = (annualRate) => amount * (Math.pow(1 + annualRate, horizon / 12) - 1);
-  estimate.innerHTML = `<div><strong>Illustrative return range</strong><span>${escapeHtml(formatMoney(amount))} over ${horizon} months</span></div><div class="capital-goal-scenarios"><span><small>Conservative · 4% annualized</small><strong>${escapeHtml(formatMoney(growth(0.04)))}</strong></span><span><small>Base · 8% annualized</small><strong>${escapeHtml(formatMoney(growth(0.08)))}</strong></span><span><small>Strong · 15% annualized</small><strong>${escapeHtml(formatMoney(growth(0.15)))}</strong></span></div><small>Illustrative math only. Markets can lose money; no return is guaranteed.</small>`;
+  const endingCapital = (annualRate) => base * Math.pow(1 + annualRate, horizon / 12);
+  const requiredAnnualized = base > 0 ? Math.pow(target / base, 12 / horizon) - 1 : null;
+  estimate.innerHTML = `<div><strong>Illustrative capital paths</strong><span>${escapeHtml(formatMoney(base))} planned capital over ${horizon} months toward ${escapeHtml(formatMoney(target))}</span></div><div class="capital-goal-required"><span><small>Required gain</small><strong>${escapeHtml(formatMoney(requiredGain))}</strong></span><span><small>Required annualized change</small><strong>${escapeHtml(requiredAnnualized === null ? "unavailable" : `${(requiredAnnualized * 100).toFixed(1)}%`)}</strong></span></div><div class="capital-goal-scenarios"><span><small>Conservative · 4% annualized</small><strong>${escapeHtml(formatMoney(endingCapital(0.04)))}</strong></span><span><small>Base · 8% annualized</small><strong>${escapeHtml(formatMoney(endingCapital(0.08)))}</strong></span><span><small>Strong · 15% annualized</small><strong>${escapeHtml(formatMoney(endingCapital(0.15)))}</strong></span></div><small>Illustrative math only. Research, position sizing, and realized outcomes are rerun from current evidence; markets can lose money and no return is guaranteed.</small>`;
 }
 
 function statusClass(value) {
@@ -410,7 +436,7 @@ function renderNotificationStatus() {
       ? "Your approved Telegram scope survived, but the secure bot token and chat ID are missing. Re-enter the same destination once to restore alerts."
     : status.configured
       ? approval.status === "approved" ? "Human Gate approved this destination. Enable it once." : "Credentials are secure. Human Gate must approve automatic alerts."
-      : "Get a message when a qualified proposal reaches Human Gate and after Robinhood confirms an order.";
+      : "Qualified trade alerts and broker outcomes will notify this destination.";
   const recent = Array.isArray(status.recent) ? status.recent : [];
   $("#telegramRecent").innerHTML = recent.length
     ? recent.map((item) => `<span data-status="${escapeHtml(item.status)}"><i></i><strong>${escapeHtml(String(item.kind || "notification").replaceAll("_", " "))}</strong><small>${escapeHtml(item.sentAt ? formatTime(item.sentAt) : item.status)}</small></span>`).join("")
@@ -422,6 +448,30 @@ function renderNotificationStatus() {
   $("#telegramDisableButton").hidden = !status.enabled;
   $("#telegramRemoveButton").hidden = !status.configured;
   if (status.lastError) $("#telegramFeedback").textContent = status.lastError;
+}
+
+function systemLightTone(value) {
+  const status = String(value || "waiting").toLowerCase();
+  if (["healthy", "connected", "running", "online", "success", "active"].includes(status)) return "ready";
+  if (["error", "failed", "disconnected", "offline", "unavailable", "attention", "blocked"].includes(status)) return "danger";
+  return "warning";
+}
+
+function systemLightLabel(value) {
+  const labels = {
+    approval_required: "Approval required",
+    not_configured: "Not configured",
+    connected: "Connected",
+    running: "Running",
+    healthy: "Healthy",
+    degraded: "Degraded",
+    stale: "Stale",
+    blocked: "Blocked",
+    attention: "Needs attention",
+    waiting: "Waiting",
+  };
+  const status = String(value || "waiting").toLowerCase();
+  return labels[status] || status.replaceAll("_", " ");
 }
 
 function renderOverviewDashboard() {
@@ -502,16 +552,44 @@ function renderOverviewDashboard() {
     : `<div class="overview-empty-row"><strong>No qualified opportunity</strong><span>No symbol currently meets the persisted research threshold.</span></div>`;
 
   const health = state.systemHealth || {};
-  $("#overviewResearchState").textContent = health.research?.status || "Waiting";
-  $("#overviewResearchTimestamp").textContent = health.research?.updatedAt ? `Updated ${relativeCycle(health.research.updatedAt)}` : "No persisted cycle";
-  $("#overviewSystemHealth").innerHTML = [
-    ["Feeds", providerHealth.status || health.marketData?.status],
-    ["Broker", health.broker?.status],
-    ["Telegram", health.telegram?.status],
-    ["Research", health.research?.status],
-    ["Copy", health.mirror ? `${health.mirror.healthy}/${health.mirror.total}` : "waiting"],
-    ["DB", health.database?.status],
-  ].map(([label, value]) => `<span data-status="${escapeHtml(value || "waiting")}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value || "waiting").replaceAll("_", " "))}</strong></span>`).join("");
+  const daily = state.intelligence?.daily || {};
+  const dailyResearch = daily.research || {};
+  const reports = Array.isArray(daily.reports) ? daily.reports : [];
+  $("#overviewDailyReportDate").textContent = daily.day ? `Today · ${daily.day}` : "Today";
+  $("#overviewDailyResearchMetrics").innerHTML = [
+    ["Runs", dailyResearch.runs || 0],
+    ["Stocks", dailyResearch.symbolsScanned || 0],
+    ["Signals", dailyResearch.signalsFound || 0],
+    ["Reports", reports.length],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(formatCount(value))}</strong></span>`).join("");
+  $("#overviewDailyResearchLatest").textContent = dailyResearch.latestCompletedAt
+    ? `${dailyResearch.successfulRuns || 0} successful · last completed ${formatTime(dailyResearch.latestCompletedAt)}${reports.length ? ` · ${reports.map((report) => String(report.type || "report")).join(" + ")} report${reports.length === 1 ? "" : "s"}` : ""}`
+    : "Waiting for the first completed research cycle.";
+  const algorithm = daily.algorithmTests || state.simulationLab || {};
+  const algorithmStatus = String(algorithm.status || "waiting").toLowerCase();
+  $("#overviewAlgorithmTestStatus").textContent = systemLightLabel(algorithmStatus);
+  $("#overviewAlgorithmTestStatus").dataset.status = systemLightTone(algorithmStatus);
+  $("#overviewAlgorithmTestMetrics").innerHTML = [
+    ["Cycles today", algorithm.cyclesToday || 0],
+    ["Candidates", algorithm.candidatesTested || 0],
+    ["Configs", algorithm.strategyConfigurations || 0],
+    ["Paths", algorithm.scenarioPaths || 0],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(formatCount(value))}</strong></span>`).join("");
+  $("#overviewAlgorithmTestLatest").textContent = algorithm.lastCycleAt
+    ? `Cycle ${formatCount(algorithm.totalCycles || 0)} · last tested ${formatTime(algorithm.lastCycleAt)} · ${formatCount(algorithm.strategyConfigurationsPerSecond || 0)}/s configs`
+    : "Autonomous paper testing runs in the background.";
+  const systemLights = [
+    ["Telegram", health.telegram?.status, health.telegram?.status === "connected" ? "Qualified alerts enabled" : "Approval or setup required"],
+    ["Agent 101", health.agent?.status, health.agent?.detail || "Supervised agent status"],
+    ["Background worker", health.backgroundWorker?.status, health.backgroundWorker?.detail || "Server-side scheduler status"],
+    ["Market data", providerHealth.status || health.marketData?.status, "Provider and freshness state"],
+    ["Broker", health.broker?.status, "Official account connection"],
+    ["Database", health.database?.status, "Research persistence"],
+  ];
+  $("#overviewSystemHealth").innerHTML = systemLights.map(([label, value, detail]) => {
+    const status = String(value || "waiting").toLowerCase();
+    return `<span data-status="${escapeHtml(status)}" data-tone="${escapeHtml(systemLightTone(status))}" title="${escapeHtml(detail)}"><i aria-hidden="true"></i><div><small>${escapeHtml(label)}</small><strong>${escapeHtml(systemLightLabel(status))}</strong></div></span>`;
+  }).join("");
 
   $("#overviewCapitalUse").textContent = `${formatMoney(deployed)} / ${formatMoney(capitalGoal)}`;
   $("#overviewCapitalFill").style.width = `${utilization.toFixed(1)}%`;
@@ -604,9 +682,9 @@ function renderTradeProposals() {
     return Math.max(0, Math.ceil((enteredAt + 5 * 60 * 1_000 - queueNow) / 1_000));
   };
   const queuedVisible = visible.filter((proposal) => queueRemaining(proposal) > 0);
-  const qualifiedNow = actionCandidates.filter((proposal) => proposal.draftEligible && executionSessionOpen).length;
+  const qualifiedNow = qualifiedCandidates.filter((proposal) => proposal.draftEligible && executionSessionOpen).length;
   const liveReady = executionSessionOpen ? qualifiedNow : 0;
-  const pendingGate = actionCandidates.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
+  const pendingGate = qualifiedCandidates.filter((proposal) => proposal.reviewState === "awaiting_human_gate").length;
   const researchCandidates = actionCandidates.filter((proposal) => !proposal.draftEligible && !realOrderStates.has(proposal.reviewState));
   const closestCandidate = [...researchCandidates]
     .sort((a, b) => Number(b.research?.score || b.rankingScore || 0) - Number(a.research?.score || a.rankingScore || 0))[0] || null;
@@ -628,8 +706,8 @@ function renderTradeProposals() {
         : "0 qualified";
   $("#overviewTradeReadiness").innerHTML = `
     <div class="overview-readiness-metric"><small>BUYING POWER</small><strong>${escapeHtml(Number.isFinite(buyingPower) ? formatMoney(buyingPower) : "Unavailable")}</strong></div>
-    <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
-      <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : qualifiedNow ? "Waiting for regular session" : "Waiting for a qualified trade")}</strong></span>
+      <div class="overview-readiness-state ${liveReady || pendingGate ? "ready" : "waiting"}">
+        <i aria-hidden="true"></i><span><small>ORDER QUEUE</small><strong>${escapeHtml(liveReady ? `${liveReady} ready now` : pendingGate ? `${pendingGate} awaiting approval` : qualifiedNow ? "Waiting for regular session" : "Waiting for a qualified trade")}</strong></span>
     </div>
     <button class="secondary" type="button" data-quick-order ${executionSessionOpen ? "" : "disabled"}>${escapeHtml(!executionSessionOpen ? "Regular session only" : executionLive && accountVerified ? "New real order" : "Check new order")}</button>`;
   $("#overviewProposalList").innerHTML = queuedVisible.length
@@ -644,30 +722,33 @@ function renderTradeProposals() {
         const reviewState = proposal.reviewState || (proposal.draftEligible ? "qualified" : "blocked");
         const waitingGate = reviewState === "awaiting_human_gate";
         const approved = reviewState === "approved";
-        const liveStateClass = approved || waitingGate || proposal.draftEligible ? "ready" : proposal.monitoring ? "monitoring" : "blocked";
+        const liveStateClass = approved || waitingGate || proposal.draftEligible ? "ready" : proposal.researchOnly ? "recommendation" : proposal.monitoring ? "monitoring" : "blocked";
         const blocker = Array.isArray(proposal.blockers) && proposal.blockers.length
           ? proposal.blockers[0]
           : "Current live-order checks have not all passed.";
         const reviewExpiresAt = Date.parse(proposal.reviewExpiresAt || "");
         const approvalRemaining = Number.isFinite(reviewExpiresAt) ? Math.max(0, Math.ceil((reviewExpiresAt - Date.now()) / 1_000)) : null;
-        const queueSeconds = queueRemaining(proposal);
+        const queueSeconds = proposal.researchOnly || proposal.blockers?.length > 0 ? null : queueRemaining(proposal);
+        const timerLabel = proposal.researchOnly ? "RESEARCH" : proposal.blockers?.length > 0 ? "REVIEW" : formatCountdown(queueSeconds);
         return `<article class="overview-proposal ${escapeHtml(liveStateClass)}" data-proposal-id="${escapeHtml(proposal.id)}">
           <div class="overview-proposal-company">
             ${logoMarkup(proposal.symbol)}
             <div class="proposal-company-meta">
               <span class="proposal-symbol">${escapeHtml(proposal.symbol)}</span>
-              <span class="proposal-timer">${escapeHtml(formatCountdown(queueSeconds))}</span>
+              <span class="proposal-timer">${escapeHtml(timerLabel)}</span>
             </div>
-            <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.side)}</span>
+            <span class="proposal-side ${escapeHtml(proposal.side.toLowerCase())}">${escapeHtml(proposal.researchOnly ? "RESEARCH" : proposal.side)}</span>
           </div>
           <div class="overview-proposal-scores">
             <span><small>AI</small><strong>${escapeHtml(scorePercent(scores.ai ?? research.score))}</strong></span>
             <span><small>TECH</small><strong>${escapeHtml(scorePercent(scores.technical ?? research.score))}</strong></span>
             <span><small>COPY</small><strong>${escapeHtml(scorePercent(scores.mirror))}</strong></span>
             <span><small>RISK</small><strong>${escapeHtml(scorePercent(scores.risk))}</strong></span>
+            <span><small>DATA</small><strong>${escapeHtml(scorePercent(scores.dataQuality ?? research.dataQualityScore))}</strong></span>
+            <span><small>CONF</small><strong>${escapeHtml(scorePercent(scores.confidence ?? research.confidenceScore))}</strong></span>
           </div>
           <div class="overview-proposal-thesis">
-            <div><span>${escapeHtml(portfolioKindLabel(proposal.kind))}</span><strong>${escapeHtml(formatMoney(proposal.requestedDollars))}</strong><em>${escapeHtml(research.confidence || "unknown confidence")}</em></div>
+            <div><span>${escapeHtml(research.recommendation || portfolioKindLabel(proposal.kind))}</span><strong>${escapeHtml(formatMoney(proposal.requestedDollars))}</strong><em>${escapeHtml(research.confidence || "unknown confidence")}</em></div>
             <p>${escapeHtml(research.mainReason || proposal.reasons?.[0] || "Proposal passed the current research planner.")}</p>
             <small>${escapeHtml(`${research.checksPassed ?? 0}/${research.checksTotal ?? 0} current checks passed`)}</small>
             <small>Risk: ${escapeHtml(research.mainRisk || "Market conditions can change before execution.")}</small>
@@ -682,6 +763,10 @@ function renderTradeProposals() {
             <p><strong>Setup</strong>${escapeHtml(research.setupType || "Evaluator review")} · score ${escapeHtml(research.score ?? "—")} · ${escapeHtml(research.marketCondition || "market condition unavailable")}</p>
             <p><strong>Plan</strong>Entry ${escapeHtml(research.entryZone || "reprice before order")} · stop ${escapeHtml(outlookValue(outlook.stopPrice))}${Number.isFinite(Number(outlook.stopScenarioDollars)) ? ` · ${escapeHtml(formatMoney(outlook.stopScenarioDollars))} downside scenario` : ""} · ${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p>
             <p><strong>Projected sell timing</strong>${escapeHtml(outlook.timingNote || outlook.horizonLabel || "No reliable exit time is available yet.")}</p>
+            <p><strong>Evidence depth</strong>${escapeHtml(`${research.checksPassed ?? 0}/${research.checksTotal ?? 0} live checks · ${research.evidenceCompleteness === null || research.evidenceCompleteness === undefined ? "completeness unavailable" : `${Math.round(Number(research.evidenceCompleteness) * 100)}% evidence`} · ${research.dataQualityScore === null || research.dataQualityScore === undefined ? "data quality unavailable" : `${Math.round(Number(research.dataQualityScore))}% data quality`}`)}</p>
+            <p><strong>Company / catalyst</strong>${escapeHtml([research.company?.name, research.company?.sector, research.company?.recommendation, research.company?.catalystSummary?.methodology].filter(Boolean).join(" · ") || "Structured company research is not available yet.")}</p>
+            <p><strong>Market context</strong>${escapeHtml([research.marketContext?.alignment, research.marketContext?.relativeVolume ? `relative volume ${research.marketContext.relativeVolume}` : "", research.regimeContext?.regime, research.regimeContext?.riskState].filter(Boolean).join(" · ") || "Intraday and regime context is not available yet.")}</p>
+            <p><strong>News</strong>${escapeHtml((research.news || []).slice(0, 2).map((item) => item.title).filter(Boolean).join(" · ") || "No structured news item is attached yet.")}</p>
             <p><strong>Source</strong>${escapeHtml(research.sourceLabel || "Stock Guru evaluator")}</p>
           </details>
           <div class="overview-proposal-actions">
@@ -694,13 +779,13 @@ function renderTradeProposals() {
                     ? `<button type="button" data-proposal-approve="${escapeHtml(proposal.id)}">Send ${escapeHtml(proposal.side)} ${escapeHtml(formatMoney(proposal.requestedDollars))} to Human Gate</button>`
                     : proposal.draftEligible
                       ? `<button type="button" disabled>Regular session only</button>`
-                    : `<button type="button" data-proposal-review="${escapeHtml(proposal.id)}">Review &amp; recheck</button>`}
+                    : `<button type="button" data-proposal-review="${escapeHtml(proposal.id)}">${proposal.researchOnly ? "Review recommendation" : "Review &amp; recheck"}</button>`}
             ${approved || waitingGate ? "" : `<button class="secondary" type="button" data-proposal-decline="${escapeHtml(proposal.id)}">Dismiss</button>`}
             ${proposal.draftEligible && !executionSessionOpen ? `<small>${escapeHtml(`${cycle.session?.label || "Market closed"}. Research continues; live market orders wait for the regular session.`)}</small>` : proposal.draftEligible || approved || waitingGate ? "" : `<small>${escapeHtml(blocker)}</small>`}
           </div>
         </article>`;
       }).join("")
-    : `<div class="overview-empty-row overview-live-empty"><strong>No trade meets ${escapeHtml(requiredScore)}/100 yet</strong><span>${escapeHtml(`Fresh market scans run about every ${cadenceMinutes} minute${cadenceMinutes === 1 ? "" : "s"}. ${closestStatus}`)}</span><button class="secondary" type="button" data-open-stock-view="mirror">Open Research</button></div>`;
+    : `<div class="overview-empty-row overview-live-empty"><strong>No qualified trade is ready yet</strong><span>Research stays in the Research view; only qualified trades appear here.</span><button class="secondary" type="button" data-open-stock-view="mirror">Open Research</button></div>`;
 }
 
 function openIntelligenceDrawer({ kicker = "INTELLIGENCE", title = "Details", tabs = [] }) {
@@ -1236,346 +1321,105 @@ function isCurrentCopyCandidate(candidate = {}) {
     && Number(candidate.currentPrice) > 0;
 }
 
-function researchCycleIsRunning() {
-  return state.manualRefreshRunning
-    || state.portfolioPlan?.cycle?.running === true
-    || state.intelligenceScheduler?.running === true;
-}
-
-function researchLoopIsActive() {
-  return state.manualRefreshRunning
-    || state.intelligenceScheduler?.continuousResearch === true
-    || state.intelligenceScheduler?.enabled === true
-    || state.portfolioPlan?.cycle?.workersContinueAfterCycle === true;
-}
-
-function researchProgress() {
-  const refresh = state.refresh || {};
-  const scheduler = state.intelligenceScheduler || {};
-  const symbols = (Array.isArray(refresh.progressSymbols) && refresh.progressSymbols.length
-    ? refresh.progressSymbols
-    : scheduler.progressSymbols || [])
-    .map((symbol) => String(symbol || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12))
-    .filter(Boolean);
-  return {
-    phase: String(refresh.progressPhase || scheduler.progressPhase || refresh.stage || scheduler.currentStage || ""),
-    symbols,
-    currentTicker: String(refresh.currentTicker || scheduler.currentTicker || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12),
-    completed: Number(refresh.progressCompleted ?? scheduler.progressCompleted ?? 0),
-    total: Number(refresh.progressTotal ?? scheduler.progressTotal ?? symbols.length ?? 0),
-    pct: Number(refresh.progressPct ?? scheduler.progressPct ?? 0),
-    message: String(refresh.progressMessage || scheduler.progressMessage || refresh.message || scheduler.currentMessage || ""),
-    universeTotal: Number(refresh.universeTotal ?? scheduler.universeTotal ?? 0),
-    sweepCompleted: Number(refresh.sweepCompleted ?? scheduler.sweepCompleted ?? 0),
-    sweepNumber: Number(refresh.sweepNumber ?? scheduler.sweepNumber ?? 0),
-    batchNumber: Number(refresh.batchNumber ?? scheduler.batchNumber ?? 0),
-    batchCount: Number(refresh.batchCount ?? scheduler.batchCount ?? 0),
-  };
-}
-
-function researchConveyorQueue(candidates = [], proposals = []) {
-  const queue = [];
-  const seen = new Set();
-  const add = (symbol, source, ready = false) => {
-    const normalized = String(symbol || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
-    if (!normalized || seen.has(normalized)) return;
-    seen.add(normalized);
-    queue.push({ symbol: normalized, source, ready });
-  };
-  const liveSymbols = researchProgress().symbols;
-  if (!liveSymbols.length && researchLoopIsActive() && researchConveyorMotion.queue.length) {
-    return researchConveyorMotion.queue;
-  }
-  liveSymbols.forEach((symbol) => add(symbol, "live evaluator"));
-  proposals.forEach((proposal) => add(proposal.symbol, "proposal", proposal.draftEligible === true));
-  candidates.forEach((candidate) => add(candidate.symbol, "copy signal", candidate.status === "paper_ready"));
-  state.records.forEach((record) => add(record.ticker || record.symbol, "market scan", record.status === "valid_setup"));
-  return queue.slice(0, 240);
-}
-
-function stopResearchConveyorMotion() {
-  const root = $("#mirrorCandidates");
-  if (root) root.dataset.motion = "paused";
-}
-
-function prepareResearchConveyorLoop(root) {
-  if (!root.querySelector("[data-conveyor-segment]")) return;
-  const distance = Math.max(1, researchConveyorMotion.queue.length * 78);
-  const duration = Math.max(8_000, researchConveyorMotion.queue.length * 1_050);
-  const elapsed = (window.performance?.now?.() || Date.now()) - researchConveyorMotion.animationEpoch;
-  root.style.setProperty("--conveyor-loop-distance", `${-distance}px`);
-  root.style.setProperty("--conveyor-loop-duration", `${duration}ms`);
-  root.style.setProperty("--conveyor-loop-delay", `${-(elapsed % duration)}ms`);
-}
-
-function updateResearchConveyorFrame() {
-  const root = $("#mirrorCandidates");
-  const queue = researchConveyorMotion.queue;
-  if (!root || !queue.length) return;
-  const progress = researchProgress();
-  const running = researchCycleIsRunning();
-  if (running && progress.currentTicker) researchConveyorMotion.lastTicker = progress.currentTicker;
-  const liveIndex = progress.currentTicker ? queue.findIndex((item) => item.symbol === progress.currentTicker) : -1;
-  const current = liveIndex >= 0 ? queue[liveIndex] : queue[0];
-  const focusSymbol = running && progress.currentTicker ? progress.currentTicker : current.symbol;
-  const next = liveIndex >= 0 ? queue[(liveIndex + 1) % queue.length] : queue[1] || queue[0];
-  root.querySelectorAll("[data-conveyor-symbol]").forEach((item) => {
-    item.classList.toggle("current", running && item.dataset.conveyorSymbol === progress.currentTicker);
-  });
-  const focus = root.querySelector("[data-conveyor-focus]");
-  const nextLabel = root.querySelector("[data-conveyor-next]");
-  const focusLabel = running
-    ? progress.currentTicker ? "ANALYZING NOW" : "PREPARING LIVE SCAN"
-    : researchConveyorMotion.lastTicker ? "LAST SCANNED" : current.ready ? "LATEST READY RESULT" : "QUEUED";
-  if (focus) focus.innerHTML = `${logoMarkup(focusSymbol, "", { eager: true })}<span><small>${focusLabel}</small><strong>${escapeHtml(focusSymbol)}</strong></span>`;
-  if (nextLabel) nextLabel.textContent = running && progress.total
-    ? `${Math.min(progress.completed + 1, progress.total)} / ${progress.total}${progress.universeTotal ? ` · ${formatCount(progress.universeTotal)} total` : ""}`
-    : next ? `Next scan starts with · ${next.symbol}` : "Waiting for queue";
-  root.style.setProperty("--conveyor-progress", `${Math.max(0, Math.min(100, running ? progress.pct : researchConveyorMotion.lastCompletedAt ? 100 : 0))}%`);
-}
-
-function tickResearchConveyorCountdown() {
-  if (state.activeView !== "mirror" || researchCycleIsRunning()) return;
-  const status = $("#mirrorCandidates [data-conveyor-copy-status]");
-  if (!status) return;
-  status.textContent = state.intelligenceScheduler?.lastResult?.status === "failed"
-    ? "The next safe research retry is queued automatically."
-    : "Loading the next exchange-wide batch; the continuous sweep stays active.";
-}
-
-function syncResearchCoverageLabels(progress = researchProgress()) {
-  if (!progress.universeTotal) return;
-  const universeLabel = $("[data-research-universe]");
-  if (universeLabel) universeLabel.textContent = `${formatCount(progress.universeTotal)}-stock sweep`;
-  const metric = $("#mirrorMetrics")?.firstElementChild;
-  if (!metric) return;
-  const label = metric.querySelector("small");
-  const value = metric.querySelector("strong");
-  const hint = metric.querySelector("span");
-  if (label) label.textContent = "Exchange sweep";
-  if (value) value.textContent = `${formatCount(progress.sweepCompleted)} / ${formatCount(progress.universeTotal)}`;
-  if (hint) hint.textContent = `${formatCount(Math.max(0, progress.universeTotal - progress.sweepCompleted))} remaining · batch ${progress.batchNumber || 1}/${progress.batchCount || 1}`;
-}
-
-function syncResearchConveyorMotion() {
-  const root = $("#mirrorCandidates");
-  if (!root) return;
-  const desiredQueue = researchConveyorQueue(researchConveyorMotion.candidates, researchConveyorMotion.proposals);
-  const desiredKey = desiredQueue.map((item) => item.symbol).join("|");
-  if (desiredKey && desiredKey !== researchConveyorMotion.queueKey) {
-    const nextAt = Date.parse(state.portfolioPlan?.cycle?.nextRunAt || state.intelligenceScheduler?.nextRunAt || "");
-    const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
-    renderResearchConveyor(researchConveyorMotion.candidates, researchConveyorMotion.proposals, state.intelligenceScheduler || {}, remainingSeconds);
-    return;
-  }
-  const motionAllowed = !window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-  const visible = state.activeView === "mirror" && !document.hidden;
-  const running = researchCycleIsRunning() && visible;
-  const moving = researchLoopIsActive() && visible && motionAllowed;
-  const progress = researchProgress();
-  syncResearchCoverageLabels(progress);
-  root.dataset.state = running ? "running" : researchLoopIsActive() ? "handoff" : "idle";
-  root.dataset.motion = moving ? "moving" : "paused";
-  const stateLabel = $("#researchConveyorState");
-  if (stateLabel) stateLabel.textContent = running
-    ? progress.currentTicker ? `Scanning ${progress.currentTicker}` : "Preparing automatic scan"
-    : researchLoopIsActive()
-      ? "Continuous sweep · loading next batch"
-      : "Research loop unavailable";
-  const title = root.querySelector("[data-conveyor-copy-title]");
-  const status = root.querySelector("[data-conveyor-copy-status]");
-  const nextAt = Date.parse(state.portfolioPlan?.cycle?.nextRunAt || state.intelligenceScheduler?.nextRunAt || "");
-  const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
-  if (title) title.textContent = running
-    ? progress.currentTicker ? `Researching ${progress.currentTicker}` : progress.phase === "market_data" ? "Loading the live stock batch" : "Real research cycle starting"
-    : researchLoopIsActive()
-      ? "Continuous exchange sweep"
-      : "Research queue is ready";
-  if (status) status.textContent = running
-    ? progress.message || "The belt will advance when the evaluator reports the next real ticker."
-    : researchLoopIsActive()
-      ? progress.universeTotal
-        ? `${formatCount(progress.sweepCompleted)} of ${formatCount(progress.universeTotal)} covered in sweep ${progress.sweepNumber || 1}; loading the next batch.`
-        : "Loading the next exchange-wide batch; automatic research remains on."
-      : remainingSeconds !== null
-        ? `Automatic research starts in ${formatCountdown(remainingSeconds)}.`
-        : "Automatic research is queued.";
-  const pill = $("#mirrorStatusPill");
-  if (pill && running) {
-    pill.textContent = "Scanning now";
-    pill.className = "status-pill ready";
-  } else if (pill) {
-    pill.textContent = "Automatic research on";
-    pill.className = "status-pill ready";
-  }
-  updateResearchConveyorFrame();
-  prepareResearchConveyorLoop(root);
-}
-
-function renderResearchConveyor(candidates, proposals, scheduler, remainingSeconds) {
-  const root = $("#mirrorCandidates");
-  if (!root) return;
-  researchConveyorMotion.candidates = candidates;
-  researchConveyorMotion.proposals = proposals;
-  const queue = researchConveyorQueue(candidates, proposals);
-  const queueKey = queue.map((item) => item.symbol).join("|");
-  if (queueKey !== researchConveyorMotion.queueKey) {
-    researchConveyorMotion.queueKey = queueKey;
-  }
-  researchConveyorMotion.queue = queue;
-  const completedAt = scheduler.lastCompletedAt || state.refresh?.completedAt || "";
-  const justCompleted = Boolean(
-    completedAt
-    && researchConveyorMotion.lastCompletedAt
-    && completedAt !== researchConveyorMotion.lastCompletedAt,
-  );
-  if (completedAt) researchConveyorMotion.lastCompletedAt = completedAt;
-
-  if (!queue.length) {
-    stopResearchConveyorMotion();
-    root.innerHTML = `<div class="research-conveyor-empty"><span class="mirror-radar" aria-hidden="true"><i></i></span><strong>No stock queue yet</strong><small>${escapeHtml(researchCycleIsRunning() ? "The first real research batch is loading." : remainingSeconds !== null ? `Next scheduled scan in ${formatCountdown(remainingSeconds)}.` : "Waiting for the first scheduled scan.")}</small></div>`;
-    syncResearchConveyorMotion();
-    return;
-  }
-
-  const beltIcons = queue.map((item) => `
-    <span class="research-conveyor-icon ${item.ready ? "ready" : ""}" data-conveyor-symbol="${escapeHtml(item.symbol)}" aria-hidden="true">
-      ${logoMarkup(item.symbol, "", { eager: true })}<small>${escapeHtml(item.symbol)}</small><i></i>
-    </span>`).join("");
-  root.innerHTML = `
-    <div class="research-conveyor-window">
-      <div class="research-conveyor-belt" aria-hidden="true"><div class="research-conveyor-track"><div class="research-conveyor-segment" data-conveyor-segment>${beltIcons}</div><div class="research-conveyor-segment" aria-hidden="true">${beltIcons}</div></div></div>
-      <div class="research-conveyor-scanner" aria-hidden="true"><span>RESEARCH</span></div>
-    </div>
-    <div class="research-conveyor-readout">
-      <div class="research-conveyor-focus" data-conveyor-focus></div>
-      <div class="research-conveyor-copy">
-        <strong data-conveyor-copy-title>${escapeHtml(researchCycleIsRunning() ? "Real research cycle starting" : completedAt ? "Latest research batch complete" : "Research queue is ready")}</strong>
-        <span data-conveyor-copy-status>${escapeHtml(researchCycleIsRunning() ? "Waiting for the evaluator's first ticker." : researchLoopIsActive() ? "Loading the next exchange-wide batch; automatic research remains on." : remainingSeconds !== null ? `Automatic research starts in ${formatCountdown(remainingSeconds)}.` : "Automatic research is queued.")}</span>
-        <i><b></b></i>
-      </div>
-      <small data-conveyor-next></small>
-    </div>`;
-  syncResearchConveyorMotion();
-  if (justCompleted && !researchCycleIsRunning()) {
-    window.clearTimeout(researchConveyorMotion.completionTimer);
-    root.classList.add("cycle-complete");
-    researchConveyorMotion.completionTimer = window.setTimeout(() => root.classList.remove("cycle-complete"), 1_400);
-  }
-}
-
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
   const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
-  const summary = mirror.summary || {};
-  const candidates = mirror.candidates || [];
-  const sources = mirror.sources || [];
   const watchers = Array.isArray(mirror.watchers) ? mirror.watchers : [];
   const warnings = mirror.warnings || [];
-  const importer = mirror.importer || {};
   const importer13f = mirror.importer13f || {};
   const knowledge = mirror.knowledge || {};
   const knowledgeSummary = knowledge.summary || {};
-  const plan = state.portfolioPlan || {};
-  const cycle = plan.cycle || {};
-  const planSummary = plan.summary || {};
-  const paper = state.shadowPortfolio || {};
   const simulation = state.simulationLab || {};
-  const paperLearning = paper.learning || {};
-  const guardrails = state.brokerControl?.guardrails || {};
-  const scheduler = state.intelligenceScheduler || {};
-  const cadenceMinutes = Number(cycle.cadenceMinutes || scheduler.activeCadenceMinutes || 5);
-  const nextAt = Date.parse(cycle.nextRunAt || scheduler.nextRunAt || "");
-  const remainingSeconds = Number.isFinite(nextAt) ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1_000)) : null;
-  const marketOpen = cycle.session?.regular === true;
-  const cycleRunning = cycle.running === true || scheduler.running === true;
-  const cycleWorking = cycleRunning || scheduler.handoffPending === true;
-  const progress = researchProgress();
+  const paperLearning = state.shadowPortfolio?.learning || {};
+  const traderResearch = state.traderResearch || {};
+  const jobs = Array.isArray(traderResearch.jobs) ? traderResearch.jobs : [];
   const activeWatchers = watchers.filter((watcher) => watcher.enabled);
-  const fastWatchers = activeWatchers.filter((watcher) => watcher.copyEligible);
   const delayedWatchers = activeWatchers.filter((watcher) => watcher.researchOnly);
-  const liveGateCount = (plan.proposals || []).filter((proposal) => ["awaiting_human_gate", "approved"].includes(proposal.reviewState)).length;
+  const researchSignals = Array.isArray(importer13f.researchSignals) ? importer13f.researchSignals : [];
+  const unresolvedSignals = researchSignals.filter((signal) => signal.tickerResolved === false).length;
+  const runningJobs = jobs.filter((job) => job.status === "running").length;
+  const queuedJobs = jobs.filter((job) => job.status === "queued").length;
+  const completedJobs = jobs.filter((job) => ["success", "partial"].includes(job.status)).length;
   const pill = $("#mirrorStatusPill");
-  pill.textContent = cycleRunning ? "Scanning now" : scheduler.handoffPending ? "Loading next batch" : !mirror.available ? "Waiting for first scan" : mirror.stale ? "Signals stale" : "Engine active";
-  pill.className = `status-pill ${cycleWorking || (!mirror.stale && mirror.available) ? "ready" : mirror.stale ? "warning" : "muted"}`;
-
-  const cycleLabel = cycleRunning
-    ? String(scheduler.currentMessage || "Refreshing market research and public-trader signals")
-    : scheduler.handoffPending
-      ? String(scheduler.currentMessage || "Loading the next exchange-wide research batch")
-    : marketOpen && remainingSeconds !== null
-      ? `Next scan ${formatCountdown(remainingSeconds)}`
-      : cycle.session?.label || "Market schedule unavailable";
-  $("#mirrorCycleRail").innerHTML = `
-    <div class="mirror-cycle-primary" data-status="${escapeHtml(cycleWorking ? "working" : marketOpen ? "countdown" : "quiet")}">
-      <i aria-hidden="true"></i><span><small>CONTINUOUS RESEARCH</small><strong>${escapeHtml(cycleLabel)}</strong></span>
-    </div>
-    <div class="mirror-flow-step ${cycleWorking ? "working" : mirror.available ? "done" : "waiting"}"><small>01</small><span><strong>Research</strong><em data-research-universe>${escapeHtml(progress.universeTotal ? `${formatCount(progress.universeTotal)}-stock sweep` : `${state.overview?.metrics?.trackedRecords || state.records.length || 0} symbols`)}</em></span></div>
-    <div class="mirror-flow-step ${activeWatchers.length ? "done" : "blocked"}"><small>02</small><span><strong>Copy sources</strong><em>${escapeHtml(`${activeWatchers.length} traders & funds`)}</em></span></div>
-    <div class="mirror-flow-step ${paper.mode === "paper_shadow_only" ? "done" : "waiting"}"><small>03</small><span><strong>Test results</strong><em>${escapeHtml(`${(paper.positions || []).length} simulated positions`)}</em></span></div>
-    <div class="mirror-flow-step gate"><small>04</small><span><strong>Real order</strong><em>${escapeHtml(liveGateCount ? `${liveGateCount} in Human Gate` : "Only after every check passes")}</em></span></div>`;
+  pill.textContent = runningJobs ? `${runningJobs} agent${runningJobs === 1 ? "" : "s"} working` : queuedJobs ? `${queuedJobs} queued` : "Background watch active";
+  pill.className = `status-pill ${runningJobs || queuedJobs || activeWatchers.length ? "ready" : "muted"}`;
 
   $("#mirrorMetrics").innerHTML = [
-    [progress.universeTotal ? "Exchange sweep" : "Symbols researched", progress.universeTotal ? `${formatCount(progress.sweepCompleted)} / ${formatCount(progress.universeTotal)}` : state.overview?.metrics?.trackedRecords || state.records.length || 0, progress.universeTotal ? `${formatCount(Math.max(0, progress.universeTotal - progress.sweepCompleted))} remaining · batch ${progress.batchNumber || 1}/${progress.batchCount || 1}` : `${state.overview?.metrics?.validSetups || 0} valid setups`],
-    ["Ready for gate", planSummary.readyForExactDraft ?? 0, `${planSummary.proposals ?? 0} current reviews`],
-    ["Scenario tests", formatCount(simulation.scenarioPaths || 0), `${simulation.candidatesTested || 0} candidates this cycle`],
-    ["Paper outcomes", paperLearning.closedTrades ?? 0, paperLearning.hitRate === null || paperLearning.hitRate === undefined ? "building measured history" : `${formatPercent(paperLearning.hitRate)} hit rate`],
+    ["Managers monitored", activeWatchers.length, `${activeWatchers.filter((watcher) => watcher.researchAgentEnabled).length} agent-enabled identities`],
+    ["Filings scanned", importer13f.filingsScanned || 0, importer13f.generatedAt ? `Last SEC read ${relativeCycle(importer13f.generatedAt)}` : "First SEC read pending"],
+    ["Holding changes", importer13f.holdingChangesFound || 0, `${unresolvedSignals} awaiting verified ticker`],
+    ["Research agents", `${runningJobs} live · ${queuedJobs} queued`, `${completedJobs} completed with persisted evidence`],
   ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
-  $("#mirrorAllocation").innerHTML = `
-    <div><small>SIMULATION RESULT</small><strong>${escapeHtml(formatMoney(paper.equityDollars || paper.initialCashDollars || 0))}</strong><span class="${Number(paper.totalPnlDollars || 0) >= 0 ? "positive" : "negative"}">${escapeHtml(`${formatMoney(paper.totalPnlDollars || 0)} P&L`)}</span></div>
-    <div><small>REAL ORDER CAP</small><strong>${escapeHtml(formatMoney(guardrails.maxOrderDollars || mirror.policy?.maxTradeDollars || 0))}</strong><span>Human Gate required</span></div>`;
-
-  renderResearchConveyor(candidates, plan.proposals || [], scheduler, remainingSeconds);
 
   $("#mirrorWatcherCount").textContent = `${activeWatchers.length} monitored`;
   $("#mirrorWatchers").innerHTML = watchers.length
     ? watchers.map((watcher) => {
-        const initials = watcher.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
-        const feed = watcher.copyEligible ? importer : importer13f;
-        const status = watcher.enabled ? watcher.copyEligible ? "copy" : "research" : "off";
-        return `<article class="mirror-watcher" data-status="${escapeHtml(status)}">
-          <i>${escapeHtml(initials || "W")}</i>
-          <div><strong>${escapeHtml(watcher.name)}</strong><span>${escapeHtml(watcher.filingType)} · ${escapeHtml(watcher.copyEligible ? "fast signal" : "delayed holdings")}</span></div>
-          <em>${escapeHtml(watcher.enabled ? watcher.copyEligible ? "COPY" : "WATCH" : "OFF")}</em>
-          <small>${escapeHtml(feed.generatedAt ? `Read ${relativeCycle(feed.generatedAt)}` : "First read pending")}</small>
+        const initials = watcher.traderName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+        const watcherJobs = jobs.filter((job) => job.traderName === watcher.name || job.traderName === watcher.traderName);
+        return `<article class="trader-roster-card" data-status="${escapeHtml(watcher.enabled ? "watching" : "off")}">
+          <i>${escapeHtml(initials || "TR")}</i>
+          <div class="trader-roster-identity"><strong>${escapeHtml(watcher.traderName)}</strong><span>${escapeHtml(watcher.firmName)}</span><small>${escapeHtml(watcher.strategy)}</small></div>
+          <div class="trader-roster-state"><em>${escapeHtml(watcher.enabled ? "WATCHING" : "OFF")}</em><b>${escapeHtml(`${watcherJobs.length} job${watcherJobs.length === 1 ? "" : "s"}`)}</b></div>
+          <div class="trader-roster-meta"><span>${escapeHtml(`${watcher.filingType} · CIK ${watcher.cik}`)}</span>${watcher.identityUrl ? `<a href="${escapeHtml(watcher.identityUrl)}" target="_blank" rel="noreferrer">SEC profile</a>` : ""}</div>
         </article>`;
       }).join("")
-    : `<div class="mirror-watch-empty"><strong>No named watchers</strong><span>Add verified CIKs in Sources to start the public filing watch.</span></div>`;
+    : `<div class="trader-lab-empty"><strong>No verified managers configured</strong><span>Add a named SEC CIK before this independent research queue can run.</span></div>`;
+
+  $("#traderAgentCount").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}`;
+  $("#traderAgentJobs").innerHTML = jobs.length
+    ? jobs.slice(0, 20).map((job) => {
+        const result = job.result || {};
+        const evaluation = result.evaluation || {};
+        const company = result.company || {};
+        const intraday = result.intraday || {};
+        const evidence = Array.isArray(result.evidence) ? result.evidence : [];
+        const statusLabel = job.status === "success" ? "COMPLETE" : job.status === "partial" ? "PARTIAL" : job.status === "running" ? "WORKING" : job.status === "queued" ? "QUEUED" : job.status === "blocked" ? "BLOCKED" : "FAILED";
+        const stageMarkup = (job.stages || []).map((stage) => `<span data-stage-status="${escapeHtml(stage.status)}"><i></i><small>${escapeHtml(stage.label)}</small><b>${escapeHtml(stage.status === "running" ? "working" : stage.status)}</b><em>${escapeHtml(stage.durationMs ? formatResearchDuration(stage.durationMs) : stage.status === "pending" ? "—" : "<0.1s")}</em></span>`).join("");
+        const retry = ["blocked", "failed", "stopped"].includes(job.status)
+          ? `<button type="button" data-trader-agent-retry="${escapeHtml(job.id)}">Retry research</button>`
+          : "";
+        return `<article class="trader-agent-job" data-job-status="${escapeHtml(job.status)}">
+          <header>
+            <div class="trader-agent-symbol">${job.symbol ? logoMarkup(job.symbol, "", { eager: true }) : `<i>${escapeHtml((job.issuerName || "?")[0])}</i>`}<span><small>${escapeHtml(job.traderName)}</small><strong>${escapeHtml(job.symbol || job.issuerName || "Unresolved holding")}</strong></span></div>
+            <div class="trader-agent-verdict"><em>${escapeHtml(statusLabel)}</em><strong>${escapeHtml(job.currentStage.replaceAll("_", " "))}</strong><small>${escapeHtml(job.status === "running" ? `Started ${relativeCycle(job.startedAt)}` : job.completedAt ? `${formatResearchDuration(job.durationMs)} total · ${relativeCycle(job.completedAt)}` : relativeCycle(job.queuedAt))}</small></div>
+          </header>
+          <div class="trader-agent-stages">${stageMarkup}</div>
+          <p>${escapeHtml(job.message)}</p>
+          <details class="trader-agent-output" ${["success", "partial"].includes(job.status) ? "" : "open"}>
+            <summary><span>Research output</span><strong>${escapeHtml(result.artifactCount ? `${result.artifactCount} artifacts` : job.securityIdentifier ? `CUSIP ${job.securityIdentifier}` : "No artifact yet")}</strong></summary>
+            <div class="trader-agent-output-grid">
+              <span><small>Decision</small><b>${escapeHtml(evaluation.decision || "Pending")}</b></span>
+              <span><small>Quant score</small><b>${escapeHtml(Number.isFinite(Number(evaluation.score)) ? evaluation.score : "—")}</b></span>
+              <span><small>Data</small><b>${escapeHtml(evaluation.dataProvider || intraday.sourceProvider || "Pending")}</b></span>
+              <span><small>Health</small><b>${escapeHtml(evaluation.dataHealth || intraday.dataHealth || "Pending")}</b></span>
+              <span><small>Company</small><b>${escapeHtml(company.name || job.issuerName || "Pending")}</b></span>
+              <span><small>Sector</small><b>${escapeHtml(company.sector || "Pending")}</b></span>
+              <span><small>Intraday</small><b>${escapeHtml(intraday.alignment || "Pending")}</b></span>
+              <span><small>Current price</small><b>${escapeHtml(evaluation.currentPrice === null || evaluation.currentPrice === undefined ? "—" : formatMoney(evaluation.currentPrice))}</b></span>
+            </div>
+            ${evaluation.mainReason || evaluation.mainRisk ? `<div class="trader-agent-thesis"><p><strong>Reason</strong>${escapeHtml(evaluation.mainReason || "No valid setup reason recorded.")}</p><p><strong>Risk</strong>${escapeHtml(evaluation.mainRisk || "No risk note recorded.")}</p></div>` : ""}
+            <div class="trader-agent-evidence">${evidence.length ? evidence.map((item) => item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>` : `<span>${escapeHtml(item.label)}</span>`).join("") : `<span>No completed evidence links yet.</span>`}</div>
+            <small class="trader-agent-boundary">This agent has no broker tools. Its result can inform research, never place an order.</small>
+            ${retry}
+          </details>
+        </article>`;
+      }).join("")
+    : `<div class="trader-lab-empty"><strong>No trader-triggered jobs yet</strong><span>When a monitored filing contains a holding change, a separate agent will resolve the ticker and run market, quant, intraday, company, and news stages. Keep the SEC contact identity configured so the background watcher can read filings.</span></div>`;
 
   const consensus = Array.isArray(mirrorIntelligence.consensus) ? mirrorIntelligence.consensus : [];
   $("#mirrorConsensus").innerHTML = consensus.length
     ? consensus.slice(0, 8).map((item) => `<article><span>${logoMarkup(item.symbol)}</span><strong>${escapeHtml(item.side)}</strong><b>${escapeHtml(Math.round(item.score))}</b><small>${escapeHtml(`${item.sourceCount} sources · ${relativeCycle(item.lastUpdatedAt)}`)}</small></article>`).join("")
-    : `<div class="mirror-watch-empty"><strong>No multi-source consensus</strong><span>A consensus appears only when at least two distinct attributable sources align.</span></div>`;
-  const mirrorEvents = Array.isArray(mirrorIntelligence.events) ? mirrorIntelligence.events : [];
-  const currentMirrorEvents = mirrorEvents.filter((item) => {
-    const data = item.data || {};
-    return data.referenceOnly !== true
-      && data.tickerResolved !== false
-      && !String(item.symbol || "").toUpperCase().startsWith("CUSIP:")
-      && String(item.sourceId || "").toLowerCase() !== "sec_13f";
-  });
-  $("#mirrorEventFeed").innerHTML = currentMirrorEvents.length
-    ? currentMirrorEvents.slice(0, 10).map((item) => `<article><i></i><div><strong>${escapeHtml(`${item.side || "OBSERVE"} ${item.symbol || "—"}`)}</strong><span>${escapeHtml(item.sourceId || "public source")}</span></div><em>${escapeHtml(item.delaySeconds === null || item.delaySeconds === undefined ? "delay unavailable" : item.delaySeconds < 3600 ? `${Math.round(item.delaySeconds / 60)}m delay` : `${(item.delaySeconds / 3600).toFixed(1)}h delay`)}</em><small>${escapeHtml(relativeCycle(item.receivedAt))}</small></article>`).join("")
-    : `<div class="mirror-watch-empty"><strong>No current copy event</strong><span>Historical 13F changes stay in the archive summary, not the live signal feed.</span></div>`;
-
-  $("#mirrorSources").innerHTML = sources.length
-    ? sources.slice(0, 8).map((source) => `<article data-source-health="${escapeHtml(source.health || "waiting")}">
-        <i class="${source.active ? "ready" : "delay"}"></i>
-        <div><strong>${escapeHtml(source.name)}</strong><em>${escapeHtml(`${String(source.delayClass || "delay unknown").replaceAll("_", " ")} · ${source.health || "waiting"}`)}</em></div>
-        <button type="button" data-mirror-follow="${escapeHtml(source.id)}" data-next-following="${source.following ? "false" : "true"}">${source.following ? "Following" : "Follow"}</button>
-        <button type="button" data-mirror-enable="${escapeHtml(source.id)}" data-next-enabled="${source.mirrorEnabled ? "false" : "true"}" ${source.following ? "" : "disabled"}>${source.mirrorEnabled ? "Copy on" : "Copy off"}</button>
-      </article>`).join("")
-    : `<span><i class="delay"></i><strong>Source registry</strong><em>pending</em></span>`;
+    : `<div class="trader-lab-empty"><strong>No independent consensus</strong><span>A match appears only when at least two attributable sources align on the same stock and direction.</span></div>`;
   const profiles = knowledge.sourceProfiles || [];
   $("#knowledgeStatus").textContent = knowledge.stale
     ? "Evidence stale"
-    : `${paperLearning.closedTrades || 0} paper closes · ${knowledgeSummary.measuredOutcomes || 0} copy outcomes`;
+    : `${completedJobs} agent reports · ${knowledgeSummary.measuredOutcomes || 0} measured outcomes`;
   $("#knowledgeMetrics").innerHTML = [
+    ["Agent reports", completedJobs],
+    ["SEC changes", importer13f.holdingChangesFound || 0],
     ["Scenario paths", formatCount(simulation.scenarioPaths || 0)],
-    ["Ideas tested", simulation.candidatesTested ?? 0],
     ["Paper closes", paperLearning.closedTrades ?? 0],
     ["Copy outcomes", knowledgeSummary.measuredOutcomes ?? 0],
-    ["Copy pending", knowledgeSummary.pendingOutcomes ?? 0],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join("");
   $("#knowledgeProfiles").innerHTML = profiles.length
     ? profiles.map((profile) => `
@@ -1586,7 +1430,9 @@ function renderMirror() {
       `).join("")
     : `<p class="muted-copy">Scores remain neutral until post-disclosure outcomes mature.</p>`;
   const combinedWarnings = [
-    delayedWatchers.length ? `${delayedWatchers.length} 13F watcher${delayedWatchers.length === 1 ? " is" : "s are"} delayed research, not automatic copy orders.` : "",
+    delayedWatchers.length ? `${delayedWatchers.length} 13F watcher${delayedWatchers.length === 1 ? " is" : "s are"} delayed research only; no 13F change can become an order.` : "",
+    unresolvedSignals ? `${unresolvedSignals} institutional holding change${unresolvedSignals === 1 ? " needs" : "s need"} a confident Yahoo equity-name match before stock research can begin.` : "",
+    ...(importer13f.warnings || []),
     ...warnings,
     ...(knowledge.warnings || []),
   ].filter(Boolean);
@@ -1843,6 +1689,7 @@ async function loadApp() {
     state.messages = chat.messages || [];
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
     state.mirrorIntelligence = mirrorPayload.mirrorIntelligence || brokerPayload.intelligence?.mirror || null;
+    state.traderResearch = mirrorPayload.traderResearch || null;
     state.intelligence = brokerPayload.intelligence || overview.intelligence || null;
     state.systemHealth = brokerPayload.systemHealth || overview.systemHealth || null;
     state.brokerControl = brokerPayload.brokerControl || null;
@@ -2480,7 +2327,7 @@ async function enableTelegram() {
       body: JSON.stringify({ approvalId: state.notificationApproval?.id }),
     });
     state.notificationStatus = payload.notificationStatus;
-    feedback.textContent = "Qualified proposal and verified Robinhood order alerts are now active.";
+    feedback.textContent = "Qualified trade and verified Robinhood order alerts are now active.";
     renderNotificationStatus();
   } catch (error) {
     feedback.textContent = error.message;
@@ -2534,7 +2381,6 @@ function renderRefreshFeedback(refresh) {
   if (!refresh || refresh.status === "idle") {
     panel.hidden = true;
     delete panel.dataset.status;
-    syncResearchConveyorMotion();
     return;
   }
   panel.hidden = false;
@@ -2555,7 +2401,6 @@ function renderRefreshFeedback(refresh) {
     ? "Latest available prices, rankings, research, and copy-source decisions loaded. Automatic monitoring continues."
     : issue || refresh.message || "Market data status updated.";
   $("#refreshFeedbackTime").textContent = refresh.completedAt ? formatTime(refresh.completedAt) : "Working now";
-  syncResearchConveyorMotion();
 }
 
 async function pollRefreshStatus() {
@@ -2571,6 +2416,40 @@ async function pollRefreshStatus() {
   } catch (_error) {
   } finally {
     state.refreshStatusPolling = false;
+  }
+}
+
+async function pollTraderResearch() {
+  if (state.traderResearchPolling || document.hidden || state.activeView !== "mirror") return;
+  state.traderResearchPolling = true;
+  try {
+    const payload = await api("/api/stock-office/mirror");
+    state.mirror = payload.mirror || state.mirror;
+    state.mirrorIntelligence = payload.mirrorIntelligence || state.mirrorIntelligence;
+    state.traderResearch = payload.traderResearch || state.traderResearch;
+    renderMirror();
+  } catch (_error) {
+  } finally {
+    state.traderResearchPolling = false;
+  }
+}
+
+async function retryTraderResearch(jobId) {
+  const button = $(`[data-trader-agent-retry="${CSS.escape(jobId)}"]`);
+  const feedback = $("#mirrorGateFeedback");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Queueing…";
+  }
+  feedback.textContent = "Queueing a fresh isolated research attempt. No broker action is available to this agent.";
+  try {
+    const payload = await api(`/api/stock-office/trader-research/${encodeURIComponent(jobId)}/retry`, { method: "POST", body: "{}" });
+    state.traderResearch = payload.traderResearch || state.traderResearch;
+    feedback.textContent = "Research retry queued. The stage timings below update from persisted agent state.";
+    renderMirror();
+  } catch (error) {
+    feedback.textContent = error.message;
+    if (button) button.disabled = false;
   }
 }
 
@@ -2601,9 +2480,8 @@ async function syncLocalFiles() {
     button.textContent = "Update market data";
     if (mirrorButton) {
       mirrorButton.disabled = false;
-      mirrorButton.textContent = "Run extra scan";
+      mirrorButton.textContent = "Scan managers now";
     }
-    syncResearchConveyorMotion();
   }
 }
 
@@ -2694,6 +2572,8 @@ document.addEventListener("click", (event) => {
   if (mirrorFollow) updateMirrorSourcePolicy(mirrorFollow);
   const mirrorEnable = event.target.closest("[data-mirror-enable]");
   if (mirrorEnable) updateMirrorSourcePolicy(mirrorEnable);
+  const traderResearchRetry = event.target.closest("[data-trader-agent-retry]");
+  if (traderResearchRetry && !traderResearchRetry.disabled) retryTraderResearch(traderResearchRetry.dataset.traderAgentRetry);
   const portfolioDraft = event.target.closest("[data-portfolio-draft]");
   if (portfolioDraft && !portfolioDraft.disabled) stagePortfolioProposal(portfolioDraft.dataset.portfolioDraft);
   const proposalApprove = event.target.closest("[data-proposal-approve]");
@@ -2737,17 +2617,24 @@ $("#syncButton").addEventListener("click", syncLocalFiles);
 $("#stockChatForm").addEventListener("submit", askStockGuru);
 $("#capitalGoalForm").addEventListener("submit", (event) => {
   event.preventDefault();
+  const baseInput = $("#capitalGoalBaseDollars");
   const input = $("#capitalGoalDollars");
   const feedback = $("#capitalGoalFeedback");
+  const base = Number(baseInput.value);
   const value = Number(input.value);
-  if (!Number.isFinite(value) || value <= 0) {
-    feedback.textContent = "Enter a goal greater than zero.";
+  if (!Number.isFinite(base) || base <= 0 || !Number.isFinite(value) || value <= 0) {
+    feedback.textContent = "Enter planned starting capital and a target greater than zero.";
+    return;
+  }
+  if (value < base) {
+    feedback.textContent = "Target capital must be at least the planned starting capital.";
     return;
   }
   try {
+    window.localStorage.setItem("argentum.stockOffice.capitalGoalBaseDollars", String(base));
     window.localStorage.setItem("argentum.stockOffice.capitalGoalDollars", String(value));
     window.localStorage.setItem("argentum.stockOffice.capitalGoalHorizonMonths", String($("#capitalGoalHorizon").value));
-    feedback.textContent = `Saved: ${formatMoney(value)} goal.`;
+    feedback.textContent = `Saved: ${formatMoney(base)} planned capital toward a ${formatMoney(value)} target.`;
   } catch {
     feedback.textContent = "This goal could not be saved on this device.";
   }
@@ -2755,7 +2642,10 @@ $("#capitalGoalForm").addEventListener("submit", (event) => {
   renderCapitalGoalPlanner();
 });
 const savedCapitalGoal = getCapitalGoal();
+const savedCapitalGoalBase = getCapitalGoalBase();
+if (savedCapitalGoalBase) $("#capitalGoalBaseDollars").value = savedCapitalGoalBase;
 if (savedCapitalGoal) $("#capitalGoalDollars").value = savedCapitalGoal;
+$("#capitalGoalBaseDollars").addEventListener("input", renderCapitalGoalPlanner);
 $("#capitalGoalDollars").addEventListener("input", renderCapitalGoalPlanner);
 $("#capitalGoalHorizon").addEventListener("change", renderCapitalGoalPlanner);
 renderCapitalGoalPlanner();
@@ -2780,15 +2670,17 @@ function tickLivePortfolio() {
   const snapshotAt = Date.parse(state.brokerControl?.snapshotUpdatedAt || "");
   const ageSeconds = Number.isFinite(snapshotAt) ? Math.max(0, Math.floor((Date.now() - snapshotAt) / 1_000)) : null;
   clock.textContent = ageSeconds === null ? "Waiting for live account" : `Display live · broker read ${ageSeconds}s ago`;
-  tickResearchConveyorCountdown();
 }
 
 window.setInterval(tickLivePortfolio, 1_000);
 window.setInterval(pollLivePortfolio, 1_000);
 window.setInterval(pollRefreshStatus, 400);
 window.setInterval(pollBrokerControl, 15_000);
+window.setInterval(pollTraderResearch, 2_000);
 
-document.addEventListener("visibilitychange", syncResearchConveyorMotion);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) pollTraderResearch();
+});
 
 document.addEventListener("toggle", (event) => {
   const details = event.target;
@@ -2819,6 +2711,7 @@ function connectIntelligenceEvents() {
   };
   [
     "research.completed",
+    "research.recommendations_ready",
     "opportunity.created",
     "opportunity.updated",
     "trade.approval_requested",

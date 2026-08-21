@@ -62,7 +62,16 @@ function makeWorkspace() {
   writeJson(path.join(stockRoot, "config/copy_trader_watchlist.json"), {
     version: 1,
     sec_form4: [{ cik: "0000000123", label: "Example insider", enabled: true }],
-    sec_13f: [{ cik: "0001067983", label: "Berkshire Hathaway / Warren Buffett", enabled: true, identity_url: "https://www.sec.gov/edgar/browse/?CIK=0001067983" }],
+    sec_13f: [{
+      cik: "0001067983",
+      label: "Berkshire Hathaway / Warren Buffett",
+      trader_name: "Warren Buffett",
+      firm_name: "Berkshire Hathaway Inc.",
+      strategy: "Concentrated long-term value investing",
+      research_agent_enabled: true,
+      enabled: true,
+      identity_url: "https://www.sec.gov/edgar/browse/?CIK=0001067983",
+    }],
   });
   writeJson(path.join(stockRoot, "data/copy_import_status.json"), {
     version: 1,
@@ -89,6 +98,24 @@ function makeWorkspace() {
     signals_imported: 12,
     signals_retained: 13,
     research_only: true,
+    research_signals: [{
+      id: "sec13f-example",
+      source_id: "sec_13f",
+      trader_name: "Berkshire Hathaway / Warren Buffett",
+      issuer_name: "Example Holdings Inc.",
+      title_of_class: "COM",
+      symbol: "CUSIP:000000001",
+      ticker_resolved: false,
+      security_identifier: "000000001",
+      side: "BUY",
+      previous_shares: 100,
+      current_shares: 150,
+      share_delta: 50,
+      as_filed_value: 500,
+      disclosed_at: "2026-06-19T11:40:00Z",
+      observed_at: "2026-06-19T11:41:00Z",
+      source_url: "https://www.sec.gov/example",
+    }],
     live_orders_placed: 0,
     warnings: ["13F is delayed research only."],
   });
@@ -290,11 +317,16 @@ test("Stock Office loads local records without exposing secrets", () => {
   assert.equal(snapshot.mirror.importer13f.holdingChangesFound, 1302);
   assert.equal(snapshot.mirror.importer13f.unmappedChanges, 1302);
   assert.equal(snapshot.mirror.importer13f.resolvedSignalsImported, 0);
+  assert.equal(snapshot.mirror.importer13f.researchSignals.length, 1);
+  assert.equal(snapshot.mirror.importer13f.researchSignals[0].issuerName, "Example Holdings Inc.");
+  assert.equal(snapshot.mirror.importer13f.researchSignals[0].tickerResolved, false);
   assert.equal(snapshot.mirror.importer13f.liveOrdersPlaced, 0);
   assert.equal(snapshot.mirror.watchers.length, 2);
   assert.deepEqual(snapshot.mirror.watchers.map((watcher) => watcher.filingType), ["Form 4", "13F"]);
   assert.equal(snapshot.mirror.watchers[0].copyEligible, true);
   assert.equal(snapshot.mirror.watchers[1].researchOnly, true);
+  assert.equal(snapshot.mirror.watchers[1].traderName, "Warren Buffett");
+  assert.equal(snapshot.mirror.watchers[1].researchAgentEnabled, true);
   assert.equal(snapshot.mirror.knowledge.summary.measuredOutcomes, 3);
   assert.equal(snapshot.mirror.knowledge.methodology.lookAheadAllowed, false);
   assert.equal(snapshot.mirror.candidates[0].evidenceStatus, "small_sample");

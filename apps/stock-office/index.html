@@ -48,6 +48,7 @@
             <h1 id="viewTitle">Overview</h1>
           </div>
           <div class="command-actions">
+            <span id="executionModePill" class="status-pill muted">Checking live orders</span>
             <button id="syncButton" type="button">Update market data</button>
           </div>
         </header>
@@ -86,22 +87,30 @@
               <div id="marketWorkers" class="overview-worker-list"></div>
             </div>
           </section>
-          <section class="overview-intelligence-rail" aria-label="Research memory and system health">
-            <div class="overview-intelligence-state">
-              <span>Research memory</span>
-              <strong id="overviewResearchState">Waiting</strong>
-              <small id="overviewResearchTimestamp">No persisted cycle</small>
+          <section class="overview-daily-rail" aria-label="Daily research and algorithm tests">
+            <div class="overview-daily-report">
+              <div class="overview-rail-heading"><span>Daily research</span><strong id="overviewDailyReportDate">Today</strong></div>
+              <div id="overviewDailyResearchMetrics" class="overview-daily-metrics"></div>
+              <small id="overviewDailyResearchLatest">Waiting for the first completed research cycle.</small>
             </div>
-            <div id="overviewSystemHealth" class="overview-system-health"></div>
+            <div class="overview-algorithm-tests">
+              <div class="overview-rail-heading"><span>Algorithm tests</span><strong id="overviewAlgorithmTestStatus">Waiting</strong></div>
+              <div id="overviewAlgorithmTestMetrics" class="overview-daily-metrics"></div>
+              <small id="overviewAlgorithmTestLatest">Autonomous paper testing runs in the background.</small>
+            </div>
             <div class="overview-report-actions">
               <button type="button" data-report-drawer="overnight">Night report</button>
               <button type="button" data-report-drawer="morning">Morning report</button>
             </div>
           </section>
+          <section class="overview-system-rail" aria-label="System connection status">
+            <div class="overview-system-heading"><span>System lights</span><small>Green means connected or running · amber means approval or degraded · red means attention required</small></div>
+            <div id="overviewSystemHealth" class="overview-system-health"></div>
+          </section>
           <section class="overview-proposals-board" aria-labelledby="tradeProposalsTitle">
             <div class="overview-board-head overview-proposals-head">
               <div><span>Live Robinhood review</span><h2 id="tradeProposalsTitle">Trade proposals</h2></div>
-              <div><strong id="overviewProposalCount">0 ready</strong><small>Real orders only. Human Gate approval required.</small></div>
+              <div><strong id="overviewProposalCount">0 ready</strong><small>REAL ORDERS ONLY · Human Gate approval required.</small></div>
             </div>
             <div id="overviewCycleRail" class="overview-cycle-rail" aria-live="polite"></div>
             <div id="overviewTradeReadiness" class="overview-trade-readiness" aria-live="polite"></div>
@@ -191,42 +200,37 @@
           <section class="mirror-console">
             <header class="mirror-console-head">
               <div>
-                <span class="mirror-kicker">RESEARCH + COPY TRADING</span>
-                <h2>Research center</h2>
-                <p>Market ideas, public-trader signals, and measured outcomes.</p>
+                <span class="mirror-kicker">FAMOUS TRADER INTELLIGENCE</span>
+                <h2>Trader research lab</h2>
+                <p>Public disclosures deploy isolated stock-research agents. The main market evaluator stays separate.</p>
               </div>
               <div class="mirror-head-actions">
-                <span id="mirrorStatusPill" class="status-pill muted">Loading engine</span>
-                <button id="mirrorRefreshButton" class="quiet-button" type="button">Run extra scan</button>
+                <span id="mirrorStatusPill" class="status-pill muted">Loading agents</span>
+                <button id="mirrorRefreshButton" class="quiet-button" type="button">Scan managers now</button>
               </div>
             </header>
-            <div id="mirrorCycleRail" class="mirror-cycle-rail" aria-live="polite"></div>
-            <div class="mirror-kpi-strip">
-              <div id="mirrorMetrics" class="mirror-metrics"></div>
-              <div id="mirrorAllocation" class="mirror-allocation"></div>
-            </div>
-            <div class="mirror-workspace">
-              <section class="mirror-signal-board">
+            <div id="mirrorMetrics" class="trader-lab-metrics"></div>
+            <div class="trader-lab-workspace">
+              <section class="trader-roster-panel">
                 <div class="mirror-section-head">
-                  <div><span>LIVE RESEARCH FLOW</span><h3>Stock conveyor</h3></div>
-                  <strong id="researchConveyorState">Waiting for engine</strong>
+                  <div><span>VERIFIED SEC IDENTITIES</span><h3>Famous traders &amp; funds</h3></div>
+                  <strong id="mirrorWatcherCount">0 monitored</strong>
                 </div>
-                <div id="mirrorCandidates" class="research-conveyor" aria-live="polite"></div>
+                <div id="mirrorWatchers" class="trader-roster"></div>
+              </section>
+              <section class="trader-agent-panel">
+                <div class="mirror-section-head">
+                  <div><span>SEPARATE AGENT QUEUE</span><h3>Trader-triggered stock research</h3></div>
+                  <strong id="traderAgentCount">0 jobs</strong>
+                </div>
+                <div id="traderAgentJobs" class="trader-agent-jobs" aria-live="polite"></div>
                 <p id="mirrorGateFeedback" class="mirror-feedback" aria-live="polite"></p>
               </section>
-              <aside class="mirror-watch-board">
-                <div class="mirror-section-head">
-                  <div><span>COPY SOURCES</span><h3>Traders &amp; funds</h3></div>
-                  <strong id="mirrorWatcherCount">0 active</strong>
-                </div>
-                <div id="mirrorWatchers" class="mirror-watchers"></div>
-                <div class="mirror-section-head compact"><div><span>AGREEMENT</span><h3>Multi-source matches</h3></div></div>
-                <div id="mirrorConsensus" class="mirror-consensus"></div>
-                <div class="mirror-section-head compact"><div><span>LATEST</span><h3>Source events</h3></div></div>
-                <div id="mirrorEventFeed" class="mirror-event-feed"></div>
-                <div id="mirrorSources" class="mirror-source-rail"></div>
-              </aside>
             </div>
+            <section class="trader-consensus-panel">
+              <div class="mirror-section-head"><div><span>INDEPENDENT AGREEMENT</span><h3>Multi-source matches</h3></div><strong>Two sources minimum</strong></div>
+              <div id="mirrorConsensus" class="mirror-consensus"></div>
+            </section>
             <details class="mirror-proof">
               <summary><span>Methods &amp; evidence</span><strong id="knowledgeStatus">Neutral</strong></summary>
               <div class="mirror-proof-grid">
@@ -321,7 +325,7 @@
             <div class="telegram-layout">
               <div class="telegram-summary">
                 <strong id="telegramDestination">Telegram not configured</strong>
-                <span id="telegramSummary">Get a message only after Robinhood confirms an order.</span>
+                <span id="telegramSummary">Qualified trade alerts and broker outcomes will notify this destination.</span>
                 <div id="telegramRecent" class="telegram-recent"></div>
               </div>
               <form id="telegramConfigForm" class="telegram-config-form">
@@ -364,9 +368,10 @@
             <section class="panel assistant-panel">
               <div class="panel-head compact"><div><p class="eyebrow">Assistant</p><h2>Ask about the data</h2></div><span class="status-pill muted">Research only</span></div>
               <form id="capitalGoalForm" class="capital-goal-form">
-                <div class="capital-goal-intro"><p class="eyebrow">Operating goal</p><h3>Plan your deployment</h3><span>Set an amount from buying power and see measured scenario ranges for the time horizon you choose.</span></div>
+                <div class="capital-goal-intro"><p class="eyebrow">Operating goal</p><h3>Plan your deployment</h3><span>Track $75 of planned starting capital ($25 existing + $50 requested) toward a $150 target. Robinhood buying power remains the official source.</span></div>
                 <div class="capital-goal-facts"><span><small>Buying power</small><strong id="capitalGoalBuyingPower">—</strong></span><span><small>Available to plan</small><strong id="capitalGoalAvailable">—</strong></span></div>
-                <label>Amount to allocate <span class="input-suffix"><input id="capitalGoalDollars" type="number" min="1" max="100000000" step="1" required /><em>$</em></span></label>
+                <label>Planned starting capital <span class="input-suffix"><input id="capitalGoalBaseDollars" type="number" min="1" max="100000000" step="1" required /><em>$</em></span></label>
+                <label>Target capital <span class="input-suffix"><input id="capitalGoalDollars" type="number" min="1" max="100000000" step="1" required /><em>$</em></span></label>
                 <label>Time horizon<select id="capitalGoalHorizon"><option value="" selected>No fixed deadline</option><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option><option value="24">24 months</option></select></label>
                 <button type="submit">Save plan</button>
                 <div id="capitalGoalEstimate" class="capital-goal-estimate" aria-live="polite"></div>

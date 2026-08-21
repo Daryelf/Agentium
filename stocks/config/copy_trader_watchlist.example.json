@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "sec_form4": [
+    {
+      "cik": "0000315090",
+      "label": "Warren E. Buffett - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0000315090"
+    },
+    {
+      "cik": "0001494730",
+      "label": "Elon Musk - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001494730"
+    },
+    {
+      "cik": "0001197649",
+      "label": "Jen-Hsun Huang - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001197649"
+    },
+    {
+      "cik": "0001195345",
+      "label": "James Dimon - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001195345"
+    },
+    {
+      "cik": "0001214156",
+      "label": "Timothy D. Cook - SEC reporting owner",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001214156"
+    }
+  ],
+  "sec_13f": [
+    {
+      "cik": "0001067983",
+      "label": "Berkshire Hathaway Inc. - associated with Warren Buffett",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001067983",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001350694",
+      "label": "Bridgewater Associates, LP",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001350694",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001336528",
+      "label": "Pershing Square Capital Management, L.P.",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001336528",
+      "cusip_ticker_map": {}
+    },
+    {
+      "cik": "0001649339",
+      "label": "Scion Asset Management, LLC",
+      "enabled": false,
+      "identity_url": "https://www.sec.gov/edgar/browse/?CIK=0001649339",
+      "cusip_ticker_map": {}
+    }
+  ],
+  "operator_note": "Starter identities were checked against official SEC filing pages. Form 4 entries remain opt-in because most rows are grants, exercises, tax withholding, or planned sales; only fresh code P/S rows can reach Mirror Lab. Form 13F entries compare period-end holdings and always remain delayed research context, never executable copy orders. Every live order still requires a separate exact Human Gate approval."
+}

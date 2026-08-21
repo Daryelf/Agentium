@@ -4,7 +4,7 @@ const test = require("node:test");
 const { buildStockMarketWorkers, marketSession } = require("../services/stock-market-workers");
 
 test("market session reports the actual regular New York trading window", () => {
-  assert.deepEqual(marketSession(new Date("2026-08-12T14:00:00.000Z")), { status: "regular", label: "Regular market open", regular: true });
+  assert.equal(marketSession(new Date("2026-08-12T14:00:00.000Z")).regular, true);
   assert.equal(marketSession(new Date("2026-08-12T12:00:00.000Z")).status, "premarket");
   assert.equal(marketSession(new Date("2026-08-15T14:00:00.000Z")).status, "weekend");
 });

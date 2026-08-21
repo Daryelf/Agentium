@@ -1,3 +1,5 @@
+const { marketSession } = require("./stock-market-calendar");
+
 function finiteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -11,22 +13,6 @@ function safeDate(value) {
 
 function shortText(value, maximum = 180) {
   return String(value || "").trim().slice(0, maximum);
-}
-
-function marketSession(at = new Date(), timeZone = "America/New_York") {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(at).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
-  if (["Sat", "Sun"].includes(parts.weekday)) return { status: "weekend", label: "Weekend research", regular: false };
-  const minutes = Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
-  if (minutes >= 570 && minutes < 960) return { status: "regular", label: "Regular market open", regular: true };
-  if (minutes >= 240 && minutes < 570) return { status: "premarket", label: "Premarket research", regular: false };
-  if (minutes >= 960 && minutes < 1200) return { status: "afterhours", label: "After-hours research", regular: false };
-  return { status: "closed", label: "Overnight research", regular: false };
 }
 
 function latestCommand(scheduler = {}, name) {

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "observations": [
+    {
+      "signal_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+      "observed_at": "2026-01-07T20:05:00Z",
+      "price": 10.32,
+      "provenance": "market_snapshot",
+      "reference": "https://finance.yahoo.com/quote/EXAMPLE",
+      "market_regime": "unknown"
+    }
+  ]
+}

@@ -381,6 +381,73 @@ test("portfolio proposals expose research, target scenarios, and an explicitly u
   assert.match(proposal.outlook.horizonLabel, /fresh market-data cycle/i);
 });
 
+test("research-only recommendations stay visible without becoming trade drafts", () => {
+  const current = snapshot({
+    records: [{
+      id: "ticker-SNOW",
+      ticker: "SNOW",
+      status: "watch",
+      decision: "WATCH",
+      score: 78,
+      currentPrice: 150,
+      dataFresh: false,
+      lastUpdated: "2026-08-10T16:59:00.000Z",
+      mainReason: "Revenue growth remains strong, but the entry needs a fresh quote.",
+      mainRisk: "Valuation and market regime can invalidate the setup.",
+    }],
+    intelligence: {
+      opportunities: [{
+        id: "opportunity-SNOW",
+        symbol: "SNOW",
+        status: "candidate",
+        overallScore: 78,
+        aiScore: 80,
+        confidenceScore: 72,
+        evidenceCompleteness: 0.65,
+        dataQualityScore: 68,
+        thesis: { reason: "Needs a fresh quote before any order review." },
+        company: { name: "Snowflake", sector: "Technology" },
+        evidence: [{ label: "Evaluator", source: "Stock Guru", direction: "supporting" }],
+      }],
+    },
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const proposal = plan.proposals.find((item) => item.symbol === "SNOW");
+
+  assert.ok(proposal);
+  assert.equal(proposal.kind, "research_recommendation");
+  assert.equal(proposal.researchOnly, true);
+  assert.equal(proposal.actionable, false);
+  assert.equal(proposal.draftEligible, false);
+  assert.equal(proposal.scores.dataQuality, 68);
+  assert.equal(proposal.research.evidenceCompleteness, 0.65);
+  assert.equal(plan.summary.researchRecommendations, 1);
+});
+
+test("execution-rejected records remain visible as research-only recommendations", () => {
+  const current = snapshot({
+    records: [{
+      id: "ticker-DJCO",
+      ticker: "DJCO",
+      status: "rejected",
+      decision: "REJECT",
+      score: 83,
+      currentPrice: 614.70,
+      dataFresh: false,
+      mainRisk: "market-data provenance or quality failed the execution gate",
+    }],
+  });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const proposal = plan.proposals.find((item) => item.symbol === "DJCO");
+
+  assert.ok(proposal);
+  assert.equal(proposal.kind, "research_recommendation");
+  assert.equal(proposal.researchOnly, true);
+  assert.equal(proposal.actionable, false);
+  assert.equal(proposal.draftEligible, false);
+  assert.match(proposal.reasons.join(" "), /did not pass the live execution gate/i);
+});
+
 test("portfolio planner sizes BUY proposals to the stop-distance risk budget before review", () => {
   const current = snapshot({ records: [{ ...snapshot().records[0], stopLoss: 90, target1: 120 }] });
   const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });

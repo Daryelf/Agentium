@@ -113,6 +113,35 @@ function formatQualifiedProposalMessage(proposal = {}, draft = {}, approval = {}
   ].filter(Boolean).join("\n");
 }
 
+function formatResearchRecommendationMessage(proposals = [], metadata = {}, at = new Date()) {
+  const rows = (Array.isArray(proposals) ? proposals : []).slice(0, 6).map((proposal, index) => {
+    const research = proposal.research || {};
+    const scoreValue = research.score === null || research.score === undefined || research.score === "" ? null : Number(research.score);
+    const confidenceValue = research.confidenceScore === null || research.confidenceScore === undefined || research.confidenceScore === "" ? null : Number(research.confidenceScore);
+    const targetValue = proposal.outlook?.targetPrice === null || proposal.outlook?.targetPrice === undefined || proposal.outlook?.targetPrice === "" ? null : Number(proposal.outlook.targetPrice);
+    const stopValue = proposal.outlook?.stopPrice === null || proposal.outlook?.stopPrice === undefined || proposal.outlook?.stopPrice === "" ? null : Number(proposal.outlook.stopPrice);
+    const score = Number.isFinite(scoreValue) ? Math.round(scoreValue) : "—";
+    const confidence = research.confidenceScore === null || research.confidenceScore === undefined
+      ? research.confidence || "unknown"
+      : Number.isFinite(confidenceValue) ? `${Math.round(confidenceValue)}%` : "unknown";
+    const target = Number.isFinite(targetValue) && targetValue > 0 ? ` · target $${targetValue.toFixed(2)}` : "";
+    const stop = Number.isFinite(stopValue) && stopValue > 0 ? ` · stop $${stopValue.toFixed(2)}` : "";
+    return [
+      `${index + 1}. ${String(proposal.symbol || "UNKNOWN").toUpperCase()} · score ${score} · ${confidence}`,
+      `   ${String(research.mainReason || proposal.reasons?.[0] || "Research candidate").slice(0, 220)}${target}${stop}`,
+    ].join("\n");
+  });
+  return [
+    "ARGENTUM RESEARCH RECOMMENDATIONS",
+    metadata.phase ? `Phase: ${String(metadata.phase).replaceAll("_", " ")}` : null,
+    ...(rows.length ? rows : ["No current research candidate passed the recommendation floor."]),
+    "",
+    "Research only. No broker review, Human Gate request, or order has occurred.",
+    "Use WATCH or RESEARCH to keep investigating. A live order still needs a separate exact Human Gate approval and broker revalidation.",
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(at),
+  ].filter(Boolean).join("\n");
+}
+
 function createStockTelegramNotifier(options = {}) {
   const environment = options.environment || process.env;
   const fetchImpl = options.fetchImpl || fetch;
@@ -374,6 +403,38 @@ function createStockTelegramNotifier(options = {}) {
     }, approvals);
   }
 
+  async function notifyResearchRecommendations(proposals = [], metadata = {}, approvals = []) {
+    return { sent: false, state: "suppressed_research_only", reason: "Research-only recommendations stay in Stock Office Research and never send Telegram approval alerts." };
+    /*
+    const eligible = (Array.isArray(proposals) ? proposals : [])
+      .filter((proposal) => proposal?.researchOnly === true && /^[A-Z][A-Z0-9.-]{0,11}$/.test(String(proposal.symbol || "").toUpperCase()))
+      .slice(0, 6);
+    if (!eligible.length) {
+      return { sent: false, state: "ineligible", reason: "No research-only recommendation passed the notification floor." };
+    }
+    const fingerprint = secretHash(JSON.stringify(eligible.map((proposal) => ({
+      id: proposal.id,
+      fingerprint: proposal.fingerprint,
+      score: proposal.research?.score,
+      status: proposal.opportunityStatus,
+      reason: proposal.research?.mainReason,
+    }))));
+    const replyRows = eligible.slice(0, 3).flatMap((proposal) => {
+      const proposalId = String(proposal.id || proposal.fingerprint || "").slice(0, 48);
+      return [
+        { text: `WATCH ${String(proposal.symbol).toUpperCase()}`, callback_data: `wt:${proposalId}` },
+        { text: `RESEARCH ${String(proposal.symbol).toUpperCase()}`, callback_data: `rs:${String(proposal.symbol).toUpperCase()}` },
+      ];
+    });
+    return deliver({
+      eventId: `research-recommendations:${fingerprint.slice(0, 24)}`,
+      kind: "research_recommendation",
+      text: formatResearchRecommendationMessage(eligible, metadata, nowFn()),
+      replyMarkup: replyRows.length ? { inline_keyboard: [replyRows.slice(0, 6)] } : null,
+    }, approvals);
+    */
+  }
+
   async function sendTest(approvals = []) {
     const eventId = `operator-test:${nowFn().getTime()}`;
     return deliver({
@@ -530,6 +591,7 @@ function createStockTelegramNotifier(options = {}) {
     disable,
     enable,
     notifyQualifiedProposal,
+    notifyResearchRecommendations,
     notifySystemEvent,
     notifyVerifiedTrade,
     pollUpdates,
@@ -551,6 +613,7 @@ module.exports = {
   approvalAuthorizes,
   createStockTelegramNotifier,
   formatQualifiedProposalMessage,
+  formatResearchRecommendationMessage,
   formatVerifiedTradeMessage,
   normalizeSettings,
   secretHash,

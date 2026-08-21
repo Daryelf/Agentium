@@ -1096,6 +1096,37 @@ function createStockIntelligenceStore(options = {}) {
     }
   }
 
+  function dailySummary(at = nowFn()) {
+    const day = easternDay(at);
+    const db = open();
+    try {
+      const runs = db.prepare(`SELECT status, completed_at AS completedAt, symbols_scanned AS symbolsScanned,
+        signals_found AS signalsFound FROM stock_research_runs ORDER BY completed_at DESC LIMIT 2000`).all()
+        .filter((run) => run.completedAt && easternDay(new Date(run.completedAt)) === day);
+      const reports = db.prepare(`SELECT report_type AS reportType, generated_at AS generatedAt, status
+        FROM stock_research_reports WHERE report_day = ? ORDER BY generated_at DESC`).all(day);
+      return {
+        day,
+        research: {
+          runs: runs.length,
+          successfulRuns: runs.filter((run) => run.status === "success").length,
+          partialRuns: runs.filter((run) => run.status === "partial").length,
+          failedRuns: runs.filter((run) => run.status === "failed").length,
+          symbolsScanned: runs.reduce((sum, run) => sum + Math.max(0, Number(run.symbolsScanned) || 0), 0),
+          signalsFound: runs.reduce((sum, run) => sum + Math.max(0, Number(run.signalsFound) || 0), 0),
+          latestCompletedAt: runs[0]?.completedAt || null,
+        },
+        reports: reports.map((report) => ({
+          type: report.reportType,
+          generatedAt: report.generatedAt,
+          status: report.status,
+        })),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
   function upsertProposal(proposal = {}, input = {}) {
     if (!proposal.id || !proposal.symbol || !proposal.fingerprint) return null;
     const at = safeDate(input.updatedAt, nowFn().toISOString());
@@ -1331,6 +1362,7 @@ function createStockIntelligenceStore(options = {}) {
     captureDueSignalOutcomes,
     completeTelegramEvent,
     createDueReports,
+    dailySummary,
     health,
     ingestSnapshot,
     latestReport,

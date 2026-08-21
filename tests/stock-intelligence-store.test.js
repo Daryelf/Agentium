@@ -213,6 +213,11 @@ test("overnight and morning reports are generated only in their session windows 
   const morning = fixture.store.createDueReports(new Date("2026-08-13T12:15:00.000Z"), { status: "premarket", regular: false });
   assert.equal(morning.morning.type, "morning");
   assert.equal(fixture.store.latestReport("morning").summary.researched, 1);
+  const daily = fixture.store.dailySummary(new Date("2026-08-13T12:16:00.000Z"));
+  assert.equal(daily.day, "2026-08-13");
+  assert.equal(daily.research.runs, 1);
+  assert.equal(daily.research.symbolsScanned, 1);
+  assert.equal(daily.reports.length, 2);
   assert.deepEqual(fixture.store.createDueReports(new Date("2026-08-13T12:16:00.000Z"), { status: "premarket", regular: false }), {});
 });
 

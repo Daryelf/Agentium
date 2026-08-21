@@ -1326,10 +1326,21 @@ function normalizedResearchSymbol(value) {
   return /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol) ? symbol : "";
 }
 
+const researchRenderKeys = new Map();
+const researchFlowAnimationStartedAt = window.performance?.now?.() || Date.now();
+
+function renderStableHtml(selector, key, html) {
+  const root = $(selector);
+  if (!root || researchRenderKeys.get(selector) === key) return false;
+  root.innerHTML = html;
+  researchRenderKeys.set(selector, key);
+  return true;
+}
+
 function researchFlowStatus(value) {
   const status = String(value || "waiting").toLowerCase();
-  if (["running", "working", "valid_setup", "paper_ready", "buy"].includes(status)) return "working";
-  if (["success", "complete", "completed", "partial"].includes(status)) return "complete";
+  if (["running", "working"].includes(status)) return "working";
+  if (["success", "complete", "completed", "partial", "valid_setup", "paper_ready", "buy", "watch", "review", "hold"].includes(status)) return "complete";
   if (["blocked", "failed", "rejected", "stopped"].includes(status)) return "blocked";
   return "queued";
 }
@@ -1343,16 +1354,25 @@ function renderResearchFlowConveyor(selector, items, options = {}) {
   if (!root) return;
   const label = options.label || "RESEARCH";
   const summary = options.summary || `${items.length} persisted item${items.length === 1 ? "" : "s"}`;
-  root.dataset.flowState = items.some((item) => item.state === "working") ? "working" : items.length ? "active" : "waiting";
+  const durationSeconds = Math.max(90, Number(options.durationSeconds || items.length * 10 || 90));
+  const key = JSON.stringify({ label, items: items.map((item) => [item.id, item.symbol, item.name, item.detail, item.state]) });
+  root.dataset.flowState = options.working || items.some((item) => item.state === "working") ? "working" : items.length ? "active" : "waiting";
+  const existingSummary = root.querySelector(".research-flow-overlay strong");
+  if (existingSummary && existingSummary.textContent !== summary) existingSummary.textContent = summary;
+  if (researchRenderKeys.get(selector) === key) return;
+  researchRenderKeys.set(selector, key);
+  const elapsedSeconds = Math.max(0, ((window.performance?.now?.() || Date.now()) - researchFlowAnimationStartedAt) / 1_000);
+  root.style.setProperty("--flow-duration", `${durationSeconds}s`);
+  root.style.setProperty("--flow-delay", `${-(elapsedSeconds % durationSeconds).toFixed(2)}s`);
   if (!items.length) {
     root.innerHTML = `<div class="research-flow-overlay"><span>${escapeHtml(label)}</span><strong>${escapeHtml(summary)}</strong></div><div class="research-flow-empty"><i></i><strong>${escapeHtml(options.emptyTitle || "Waiting for persisted work")}</strong><small>${escapeHtml(options.emptyCopy || "The belt starts when the background engine records its first item.")}</small></div>`;
     return;
   }
   const itemMarkup = items.map((item) => {
     const identity = item.symbol
-      ? logoMarkup(item.symbol, item.name || "", { eager: true })
+      ? logoMarkup(item.symbol, item.name || "")
       : `<span class="research-flow-avatar">${escapeHtml(researchFlowInitials(item.name))}</span>`;
-    return `<article class="research-flow-item" data-item-state="${escapeHtml(item.state)}">
+    return `<article class="research-flow-item" data-item-state="${escapeHtml(item.state)}" data-flow-item="${escapeHtml(item.id || item.symbol || item.name)}">
       <span class="research-flow-identity">${identity}</span>
       <span class="research-flow-copy"><strong>${escapeHtml(item.symbol || item.name || "Unresolved")}</strong><small>${escapeHtml(item.detail || "Persisted research")}</small></span>
       <i aria-hidden="true"></i>
@@ -1361,7 +1381,7 @@ function renderResearchFlowConveyor(selector, items, options = {}) {
   root.innerHTML = `
     <div class="research-flow-overlay"><span>${escapeHtml(label)}</span><strong>${escapeHtml(summary)}</strong></div>
     <div class="research-flow-window">
-      <div class="research-flow-track"><div class="research-flow-segment">${itemMarkup}</div><div class="research-flow-segment" aria-hidden="true">${itemMarkup}</div></div>
+      <div class="research-flow-track"><div class="research-flow-segment">${itemMarkup}</div><div class="research-flow-segment" aria-hidden="true" inert>${itemMarkup}</div></div>
       <div class="research-flow-scanner" aria-hidden="true"><b></b></div>
       <div class="research-flow-rail" aria-hidden="true"></div>
     </div>`;
@@ -1369,26 +1389,38 @@ function renderResearchFlowConveyor(selector, items, options = {}) {
 
 function renderResearchFlowConveyors(jobs = [], watchers = []) {
   const scheduler = state.intelligenceScheduler || {};
-  const progressSymbols = Array.isArray(scheduler.progressSymbols) ? scheduler.progressSymbols : [];
+  const progressSymbols = [...new Set((Array.isArray(scheduler.progressSymbols) ? scheduler.progressSymbols : []).map(normalizedResearchSymbol).filter(Boolean))];
   const currentTicker = normalizedResearchSymbol(scheduler.currentTicker);
-  const marketItems = [];
-  const marketSeen = new Set();
-  const addMarketItem = (symbolValue, detail, status, name = "") => {
-    const symbol = normalizedResearchSymbol(symbolValue);
-    if (!symbol || marketSeen.has(symbol)) return;
-    marketSeen.add(symbol);
-    marketItems.push({ symbol, name, detail, state: researchFlowStatus(status) });
-  };
-  if (currentTicker) addMarketItem(currentTicker, "Analyzing now", "running");
-  progressSymbols.forEach((symbol) => addMarketItem(symbol, "Current evaluator batch", symbol === currentTicker ? "running" : "queued"));
-  state.records.forEach((record) => addMarketItem(
-    record.ticker,
-    `${mirrorStatusLabel(record.decision || record.status || "evaluated")} · score ${record.score ?? "—"}`,
-    record.status,
-    record.companyName || record.name || "",
-  ));
+  const recordBySymbol = new Map(state.records.map((record) => [normalizedResearchSymbol(record.ticker), record]));
+  const progressCompleted = Math.max(0, Math.min(progressSymbols.length, Number(scheduler.progressCompleted || 0)));
+  const progressTotal = Math.max(progressSymbols.length, Number(scheduler.progressTotal || 0));
+  const persistedTotal = Math.max(state.records.length, Number(state.recordTotal || 0));
+  const marketItems = progressSymbols.length
+    ? progressSymbols.map((symbol, index) => {
+        const record = recordBySymbol.get(symbol);
+        return {
+          id: `market:${symbol}`,
+          symbol,
+          name: record?.companyName || record?.name || "",
+          detail: record
+            ? `${mirrorStatusLabel(record.decision || record.status || "persisted")} · score ${record.score ?? "—"}`
+            : `Evaluator batch · ${index + 1}/${progressTotal || progressSymbols.length}`,
+          state: record ? researchFlowStatus(record.status === "rejected" ? "blocked" : "complete") : "queued",
+        };
+      })
+    : state.records.map((record) => ({
+        id: `record:${normalizedResearchSymbol(record.ticker)}`,
+        symbol: normalizedResearchSymbol(record.ticker),
+        name: record.companyName || record.name || "",
+        detail: `${mirrorStatusLabel(record.decision || record.status || "evaluated")} · score ${record.score ?? "—"}`,
+        state: researchFlowStatus(record.status === "rejected" ? "blocked" : "complete"),
+      })).filter((item) => item.symbol);
+  const marketFocusIndex = Math.max(0, currentTicker ? marketItems.findIndex((item) => item.symbol === currentTicker) : progressCompleted - 1);
+  const marketStart = Math.max(0, Math.min(Math.max(0, marketItems.length - 14), Math.floor(marketFocusIndex / 10) * 10));
+  const visibleMarketItems = marketItems.slice(marketStart, marketStart + 14);
 
   const copyItems = jobs.slice(0, 24).map((job) => ({
+    id: `copy:${job.id}`,
     symbol: normalizedResearchSymbol(job.symbol),
     name: job.symbol ? job.traderName : job.issuerName || job.traderName,
     detail: `${job.traderName || "Verified manager"} · ${mirrorStatusLabel(job.currentStage || job.status)}`,
@@ -1396,6 +1428,7 @@ function renderResearchFlowConveyors(jobs = [], watchers = []) {
   }));
   if (!copyItems.length) {
     watchers.filter((watcher) => watcher.enabled).slice(0, 16).forEach((watcher) => copyItems.push({
+      id: `watcher:${watcher.id || watcher.cik || watcher.traderName}`,
       symbol: "",
       name: watcher.traderName,
       detail: `${watcher.firmName || "Verified SEC source"} · watching`,
@@ -1403,20 +1436,93 @@ function renderResearchFlowConveyors(jobs = [], watchers = []) {
     }));
   }
 
-  const runningMarket = marketItems.filter((item) => item.state === "working").length;
+  const runningMarket = currentTicker ? 1 : 0;
   const runningCopy = copyItems.filter((item) => item.state === "working").length;
-  renderResearchFlowConveyor("#marketResearchConveyor", marketItems.slice(0, 24), {
+  renderResearchFlowConveyor("#marketResearchConveyor", visibleMarketItems, {
     label: "MARKET RESEARCH",
-    summary: runningMarket ? `${runningMarket} analyzing · ${marketItems.length} loaded` : `${marketItems.length} evaluator records`,
+    summary: runningMarket
+      ? `Analyzing ${currentTicker} · ${progressCompleted}/${progressTotal || progressSymbols.length} · ${persistedTotal} persisted`
+      : `${persistedTotal} persisted evaluator record${persistedTotal === 1 ? "" : "s"}`,
+    working: Boolean(currentTicker),
+    durationSeconds: 140,
     emptyTitle: "Evaluator queue is loading",
     emptyCopy: "Only real evaluator records appear on this belt.",
   });
   renderResearchFlowConveyor("#copyTradeConveyor", copyItems, {
     label: "COPY-TRADE RESEARCH",
     summary: runningCopy ? `${runningCopy} agent${runningCopy === 1 ? "" : "s"} working · ${copyItems.length} jobs` : `${copyItems.length} persisted job${copyItems.length === 1 ? "" : "s"}`,
+    durationSeconds: 150,
     emptyTitle: "No copy-trader job yet",
     emptyCopy: "Verified manager signals appear here after they create a persisted research job.",
   });
+}
+
+function traderAgentStatusLabel(job = {}) {
+  if (job.status === "success") return "COMPLETE";
+  if (job.status === "partial") return "PARTIAL";
+  if (job.status === "running") return "WORKING";
+  if (job.status === "queued") return "QUEUED";
+  if (job.status === "blocked") return "BLOCKED";
+  return "FAILED";
+}
+
+function renderTraderAgentConveyor(jobs = []) {
+  const selector = "#traderAgentJobs";
+  const root = $(selector);
+  if (!root) return;
+  if (!jobs.length) {
+    renderStableHtml(selector, "empty", `<div class="trader-lab-empty"><strong>No trader-triggered jobs yet</strong><span>Verified manager holding changes will appear here only after a persisted agent job is created.</span></div>`);
+    return;
+  }
+  const visibleJobs = jobs.slice(0, 20);
+  const key = JSON.stringify(visibleJobs.map((job) => ({
+    id: job.id,
+    status: job.status,
+    currentStage: job.currentStage,
+    message: job.message,
+    durationMs: job.durationMs,
+    completedAt: job.completedAt,
+    stages: (job.stages || []).map((stage) => [stage.id, stage.status, stage.durationMs]),
+    result: {
+      artifacts: job.result?.artifactCount,
+      decision: job.result?.evaluation?.decision,
+      score: job.result?.evaluation?.score,
+      provider: job.result?.evaluation?.dataProvider || job.result?.intraday?.sourceProvider,
+      health: job.result?.evaluation?.dataHealth || job.result?.intraday?.dataHealth,
+    },
+  })));
+  if (researchRenderKeys.get(selector) === key) return;
+  researchRenderKeys.set(selector, key);
+  const cardMarkup = visibleJobs.map((job) => {
+    const result = job.result || {};
+    const evaluation = result.evaluation || {};
+    const intraday = result.intraday || {};
+    const statusLabel = traderAgentStatusLabel(job);
+    const stageMarkup = (job.stages || []).map((stage) => `<span data-stage-status="${escapeHtml(stage.status)}"><i></i><small>${escapeHtml(stage.label)}</small><b>${escapeHtml(stage.status === "running" ? "working" : stage.status)}</b><em>${escapeHtml(stage.durationMs ? formatResearchDuration(stage.durationMs) : stage.status === "pending" ? "—" : "<0.1s")}</em></span>`).join("");
+    const retry = ["blocked", "failed", "stopped"].includes(job.status)
+      ? `<button type="button" data-trader-agent-retry="${escapeHtml(job.id)}">Retry</button>`
+      : "";
+    return `<article class="trader-agent-conveyor-card" data-job-status="${escapeHtml(job.status)}">
+      <header>
+        <div class="trader-agent-symbol">${job.symbol ? logoMarkup(job.symbol) : `<i>${escapeHtml(researchFlowInitials(job.issuerName || job.traderName))}</i>`}<span><small>${escapeHtml(job.traderName || "Verified manager")}</small><strong>${escapeHtml(job.symbol || job.issuerName || "Unresolved holding")}</strong></span></div>
+        <div class="trader-agent-verdict"><em>${escapeHtml(statusLabel)}</em><strong>${escapeHtml(mirrorStatusLabel(job.currentStage || "queued"))}</strong><small>${escapeHtml(job.completedAt ? `${formatResearchDuration(job.durationMs)} · ${formatTime(job.completedAt)}` : job.startedAt ? `Started ${formatTime(job.startedAt)}` : `Queued ${formatTime(job.queuedAt)}`)}</small></div>
+      </header>
+      <div class="trader-agent-stages">${stageMarkup}</div>
+      <p>${escapeHtml(job.message || "Persisted research job waiting for its next stage.")}</p>
+      <div class="trader-agent-conveyor-metrics">
+        <span><small>Decision</small><b>${escapeHtml(evaluation.decision || "Pending")}</b></span>
+        <span><small>Score</small><b>${escapeHtml(Number.isFinite(Number(evaluation.score)) ? evaluation.score : "—")}</b></span>
+        <span><small>Data</small><b>${escapeHtml(evaluation.dataProvider || intraday.sourceProvider || "Pending")}</b></span>
+        <span><small>Health</small><b>${escapeHtml(evaluation.dataHealth || intraday.dataHealth || "Pending")}</b></span>
+      </div>
+      <footer><span>${escapeHtml(result.artifactCount ? `${result.artifactCount} persisted artifacts` : job.securityIdentifier ? `CUSIP ${job.securityIdentifier}` : "Evidence pending")}</span>${retry}</footer>
+    </article>`;
+  }).join("");
+  const durationSeconds = Math.max(180, visibleJobs.length * 18);
+  const elapsedSeconds = Math.max(0, ((window.performance?.now?.() || Date.now()) - researchFlowAnimationStartedAt) / 1_000);
+  root.style.setProperty("--agent-flow-duration", `${durationSeconds}s`);
+  root.style.setProperty("--agent-flow-delay", `${-(elapsedSeconds % durationSeconds).toFixed(2)}s`);
+  root.innerHTML = `<div class="trader-agent-conveyor-window"><div class="trader-agent-conveyor-track"><div class="trader-agent-conveyor-segment">${cardMarkup}</div><div class="trader-agent-conveyor-segment" aria-hidden="true" inert>${cardMarkup}</div></div><div class="trader-agent-conveyor-scan" aria-hidden="true"></div><div class="trader-agent-conveyor-rail" aria-hidden="true"></div></div>`;
 }
 
 function renderMirror() {
@@ -1451,7 +1557,7 @@ function renderMirror() {
   ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
 
   $("#mirrorWatcherCount").textContent = `${activeWatchers.length} monitored`;
-  $("#mirrorWatchers").innerHTML = watchers.length
+  const watcherMarkup = watchers.length
     ? watchers.map((watcher) => {
         const initials = watcher.traderName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
         const watcherJobs = jobs.filter((job) => job.traderName === watcher.name || job.traderName === watcher.traderName);
@@ -1463,47 +1569,10 @@ function renderMirror() {
         </article>`;
       }).join("")
     : `<div class="trader-lab-empty"><strong>No verified managers configured</strong><span>Add a named SEC CIK before this independent research queue can run.</span></div>`;
+  renderStableHtml("#mirrorWatchers", JSON.stringify(watchers.map((watcher) => [watcher.id, watcher.cik, watcher.enabled, watcher.traderName, jobs.filter((job) => job.traderName === watcher.name || job.traderName === watcher.traderName).length])), watcherMarkup);
 
   $("#traderAgentCount").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}`;
-  $("#traderAgentJobs").innerHTML = jobs.length
-    ? jobs.slice(0, 20).map((job) => {
-        const result = job.result || {};
-        const evaluation = result.evaluation || {};
-        const company = result.company || {};
-        const intraday = result.intraday || {};
-        const evidence = Array.isArray(result.evidence) ? result.evidence : [];
-        const statusLabel = job.status === "success" ? "COMPLETE" : job.status === "partial" ? "PARTIAL" : job.status === "running" ? "WORKING" : job.status === "queued" ? "QUEUED" : job.status === "blocked" ? "BLOCKED" : "FAILED";
-        const stageMarkup = (job.stages || []).map((stage) => `<span data-stage-status="${escapeHtml(stage.status)}"><i></i><small>${escapeHtml(stage.label)}</small><b>${escapeHtml(stage.status === "running" ? "working" : stage.status)}</b><em>${escapeHtml(stage.durationMs ? formatResearchDuration(stage.durationMs) : stage.status === "pending" ? "—" : "<0.1s")}</em></span>`).join("");
-        const retry = ["blocked", "failed", "stopped"].includes(job.status)
-          ? `<button type="button" data-trader-agent-retry="${escapeHtml(job.id)}">Retry research</button>`
-          : "";
-        return `<article class="trader-agent-job" data-job-status="${escapeHtml(job.status)}">
-          <header>
-            <div class="trader-agent-symbol">${job.symbol ? logoMarkup(job.symbol, "", { eager: true }) : `<i>${escapeHtml((job.issuerName || "?")[0])}</i>`}<span><small>${escapeHtml(job.traderName)}</small><strong>${escapeHtml(job.symbol || job.issuerName || "Unresolved holding")}</strong></span></div>
-            <div class="trader-agent-verdict"><em>${escapeHtml(statusLabel)}</em><strong>${escapeHtml(job.currentStage.replaceAll("_", " "))}</strong><small>${escapeHtml(job.status === "running" ? `Started ${relativeCycle(job.startedAt)}` : job.completedAt ? `${formatResearchDuration(job.durationMs)} total · ${relativeCycle(job.completedAt)}` : relativeCycle(job.queuedAt))}</small></div>
-          </header>
-          <div class="trader-agent-stages">${stageMarkup}</div>
-          <p>${escapeHtml(job.message)}</p>
-          <details class="trader-agent-output" ${["success", "partial"].includes(job.status) ? "" : "open"}>
-            <summary><span>Research output</span><strong>${escapeHtml(result.artifactCount ? `${result.artifactCount} artifacts` : job.securityIdentifier ? `CUSIP ${job.securityIdentifier}` : "No artifact yet")}</strong></summary>
-            <div class="trader-agent-output-grid">
-              <span><small>Decision</small><b>${escapeHtml(evaluation.decision || "Pending")}</b></span>
-              <span><small>Quant score</small><b>${escapeHtml(Number.isFinite(Number(evaluation.score)) ? evaluation.score : "—")}</b></span>
-              <span><small>Data</small><b>${escapeHtml(evaluation.dataProvider || intraday.sourceProvider || "Pending")}</b></span>
-              <span><small>Health</small><b>${escapeHtml(evaluation.dataHealth || intraday.dataHealth || "Pending")}</b></span>
-              <span><small>Company</small><b>${escapeHtml(company.name || job.issuerName || "Pending")}</b></span>
-              <span><small>Sector</small><b>${escapeHtml(company.sector || "Pending")}</b></span>
-              <span><small>Intraday</small><b>${escapeHtml(intraday.alignment || "Pending")}</b></span>
-              <span><small>Current price</small><b>${escapeHtml(evaluation.currentPrice === null || evaluation.currentPrice === undefined ? "—" : formatMoney(evaluation.currentPrice))}</b></span>
-            </div>
-            ${evaluation.mainReason || evaluation.mainRisk ? `<div class="trader-agent-thesis"><p><strong>Reason</strong>${escapeHtml(evaluation.mainReason || "No valid setup reason recorded.")}</p><p><strong>Risk</strong>${escapeHtml(evaluation.mainRisk || "No risk note recorded.")}</p></div>` : ""}
-            <div class="trader-agent-evidence">${evidence.length ? evidence.map((item) => item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>` : `<span>${escapeHtml(item.label)}</span>`).join("") : `<span>No completed evidence links yet.</span>`}</div>
-            <small class="trader-agent-boundary">This agent has no broker tools. Its result can inform research, never place an order.</small>
-            ${retry}
-          </details>
-        </article>`;
-      }).join("")
-    : `<div class="trader-lab-empty"><strong>No trader-triggered jobs yet</strong><span>When a monitored filing contains a holding change, a separate agent will resolve the ticker and run market, quant, intraday, company, and news stages. Keep the SEC contact identity configured so the background watcher can read filings.</span></div>`;
+  renderTraderAgentConveyor(jobs);
 
   const consensus = Array.isArray(mirrorIntelligence.consensus) ? mirrorIntelligence.consensus : [];
   $("#mirrorConsensus").innerHTML = consensus.length

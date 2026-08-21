@@ -215,19 +215,20 @@
               <div id="copyTradeConveyor" class="research-flow-conveyor" data-flow-kind="copy" aria-label="Copy-trade research conveyor" aria-live="polite"></div>
             </section>
             <div class="trader-lab-workspace">
-              <section class="trader-roster-panel">
-                <div class="mirror-section-head">
+              <details id="verifiedSecIdentities" class="trader-roster-panel" open>
+                <summary class="mirror-section-head">
                   <div><span>VERIFIED SEC IDENTITIES</span><h3>Famous traders &amp; funds</h3></div>
                   <strong id="mirrorWatcherCount">0 monitored</strong>
-                </div>
+                </summary>
                 <div id="mirrorWatchers" class="trader-roster"></div>
-              </section>
-              <section class="trader-agent-panel">
+              </details>
+              <section class="trader-agent-conveyor-panel">
                 <div class="mirror-section-head">
                   <div><span>SEPARATE AGENT QUEUE</span><h3>Trader-triggered stock research</h3></div>
                   <strong id="traderAgentCount">0 jobs</strong>
                 </div>
-                <div id="traderAgentJobs" class="trader-agent-jobs" aria-live="polite"></div>
+                <div id="traderAgentJobs" class="trader-agent-conveyor" aria-label="Persisted trader research agent queue" aria-live="polite"></div>
+                <small class="trader-agent-safety">Research-only agents have no broker tools. Hover or focus the belt to pause it.</small>
                 <p id="mirrorGateFeedback" class="mirror-feedback" aria-live="polite"></p>
               </section>
             </div>

@@ -287,7 +287,7 @@ test("Stock Office UI exposes secure approval-gated Telegram alerts for verified
   assert.doesNotMatch(server, /subscribe\("risk\.blocked", \(event\) => stockTelegramNotifier/);
 });
 
-test("Research exposes separate famous-trader agents with real stage timing and no conveyor theater", () => {
+test("Research exposes real stock and copy-trader conveyors plus separate famous-trader agents", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
   const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
@@ -302,7 +302,9 @@ test("Research exposes separate famous-trader agents with real stage timing and 
   assert.match(html, /SEPARATE AGENT QUEUE/);
   assert.match(html, /Multi-source matches/);
   assert.match(html, /Scan managers now/);
-  assert.doesNotMatch(html, /Source events|Stock conveyor|mirrorCycleRail|mirrorCandidates|mirrorEventFeed|mirrorSources/);
+  assert.match(html, /id="marketResearchConveyor"/);
+  assert.match(html, /id="copyTradeConveyor"/);
+  assert.doesNotMatch(html, />Stock conveyor<|Source events|mirrorCycleRail|mirrorCandidates|mirrorEventFeed|mirrorSources/);
   assert.match(script, /knowledgeSummary\.measuredOutcomes/);
   assert.match(script, /state\.traderResearch/);
   assert.match(script, /function pollTraderResearch/);
@@ -312,7 +314,10 @@ test("Research exposes separate famous-trader agents with real stage timing and 
   assert.match(script, /This agent has no broker tools/);
   assert.match(script, /trader-research\/\$\{encodeURIComponent\(jobId\)\}\/retry/);
   assert.match(script, /window\.setInterval\(pollTraderResearch, 2_000\)/);
-  assert.doesNotMatch(script, /researchConveyor|renderResearchConveyor|Stock conveyor|mirrorEventFeed/);
+  assert.match(script, /function renderResearchFlowConveyors/);
+  assert.match(script, /Only real evaluator records appear on this belt/);
+  assert.match(script, /Verified manager signals appear here after they create a persisted research job/);
+  assert.doesNotMatch(script, /researchConveyorMotion|renderResearchConveyor|mirrorEventFeed/);
   assert.match(script, /manualRefreshRunning: false/);
   assert.match(script, /state\.manualRefreshRunning = true/);
   assert.match(script, /state\.manualRefreshRunning = false/);
@@ -321,6 +326,8 @@ test("Research exposes separate famous-trader agents with real stage timing and 
   assert.match(script, /pollRefreshStatus\(\);/);
   assert.match(styles, /\.trader-lab-workspace/);
   assert.match(styles, /\.trader-agent-stages/);
+  assert.match(styles, /\.research-flow-conveyors/);
+  assert.match(styles, /@keyframes research-flow-scroll/);
   assert.match(styles, /@keyframes trader-agent-pulse/);
   assert.match(script, /window\.setInterval\(pollRefreshStatus, 400\)/);
   assert.match(script, /No matured outcomes/);

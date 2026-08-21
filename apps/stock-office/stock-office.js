@@ -1321,6 +1321,104 @@ function isCurrentCopyCandidate(candidate = {}) {
     && Number(candidate.currentPrice) > 0;
 }
 
+function normalizedResearchSymbol(value) {
+  const symbol = String(value || "").toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 12);
+  return /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol) ? symbol : "";
+}
+
+function researchFlowStatus(value) {
+  const status = String(value || "waiting").toLowerCase();
+  if (["running", "working", "valid_setup", "paper_ready", "buy"].includes(status)) return "working";
+  if (["success", "complete", "completed", "partial"].includes(status)) return "complete";
+  if (["blocked", "failed", "rejected", "stopped"].includes(status)) return "blocked";
+  return "queued";
+}
+
+function researchFlowInitials(value) {
+  return String(value || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+}
+
+function renderResearchFlowConveyor(selector, items, options = {}) {
+  const root = $(selector);
+  if (!root) return;
+  const label = options.label || "RESEARCH";
+  const summary = options.summary || `${items.length} persisted item${items.length === 1 ? "" : "s"}`;
+  root.dataset.flowState = items.some((item) => item.state === "working") ? "working" : items.length ? "active" : "waiting";
+  if (!items.length) {
+    root.innerHTML = `<div class="research-flow-overlay"><span>${escapeHtml(label)}</span><strong>${escapeHtml(summary)}</strong></div><div class="research-flow-empty"><i></i><strong>${escapeHtml(options.emptyTitle || "Waiting for persisted work")}</strong><small>${escapeHtml(options.emptyCopy || "The belt starts when the background engine records its first item.")}</small></div>`;
+    return;
+  }
+  const itemMarkup = items.map((item) => {
+    const identity = item.symbol
+      ? logoMarkup(item.symbol, item.name || "", { eager: true })
+      : `<span class="research-flow-avatar">${escapeHtml(researchFlowInitials(item.name))}</span>`;
+    return `<article class="research-flow-item" data-item-state="${escapeHtml(item.state)}">
+      <span class="research-flow-identity">${identity}</span>
+      <span class="research-flow-copy"><strong>${escapeHtml(item.symbol || item.name || "Unresolved")}</strong><small>${escapeHtml(item.detail || "Persisted research")}</small></span>
+      <i aria-hidden="true"></i>
+    </article>`;
+  }).join("");
+  root.innerHTML = `
+    <div class="research-flow-overlay"><span>${escapeHtml(label)}</span><strong>${escapeHtml(summary)}</strong></div>
+    <div class="research-flow-window">
+      <div class="research-flow-track"><div class="research-flow-segment">${itemMarkup}</div><div class="research-flow-segment" aria-hidden="true">${itemMarkup}</div></div>
+      <div class="research-flow-scanner" aria-hidden="true"><b></b></div>
+      <div class="research-flow-rail" aria-hidden="true"></div>
+    </div>`;
+}
+
+function renderResearchFlowConveyors(jobs = [], watchers = []) {
+  const scheduler = state.intelligenceScheduler || {};
+  const progressSymbols = Array.isArray(scheduler.progressSymbols) ? scheduler.progressSymbols : [];
+  const currentTicker = normalizedResearchSymbol(scheduler.currentTicker);
+  const marketItems = [];
+  const marketSeen = new Set();
+  const addMarketItem = (symbolValue, detail, status, name = "") => {
+    const symbol = normalizedResearchSymbol(symbolValue);
+    if (!symbol || marketSeen.has(symbol)) return;
+    marketSeen.add(symbol);
+    marketItems.push({ symbol, name, detail, state: researchFlowStatus(status) });
+  };
+  if (currentTicker) addMarketItem(currentTicker, "Analyzing now", "running");
+  progressSymbols.forEach((symbol) => addMarketItem(symbol, "Current evaluator batch", symbol === currentTicker ? "running" : "queued"));
+  state.records.forEach((record) => addMarketItem(
+    record.ticker,
+    `${mirrorStatusLabel(record.decision || record.status || "evaluated")} · score ${record.score ?? "—"}`,
+    record.status,
+    record.companyName || record.name || "",
+  ));
+
+  const copyItems = jobs.slice(0, 24).map((job) => ({
+    symbol: normalizedResearchSymbol(job.symbol),
+    name: job.symbol ? job.traderName : job.issuerName || job.traderName,
+    detail: `${job.traderName || "Verified manager"} · ${mirrorStatusLabel(job.currentStage || job.status)}`,
+    state: researchFlowStatus(job.status),
+  }));
+  if (!copyItems.length) {
+    watchers.filter((watcher) => watcher.enabled).slice(0, 16).forEach((watcher) => copyItems.push({
+      symbol: "",
+      name: watcher.traderName,
+      detail: `${watcher.firmName || "Verified SEC source"} · watching`,
+      state: "queued",
+    }));
+  }
+
+  const runningMarket = marketItems.filter((item) => item.state === "working").length;
+  const runningCopy = copyItems.filter((item) => item.state === "working").length;
+  renderResearchFlowConveyor("#marketResearchConveyor", marketItems.slice(0, 24), {
+    label: "MARKET RESEARCH",
+    summary: runningMarket ? `${runningMarket} analyzing · ${marketItems.length} loaded` : `${marketItems.length} evaluator records`,
+    emptyTitle: "Evaluator queue is loading",
+    emptyCopy: "Only real evaluator records appear on this belt.",
+  });
+  renderResearchFlowConveyor("#copyTradeConveyor", copyItems, {
+    label: "COPY-TRADE RESEARCH",
+    summary: runningCopy ? `${runningCopy} agent${runningCopy === 1 ? "" : "s"} working · ${copyItems.length} jobs` : `${copyItems.length} persisted job${copyItems.length === 1 ? "" : "s"}`,
+    emptyTitle: "No copy-trader job yet",
+    emptyCopy: "Verified manager signals appear here after they create a persisted research job.",
+  });
+}
+
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
   const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
@@ -1340,6 +1438,7 @@ function renderMirror() {
   const runningJobs = jobs.filter((job) => job.status === "running").length;
   const queuedJobs = jobs.filter((job) => job.status === "queued").length;
   const completedJobs = jobs.filter((job) => ["success", "partial"].includes(job.status)).length;
+  renderResearchFlowConveyors(jobs, watchers);
   const pill = $("#mirrorStatusPill");
   pill.textContent = runningJobs ? `${runningJobs} agent${runningJobs === 1 ? "" : "s"} working` : queuedJobs ? `${queuedJobs} queued` : "Background watch active";
   pill.className = `status-pill ${runningJobs || queuedJobs || activeWatchers.length ? "ready" : "muted"}`;

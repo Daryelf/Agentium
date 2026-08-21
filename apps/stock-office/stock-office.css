@@ -3967,6 +3967,114 @@ select {
 .trader-lab-metrics strong { margin-top: 4px; color: #f8fafc; font-size: 0.86rem; }
 .trader-lab-metrics span { margin-top: 3px; color: #738198; font-size: 0.53rem; }
 
+.research-flow-conveyors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 12px 0;
+}
+.research-flow-conveyor {
+  position: relative;
+  min-width: 0;
+  height: 170px;
+  overflow: hidden;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 50% 60%, rgba(34, 211, 238, 0.11), transparent 38%),
+    linear-gradient(180deg, rgba(2, 11, 26, 0.96), rgba(3, 8, 20, 0.86));
+  box-shadow: inset 0 -24px 38px rgba(0, 0, 0, 0.24);
+}
+.research-flow-conveyor[data-flow-kind="copy"] {
+  border-color: rgba(167, 139, 250, 0.15);
+  background:
+    radial-gradient(circle at 50% 60%, rgba(139, 92, 246, 0.13), transparent 38%),
+    linear-gradient(180deg, rgba(8, 8, 30, 0.96), rgba(3, 8, 20, 0.86));
+}
+.research-flow-overlay {
+  position: absolute;
+  z-index: 6;
+  inset: 10px 12px auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+.research-flow-overlay span {
+  color: #67e8f9;
+  font-size: 0.46rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+.research-flow-conveyor[data-flow-kind="copy"] .research-flow-overlay span { color: #c4b5fd; }
+.research-flow-overlay strong { overflow: hidden; color: #718198; font-size: 0.48rem; text-overflow: ellipsis; white-space: nowrap; }
+.research-flow-window { position: absolute; inset: 34px 0 0; overflow: hidden; }
+.research-flow-window::before,
+.research-flow-window::after {
+  content: "";
+  position: absolute;
+  z-index: 4;
+  inset: 0 auto 0 0;
+  width: 58px;
+  background: linear-gradient(90deg, #030814, transparent);
+  pointer-events: none;
+}
+.research-flow-window::after { inset: 0 0 0 auto; transform: rotate(180deg); }
+.research-flow-track {
+  position: absolute;
+  inset: 20px auto auto 0;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  will-change: transform;
+  animation: research-flow-scroll 24s linear infinite;
+}
+.research-flow-conveyor[data-flow-state="working"] .research-flow-track { animation-duration: 17s; }
+.research-flow-segment { width: max-content; display: flex; align-items: center; gap: 10px; padding-right: 10px; }
+.research-flow-item {
+  position: relative;
+  width: 136px;
+  min-height: 73px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 11px;
+  background: rgba(9, 20, 38, 0.9);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+}
+.research-flow-conveyor[data-flow-kind="copy"] .research-flow-item { border-color: rgba(167, 139, 250, 0.12); background: rgba(17, 15, 43, 0.9); }
+.research-flow-item > i { position: absolute; inset: auto 8px 6px; height: 2px; border-radius: 9px; background: #334155; }
+.research-flow-item[data-item-state="working"] > i { background: #22d3ee; box-shadow: 0 0 8px rgba(34, 211, 238, 0.62); }
+.research-flow-item[data-item-state="complete"] > i { background: #34d399; }
+.research-flow-item[data-item-state="blocked"] > i { background: #fb7185; }
+.research-flow-identity { min-width: 0; }
+.research-flow-identity .company-logo,
+.research-flow-avatar { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; }
+.research-flow-identity .company-logo { flex-basis: 38px; }
+.research-flow-identity .company-identity { display: none; }
+.research-flow-avatar { color: #cffafe; background: rgba(8, 145, 178, 0.16); font-size: 0.58rem; font-weight: 950; }
+.research-flow-conveyor[data-flow-kind="copy"] .research-flow-avatar { color: #ddd6fe; background: rgba(124, 58, 237, 0.2); }
+.research-flow-copy { min-width: 0; }
+.research-flow-copy strong,
+.research-flow-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-flow-copy strong { color: #e0f2fe; font-size: 0.66rem; }
+.research-flow-copy small { margin-top: 5px; color: #718198; font-size: 0.45rem; }
+.research-flow-scanner { position: absolute; z-index: 5; inset: 5px auto 9px 50%; width: 2px; transform: translateX(-50%); background: linear-gradient(transparent, rgba(103, 232, 249, 0.86), transparent); box-shadow: 0 0 14px rgba(34, 211, 238, 0.48); }
+.research-flow-conveyor[data-flow-kind="copy"] .research-flow-scanner { background: linear-gradient(transparent, rgba(196, 181, 253, 0.88), transparent); box-shadow: 0 0 14px rgba(139, 92, 246, 0.52); }
+.research-flow-scanner b { position: absolute; top: 41px; left: 50%; width: 11px; height: 11px; border: 2px solid #67e8f9; border-radius: 50%; transform: translate(-50%, -50%); background: #07101f; }
+.research-flow-conveyor[data-flow-kind="copy"] .research-flow-scanner b { border-color: #c4b5fd; }
+.research-flow-rail { position: absolute; z-index: 3; inset: auto 0 12px; height: 7px; background: repeating-linear-gradient(90deg, #263449 0 22px, #111827 22px 31px); box-shadow: 0 5px 11px rgba(0, 0, 0, 0.46); }
+.research-flow-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 5px; padding: 34px 18px 10px; color: #718198; text-align: center; }
+.research-flow-empty i { width: 9px; height: 9px; border-radius: 50%; background: #334155; }
+.research-flow-empty strong { color: #cbd5e1; font-size: 0.65rem; }
+.research-flow-empty small { max-width: 320px; font-size: 0.5rem; }
+@keyframes research-flow-scroll { to { transform: translate3d(-50%, 0, 0); } }
+@media (prefers-reduced-motion: reduce) { .research-flow-track { animation: none !important; } }
+
 .trader-lab-workspace {
   display: grid;
   grid-template-columns: minmax(330px, 0.78fr) minmax(560px, 1.42fr);
@@ -4101,6 +4209,7 @@ select {
 .trader-lab-empty strong { color: #cbd5e1; font-size: 0.65rem; }
 
 @media (max-width: 1180px) {
+  .research-flow-conveyors { grid-template-columns: 1fr; }
   .trader-lab-workspace { grid-template-columns: 1fr; }
   .trader-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -4111,6 +4220,8 @@ select {
   .trader-agent-output-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) {
+  .research-flow-conveyors { padding: 8px 8px 0; }
+  .research-flow-conveyor { height: 158px; }
   .trader-lab-workspace { padding: 8px; }
   .trader-consensus-panel { margin: 0 8px 8px; }
   .trader-agent-job > header { align-items: flex-start; }

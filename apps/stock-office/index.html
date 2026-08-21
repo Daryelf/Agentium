@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock Office | Argentum</title>
-    <link rel="stylesheet" href="./stock-office.css?v=20260818-16" />
+    <link rel="stylesheet" href="./stock-office.css?v=20260821-17" />
     <link rel="stylesheet" href="/human-gate-bubble.css?v=20260812-2" />
-    <script src="./stock-office.js?v=20260818-21" defer></script>
+    <script src="./stock-office.js?v=20260821-22" defer></script>
   </head>
   <body>
     <div id="stockOfficePreloader" class="stock-office-preloader" role="status" aria-live="polite" aria-label="Opening Stock Office">
@@ -390,6 +390,25 @@
         </section>
       </main>
     </div>
+    <aside id="stockManagersWidget" class="stock-managers" data-status="paused" aria-label="Stock Office managers">
+      <button id="stockManagersTrigger" class="stock-managers-trigger" type="button" aria-expanded="false" aria-controls="stockManagersPanel">
+        <span class="stock-managers-icon" aria-hidden="true">M</span>
+        <span><strong>Managers</strong><small id="stockManagersTriggerStatus">Both paused</small></span>
+        <i id="stockManagersAttention" aria-hidden="true"></i>
+      </button>
+      <section id="stockManagersPanel" class="stock-managers-panel" hidden>
+        <header>
+          <div><span>FLOW SUPERVISION</span><h2>Managers</h2><p>Independent validation for Research and Simulation.</p></div>
+          <button type="button" data-managers-close aria-label="Close Managers">×</button>
+        </header>
+        <div class="stock-managers-toolbar">
+          <span id="stockManagersRuntime"><i></i> Reading supervisor</span>
+          <button type="button" data-managers-refresh>Validate now</button>
+        </div>
+        <div id="stockManagersList" class="stock-managers-list" aria-live="polite"></div>
+        <footer>Validation only. Managers cannot approve Human Gate requests, contact the broker, or place orders.</footer>
+      </section>
+    </aside>
     <dialog id="intelligenceDrawer" class="intelligence-drawer">
       <form method="dialog" class="intelligence-drawer-shell">
         <header><div><span id="drawerKicker">INTELLIGENCE</span><h2 id="drawerTitle">Details</h2></div><button value="close" aria-label="Close details">×</button></header>

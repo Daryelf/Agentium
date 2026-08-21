@@ -41,6 +41,7 @@ const {
   runShadowPortfolioCycle,
 } = require("./services/stock-shadow-portfolio");
 const { runAutonomousSimulationCycle } = require("./services/stock-simulation-engine");
+const { createStockFlowManagerSupervisor } = require("./services/stock-flow-managers");
 const {
   brokerControlOverview,
   buildCopyPortfolioPlan,
@@ -10794,6 +10795,7 @@ let stockTelegramPollPromise = null;
 let stockContinuousReviewPromise = null;
 let stockReadinessBrokerSnapshotAt = "";
 let stockSimulationLabState = null;
+let stockFlowManagerSupervisor = null;
 
 function stockReadinessIntervalMs() {
   return simulationInteger(process.env.STOCK_GURU_READINESS_INTERVAL_MS, 1_000, 1_000, 60_000);
@@ -10914,6 +10916,44 @@ function withPaperProposalReadiness(plan = {}, shadowPortfolio = {}, snapshot = 
       paperReady: proposals.filter((proposal) => proposal.paperTest?.eligible).length,
     },
   };
+}
+
+function collectStockFlowManagerInput() {
+  const state = readState();
+  const snapshot = stockOfficeSnapshot(state, undefined, { cachedIntelligence: true });
+  const intelligenceScheduler = stockIntelligenceScheduler.getStatus();
+  const shadowPortfolio = refreshStockShadowPortfolio({ state });
+  const portfolioPlan = withPaperProposalReadiness(buildContinuousReviewView({
+    plan: buildCopyPortfolioPlan(snapshot),
+    review: normalizeStockOfficeState(state.stockOffice).continuousReview,
+    scheduler: intelligenceScheduler,
+    tradeDrafts: snapshot.tradeDrafts || [],
+  }), shadowPortfolio, snapshot);
+  portfolioPlan.decisions = normalizeStockOfficeState(state.stockOffice).proposalDecisions;
+  return {
+    portfolioPlan,
+    simulationLab: readStockSimulationLab() || refreshStockSimulationLab({ state, plan: portfolioPlan, force: true }),
+    shadowPortfolio,
+    intelligenceScheduler,
+    recordCount: Number(snapshot.metrics?.trackedRecords || 0),
+    opportunityCount: Array.isArray(snapshot.intelligence?.opportunities) ? snapshot.intelligence.opportunities.length : 0,
+  };
+}
+
+function getStockFlowManagerSupervisor() {
+  if (!stockFlowManagerSupervisor) {
+    stockFlowManagerSupervisor = createStockFlowManagerSupervisor({
+      dataDir: DATA_DIR,
+      collect: collectStockFlowManagerInput,
+      intervalMs: 15_000,
+    });
+  }
+  return stockFlowManagerSupervisor;
+}
+
+function startStockFlowManagers() {
+  if (process.env.NODE_ENV === "test") return null;
+  return getStockFlowManagerSupervisor().start();
 }
 
 function startStockShadowScheduler() {
@@ -13593,6 +13633,7 @@ async function handleApi(req, res, url) {
         simulationLab,
         intelligenceScheduler,
         marketWorkers: buildStockMarketWorkers({ snapshot, brokerControl, portfolioPlan, intelligenceScheduler, intelligence: snapshot.intelligence }),
+        flowManagers: getStockFlowManagerSupervisor().getStatus(),
         notificationStatus,
         notificationApproval: notificationApproval ? {
           id: notificationApproval.id,
@@ -13617,6 +13658,45 @@ async function handleApi(req, res, url) {
         guardrailsSource: snapshot.guardrailsSource,
         tradeDrafts,
         permissions: access.permissions,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/stock-office/managers/validate") {
+    try {
+      enforceStockOfficeRateLimit(req, "flow-manager-validate", 30, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const flowManagers = getStockFlowManagerSupervisor().runNow();
+      sendJson(res, 200, {
+        flowManagers,
+        liveOrderPlaced: false,
+        brokerCalled: false,
+        humanGateCreated: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockFlowManagerMatch = url.pathname.match(/^\/api\/stock-office\/managers\/(research|simulation)$/);
+  if (req.method === "POST" && stockFlowManagerMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "flow-manager-update", 20, 60_000);
+      requireStockOfficeAccess(req, "broker_view");
+      const body = await readBody(req);
+      if (typeof body.enabled !== "boolean") throw guardedError("Manager activation must be true or false.", 400);
+      const flowManagers = getStockFlowManagerSupervisor().setEnabled(stockFlowManagerMatch[1], body.enabled);
+      sendJson(res, 200, {
+        flowManagers,
+        liveOrderPlaced: false,
+        brokerCalled: false,
+        humanGateCreated: false,
       });
     } catch (error) {
       const response = stockOfficeErrorResponse(error);
@@ -14844,6 +14924,7 @@ async function prewarmLocalOffices() {
   startStockShadowScheduler();
   startStockSimulationScheduler();
   startStockReadinessScheduler();
+  startStockFlowManagers();
   startStockTelegramPolling();
   stockIntelligenceScheduler.start();
   stockTraderResearchAgent.start();
@@ -14862,6 +14943,7 @@ async function prewarmLocalOffices() {
 async function shutdownLocalOffices() {
   await stockIntelligenceScheduler.stop();
   await stockTraderResearchAgent.stop();
+  getStockFlowManagerSupervisor().stop();
   if (stockShadowTimer) clearInterval(stockShadowTimer);
   if (stockSimulationTimer) clearInterval(stockSimulationTimer);
   if (stockReadinessTimer) clearInterval(stockReadinessTimer);
@@ -15255,6 +15337,7 @@ module.exports = {
   startStockShadowScheduler,
   startStockSimulationScheduler,
   startStockReadinessScheduler,
+  startStockFlowManagers,
   startStockTelegramPolling,
   shutdownLocalOffices,
 };

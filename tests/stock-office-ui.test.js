@@ -59,6 +59,29 @@ test("Stock Office uses a compact left navigation shell instead of a repeated of
   assert.doesNotMatch(html, /class="hero-panel"/);
 });
 
+test("Stock Office exposes floating Research and Simulation managers backed by independent validation", () => {
+  const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
+  const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
+  const styles = fs.readFileSync(path.join(appRoot, "stock-office.css"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+
+  assert.match(html, /id="stockManagersTrigger"[^]*<strong>Managers<\/strong>/);
+  assert.match(html, /Independent validation for Research and Simulation/);
+  assert.match(html, /Managers cannot approve Human Gate requests, contact the broker, or place orders/);
+  assert.match(styles, /\.stock-managers\s*\{[^]*position: fixed/);
+  assert.match(styles, /bottom: 78px/);
+  assert.match(script, /function renderFlowManagers/);
+  assert.match(script, /\/api\/stock-office\/managers\/\$\{encodeURIComponent\(managerId\)\}/);
+  assert.match(script, /\/api\/stock-office\/managers\/validate/);
+  assert.match(script, /data-open-stock-view="\$\{escapeHtml\(flowView\)\}"/);
+  assert.match(server, /createStockFlowManagerSupervisor/);
+  assert.match(server, /startStockFlowManagers\(\)/);
+  assert.match(server, /flowManagers: getStockFlowManagerSupervisor\(\)\.getStatus\(\)/);
+  assert.match(server, /const body = await readBody\(req\);[^]*getStockFlowManagerSupervisor\(\)\.setEnabled/);
+  assert.doesNotMatch(server, /parseJsonBody/);
+  assert.match(server, /liveOrderPlaced: false,[^]*brokerCalled: false,[^]*humanGateCreated: false/);
+});
+
 test("Stock Office UI keeps broker actions compact while preserving guarded order controls", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");

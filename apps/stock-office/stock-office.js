@@ -22,6 +22,7 @@ const state = {
   systemHealth: null,
   mirrorIntelligence: null,
   traderResearch: null,
+  flowManagers: null,
   notificationStatus: null,
   notificationApproval: null,
   robinhoodConnection: null,
@@ -448,6 +449,123 @@ function renderNotificationStatus() {
   $("#telegramDisableButton").hidden = !status.enabled;
   $("#telegramRemoveButton").hidden = !status.configured;
   if (status.lastError) $("#telegramFeedback").textContent = status.lastError;
+}
+
+function managerStatusLabel(value) {
+  const labels = {
+    paused: "Paused",
+    starting: "Starting",
+    healthy: "Healthy",
+    watching: "Watching",
+    attention: "Needs attention",
+  };
+  return labels[String(value || "paused")] || String(value || "paused").replaceAll("_", " ");
+}
+
+function managerMetricEntries(manager = {}) {
+  const metrics = manager.metrics || {};
+  if (manager.id === "research") {
+    return [
+      ["Records", metrics.records ?? 0],
+      ["BUY/SELL ideas", metrics.actionable ?? 0],
+      ["Qualified", metrics.qualified ?? 0],
+      ["Board eligible", metrics.boardEligible ?? 0],
+    ];
+  }
+  return [
+    ["Candidates", metrics.candidates ?? 0],
+    ["Covered", metrics.covered ?? 0],
+    ["Missing", metrics.missing ?? 0],
+    ["Configs", formatCount(metrics.configurations || 0)],
+    ["Paths", formatCount(metrics.paths || 0)],
+  ];
+}
+
+function renderFlowManagers() {
+  const widget = $("#stockManagersWidget");
+  if (!widget) return;
+  const payload = state.flowManagers || {};
+  const managers = Array.isArray(payload.managers) ? payload.managers : [
+    { id: "research", name: "Research Manager", enabled: false, status: "paused", summary: "Connect to the background supervisor to activate this manager.", checks: [], metrics: {} },
+    { id: "simulation", name: "Simulation Manager", enabled: false, status: "paused", summary: "Connect to the background supervisor to activate this manager.", checks: [], metrics: {} },
+  ];
+  const activeCount = managers.filter((manager) => manager.enabled).length;
+  const attentionCount = managers.filter((manager) => manager.enabled && manager.status === "attention").length;
+  widget.dataset.status = attentionCount ? "attention" : activeCount ? "active" : "paused";
+  $("#stockManagersTriggerStatus").textContent = attentionCount
+    ? `${attentionCount} needs attention`
+    : activeCount
+      ? `${activeCount} active · background`
+      : "Both paused";
+  $("#stockManagersAttention").hidden = !attentionCount && !activeCount;
+  $("#stockManagersRuntime").innerHTML = `<i></i>${escapeHtml(activeCount ? `${activeCount} manager${activeCount === 1 ? "" : "s"} validating outside this view` : "Background supervisor ready")}`;
+  $("#stockManagersList").innerHTML = managers.map((manager) => {
+    const enabled = manager.enabled === true;
+    const checks = enabled && Array.isArray(manager.checks) ? manager.checks : [];
+    const flowView = manager.id === "research" ? "mirror" : "portfolio";
+    const flowLabel = manager.id === "research" ? "Open Research" : "Open Simulation";
+    const checkedAt = manager.lastValidatedAt ? `Validated ${formatTime(manager.lastValidatedAt)}` : enabled ? "First validation starting" : "No validation while paused";
+    return `<article class="stock-manager-card" data-manager-id="${escapeHtml(manager.id)}" data-status="${escapeHtml(manager.status || "paused")}">
+      <div class="stock-manager-head">
+        <i aria-hidden="true"></i>
+        <span><strong>${escapeHtml(manager.name)}</strong><small>${escapeHtml(managerStatusLabel(manager.status))}</small></span>
+        <button type="button" data-manager-toggle="${escapeHtml(manager.id)}" data-next-enabled="${enabled ? "false" : "true"}">${enabled ? "Pause" : "Activate"}</button>
+      </div>
+      <p class="stock-manager-summary">${escapeHtml(manager.summary || "Waiting for manager state.")}</p>
+      ${enabled ? `<div class="stock-manager-metrics">${managerMetricEntries(manager).map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("")}</div>` : ""}
+      ${checks.length ? `<div class="stock-manager-checks">${checks.map((item) => `<div class="stock-manager-check" data-status="${escapeHtml(item.status)}"><i aria-hidden="true"></i><span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.detail)}</small></span></div>`).join("")}</div>` : ""}
+      <div class="stock-manager-actions"><button type="button" data-open-stock-view="${escapeHtml(flowView)}">${escapeHtml(flowLabel)}</button><small>${escapeHtml(checkedAt)}</small></div>
+    </article>`;
+  }).join("");
+}
+
+function setManagersPanel(open) {
+  const panel = $("#stockManagersPanel");
+  const trigger = $("#stockManagersTrigger");
+  if (!panel || !trigger) return;
+  panel.hidden = !open;
+  trigger.setAttribute("aria-expanded", String(open));
+}
+
+async function updateStockFlowManager(managerId, enabled) {
+  const button = $(`[data-manager-toggle="${CSS.escape(managerId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = enabled ? "Activating…" : "Pausing…";
+  }
+  try {
+    const payload = await api(`/api/stock-office/managers/${encodeURIComponent(managerId)}`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+    state.flowManagers = payload.flowManagers || state.flowManagers;
+    renderFlowManagers();
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = error.message;
+    }
+  }
+}
+
+async function validateStockFlowManagers() {
+  const button = $("[data-managers-refresh]");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Validating…";
+  }
+  try {
+    const payload = await api("/api/stock-office/managers/validate", { method: "POST", body: "{}" });
+    state.flowManagers = payload.flowManagers || state.flowManagers;
+    renderFlowManagers();
+  } catch (error) {
+    if ($("#stockManagersRuntime")) $("#stockManagersRuntime").textContent = error.message;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Validate now";
+    }
+  }
 }
 
 function systemLightTone(value) {
@@ -1772,6 +1890,7 @@ function renderChat() {
 
 function renderActiveStockView() {
   if (!state.hasRendered) return;
+  renderFlowManagers();
   if (state.activeView === "overview") renderOverviewDashboard();
   else if (state.activeView === "portfolio") renderShadowPortfolio();
   else if (state.activeView === "performance") renderPerformance();
@@ -1858,6 +1977,7 @@ async function loadApp() {
     state.mirror = mirrorPayload.mirror || overview.mirror || null;
     state.mirrorIntelligence = mirrorPayload.mirrorIntelligence || brokerPayload.intelligence?.mirror || null;
     state.traderResearch = mirrorPayload.traderResearch || null;
+    state.flowManagers = brokerPayload.flowManagers || null;
     state.intelligence = brokerPayload.intelligence || overview.intelligence || null;
     state.systemHealth = brokerPayload.systemHealth || overview.systemHealth || null;
     state.brokerControl = brokerPayload.brokerControl || null;
@@ -2403,6 +2523,7 @@ async function pollBrokerControl() {
     state.simulationLab = payload.simulationLab || state.simulationLab;
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     state.marketWorkers = payload.marketWorkers || state.marketWorkers;
+    state.flowManagers = payload.flowManagers || state.flowManagers;
     state.notificationStatus = payload.notificationStatus || state.notificationStatus;
     state.notificationApproval = payload.notificationApproval || null;
     state.robinhoodConnection = payload.robinhoodConnection || state.robinhoodConnection;
@@ -2712,10 +2833,18 @@ async function updateMirrorSourcePolicy(button) {
 }
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("#stockManagersTrigger")) setManagersPanel($("#stockManagersPanel").hidden);
+  if (event.target.closest("[data-managers-close]")) setManagersPanel(false);
+  if (event.target.closest("[data-managers-refresh]")) validateStockFlowManagers();
+  const managerToggle = event.target.closest("[data-manager-toggle]");
+  if (managerToggle && !managerToggle.disabled) updateStockFlowManager(managerToggle.dataset.managerToggle, managerToggle.dataset.nextEnabled === "true");
   const nav = event.target.closest("[data-stock-nav]");
   if (nav) setStockView(nav.dataset.stockNav);
   const viewLink = event.target.closest("[data-open-stock-view]");
-  if (viewLink) setStockView(viewLink.dataset.openStockView);
+  if (viewLink) {
+    setStockView(viewLink.dataset.openStockView);
+    if (viewLink.closest("#stockManagersPanel")) setManagersPanel(false);
+  }
   const brokerConnect = event.target.closest("#brokerConnectGate");
   if (brokerConnect && brokerConnect.dataset.action === "oauth") startRobinhoodOAuth();
   else if (brokerConnect && brokerConnect.dataset.action === "refresh") refreshRobinhoodAccount();
@@ -2770,6 +2899,14 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#telegramDisableButton")) telegramAction("disable");
   if (event.target.closest("#telegramRemoveButton")) telegramAction("remove");
   if (event.target.closest("#mirrorRefreshButton")) syncLocalFiles();
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#stockManagersWidget") && !$("#stockManagersPanel")?.hidden) setManagersPanel(false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setManagersPanel(false);
 });
 
 $("#guardrailForm").addEventListener("submit", requestGuardrails);

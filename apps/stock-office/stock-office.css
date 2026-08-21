@@ -4392,3 +4392,148 @@ select {
   .mirror-candidate-verdict,
   .mirror-candidate-actions { grid-column: 1; }
 }
+
+body:not(.stock-office-ready) .stock-managers {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stock-managers {
+  position: fixed;
+  z-index: 2147482900;
+  bottom: 78px;
+  left: 16px;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  transition: opacity 180ms ease;
+}
+
+.stock-managers-trigger {
+  width: 154px;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid rgba(34, 211, 238, 0.38);
+  border-radius: 15px;
+  color: #e0f2fe;
+  background: linear-gradient(145deg, rgba(7, 29, 45, 0.97), rgba(5, 12, 28, 0.98));
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.04);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stock-managers-trigger:hover,
+.stock-managers-trigger[aria-expanded="true"] {
+  border-color: rgba(103, 232, 249, 0.7);
+  transform: translateY(-1px);
+}
+
+.stock-managers-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(34, 211, 238, 0.42);
+  border-radius: 11px;
+  color: #cffafe;
+  background: linear-gradient(145deg, rgba(8, 145, 178, 0.55), rgba(79, 70, 229, 0.48));
+  font-size: 0.78rem;
+  font-weight: 950;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.13);
+}
+
+.stock-managers-trigger strong,
+.stock-managers-trigger small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-managers-trigger strong { color: #f8fafc; font-size: 0.72rem; }
+.stock-managers-trigger small { margin-top: 2px; color: #94a3b8; font-size: 0.52rem; font-weight: 760; }
+.stock-managers-trigger > i { width: 7px; height: 7px; border-radius: 50%; background: #475569; }
+.stock-managers[data-status="active"] .stock-managers-trigger > i { background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.1); }
+.stock-managers[data-status="attention"] .stock-managers-trigger > i { background: #fb7185; box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.1); }
+
+.stock-managers-panel {
+  position: absolute;
+  bottom: 62px;
+  left: 0;
+  width: min(500px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 160px));
+  overflow: auto;
+  border: 1px solid rgba(103, 232, 249, 0.26);
+  border-radius: 18px;
+  color: #e2e8f0;
+  background:
+    radial-gradient(circle at 0 0, rgba(8, 145, 178, 0.18), transparent 38%),
+    linear-gradient(160deg, rgba(7, 18, 35, 0.995), rgba(2, 7, 18, 0.995));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.64), inset 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.stock-managers-panel[hidden] { display: none; }
+.stock-managers-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 17px 17px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.11); }
+.stock-managers-panel > header span { color: #67e8f9; font-size: 0.5rem; font-weight: 950; letter-spacing: 0.1em; }
+.stock-managers-panel > header h2 { margin: 4px 0 3px; font-size: 1.05rem; }
+.stock-managers-panel > header p { margin: 0; color: #8fa0b7; font-size: 0.59rem; }
+.stock-managers-panel > header button { width: 30px; min-height: 30px; padding: 0; border-color: rgba(148, 163, 184, 0.18); color: #94a3b8; background: rgba(15, 23, 42, 0.68); font-size: 1rem; cursor: pointer; }
+
+.stock-managers-toolbar { min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 15px; border-bottom: 1px solid rgba(148, 163, 184, 0.09); background: rgba(2, 6, 23, 0.38); }
+.stock-managers-toolbar > span { display: flex; align-items: center; gap: 7px; color: #94a3b8; font-size: 0.53rem; font-weight: 800; }
+.stock-managers-toolbar > span i { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.08); }
+.stock-managers-toolbar button { min-height: 27px; padding: 0 9px; border-color: rgba(34, 211, 238, 0.18); color: #bae6fd; background: rgba(8, 145, 178, 0.1); font-size: 0.51rem; cursor: pointer; }
+.stock-managers-list { display: grid; gap: 9px; padding: 12px; }
+
+.stock-manager-card {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 13px;
+  background: rgba(8, 17, 32, 0.72);
+}
+
+.stock-manager-card[data-status="healthy"] { border-color: rgba(52, 211, 153, 0.27); }
+.stock-manager-card[data-status="watching"],
+.stock-manager-card[data-status="starting"] { border-color: rgba(251, 191, 36, 0.23); }
+.stock-manager-card[data-status="attention"] { border-color: rgba(251, 113, 133, 0.34); }
+.stock-manager-head { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 11px 12px; }
+.stock-manager-head > i { width: 8px; height: 8px; border-radius: 50%; background: #475569; }
+.stock-manager-card[data-status="healthy"] .stock-manager-head > i { background: #34d399; box-shadow: 0 0 0 5px rgba(52, 211, 153, 0.08); }
+.stock-manager-card[data-status="watching"] .stock-manager-head > i,
+.stock-manager-card[data-status="starting"] .stock-manager-head > i { background: #fbbf24; box-shadow: 0 0 0 5px rgba(251, 191, 36, 0.07); }
+.stock-manager-card[data-status="attention"] .stock-manager-head > i { background: #fb7185; box-shadow: 0 0 0 5px rgba(251, 113, 133, 0.08); }
+.stock-manager-head strong,
+.stock-manager-head small { display: block; }
+.stock-manager-head strong { color: #f8fafc; font-size: 0.69rem; }
+.stock-manager-head small { margin-top: 2px; color: #7f8da3; font-size: 0.49rem; text-transform: capitalize; }
+.stock-manager-head button { min-height: 29px; padding: 0 10px; border-color: rgba(52, 211, 153, 0.24); color: #bbf7d0; background: rgba(5, 46, 22, 0.38); font-size: 0.5rem; cursor: pointer; }
+.stock-manager-head button[data-next-enabled="false"] { border-color: rgba(251, 191, 36, 0.18); color: #fde68a; background: rgba(120, 53, 15, 0.18); }
+.stock-manager-summary { margin: 0; padding: 0 12px 10px 30px; color: #a8b6c8; font-size: 0.57rem; line-height: 1.5; }
+.stock-manager-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border-block: 1px solid rgba(148, 163, 184, 0.08); background: rgba(148, 163, 184, 0.07); }
+.stock-manager-metrics > span { min-width: 0; padding: 8px 10px; background: rgba(3, 9, 22, 0.94); }
+.stock-manager-metrics small,
+.stock-manager-metrics strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stock-manager-metrics small { color: #64748b; font-size: 0.43rem; font-weight: 900; text-transform: uppercase; }
+.stock-manager-metrics strong { margin-top: 3px; color: #dbeafe; font-size: 0.7rem; }
+.stock-manager-checks { display: grid; gap: 1px; background: rgba(148, 163, 184, 0.055); }
+.stock-manager-check { display: grid; grid-template-columns: 7px minmax(0, 1fr); gap: 8px; padding: 8px 10px; background: rgba(4, 10, 23, 0.92); }
+.stock-manager-check > i { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: #475569; }
+.stock-manager-check[data-status="pass"] > i { background: #34d399; }
+.stock-manager-check[data-status="warn"] > i { background: #fbbf24; }
+.stock-manager-check[data-status="fail"] > i { background: #fb7185; }
+.stock-manager-check strong,
+.stock-manager-check small { display: block; }
+.stock-manager-check strong { color: #cbd5e1; font-size: 0.54rem; }
+.stock-manager-check small { margin-top: 2px; color: #718198; font-size: 0.48rem; line-height: 1.38; }
+.stock-manager-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; }
+.stock-manager-actions button { min-height: 27px; padding: 0 9px; border-color: rgba(34, 211, 238, 0.16); color: #bae6fd; background: rgba(8, 145, 178, 0.09); font-size: 0.49rem; cursor: pointer; }
+.stock-manager-actions small { color: #64748b; font-size: 0.45rem; }
+.stock-managers-panel > footer { padding: 10px 13px 12px; border-top: 1px solid rgba(251, 191, 36, 0.13); color: #94a3b8; background: rgba(120, 53, 15, 0.08); font-size: 0.49rem; line-height: 1.45; }
+
+@media (max-width: 520px) {
+  .stock-managers { left: 10px; bottom: 76px; }
+  .stock-managers-panel { width: calc(100vw - 20px); max-height: calc(100vh - 150px); }
+  .stock-manager-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

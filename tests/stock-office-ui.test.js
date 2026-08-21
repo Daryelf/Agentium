@@ -27,15 +27,20 @@ test("Stock Office responds immediately with a bounded startup screen", () => {
   assert.match(shellStyles, /\.stock-office-launch-screen\.visible/);
 });
 
-test("Stock Office UI exposes a real refresh outcome and useful filter feedback", () => {
+test("Stock Office UI exposes a compact Eastern-time refresh outcome and useful filter feedback", () => {
   const html = fs.readFileSync(path.join(appRoot, "index.html"), "utf8");
   const script = fs.readFileSync(path.join(appRoot, "stock-office.js"), "utf8");
 
   assert.match(html, /id="syncButton"[^>]*>Update market data<\/button>/);
   assert.match(html, /Filter records/);
   assert.match(html, /refreshFeedback[^]*aria-live="polite"/);
+  assert.match(html, /id="refreshFeedbackTitle">Last refreshed</);
   assert.match(html, /filterFeedback[^]*aria-live="polite"/);
   assert.match(script, /\/api\/stock-office\/refresh-status/);
+  assert.match(script, /function formatEasternTime/);
+  assert.match(script, /timeZone: "America\/New_York"/);
+  assert.match(script, /Background research continues/);
+  assert.doesNotMatch(script, /Refreshing:/);
   assert.match(script, /No records match these filters/);
   assert.match(script, /Loaded \$\{count\} evaluator record/);
   assert.match(script, /button\.textContent = "Filter records"/);
@@ -208,6 +213,7 @@ test("Overview shows branded, evidence-backed trade proposals without promising 
   assert.match(script, /\/human-gate/);
   assert.match(script, /No broker review or order has occurred/);
   assert.match(script, /No reliable exit time is available yet/);
+  assert.match(script, /Exit plan<\/strong>\$\{escapeHtml\(proposal\.exitPlan\?\.complete \? "Complete before purchase" : "Incomplete — BUY blocked"\)/);
   assert.match(styles, /\.company-logo/);
   assert.match(styles, /\.overview-proposal-list/);
   assert.match(html, /id="quickOrderDialog"/);
@@ -327,6 +333,8 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   assert.match(html, /Scan managers now/);
   assert.match(html, /id="marketResearchConveyor"/);
   assert.match(html, /id="copyTradeConveyor"/);
+  assert.match(html, /id="buyResearchFocus"/);
+  assert.match(html, /id="buyResearchFocusMetrics"/);
   assert.match(html, /<details id="verifiedSecIdentities" class="trader-roster-panel" open>/);
   assert.match(html, /class="trader-agent-conveyor"/);
   assert.match(html, /Research-only agents have no broker tools/);
@@ -341,6 +349,12 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   assert.match(script, /window\.setInterval\(pollTraderResearch, 2_000\)/);
   assert.match(script, /function renderResearchFlowConveyors/);
   assert.match(script, /function renderTraderAgentConveyor/);
+  assert.match(script, /function renderBuyResearchFocus/);
+  assert.match(script, /Queue caught up · next cycle automatic/);
+  assert.match(script, /data-proposal-risk-review/);
+  assert.match(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/risk-review/);
+  assert.match(server, /review_stock_strategy_risk/);
+  assert.match(server, /strategyExceptionAuthorized: false/);
   assert.match(script, /function renderStableHtml/);
   assert.match(script, /root\.querySelector\("\.research-flow-overlay strong"\)/);
   assert.match(script, /Math\.floor\(marketFocusIndex \/ 10\) \* 10/);
@@ -353,8 +367,8 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   assert.match(script, /manualRefreshRunning: false/);
   assert.match(script, /state\.manualRefreshRunning = true/);
   assert.match(script, /state\.manualRefreshRunning = false/);
-  assert.match(script, /refresh\.status === "idle"/);
-  assert.match(script, /panel\.hidden = true/);
+  assert.match(script, /\$\("#refreshFeedbackTitle"\)\.textContent = "Last refreshed"/);
+  assert.match(script, /panel\.hidden = false/);
   assert.match(script, /pollRefreshStatus\(\);/);
   assert.match(styles, /\.trader-lab-workspace/);
   assert.match(styles, /\.trader-agent-stages/);

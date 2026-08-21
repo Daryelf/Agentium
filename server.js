@@ -7969,6 +7969,50 @@ function createStockOrderApprovalRequest(draft) {
   return { approvalResult, envelope };
 }
 
+function createStockRiskReviewRequest(proposal) {
+  if (!proposal?.riskReviewEligible || !proposal.riskReviewFingerprint) {
+    throw guardedError("This proposal is not eligible for a strategy-risk review. Hard data, account, sizing, and exit-plan checks cannot be waived.", 409);
+  }
+  const score = Number(proposal.research?.score || 0);
+  const requiredScore = Number(proposal.riskReviewRequiredScore || 85);
+  const approvalResult = createHumanGateRequest({
+    actionType: "review_stock_strategy_risk",
+    title: `Review strategy risk — no order: ${proposal.symbol}`,
+    riskLevel: "high",
+    linkedId: `stock-office:risk-review:${proposal.riskReviewFingerprint}`,
+    officeId: "stock-office",
+    workflowId: "workflow-stock-watch",
+    expiresAt: new Date(Date.now() + (30 * 60 * 1_000)).toISOString(),
+    evidence: proposal.riskReviewReason,
+    action: `Decide whether ${proposal.symbol}'s below-threshold setup merits continued supervised research. This decision cannot authorize an order or a policy exception.`,
+    exactScope: `Advisory review only for risk fingerprint ${proposal.riskReviewFingerprint}. No broker call, order approval, order placement, guardrail change, money movement, or hard-gate bypass is authorized.`,
+    details: {
+      officeId: "stock-office",
+      proposalId: proposal.id,
+      proposalFingerprint: proposal.fingerprint,
+      riskReviewFingerprint: proposal.riskReviewFingerprint,
+      symbol: proposal.symbol,
+      side: proposal.side,
+      score,
+      requiredScore,
+      requestedDollars: proposal.requestedDollars,
+      exitPlan: proposal.exitPlan,
+      blockers: proposal.blockers,
+      orderAuthorized: false,
+      brokerActionAuthorized: false,
+      strategyExceptionAuthorized: false,
+    },
+    reversible: true,
+    expectedPostcondition: "The operator's advisory decision is recorded and research continues; no broker action or order occurs.",
+    rollbackPlan: "No external rollback is required because this request cannot place an order or change a trading gate.",
+  });
+  stockIntelligenceStore.recordApproval(approvalResult.approval, {
+    proposalId: proposal.id,
+    actorType: "SYSTEM",
+  });
+  return approvalResult;
+}
+
 function stockOrderNotificationProposal(draft = {}, preferredProposal = null) {
   const proposal = preferredProposal && typeof preferredProposal === "object" ? preferredProposal : {};
   const checks = Array.isArray(draft.checks) ? draft.checks : [];
@@ -8353,6 +8397,24 @@ async function processStockContinuousReview(result = {}) {
   const selectionReview = priorCycleDay && priorCycleDay !== cycleDay ? { ...baseReview, stagedProposalFingerprints: [] } : baseReview;
   const proposal = selectNextQualifiedProposal(plan, selectionReview, { session, now: completedAt });
   if (!proposal) {
+    const riskProposal = [...(plan.proposals || [])]
+      .filter((item) => item.riskReviewEligible === true)
+      .sort((a, b) => Number(b.research?.score || 0) - Number(a.research?.score || 0))[0] || null;
+    if (riskProposal) {
+      const linkedId = `stock-office:risk-review:${riskProposal.riskReviewFingerprint}`;
+      const existingRiskReview = (initialState.approvals || []).find((item) => item.actionType === "review_stock_strategy_risk" && item.linkedId === linkedId);
+      if (!existingRiskReview) {
+        const riskReview = createStockRiskReviewRequest(riskProposal);
+        return recordReview({
+          lastOutcome: "risk_review_requested",
+          lastMessage: `${riskProposal.symbol} is near the normal entry threshold, so an advisory Human Gate risk review was created. It cannot authorize an order or bypass a hard check.`,
+          activeProposalFingerprint: "",
+          activeDraftId: "",
+          activeApprovalId: "",
+          riskReviewApprovalId: riskReview.approval.id,
+        });
+      }
+    }
     const blockers = plan.proposals?.find((item) => item.side !== "HOLD")?.blockers || [];
     return recordReview({
       lastOutcome: "no_qualified_proposal",
@@ -14158,6 +14220,34 @@ async function handleApi(req, res, url) {
         portfolioPlan: buildCopyPortfolioPlan(snapshot),
         approval: { id: approval.id, status: approval.status, consumedAt: approval.consumedAt },
         moneyMoved: false,
+        liveOrderPlaced: false,
+      });
+    } catch (error) {
+      const response = stockOfficeErrorResponse(error);
+      sendJson(res, response.status, response.payload);
+    }
+    return;
+  }
+
+  const stockProposalRiskReviewMatch = url.pathname.match(/^\/api\/stock-office\/proposals\/([^/]+)\/risk-review$/);
+  if (req.method === "POST" && stockProposalRiskReviewMatch) {
+    try {
+      enforceStockOfficeRateLimit(req, "proposal-risk-review", 8, 300_000);
+      const access = requireStockOfficeAccess(req, "order_approval");
+      const state = readState();
+      const snapshot = stockOfficeSnapshot(state, access.permissions);
+      const proposalId = decodeURIComponent(stockProposalRiskReviewMatch[1]);
+      const proposal = buildCopyPortfolioPlan(snapshot).proposals.find((item) => item.id === proposalId);
+      if (!proposal) throw guardedError("Current proposal not found. Refresh Research before requesting a risk review.", 404);
+      const approvalResult = createStockRiskReviewRequest(proposal);
+      const auditState = readState();
+      audit(auditState, "Stock strategy risk review requested", `${proposal.symbol} was sent to Human Gate for advisory strategy review only; no broker call, policy exception, or order occurred.`);
+      writeState(auditState);
+      sendJson(res, 200, {
+        ...approvalResult,
+        proposal,
+        orderAuthorized: false,
+        brokerCalled: false,
         liveOrderPlaced: false,
       });
     } catch (error) {

@@ -62,11 +62,13 @@ function snapshot(overrides = {}) {
       decision: "VALID_BUY_SETUP",
       score: 90,
       currentPrice: 100,
+      entryZone: "99.50-100.50",
       stopLoss: 95,
       dataFresh: true,
       lastUpdated: "2026-08-10T16:59:00.000Z",
       mainReason: "Trend and risk structure aligned.",
       mainRisk: "Use a hard stop.",
+      invalidationRule: "Exit if price closes below 95 or the setup breaks.",
       target1: 110,
     }],
     positions: [],
@@ -243,6 +245,35 @@ test("order review expiry uses the configured Human Gate window", () => {
   );
 
   assert.equal(draft.expiresAt, "2026-08-10T17:15:00.000Z");
+});
+
+test("a BUY cannot reach Human Gate without a complete pre-purchase exit plan", () => {
+  const missingPlan = snapshot({
+    records: [{ ...snapshot().records[0], target1: null, invalidationRule: "" }],
+  });
+  const draft = buildTradeDraft(
+    { symbol: "NET", side: "BUY", requestedDollars: 10 },
+    missingPlan,
+    { now: "2026-08-10T17:00:00.000Z" },
+  );
+
+  assert.equal(draft.status, "blocked");
+  assert.equal(draft.checks.find((check) => check.name === "complete_exit_plan").passed, false);
+  assert.match(draft.blockers.join(" "), /complete pre-purchase sell plan/i);
+});
+
+test("a near-threshold BUY can request advisory risk review only after every other gate and exit-plan check passes", () => {
+  const current = snapshot({ records: [{ ...snapshot().records[0], score: 80 }] });
+  const plan = buildCopyPortfolioPlan(current, { now: "2026-08-10T17:00:00.000Z" });
+  const proposal = plan.proposals.find((item) => item.symbol === "NET" && item.side === "BUY");
+
+  assert.ok(proposal);
+  assert.equal(proposal.draftEligible, false);
+  assert.deepEqual(proposal.failedCheckNames, ["entry_score"]);
+  assert.equal(proposal.exitPlan.complete, true);
+  assert.equal(proposal.riskReviewEligible, true);
+  assert.equal(proposal.riskReviewFingerprint.length, 64);
+  assert.match(proposal.riskReviewReason, /below the normal 85 entry threshold/i);
 });
 
 test("copy-entry planner requires an explicitly followed and mirror-enabled source", () => {

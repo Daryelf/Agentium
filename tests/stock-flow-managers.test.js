@@ -20,7 +20,7 @@ function currentPlan() {
     decisions: [],
     proposals: [
       { id: "qualified-buy", symbol: "AAPL", side: "BUY", draftEligible: true, reviewState: "qualified", referencePrice: 220 },
-      { id: "research-buy", symbol: "MSFT", side: "BUY", draftEligible: false, reviewState: "blocked", referencePrice: 510 },
+      { id: "research-buy", symbol: "MSFT", side: "BUY", draftEligible: false, reviewState: "blocked", referencePrice: 510, riskReviewEligible: true, blockers: ["BUY score must be at least 85."] },
     ],
   };
 }
@@ -39,6 +39,10 @@ test("research manager validates qualified proposal handoff without exposing rej
   assert.deepEqual(flow.boardEligible.map((proposal) => proposal.id), ["qualified-buy"]);
   assert.equal(report.status, "healthy");
   assert.equal(report.metrics.qualified, 1);
+  assert.equal(report.metrics.buyIdeas, 2);
+  assert.equal(report.metrics.qualifiedBuys, 1);
+  assert.equal(report.metrics.riskReviews, 1);
+  assert.equal(report.metrics.topBlocker, "BUY score must be at least 85.");
   assert.equal(report.metrics.boardEligible, 1);
   assert.match(report.checks.find((item) => item.id === "human-gate-boundary").detail, /cannot approve, dispatch, or place an order/);
 });

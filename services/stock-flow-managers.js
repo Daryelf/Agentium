@@ -71,6 +71,16 @@ function validateResearchFlow(input = {}, validatedAt = new Date().toISOString()
   const opportunityCount = Number(input.opportunityCount || 0);
   const advertisedBuys = Number(plan.summary?.buys || 0);
   const buyProposals = flow.actionCandidates.filter((proposal) => proposal.side === "BUY").length;
+  const sellProposals = flow.actionCandidates.filter((proposal) => proposal.side === "SELL").length;
+  const qualifiedBuys = flow.qualified.filter((proposal) => proposal.side === "BUY").length;
+  const riskReviews = flow.actionCandidates.filter((proposal) => proposal.side === "BUY" && proposal.riskReviewEligible === true);
+  const blockerCounts = new Map();
+  flow.actionCandidates.filter((proposal) => proposal.draftEligible !== true).forEach((proposal) => {
+    const blocker = String(proposal.blockers?.[0] || "Awaiting deeper evidence.").trim();
+    blockerCounts.set(blocker, (blockerCounts.get(blocker) || 0) + 1);
+  });
+  const [topBlocker = "", topBlockerCount = 0] = [...blockerCounts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
+  const buyDiscoveryActive = qualifiedBuys === 0 && sellProposals === 0;
   const lastResultStatus = String(scheduler.lastResult?.status || "idle").toLowerCase();
   const schedulerFailed = lastResultStatus === "failed";
   const schedulerActive = scheduler.enabled === true
@@ -105,6 +115,14 @@ function validateResearchFlow(input = {}, validatedAt = new Date().toISOString()
         : `${flow.actionCandidates.length} current BUY/SELL candidate records were derived from the current cycle.`,
     ),
     check(
+      "buy-discovery-focus",
+      "BUY discovery focus",
+      buyProposals > 0 ? "pass" : "warn",
+      buyProposals > 0
+        ? `${buyProposals} BUY idea${buyProposals === 1 ? " is" : "s are"} in the current plan; ${qualifiedBuys} passed every live-order gate.${topBlocker ? ` Most common first blocker (${topBlockerCount}): ${topBlocker}` : ""}`
+        : "The evaluator is running, but this cycle has not derived a current BUY idea yet.",
+    ),
+    check(
       "trade-proposal-handoff",
       "Trade Proposals handoff",
       unqualifiedOnBoard ? "fail" : flow.qualified.length ? "pass" : "warn",
@@ -128,14 +146,23 @@ function validateResearchFlow(input = {}, validatedAt = new Date().toISOString()
       ? "A research-to-proposal flow gap needs attention."
       : flow.qualified.length
         ? `${flow.qualified.length} qualified trade${flow.qualified.length === 1 ? "" : "s"} validated for the proposal flow.`
-        : "Research is being watched; no trade is qualified right now.",
+        : buyDiscoveryActive
+          ? `BUY discovery active: ${buyProposals} idea${buyProposals === 1 ? "" : "s"} under review; no trade is qualified right now.`
+          : "Research is being watched; no trade is qualified right now.",
     lastValidatedAt: validatedAt,
     metrics: {
       records: recordCount,
       opportunities: opportunityCount,
       actionable: flow.actionCandidates.length,
+      buyIdeas: buyProposals,
+      sellIdeas: sellProposals,
+      qualifiedBuys,
       qualified: flow.qualified.length,
       boardEligible: flow.boardEligible.length,
+      riskReviews: riskReviews.length,
+      topBlocker,
+      topBlockerCount,
+      focus: buyDiscoveryActive ? "qualified_buy_discovery" : "portfolio_review",
     },
     checks,
   };

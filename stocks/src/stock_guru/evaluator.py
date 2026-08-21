@@ -10,6 +10,7 @@ import pandas as pd
 
 from .config import REPORT_DIR, Settings
 from .data import MarketData, field_for
+from .market_data_quality import DataQualityReport, assess_market_data
 from .quant.engine import build_quant_snapshot, build_quant_snapshots
 from .quant.indicators import macd as quant_macd, period_return, volume_weighted_average_price, wilder_atr, wilder_rsi
 from .quant.models import QuantFeatureSnapshot
@@ -135,6 +136,54 @@ def is_fresh(series: pd.Series, *, max_age_days: int = 7, now: datetime | None =
         evaluated_at = evaluated_at.replace(tzinfo=timezone.utc)
     age_seconds = (evaluated_at.astimezone(timezone.utc) - latest_dt.astimezone(timezone.utc)).total_seconds()
     return 0 <= age_seconds <= max_age_days * 24 * 60 * 60
+
+
+def symbol_history(history: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Return only one symbol's columns while preserving the provider shape."""
+    if history.empty or not isinstance(history.columns, pd.MultiIndex):
+        return history.copy()
+    columns = [
+        column
+        for column in history.columns
+        if ticker in {str(value).upper() for value in column}
+    ]
+    return history.loc[:, columns].copy() if columns else pd.DataFrame(index=history.index)
+
+
+def symbol_data_quality(data: MarketData, ticker: str, *, now: datetime | None = None) -> DataQualityReport | None:
+    """Re-score execution quality for the exact symbol, not the whole scan batch.
+
+    A 200-symbol scan can legitimately contain one unavailable or malformed
+    ticker. That defect must stay attached to that ticker instead of forcing
+    every otherwise coherent symbol in the batch to DATA_PARTIAL/REJECT.
+    Provider-validation issues remain in scope because they describe the
+    provenance of the selected feed rather than an unrelated symbol's bars.
+    """
+    if data.quality is None:
+        return None
+    normalized = str(ticker or "").upper()
+    scoped_external_issues = tuple(
+        issue
+        for issue in data.quality.issues
+        if (
+            (issue.symbol is not None and str(issue.symbol).upper() == normalized)
+            or (issue.symbol is None and issue.code.startswith("PROVIDER_"))
+        )
+    )
+    checked_at = now
+    if checked_at is None:
+        try:
+            checked_at = datetime.fromisoformat(data.quality.checked_at)
+        except (TypeError, ValueError):
+            checked_at = datetime.now(timezone.utc)
+    interval = data.provenance.interval if data.provenance else "1d"
+    return assess_market_data(
+        symbol_history(data.history, normalized),
+        [normalized],
+        interval=interval,
+        now=checked_at,
+        external_issues=scoped_external_issues,
+    )
 
 
 def rsi(close: pd.Series, period: int = 14) -> float:
@@ -600,9 +649,9 @@ def evaluate_market_data(
         progress_callback(evaluation_tickers[-1], total_tickers, total_tickers)
 
     provenance = data.provenance
-    quality = data.quality
     enriched: list[TradeEvaluation] = []
     for evaluation in evaluations:
+        quality = symbol_data_quality(data, evaluation.ticker, now=now)
         updates: dict[str, object] = {
             "data_provider": provenance.provider if provenance else "UNKNOWN",
             "data_feed_type": provenance.feed_type if provenance else "UNKNOWN",

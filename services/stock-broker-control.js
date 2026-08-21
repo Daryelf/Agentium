@@ -54,6 +54,30 @@ function parsedRewardRisk(value) {
   return match ? finiteNumber(match[1], null) : null;
 }
 
+function completeBuyExitPlan(record = {}, referencePrice = 0) {
+  const entry = finiteNumber(referencePrice, 0);
+  const stop = finiteNumber(record.stopLoss, 0);
+  const target = finiteNumber(record.target1, 0);
+  const entryZone = String(record.entryZone || "").trim();
+  const invalidationRule = String(record.invalidationRule || "").trim();
+  const missing = [];
+  if (entry <= 0) missing.push("fresh entry reference");
+  if (!entryZone) missing.push("entry zone");
+  if (!(stop > 0 && entry > 0 && stop < entry)) missing.push("protective stop below entry");
+  if (!(target > 0 && entry > 0 && target > entry)) missing.push("profit target above entry");
+  if (!invalidationRule) missing.push("thesis invalidation rule");
+  return {
+    complete: missing.length === 0,
+    entry,
+    entryZone,
+    stop: stop || null,
+    target: target || null,
+    invalidationRule,
+    reviewCadence: "Re-evaluate on every fresh market-data cycle and before broker review.",
+    missing,
+  };
+}
+
 function clamp(value, min, max, fallback = min) {
   const parsed = finiteNumber(value, fallback);
   return Math.max(min, Math.min(max, parsed));
@@ -456,6 +480,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   const target1 = finiteNumber(record?.target1, null);
   const target2 = finiteNumber(record?.target2, null);
   const evaluatedRewardRisk = parsedRewardRisk(record?.riskReward) ?? rewardRisk(referencePrice, stopLoss, target1);
+  const exitPlan = side === "BUY" ? completeBuyExitPlan(record, referencePrice) : null;
   const sizing = side === "BUY" ? sizePosition({
     symbol,
     sector,
@@ -484,6 +509,9 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
   if (side === "BUY") {
     addCheck(checks, blockers, "valid_setup", record?.status === "valid_setup", "BUY requires a current valid evaluator setup.");
     addCheck(checks, blockers, "entry_score", finiteNumber(record?.score, 0) >= guardrails.minEntryScore, `BUY score must be at least ${guardrails.minEntryScore}.`);
+    addCheck(checks, blockers, "complete_exit_plan", exitPlan?.complete === true, exitPlan?.complete
+      ? "Entry, stop, target, invalidation, and re-evaluation timing are defined before purchase."
+      : `BUY requires a complete pre-purchase sell plan: ${exitPlan?.missing?.join(", ") || "plan evidence is unavailable"}.`);
     addCheck(checks, blockers, "buying_power", control.buyingPowerDollars - guardrails.cashReserveDollars >= requestedDollars, "Verified buying power after the cash reserve is insufficient.");
     addCheck(checks, blockers, "position_count", control.positions.length < guardrails.maxPositions || Boolean(position), `Maximum ${guardrails.maxPositions} positions reached.`);
     addCheck(checks, blockers, "capital_evidence", capital.verified, "Official position values, pending-order notionals, today's P&L, and today's order history must all be verified.");
@@ -553,6 +581,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     stopLoss,
     target1,
     target2,
+    invalidationRule: exitPlan?.invalidationRule || "",
     permittedDollars: sizing?.permittedDollars ?? null,
   };
   const createdAt = now.toISOString();
@@ -572,7 +601,7 @@ function buildTradeDraft(input = {}, snapshot = {}, options = {}) {
     riskBudgetDollars: side === "BUY" ? finiteNumber(sizing?.riskBudgetDollars, guardrails.principalDollars * guardrails.riskPerTradePct) : 0,
     riskSizedMaxDollars: side === "BUY" ? finiteNumber(sizing?.caps?.risk, 0) : 0,
     riskDecision: side === "BUY" ? sizing : null,
-    tradePlan,
+    tradePlan: tradePlan ? { ...tradePlan, exitPlan } : null,
     orderType: "market",
     sourceType,
     sourceId,
@@ -659,6 +688,25 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       : kind.endsWith("exit") || kind === "strategy_exit_review"
         ? "Review now while the exit condition remains valid"
         : "Re-evaluate on each fresh market-data cycle";
+    const failedCheckNames = draft.checks.filter((check) => !check.passed).map((check) => check.name);
+    const riskReviewEligible = kind === "native_entry"
+      && side === "BUY"
+      && researchOnly !== true
+      && draft.tradePlan?.exitPlan?.complete === true
+      && failedCheckNames.length === 1
+      && failedCheckNames[0] === "entry_score"
+      && finiteNumber(record?.score, 0) >= Math.max(1, guardrails.minEntryScore - 10);
+    const riskReviewFingerprint = riskReviewEligible ? stableFingerprint({
+      symbol,
+      side,
+      score: finiteNumber(record?.score, 0),
+      requiredScore: guardrails.minEntryScore,
+      requestedDollars: roundedMoney(orderDollars),
+      entry: draft.referencePrice,
+      stop: stopPrice,
+      target: targetPrice,
+      invalidationRule: String(record?.invalidationRule || ""),
+    }) : "";
     proposals.push({
       id: `portfolio-proposal-${stableFingerprint(proposalCore).slice(0, 20)}`,
       fingerprint: stableFingerprint(proposalCore),
@@ -691,6 +739,13 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       actionable: !researchOnly,
       researchOnly,
       recommendation: researchOnly,
+      failedCheckNames,
+      riskReviewEligible,
+      riskReviewFingerprint,
+      riskReviewRequiredScore: guardrails.minEntryScore,
+      riskReviewReason: riskReviewEligible
+        ? `The setup is ${Math.max(0, guardrails.minEntryScore - finiteNumber(record?.score, 0))} point(s) below the normal ${guardrails.minEntryScore} entry threshold; every non-score check and the complete exit plan passed.`
+        : "",
       blockers: draft.blockers,
       reasons: [...new Set(reasons)].slice(0, 6),
       research: {
@@ -738,6 +793,7 @@ function buildCopyPortfolioPlan(snapshot = {}, options = {}) {
       riskSizedMaxDollars: draft.riskSizedMaxDollars,
       riskDecision: draft.riskDecision,
       tradePlan: draft.tradePlan,
+      exitPlan: draft.tradePlan?.exitPlan || null,
       capitalAfterDollars: draft.capitalAfterDollars,
     });
   };

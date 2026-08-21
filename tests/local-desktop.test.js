@@ -1441,11 +1441,13 @@ test("Stock Office order approval produces one claim and consumes it on broker-r
     decision: "VALID_BUY_SETUP",
     score: 90,
     current_price: 100,
+    entry_zone: "99.50-100.50",
     stop_loss: 95,
     target_1: 110,
     data_fresh: true,
     setup_type: "Trend Continuation",
     main_risk: "Use a hard stop.",
+    invalidation_rule: "Exit if price closes below 95 or the setup breaks.",
   }]));
   fs.writeFileSync(path.join(stockRoot, "config", "settings.json"), JSON.stringify({
     live_principal_dollars: 100,

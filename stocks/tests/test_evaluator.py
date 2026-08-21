@@ -26,7 +26,7 @@ from stock_guru.evaluator import (
     write_evaluations_json,
 )
 from stock_guru.notifier import format_evaluation_update
-from stock_guru.market_data_quality import assess_market_data, build_provenance
+from stock_guru.market_data_quality import DataQualityIssue, assess_market_data, build_provenance
 
 
 def settings() -> Settings:
@@ -142,6 +142,40 @@ def test_market_data_quality_is_a_hard_execution_gate() -> None:
     assert aapl.data_provider == "CACHE"
     assert aapl.data_health_state == "STALE"
     assert aapl.data_quality_score == quality.score
+
+
+def test_unrelated_batch_defects_do_not_reject_a_coherent_symbol() -> None:
+    base = market_frame(["AAPL", "SPY", "QQQ", "^VIX"], direction="up", vix_price=15)
+    at = datetime.now(timezone.utc)
+    quality = assess_market_data(
+        base.history,
+        base.tickers,
+        interval="1d",
+        now=at,
+        external_issues=(
+            DataQualityIssue("UNRELATED_BAD_FIELD", "critical", "Bad field on another ticker.", symbol="BROKEN"),
+            DataQualityIssue("UNRELATED_BAD_VOLUME", "critical", "Bad volume on another ticker.", symbol="BROKEN"),
+        ),
+    )
+    assert quality.is_usable is False
+    provenance = build_provenance(
+        provider="YFINANCE",
+        history=base.history,
+        symbols=base.tickers,
+        period="1y",
+        interval="1d",
+        received_at=at,
+        latency_ms=10,
+        quality=quality,
+    )
+
+    result = evaluate_market_data(MarketData(base.tickers, base.history, provenance, quality), settings(), now=at)
+    aapl = next(item for item in result if item.ticker == "AAPL")
+
+    assert aapl.data_fresh is True
+    assert aapl.data_health_state == "HEALTHY"
+    assert aapl.data_quality_score == 100
+    assert aapl.rejection_reason != "market data health is offline"
 
 
 def test_market_evaluator_reports_the_exact_ticker_progress() -> None:

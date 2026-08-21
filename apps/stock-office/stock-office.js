@@ -180,6 +180,19 @@ function formatTime(value) {
   }).format(new Date(value));
 }
 
+function formatEasternTime(value) {
+  if (!value) return "Waiting for first completed cycle";
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "Waiting for first completed cycle";
+  return `${new Intl.DateTimeFormat(undefined, {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed)} ET`;
+}
+
 function formatMoney(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "Unknown";
@@ -467,9 +480,9 @@ function managerMetricEntries(manager = {}) {
   if (manager.id === "research") {
     return [
       ["Records", metrics.records ?? 0],
-      ["BUY/SELL ideas", metrics.actionable ?? 0],
-      ["Qualified", metrics.qualified ?? 0],
-      ["Board eligible", metrics.boardEligible ?? 0],
+      ["BUY ideas", metrics.buyIdeas ?? metrics.actionable ?? 0],
+      ["Qualified BUYs", metrics.qualifiedBuys ?? metrics.qualified ?? 0],
+      ["Risk reviews", metrics.riskReviews ?? 0],
     ];
   }
   return [
@@ -673,12 +686,14 @@ function renderOverviewDashboard() {
   const daily = state.intelligence?.daily || {};
   const dailyResearch = daily.research || {};
   const reports = Array.isArray(daily.reports) ? daily.reports : [];
+  const buyIdeas = Number(state.portfolioPlan?.summary?.buys || 0);
+  const qualifiedBuys = (state.portfolioPlan?.proposals || []).filter((proposal) => proposal.side === "BUY" && proposal.draftEligible === true).length;
   $("#overviewDailyReportDate").textContent = daily.day ? `Today · ${daily.day}` : "Today";
   $("#overviewDailyResearchMetrics").innerHTML = [
     ["Runs", dailyResearch.runs || 0],
     ["Stocks", dailyResearch.symbolsScanned || 0],
-    ["Signals", dailyResearch.signalsFound || 0],
-    ["Reports", reports.length],
+    ["BUY ideas", buyIdeas],
+    ["Qualified", qualifiedBuys],
   ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(formatCount(value))}</strong></span>`).join("");
   $("#overviewDailyResearchLatest").textContent = dailyResearch.latestCompletedAt
     ? `${dailyResearch.successfulRuns || 0} successful · last completed ${formatTime(dailyResearch.latestCompletedAt)}${reports.length ? ` · ${reports.map((report) => String(report.type || "report")).join(" + ")} report${reports.length === 1 ? "" : "s"}` : ""}`
@@ -880,6 +895,7 @@ function renderTradeProposals() {
             <summary>Quick evidence</summary>
             <p><strong>Setup</strong>${escapeHtml(research.setupType || "Evaluator review")} · score ${escapeHtml(research.score ?? "—")} · ${escapeHtml(research.marketCondition || "market condition unavailable")}</p>
             <p><strong>Plan</strong>Entry ${escapeHtml(research.entryZone || "reprice before order")} · stop ${escapeHtml(outlookValue(outlook.stopPrice))}${Number.isFinite(Number(outlook.stopScenarioDollars)) ? ` · ${escapeHtml(formatMoney(outlook.stopScenarioDollars))} downside scenario` : ""} · ${escapeHtml(research.invalidationRule || "Rebuild on any evidence change.")}</p>
+            <p><strong>Exit plan</strong>${escapeHtml(proposal.exitPlan?.complete ? "Complete before purchase" : "Incomplete — BUY blocked")} · target ${escapeHtml(outlookValue(proposal.exitPlan?.target || outlook.targetPrice))} · ${escapeHtml(proposal.exitPlan?.reviewCadence || "Re-evaluate on every fresh market-data cycle before broker review.")}</p>
             <p><strong>Projected sell timing</strong>${escapeHtml(outlook.timingNote || outlook.horizonLabel || "No reliable exit time is available yet.")}</p>
             <p><strong>Evidence depth</strong>${escapeHtml(`${research.checksPassed ?? 0}/${research.checksTotal ?? 0} live checks · ${research.evidenceCompleteness === null || research.evidenceCompleteness === undefined ? "completeness unavailable" : `${Math.round(Number(research.evidenceCompleteness) * 100)}% evidence`} · ${research.dataQualityScore === null || research.dataQualityScore === undefined ? "data quality unavailable" : `${Math.round(Number(research.dataQualityScore))}% data quality`}`)}</p>
             <p><strong>Company / catalyst</strong>${escapeHtml([research.company?.name, research.company?.sector, research.company?.recommendation, research.company?.catalystSummary?.methodology].filter(Boolean).join(" · ") || "Structured company research is not available yet.")}</p>
@@ -1643,6 +1659,46 @@ function renderTraderAgentConveyor(jobs = []) {
   root.innerHTML = `<div class="trader-agent-conveyor-window"><div class="trader-agent-conveyor-track"><div class="trader-agent-conveyor-segment">${cardMarkup}</div><div class="trader-agent-conveyor-segment" aria-hidden="true" inert>${cardMarkup}</div></div><div class="trader-agent-conveyor-scan" aria-hidden="true"></div><div class="trader-agent-conveyor-rail" aria-hidden="true"></div></div>`;
 }
 
+function renderBuyResearchFocus() {
+  const root = $("#buyResearchFocus");
+  const metricsRoot = $("#buyResearchFocusMetrics");
+  const feedback = $("#buyResearchFocusFeedback");
+  if (!root || !metricsRoot || !feedback) return;
+  const proposals = Array.isArray(state.portfolioPlan?.proposals) ? state.portfolioPlan.proposals : [];
+  const buyIdeas = proposals.filter((proposal) => proposal.side === "BUY" && proposal.researchOnly !== true);
+  const qualified = buyIdeas.filter((proposal) => proposal.draftEligible === true);
+  const riskReviews = buyIdeas.filter((proposal) => proposal.riskReviewEligible === true);
+  const completePlans = buyIdeas.filter((proposal) => proposal.exitPlan?.complete === true);
+  const closest = [...buyIdeas].sort((a, b) => Number(b.research?.score || 0) - Number(a.research?.score || 0))[0] || null;
+  const blockerCounts = new Map();
+  buyIdeas.filter((proposal) => proposal.draftEligible !== true).forEach((proposal) => {
+    const blocker = String(proposal.blockers?.[0] || "Awaiting deeper evidence.");
+    blockerCounts.set(blocker, (blockerCounts.get(blocker) || 0) + 1);
+  });
+  const [topBlocker = "", topBlockerCount = 0] = [...blockerCounts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
+  root.dataset.status = qualified.length ? "qualified" : buyIdeas.length ? "researching" : "waiting";
+  const title = root.querySelector(":scope > div strong");
+  const detail = root.querySelector(":scope > div small");
+  if (title) title.textContent = qualified.length
+    ? `${qualified.length} BUY candidate${qualified.length === 1 ? " has" : "s have"} passed every current gate`
+    : `${buyIdeas.length} BUY idea${buyIdeas.length === 1 ? "" : "s"} under active review`;
+  if (detail) detail.textContent = qualified.length
+    ? "Each qualified BUY already includes its entry, stop, target, invalidation rule, and recheck timing."
+    : "Research stays aggressive; stale data, buying power, and incomplete exit plans still block an order.";
+  metricsRoot.innerHTML = [
+    ["BUY ideas", buyIdeas.length],
+    ["Qualified", qualified.length],
+    ["Complete plans", completePlans.length],
+    ["Risk review", riskReviews.length],
+  ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
+  const riskCandidate = riskReviews[0];
+  const closestText = closest
+    ? `Closest candidate: ${closest.symbol} · score ${Math.round(Number(closest.research?.score || 0))}.`
+    : "The next market-data cycle is building a new BUY candidate set.";
+  const blockerText = topBlocker ? ` Main blocker across ${topBlockerCount} idea${topBlockerCount === 1 ? "" : "s"}: ${topBlocker}` : "";
+  feedback.innerHTML = `${escapeHtml(`${closestText}${blockerText}`)}${riskCandidate ? ` <button type="button" data-proposal-risk-review="${escapeHtml(riskCandidate.id)}">Ask Human Gate about ${escapeHtml(riskCandidate.symbol)} strategy risk</button><small>Advisory review only; this cannot authorize an order or bypass a hard gate.</small>` : `<small>No strategy-only exception is available; current blockers must be fixed with fresh evidence.</small>`}`;
+}
+
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
   const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
@@ -1663,6 +1719,7 @@ function renderMirror() {
   const queuedJobs = jobs.filter((job) => job.status === "queued").length;
   const completedJobs = jobs.filter((job) => ["success", "partial"].includes(job.status)).length;
   renderResearchFlowConveyors(jobs, watchers);
+  renderBuyResearchFocus();
   const pill = $("#mirrorStatusPill");
   pill.textContent = runningJobs ? `${runningJobs} agent${runningJobs === 1 ? "" : "s"} working` : queuedJobs ? `${queuedJobs} queued` : "Background watch active";
   pill.className = `status-pill ${runningJobs || queuedJobs || activeWatchers.length ? "ready" : "muted"}`;
@@ -1671,7 +1728,7 @@ function renderMirror() {
     ["Managers monitored", activeWatchers.length, `${activeWatchers.filter((watcher) => watcher.researchAgentEnabled).length} agent-enabled identities`],
     ["Filings scanned", importer13f.filingsScanned || 0, importer13f.generatedAt ? `Last SEC read ${relativeCycle(importer13f.generatedAt)}` : "First SEC read pending"],
     ["Holding changes", importer13f.holdingChangesFound || 0, `${unresolvedSignals} awaiting verified ticker`],
-    ["Research agents", `${runningJobs} live · ${queuedJobs} queued`, `${completedJobs} completed with persisted evidence`],
+    ["Research agents", runningJobs || queuedJobs ? `${runningJobs} live · ${queuedJobs} queued` : `${completedJobs} completed`, runningJobs || queuedJobs ? `${completedJobs} completed with persisted evidence` : "Queue caught up · next cycle automatic"],
   ].map(([label, value, hint]) => `<div><small>${escapeHtml(label)}</small><strong>${escapeHtml(value)}</strong><span>${escapeHtml(hint)}</span></div>`).join("");
 
   $("#mirrorWatcherCount").textContent = `${activeWatchers.length} monitored`;
@@ -2157,6 +2214,24 @@ function reviewOverviewProposal(proposalId) {
   $("#quickOrderFeedback").textContent = blocker
     ? `Current blocker: ${blocker} Run live checks again to verify whether it changed.`
     : "Run live checks to confirm this candidate before it can enter Human Gate.";
+}
+
+async function requestProposalRiskReview(proposalId) {
+  const proposal = (state.portfolioPlan?.proposals || []).find((item) => item.id === proposalId);
+  const button = $(`[data-proposal-risk-review="${CSS.escape(proposalId)}"]`);
+  const feedback = $("#buyResearchFocusFeedback");
+  if (!proposal || !button || !feedback) return;
+  button.disabled = true;
+  button.textContent = "Creating advisory review…";
+  try {
+    const payload = await api(`/api/stock-office/proposals/${encodeURIComponent(proposalId)}/risk-review`, { method: "POST", body: "{}" });
+    feedback.textContent = `${proposal.symbol} strategy-risk review is in Human Gate. It does not authorize an order or weaken any data, account, or risk gate.`;
+    window.dispatchEvent(new CustomEvent("argentum:approval-created", { detail: { officeId: "stock-office", approvalId: payload.approval?.id } }));
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = `Ask Human Gate about ${proposal.symbol} strategy risk`;
+    feedback.textContent = `Risk review stopped safely: ${error.message}`;
+  }
 }
 
 async function submitQuickOrder(event) {
@@ -2664,32 +2739,24 @@ async function resetShadowPortfolio(event) {
   }
 }
 
-function renderRefreshFeedback(refresh) {
+function renderRefreshFeedback(refresh, scheduler = state.intelligenceScheduler || {}) {
   const panel = $("#refreshFeedback");
-  state.refresh = refresh || null;
-  if (!refresh || refresh.status === "idle") {
-    panel.hidden = true;
-    delete panel.dataset.status;
-    return;
-  }
+  if (!panel) return;
+  const previous = state.refresh || {};
+  state.refresh = refresh ? { ...previous, ...refresh } : previous;
+  const current = state.refresh || {};
+  const status = String(current.status || "idle");
+  const completedAt = current.completedAt || scheduler.lastCompletedAt || previous.completedAt || null;
   panel.hidden = false;
-  panel.dataset.status = refresh.status;
-  $("#refreshFeedbackTitle").textContent = refresh.status === "running"
-    ? `Refreshing: ${String(refresh.stage || "starting").replaceAll("_", " ")}`
-    : refresh.status === "success"
-      ? "Market data updated"
-      : refresh.status === "partial"
-        ? "Market data updated with warnings"
-        : refresh.status === "failed"
-          ? "Market data update could not start"
-          : "Local reports rescanned";
-  const issue = ["failed", "partial"].includes(refresh.status)
-    ? refresh.errors?.[0] || refresh.warnings?.[0]
+  panel.dataset.status = status;
+  $("#refreshFeedbackTitle").textContent = "Last refreshed";
+  $("#refreshFeedbackTime").textContent = formatEasternTime(completedAt);
+  const issue = ["failed", "partial"].includes(status)
+    ? current.errors?.[0] || current.warnings?.[0]
     : "";
-  $("#refreshFeedbackMessage").textContent = refresh.status === "success"
-    ? "Latest available prices, rankings, research, and copy-source decisions loaded. Automatic monitoring continues."
-    : issue || refresh.message || "Market data status updated.";
-  $("#refreshFeedbackTime").textContent = refresh.completedAt ? formatTime(refresh.completedAt) : "Working now";
+  $("#refreshFeedbackMessage").textContent = status === "running"
+    ? `Updating ${String(current.stage || "market data").replaceAll("_", " ")} now`
+    : issue || "Background research continues";
 }
 
 async function pollRefreshStatus() {
@@ -2699,7 +2766,7 @@ async function pollRefreshStatus() {
     const payload = await api("/api/stock-office/refresh-status");
     state.intelligenceScheduler = payload.intelligenceScheduler || state.intelligenceScheduler;
     renderIntelligenceMonitor();
-    renderRefreshFeedback(payload.refresh);
+    renderRefreshFeedback(payload.refresh, state.intelligenceScheduler);
     const stage = String(payload.refresh?.stage || "refresh").replaceAll("_", " ");
     $("#syncButton").textContent = payload.refresh?.status === "running" ? `Updating: ${stage}` : "Update market data";
   } catch (_error) {
@@ -2877,6 +2944,8 @@ document.addEventListener("click", (event) => {
   if (proposalApprove && !proposalApprove.disabled) approveOverviewProposal(proposalApprove.dataset.proposalApprove);
   const proposalReview = event.target.closest("[data-proposal-review]");
   if (proposalReview && !proposalReview.disabled) reviewOverviewProposal(proposalReview.dataset.proposalReview);
+  const proposalRiskReview = event.target.closest("[data-proposal-risk-review]");
+  if (proposalRiskReview && !proposalRiskReview.disabled) requestProposalRiskReview(proposalRiskReview.dataset.proposalRiskReview);
   const mirrorApprove = event.target.closest("[data-mirror-approve]");
   if (mirrorApprove && !mirrorApprove.disabled) approveOverviewProposal(mirrorApprove.dataset.mirrorApprove);
   const proposalDecline = event.target.closest("[data-proposal-decline]");

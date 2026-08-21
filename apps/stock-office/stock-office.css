@@ -152,45 +152,28 @@ button:disabled {
 .refresh-feedback {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 12px;
-  padding: 12px 16px;
-  border: 1px solid rgba(34, 211, 238, 0.24);
-  border-radius: 16px;
-  color: #dbeafe;
-  background: rgba(8, 47, 73, 0.62);
+  gap: 7px;
+  min-height: 22px;
+  margin-top: 7px;
+  padding: 1px 3px;
+  color: #8fa3bc;
 }
 
 .refresh-feedback[hidden] {
   display: none;
 }
 
-.refresh-feedback[data-status="success"] {
-  border-color: rgba(52, 211, 153, 0.32);
-  background: rgba(5, 46, 22, 0.46);
-}
-
-.refresh-feedback[data-status="partial"],
-.refresh-feedback[data-status="failed"] {
-  border-color: rgba(251, 191, 36, 0.32);
-  background: rgba(69, 26, 3, 0.46);
-}
-
-.refresh-feedback div {
-  display: grid;
-  gap: 3px;
-}
-
-.refresh-feedback span {
-  color: var(--soft);
-  font-size: 0.74rem;
-}
-
-.refresh-feedback > span {
-  color: var(--muted);
-  white-space: nowrap;
-}
+.refresh-feedback > i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 9px rgba(52, 211, 153, 0.55); }
+.refresh-feedback[data-status="running"] > i { background: #22d3ee; box-shadow: 0 0 10px rgba(34, 211, 238, 0.62); animation: refresh-status-pulse 1.2s ease-in-out infinite; }
+.refresh-feedback[data-status="partial"] > i,
+.refresh-feedback[data-status="failed"] > i { background: #fbbf24; box-shadow: 0 0 9px rgba(251, 191, 36, 0.48); }
+.refresh-feedback span { color: #64748b; font-size: 0.59rem; font-weight: 850; letter-spacing: 0.04em; text-transform: uppercase; }
+.refresh-feedback strong { color: #cbd5e1; font-size: 0.66rem; }
+.refresh-feedback small { overflow: hidden; color: #64748b; font-size: 0.58rem; text-overflow: ellipsis; white-space: nowrap; }
+.refresh-feedback small::before { content: "·"; margin-right: 7px; color: #334155; }
+.refresh-feedback[data-status="partial"] small,
+.refresh-feedback[data-status="failed"] small { color: #fcd34d; }
+@keyframes refresh-status-pulse { 50% { opacity: 0.42; transform: scale(0.72); } }
 
 .status-pill.muted {
   border-color: rgba(125, 211, 252, 0.18);
@@ -2524,8 +2507,7 @@ select {
 
 .refresh-feedback {
   width: min(1440px, 100%);
-  margin: 0 auto 12px;
-  border-radius: 10px;
+  margin: 0 auto 7px;
 }
 
 @media (max-width: 1200px) {
@@ -3967,6 +3949,28 @@ select {
 .trader-lab-metrics strong { margin-top: 4px; color: #f8fafc; font-size: 0.86rem; }
 .trader-lab-metrics span { margin-top: 3px; color: #738198; font-size: 0.53rem; }
 
+.buy-research-focus {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.1fr);
+  align-items: center;
+  gap: 9px 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.09);
+  background: linear-gradient(90deg, rgba(8, 47, 73, 0.28), rgba(3, 8, 20, 0.84));
+}
+.buy-research-focus[data-status="qualified"] { background: linear-gradient(90deg, rgba(5, 46, 22, 0.34), rgba(3, 8, 20, 0.84)); }
+.buy-research-focus > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.buy-research-focus > div:first-child > span { color: #67e8f9; font-size: 0.46rem; font-weight: 950; letter-spacing: 0.11em; }
+.buy-research-focus > div:first-child > strong { overflow: hidden; color: #f8fafc; font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.buy-research-focus > div:first-child > small { overflow: hidden; color: #7c8da3; font-size: 0.52rem; text-overflow: ellipsis; white-space: nowrap; }
+#buyResearchFocusMetrics { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border: 1px solid rgba(125, 211, 252, 0.1); border-radius: 9px; overflow: hidden; background: rgba(125, 211, 252, 0.08); }
+#buyResearchFocusMetrics > span { min-width: 0; display: grid; gap: 2px; padding: 7px 9px; background: rgba(3, 8, 20, 0.9); }
+#buyResearchFocusMetrics small { overflow: hidden; color: #64748b; font-size: 0.42rem; font-weight: 900; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+#buyResearchFocusMetrics strong { color: #d1fae5; font-size: 0.68rem; }
+#buyResearchFocusFeedback { grid-column: 1 / -1; min-height: 24px; display: flex; align-items: center; gap: 8px; margin: 0; color: #8fa3bc; font-size: 0.53rem; line-height: 1.45; }
+#buyResearchFocusFeedback button { min-height: 25px; padding: 0 9px; border-radius: 7px; font-size: 0.48rem; }
+#buyResearchFocusFeedback small { margin-left: auto; color: #64748b; font-size: 0.47rem; }
+
 .research-flow-conveyors {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4266,6 +4270,9 @@ select {
 .trader-lab-empty strong { color: #cbd5e1; font-size: 0.65rem; }
 
 @media (max-width: 1180px) {
+  .buy-research-focus { grid-template-columns: 1fr; }
+  #buyResearchFocusFeedback { grid-column: auto; flex-wrap: wrap; }
+  #buyResearchFocusFeedback small { margin-left: 0; }
   .research-flow-conveyors { grid-template-columns: 1fr; }
   .trader-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -4276,6 +4283,7 @@ select {
   .trader-agent-conveyor-card { width: 350px; flex-basis: 350px; }
 }
 @media (max-width: 520px) {
+  #buyResearchFocusMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .research-flow-conveyors { padding: 8px 8px 0; }
   .research-flow-conveyor { height: 158px; }
   .trader-lab-workspace { padding: 8px; }

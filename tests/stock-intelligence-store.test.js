@@ -324,8 +324,8 @@ test("research history compaction keeps recent blocked samples and never removes
     (id, signal_id, broker_order_id, strategy_version, symbol, side, status, created_at, updated_at, data_json)
     VALUES ('trade-linked', 'blocked-0', 'broker-linked', 'test', 'NET', 'BUY', 'filled', ?, ?, '{}')`).run("2026-08-12T00:00:00.000Z", "2026-08-12T00:00:00.000Z");
   const compacted = fixture.store.compactResearchHistory({ force: true, at: "2026-08-13T06:00:00.000Z" });
-  assert.equal(compacted.blockedSignalsRemoved, 5);
-  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_signal_journal WHERE state = 'BLOCKED'").get().count, 25);
+  assert.equal(compacted.blockedSignalsRemoved, 23);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_signal_journal WHERE state = 'BLOCKED'").get().count, 7);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_signal_journal WHERE id = 'blocked-0'").get().count, 1);
 });
 

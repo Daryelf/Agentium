@@ -996,9 +996,69 @@ function workerDrawer(workerId) {
   openIntelligenceDrawer({ kicker: "WORKER", title: worker.name, tabs: [{ id: "details", label: "Details", html: `<div class="drawer-score-grid">${(worker.metrics || []).map((metric) => `<span><small>${escapeHtml(metric.label)}</small><strong>${escapeHtml(metric.value)}</strong></span>`).join("")}</div><dl class="drawer-facts"><div><dt>Status</dt><dd>${escapeHtml(worker.status)}</dd></div><div><dt>Last run</dt><dd>${escapeHtml(worker.lastRunAt ? formatTime(worker.lastRunAt) : "—")}</dd></div><div><dt>Next run</dt><dd>${escapeHtml(worker.nextRunAt ? formatTime(worker.nextRunAt) : "—")}</dd></div><div><dt>Evidence</dt><dd>${escapeHtml(worker.evidence || "—")}</dd></div></dl><ul class="drawer-evidence">${(worker.details || []).map((item) => `<li><strong>${escapeHtml(item)}</strong></li>`).join("")}</ul>` }] });
 }
 
+function reportLogoStack(items = []) {
+  const symbols = [...new Set(items.map((item) => String(item?.symbol || "").toUpperCase()).filter(Boolean))].slice(0, 5);
+  return symbols.length
+    ? `<span class="research-report-logo-stack">${symbols.map((symbol) => `<i>${logoMarkup(symbol)}</i>`).join("")}</span>`
+    : `<span class="research-report-logo-stack empty"><i>—</i></span>`;
+}
+
+function reportSuggestionsMarkup(report = {}) {
+  const suggestions = Array.isArray(report.suggestions) && report.suggestions.length
+    ? report.suggestions
+    : (report.topOpportunities || []).map((item) => ({ ...item, setup: item.thesis?.setup, reason: item.thesis?.reason, risk: item.thesis?.risk, researchOnly: true }));
+  if (!suggestions.length) return `<div class="drawer-empty">No evidence-backed symbol made the overnight watchlist. The system will not invent a pick.</div>`;
+  return `<div class="drawer-report-watchlist">${suggestions.slice(0, 10).map((item) => {
+    const blockers = Array.isArray(item.blockers) ? item.blockers.filter(Boolean) : [];
+    const readiness = item.readiness === "revalidate_at_open" ? "DAY REVALIDATION" : "MORE RESEARCH";
+    return `<article data-readiness="${escapeHtml(item.readiness || "research_more")}">
+      <div class="drawer-report-company">${logoMarkup(item.symbol)}<em>${escapeHtml(readiness)}</em></div>
+      <div class="drawer-report-score"><small>AI score</small><strong>${escapeHtml(Math.round(Number(item.aiScore ?? item.overallScore) || 0))}</strong></div>
+      <div class="drawer-report-thesis"><strong>${escapeHtml(item.setup || "Setup still forming")}</strong><p>${escapeHtml(item.reason || "The persisted evidence has not produced a complete thesis yet.")}</p><small>${escapeHtml(item.risk || blockers[0] || "Fresh daytime risk checks required.")}</small></div>
+    </article>`;
+  }).join("")}</div>`;
+}
+
 function reportDrawer(reportType) {
-  const report = state.intelligence?.reports?.[reportType];
-  openIntelligenceDrawer({ kicker: reportType === "morning" ? "MORNING INTELLIGENCE" : "NIGHT RESEARCH", title: report?.generatedAt ? formatTime(report.generatedAt) : "Report pending", tabs: [{ id: "report", label: "Report", html: report ? `<div class="drawer-score-grid"><span><small>Researched</small><strong>${escapeHtml(report.summary?.researched || 0)}</strong></span><span><small>High</small><strong>${escapeHtml(report.summary?.highPriority || 0)}</strong></span><span><small>Candidates</small><strong>${escapeHtml(report.summary?.candidates || 0)}</strong></span><span><small>Copy matched</small><strong>${escapeHtml(report.summary?.mirrorMatched || 0)}</strong></span></div><ol class="drawer-opportunities">${(report.topOpportunities || []).slice(0, 10).map((item) => `<li><strong>${logoMarkup(item.symbol)}</strong><span>AI ${escapeHtml(item.aiScore)} · ${escapeHtml(item.status)}</span></li>`).join("")}</ol><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || report.limitations?.[0] || "Research only.")}</p>` : `<div class="drawer-empty">This report has not been generated yet. Research continues on the session-aware scheduler.</div>` }] });
+  const reportKey = reportType === "market_close" ? "marketClose" : reportType;
+  const report = state.intelligence?.reports?.[reportKey];
+  const isClose = reportKey === "marketClose";
+  const kicker = isClose ? "MARKET CLOSE AUDIT" : reportKey === "morning" ? "MORNING INTELLIGENCE" : "OVERNIGHT RESEARCH";
+  if (!report) {
+    openIntelligenceDrawer({
+      kicker,
+      title: "Report pending",
+      tabs: [{ id: "report", label: "Status", html: `<div class="drawer-empty">${escapeHtml(isClose ? "The market-close audit is created after the regular session ends. Research and broker facts remain persisted while it builds." : "The overnight report is created from persisted night-agent research. No placeholder stocks or numbers are shown.")}</div>` }],
+    });
+    return;
+  }
+  if (isClose) {
+    const metrics = report.sessionMetrics || {};
+    const audit = report.closeAudit || {};
+    const trades = Array.isArray(audit.trades) ? audit.trades : [];
+    openIntelligenceDrawer({
+      kicker,
+      title: `${metrics.reportDay || "Latest session"} · ${formatEasternTime(report.generatedAt)}`,
+      tabs: [
+        { id: "summary", label: "Close audit", html: `<div class="drawer-score-grid report-audit-grid"><span><small>Reports checked</small><strong>${escapeHtml(formatCount(metrics.reportsChecked || 0))}</strong></span><span><small>Stock checks</small><strong>${escapeHtml(formatCount(metrics.stocksChecked || 0))}</strong></span><span><small>Verified spend</small><strong>${escapeHtml(formatMoney(audit.moneySpent ?? 0))}</strong></span><span><small>Official day P&amp;L</small><strong class="${Number(audit.dayPnl) > 0 ? "positive" : Number(audit.dayPnl) < 0 ? "negative" : ""}">${escapeHtml(audit.dayPnl === null || audit.dayPnl === undefined ? "Unavailable" : formatSignedMoney(audit.dayPnl))}</strong></span></div><dl class="drawer-facts"><div><dt>Market window</dt><dd>9:30 AM–${report.marketSession?.earlyClose ? "1:00" : "4:00"} PM ET</dd></div><div><dt>Unique stocks</dt><dd>${escapeHtml(formatCount(metrics.uniqueStocks || 0))}</dd></div><div><dt>Signals found</dt><dd>${escapeHtml(formatCount(metrics.signalsFound || 0))}</dd></div><div><dt>Verified fills</dt><dd>${escapeHtml(audit.verifiedFills || 0)}</dd></div><div><dt>Opening account</dt><dd>${escapeHtml(audit.openingAccountValue === null || audit.openingAccountValue === undefined ? "Unavailable" : formatMoney(audit.openingAccountValue))}</dd></div><div><dt>Closing account</dt><dd>${escapeHtml(audit.closingAccountValue === null || audit.closingAccountValue === undefined ? "Unavailable" : formatMoney(audit.closingAccountValue))}</dd></div></dl><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || "Broker accounting unavailable is shown as unavailable, never estimated.")}</p>` },
+        { id: "trades", label: `Verified trades (${trades.length})`, html: trades.length ? `<div class="drawer-report-trades">${trades.map((trade) => `<article><span>${logoMarkup(trade.symbol)}</span><strong>${escapeHtml(`${trade.side} · ${trade.quantity ?? "—"} share${Number(trade.quantity) === 1 ? "" : "s"}`)}</strong><em>${escapeHtml(trade.price === null || trade.price === undefined ? "Price unavailable" : formatMoney(trade.price))}</em><small>${escapeHtml(formatEasternTime(trade.observedAt))}</small></article>`).join("")}</div>` : `<div class="drawer-empty">No independently reconciled broker fill was recorded during this session.</div>` },
+        { id: "accounting", label: "Accounting", html: `<dl class="drawer-facts"><div><dt>Verified BUY fills</dt><dd>${escapeHtml(audit.verifiedBuyFills || 0)}</dd></div><div><dt>Money spent</dt><dd>${escapeHtml(formatMoney(audit.moneySpent ?? 0))}</dd></div><div><dt>Realized P&amp;L</dt><dd>${escapeHtml(audit.realizedPnl === null || audit.realizedPnl === undefined ? "Unavailable" : formatSignedMoney(audit.realizedPnl))}</dd></div><div><dt>Unrealized P&amp;L</dt><dd>${escapeHtml(audit.unrealizedPnl === null || audit.unrealizedPnl === undefined ? "Unavailable" : formatSignedMoney(audit.unrealizedPnl))}</dd></div><div><dt>Account change</dt><dd>${escapeHtml(audit.accountChange === null || audit.accountChange === undefined ? "Unavailable" : formatSignedMoney(audit.accountChange))}</dd></div><div><dt>Last broker snapshot</dt><dd>${escapeHtml(formatEasternTime(audit.latestBrokerSnapshotAt))}</dd></div></dl><p class="drawer-boundary">${escapeHtml(audit.source || "Official broker evidence only.")}</p>` },
+      ],
+    });
+    return;
+  }
+  const metrics = report.sessionMetrics || {};
+  const suggestions = report.suggestions || report.topOpportunities || [];
+  const market = report.marketState || {};
+  openIntelligenceDrawer({
+    kicker,
+    title: `${metrics.reportDay || "Latest"} · ${formatEasternTime(report.generatedAt)}`,
+    tabs: [
+      { id: "brief", label: "Night brief", html: `<div class="drawer-score-grid"><span><small>Reports checked</small><strong>${escapeHtml(formatCount(metrics.reportsChecked || 0))}</strong></span><span><small>Stock checks</small><strong>${escapeHtml(formatCount(metrics.stocksChecked || 0))}</strong></span><span><small>Suggestions</small><strong>${escapeHtml(formatCount(suggestions.length))}</strong></span><span><small>Data health</small><strong>${escapeHtml(report.providerHealth?.status || "UNKNOWN")}</strong></span></div><dl class="drawer-facts"><div><dt>Market regime</dt><dd>${escapeHtml(market.regime || "Unavailable")}</dd></div><div><dt>Risk state</dt><dd>${escapeHtml(market.riskState || "Unavailable")}</dd></div><div><dt>Trend</dt><dd>${escapeHtml(market.trendRegime || "Unavailable")}</dd></div><div><dt>Breadth</dt><dd>${escapeHtml(market.breadthState || "Unavailable")}</dd></div></dl><p class="drawer-boundary">${escapeHtml(report.limitations?.[1] || "Research only; every symbol needs current-session revalidation.")}</p>` },
+      { id: "suggestions", label: `Suggested (${suggestions.length})`, html: reportSuggestionsMarkup(report) },
+      { id: "changes", label: "Changed", html: (report.thesisChanges || []).length ? `<ol class="drawer-opportunities">${report.thesisChanges.slice(0, 10).map((item) => `<li><strong>${logoMarkup(item.symbol)}</strong><span>${escapeHtml(item.change?.trend || item.status || "updated")} · AI ${escapeHtml(item.aiScore ?? "—")}</span></li>`).join("")}</ol>` : `<div class="drawer-empty">No material thesis change was persisted during this report window.</div>` },
+    ],
+  });
 }
 
 function renderMetrics() {
@@ -1774,6 +1834,30 @@ function renderBuyResearchFocus() {
   feedback.innerHTML = `${escapeHtml(`${closestText}${blockerText}`)}${riskCandidate ? ` <button type="button" data-proposal-risk-review="${escapeHtml(riskCandidate.id)}">Ask Human Gate about ${escapeHtml(riskCandidate.symbol)} strategy risk</button><small>Advisory review only; this cannot authorize an order or bypass a hard gate.</small>` : `<small>No strategy-only exception is available; current blockers must be fixed with fresh evidence.</small>`}`;
 }
 
+function renderResearchReports() {
+  const root = $("#researchReportCards");
+  if (!root) return;
+  const reports = state.intelligence?.reports || {};
+  const closeReport = reports.marketClose || null;
+  const closeMetrics = closeReport?.sessionMetrics || {};
+  const closeAudit = closeReport?.closeAudit || {};
+  const nightReport = reports.overnight || null;
+  const nightMetrics = nightReport?.sessionMetrics || {};
+  const nightSuggestions = nightReport?.suggestions || nightReport?.topOpportunities || [];
+  const nightMarket = nightReport?.marketState || {};
+  root.innerHTML = `
+    <button class="research-report-card market-close" type="button" data-report-drawer="marketClose" data-status="${closeReport ? "ready" : "pending"}">
+      <span class="research-report-card-head"><span><small>MARKET CLOSE</small><strong>${escapeHtml(closeReport ? `${closeMetrics.reportDay || "Latest"} close audit` : "Builds after the closing bell")}</strong></span><em>${escapeHtml(closeReport ? formatEasternTime(closeReport.generatedAt) : "Pending")}</em></span>
+      <span class="research-report-card-metrics"><span><small>Reports checked</small><strong>${escapeHtml(closeReport ? formatCount(closeMetrics.reportsChecked || 0) : "—")}</strong></span><span><small>Stock checks</small><strong>${escapeHtml(closeReport ? formatCount(closeMetrics.stocksChecked || 0) : "—")}</strong></span><span><small>Spent</small><strong>${escapeHtml(closeReport ? formatMoney(closeAudit.moneySpent ?? 0) : "—")}</strong></span><span><small>Day P&amp;L</small><strong class="${Number(closeAudit.dayPnl) > 0 ? "positive" : Number(closeAudit.dayPnl) < 0 ? "negative" : ""}">${escapeHtml(closeReport && closeAudit.dayPnl !== null && closeAudit.dayPnl !== undefined ? formatSignedMoney(closeAudit.dayPnl) : "—")}</strong></span></span>
+      <span class="research-report-card-foot">${reportLogoStack(closeAudit.trades || [])}<span><strong>${escapeHtml(closeReport ? `${closeAudit.verifiedFills || 0} verified fill${Number(closeAudit.verifiedFills) === 1 ? "" : "s"}` : "Official close accounting")}</strong><small>${escapeHtml(closeReport ? "Open the exact research + broker audit" : "No numbers are estimated before close")}</small></span><b>OPEN</b></span>
+    </button>
+    <button class="research-report-card overnight" type="button" data-report-drawer="overnight" data-status="${nightReport ? "ready" : "pending"}">
+      <span class="research-report-card-head"><span><small>OVERNIGHT BRIEF</small><strong>${escapeHtml(nightReport ? `${nightMetrics.reportDay || "Latest"} next-session watchlist` : "Night agents are building the brief")}</strong></span><em>${escapeHtml(nightReport ? formatEasternTime(nightReport.generatedAt) : "Pending")}</em></span>
+      <span class="research-report-card-metrics"><span><small>Reports checked</small><strong>${escapeHtml(nightReport ? formatCount(nightMetrics.reportsChecked || 0) : "—")}</strong></span><span><small>Stock checks</small><strong>${escapeHtml(nightReport ? formatCount(nightMetrics.stocksChecked || 0) : "—")}</strong></span><span><small>Suggested</small><strong>${escapeHtml(nightReport ? formatCount(nightSuggestions.length) : "—")}</strong></span><span><small>Risk state</small><strong>${escapeHtml(nightReport ? nightMarket.riskState || "UNKNOWN" : "—")}</strong></span></span>
+      <span class="research-report-card-foot">${reportLogoStack(nightSuggestions)}<span><strong>${escapeHtml(nightReport ? `${nightSuggestions.length} symbol${nightSuggestions.length === 1 ? "" : "s"} for day-agent review` : "Evidence-backed symbols only")}</strong><small>Research-only until fresh daytime checks pass</small></span><b>OPEN</b></span>
+    </button>`;
+}
+
 function renderMirror() {
   const mirror = state.mirror || state.overview?.mirror || {};
   const mirrorIntelligence = state.mirrorIntelligence || state.intelligence?.mirror || {};
@@ -1793,6 +1877,7 @@ function renderMirror() {
   const runningJobs = jobs.filter((job) => job.status === "running").length;
   const queuedJobs = jobs.filter((job) => job.status === "queued").length;
   const completedJobs = jobs.filter((job) => ["success", "partial"].includes(job.status)).length;
+  renderResearchReports();
   renderResearchFlowConveyors(jobs, watchers);
   renderBuyResearchFocus();
   const pill = $("#mirrorStatusPill");

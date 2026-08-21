@@ -116,10 +116,12 @@ function reportWindow(value = new Date()) {
     hourCycle: "h23",
   }).formatToParts(value).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
   const minutes = Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+  const session = marketSession(value);
   const weekday = !["Sat", "Sun"].includes(parts.weekday);
   return {
     overnight: minutes >= 60 && minutes < 4 * 60,
     morning: weekday && minutes >= 8 * 60 && minutes < 9 * 60 + 30,
+    marketClose: Number.isFinite(Number(session.regularCloseMinute)) && minutes >= Number(session.regularCloseMinute),
   };
 }
 
@@ -1140,10 +1142,145 @@ function createStockIntelligenceStore(options = {}) {
     }
   }
 
+  function reportSessionMetrics(reportType, at = nowFn()) {
+    const day = easternDay(at);
+    const db = open();
+    try {
+      const runs = db.prepare(`SELECT id, market_session AS marketSession, status,
+        completed_at AS completedAt, symbols_scanned AS symbolsScanned, signals_found AS signalsFound
+        FROM stock_research_runs ORDER BY completed_at DESC LIMIT 2500`).all()
+        .filter((run) => run.completedAt && easternDay(new Date(run.completedAt)) === day);
+      const sessionNames = reportType === "market_close"
+        ? new Set(["regular"])
+        : reportType === "morning"
+          ? new Set(["premarket"])
+          : new Set(["closed", "weekend"]);
+      const sessionRuns = runs.filter((run) => sessionNames.has(String(run.marketSession || "").toLowerCase()));
+      const runIds = new Set(sessionRuns.map((run) => run.id));
+      const uniqueSymbols = new Set(db.prepare(`SELECT run_id AS runId, symbol
+        FROM stock_research_snapshots ORDER BY observed_at DESC LIMIT 20000`).all()
+        .filter((row) => runIds.has(row.runId))
+        .map((row) => shortText(row.symbol, 12).toUpperCase())
+        .filter(Boolean));
+      const reportsChecked = sessionRuns.filter((run) => ["success", "partial"].includes(run.status)).length;
+      const stocksChecked = sessionRuns.reduce((sum, run) => sum + Math.max(0, Number(run.symbolsScanned) || 0), 0);
+      const signalsFound = sessionRuns.reduce((sum, run) => sum + Math.max(0, Number(run.signalsFound) || 0), 0);
+      return {
+        reportDay: day,
+        reportsChecked,
+        researchRuns: sessionRuns.length,
+        successfulRuns: sessionRuns.filter((run) => run.status === "success").length,
+        partialRuns: sessionRuns.filter((run) => run.status === "partial").length,
+        failedRuns: sessionRuns.filter((run) => run.status === "failed").length,
+        stocksChecked,
+        uniqueStocks: uniqueSymbols.size,
+        signalsFound,
+        latestCompletedAt: sessionRuns[0]?.completedAt || null,
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  function marketCloseAudit(at = nowFn()) {
+    const day = easternDay(at);
+    const closeMinute = Number(marketSession(at).regularCloseMinute) || 16 * 60;
+    const db = open();
+    try {
+      const trades = db.prepare(`SELECT broker_order_id AS brokerOrderId, symbol, side, status, quantity,
+        entry_price AS entryPrice, exit_price AS exitPrice, fees, realized_pnl AS realizedPnl,
+        opened_at AS openedAt, closed_at AS closedAt, created_at AS createdAt, updated_at AS updatedAt
+        FROM stock_trade_journal ORDER BY updated_at DESC LIMIT 1000`).all()
+        .filter((trade) => {
+          const observedAt = trade.openedAt || trade.closedAt || trade.updatedAt || trade.createdAt;
+          return observedAt && easternDay(new Date(observedAt)) === day;
+        });
+      const verifiedFills = trades.filter((trade) => ["filled", "partially_filled", "partial"].includes(String(trade.status || "").toLowerCase()));
+      const buyFills = verifiedFills.filter((trade) => String(trade.side || "").toUpperCase() === "BUY");
+      const hasRealizedPnl = verifiedFills.some((trade) => trade.realizedPnl !== null && trade.realizedPnl !== undefined && Number.isFinite(Number(trade.realizedPnl)));
+      const moneySpent = buyFills.reduce((sum, trade) => {
+        const quantity = finiteNumber(trade.quantity, 0);
+        const price = finiteNumber(trade.entryPrice, 0);
+        const fees = finiteNumber(trade.fees, 0);
+        return sum + Math.max(0, quantity * price) + Math.max(0, fees);
+      }, 0);
+      const realizedPnl = verifiedFills.reduce((sum, trade) => sum + finiteNumber(trade.realizedPnl, 0), 0);
+      const snapshots = db.prepare(`SELECT observed_at AS observedAt, account_value AS accountValue,
+        day_pnl AS dayPnl, realized_pnl AS realizedPnl, unrealized_pnl AS unrealizedPnl
+        FROM stock_portfolio_snapshots ORDER BY observed_at ASC LIMIT 2000`).all()
+        .filter((snapshot) => {
+          if (!snapshot.observedAt || easternDay(new Date(snapshot.observedAt)) !== day) return false;
+          const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/New_York",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+          }).formatToParts(new Date(snapshot.observedAt)).filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
+          const minutes = Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+          return minutes >= 9 * 60 + 30 && minutes <= closeMinute + 60;
+        });
+      const firstSnapshot = snapshots[0] || null;
+      const closingSnapshot = snapshots[snapshots.length - 1] || null;
+      const accountChange = firstSnapshot && closingSnapshot
+        ? money(Number(closingSnapshot.accountValue) - Number(firstSnapshot.accountValue), null)
+        : null;
+      return {
+        source: "Official broker snapshots and independently reconciled fills",
+        verifiedFills: verifiedFills.length,
+        verifiedBuyFills: buyFills.length,
+        moneySpent: money(moneySpent, 0),
+        dayPnl: money(closingSnapshot?.dayPnl, null),
+        realizedPnl: closingSnapshot?.realizedPnl === null || closingSnapshot?.realizedPnl === undefined
+          ? money(realizedPnl, hasRealizedPnl ? 0 : null)
+          : money(closingSnapshot.realizedPnl, null),
+        unrealizedPnl: money(closingSnapshot?.unrealizedPnl, null),
+        openingAccountValue: money(firstSnapshot?.accountValue, null),
+        closingAccountValue: money(closingSnapshot?.accountValue, null),
+        accountChange,
+        latestBrokerSnapshotAt: closingSnapshot?.observedAt || null,
+        trades: verifiedFills.slice(0, 20).map((trade) => ({
+          brokerOrderId: shortText(trade.brokerOrderId, 160),
+          symbol: shortText(trade.symbol, 12).toUpperCase(),
+          side: shortText(trade.side, 8).toUpperCase(),
+          status: shortText(trade.status, 40),
+          quantity: finiteNumber(trade.quantity, null),
+          price: money(String(trade.side || "").toUpperCase() === "SELL" ? trade.exitPrice : trade.entryPrice, null),
+          realizedPnl: money(trade.realizedPnl, null),
+          observedAt: safeDate(trade.closedAt || trade.openedAt || trade.updatedAt || trade.createdAt),
+        })),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
   function buildReport(reportType, at = nowFn(), session = marketSession(at)) {
     const opportunities = listOpportunities(25);
     const actionable = opportunities.filter((item) => ["high_priority", "candidate"].includes(item.status)).slice(0, 10);
     const changed = opportunities.filter((item) => item.change?.trend !== "stable" || item.change?.thesisChanged).slice(0, 10);
+    const latestPortfolio = portfolioSnapshotHistory(1).at(-1) || null;
+    const heldSymbols = new Set((latestPortfolio?.positions || []).map((position) => String(position.symbol || "").toUpperCase()).filter(Boolean));
+    const suggestions = opportunities
+      .filter((item) => !heldSymbols.has(String(item.symbol || "").toUpperCase()))
+      .slice(0, 8)
+      .map((item) => ({
+        symbol: item.symbol,
+        status: item.status,
+        overallScore: item.overallScore,
+        aiScore: item.aiScore,
+        confidenceScore: item.confidenceScore,
+        setup: item.thesis?.setup || null,
+        reason: item.thesis?.reason || null,
+        risk: item.thesis?.risk || null,
+        invalidation: item.thesis?.invalidation || null,
+        blockers: (Array.isArray(item.blockers) ? item.blockers : []).slice(0, 3).map((blocker) => blocker.reason || blocker.code || String(blocker)),
+        lastResearchedAt: item.lastResearchedAt,
+        nextReviewAt: item.nextReviewAt,
+        readiness: ["high_priority", "candidate"].includes(item.status) ? "revalidate_at_open" : "research_more",
+        researchOnly: true,
+        executionEligible: false,
+      }));
+    const sessionMetrics = reportSessionMetrics(reportType, at);
     const db = open();
     let latestRunContext = {};
     try {
@@ -1155,19 +1292,24 @@ function createStockIntelligenceStore(options = {}) {
     const market = latestRunContext.marketContext || {};
     const providerHealth = latestRunContext.providerHealth || {};
     const performance = performanceReport();
+    const closeAudit = reportType === "market_close" ? marketCloseAudit(at) : null;
     return {
-      version: 1,
+      version: 2,
       type: reportType,
       generatedAt: at.toISOString(),
       marketSession: session,
       topOpportunities: actionable,
+      suggestions,
       thesisChanges: changed,
+      sessionMetrics,
+      closeAudit,
       summary: {
         researched: opportunities.length,
         highPriority: opportunities.filter((item) => item.status === "high_priority").length,
         candidates: opportunities.filter((item) => item.status === "candidate").length,
         mirrorMatched: opportunities.filter((item) => item.mirror).length,
         newsItems: opportunities.reduce((sum, item) => sum + (Array.isArray(item.news) ? item.news.length : 0), 0),
+        suggestions: suggestions.length,
       },
       importantNews: opportunities.flatMap((item) => (item.news || []).map((news) => ({ symbol: item.symbol, ...news }))).slice(0, 20),
       marketState: {
@@ -1188,7 +1330,11 @@ function createStockIntelligenceStore(options = {}) {
       performance: performance.summary,
       limitations: [
         "Catalyst scores remain unavailable when no structured timestamped news observation was persisted.",
-        reportType === "morning" ? "Every overnight thesis must be revalidated against current pre-market price, spread, liquidity, volume, and risk before execution." : "This report is research memory, not an order instruction.",
+        reportType === "market_close"
+          ? "Spend and trade counts include only independently reconciled broker fills; day P&L comes from the latest official broker snapshot."
+          : reportType === "morning"
+            ? "Every overnight thesis must be revalidated against current pre-market price, spread, liquidity, volume, and risk before execution."
+            : "Suggestions are a research-only watchlist. Day agents must revalidate current price, spread, liquidity, volume, risk, buying power, and duplicates before Human Gate.",
       ],
     };
   }
@@ -1209,7 +1355,8 @@ function createStockIntelligenceStore(options = {}) {
     } finally {
       db.close();
     }
-    recordSystemEvent({ id: `${reportType}.report_ready:${day}`, type: reportType === "overnight" ? "overnight.completed" : "morning.report_ready", reason: `${reportType} intelligence report persisted.`, data: { reportId: id, reportDay: day } });
+    const eventType = reportType === "overnight" ? "overnight.completed" : reportType === "morning" ? "morning.report_ready" : "market_close.report_ready";
+    recordSystemEvent({ id: `${reportType}.report_ready:${day}`, type: eventType, reason: `${reportType} intelligence report persisted.`, data: { reportId: id, reportDay: day } });
     return report;
   }
 
@@ -1224,8 +1371,18 @@ function createStockIntelligenceStore(options = {}) {
     } finally {
       db.close();
     }
-    if (window.overnight && !existing.has("overnight")) reports.overnight = saveReport("overnight", at, session);
-    if (window.morning && !existing.has("morning")) reports.morning = saveReport("morning", at, session);
+    if (window.overnight) {
+      const report = saveReport("overnight", at, session);
+      if (!existing.has("overnight")) reports.overnight = report;
+    }
+    if (window.morning) {
+      const report = saveReport("morning", at, session);
+      if (!existing.has("morning")) reports.morning = report;
+    }
+    if (window.marketClose) {
+      const report = saveReport("market_close", at, session);
+      if (!existing.has("market_close")) reports.marketClose = report;
+    }
     return reports;
   }
 

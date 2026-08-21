@@ -327,6 +327,10 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   const server = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
 
   assert.match(html, /FAMOUS TRADER INTELLIGENCE/);
+  assert.match(html, /RESEARCH REPORTS/);
+  assert.match(html, /Session intelligence/);
+  assert.match(html, /id="researchReportCards"/);
+  assert.ok(html.indexOf("RESEARCH REPORTS") < html.indexOf("FAMOUS TRADER INTELLIGENCE"));
   assert.match(html, /Trader research lab/);
   assert.match(html, /Methods &amp; evidence/);
   assert.match(html, /Famous traders &amp; funds/);
@@ -354,11 +358,19 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   assert.match(script, /function renderResearchFlowConveyors/);
   assert.match(script, /function renderTraderAgentConveyor/);
   assert.match(script, /function renderBuyResearchFocus/);
+  assert.match(script, /function renderResearchReports/);
+  assert.match(script, /data-report-drawer="marketClose"/);
+  assert.match(script, /Reports checked/);
+  assert.match(script, /Official day P&amp;L/);
+  assert.match(script, /Research-only until fresh daytime checks pass/);
+  assert.match(script, /function reportSuggestionsMarkup/);
   assert.match(script, /Queue caught up · next cycle automatic/);
   assert.match(script, /data-proposal-risk-review/);
   assert.match(script, /proposals\/\$\{encodeURIComponent\(proposalId\)\}\/risk-review/);
   assert.match(server, /review_stock_strategy_risk/);
   assert.match(server, /strategyExceptionAuthorized: false/);
+  assert.match(server, /needsMarketCloseReport/);
+  assert.match(server, /stockIntelligenceStore\.saveReport\("market_close", reportAt, reportSession\)/);
   assert.match(script, /function renderStableHtml/);
   assert.match(script, /root\.querySelector\("\.research-flow-overlay strong"\)/);
   assert.match(script, /Math\.floor\(marketFocusIndex \/ 10\) \* 10/);
@@ -375,6 +387,9 @@ test("Research exposes real stock and copy-trader conveyors plus separate famous
   assert.match(script, /panel\.hidden = false/);
   assert.match(script, /pollRefreshStatus\(\);/);
   assert.match(styles, /\.trader-lab-workspace/);
+  assert.match(styles, /\.research-report-center/);
+  assert.match(styles, /\.research-report-cards/);
+  assert.match(styles, /\.drawer-report-watchlist/);
   assert.match(styles, /\.trader-agent-stages/);
   assert.match(styles, /\.research-flow-conveyors/);
   assert.match(styles, /@keyframes research-flow-scroll/);

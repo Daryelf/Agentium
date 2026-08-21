@@ -250,6 +250,9 @@ test("overnight and morning reports are generated only in their session windows 
   fixture.store.ingestSnapshot({ records: [record()], mirror: {} }, { completedAt: "2026-08-13T06:00:00.000Z", session: { status: "closed", regular: false } });
   assert.equal(reportWindow(new Date("2026-08-13T06:00:00.000Z")).overnight, true);
   assert.equal(fixture.store.latestReport("overnight").type, "overnight");
+  assert.equal(fixture.store.latestReport("overnight").suggestions[0].symbol, "NET");
+  assert.equal(fixture.store.latestReport("overnight").suggestions[0].researchOnly, true);
+  assert.equal(fixture.store.latestReport("overnight").suggestions[0].executionEligible, false);
   const morning = fixture.store.createDueReports(new Date("2026-08-13T12:15:00.000Z"), { status: "premarket", regular: false });
   assert.equal(morning.morning.type, "morning");
   assert.equal(fixture.store.latestReport("morning").summary.researched, 1);
@@ -259,6 +262,73 @@ test("overnight and morning reports are generated only in their session windows 
   assert.equal(daily.research.symbolsScanned, 1);
   assert.equal(daily.reports.length, 2);
   assert.deepEqual(fixture.store.createDueReports(new Date("2026-08-13T12:16:00.000Z"), { status: "premarket", regular: false }), {});
+});
+
+test("market-close report audits regular-session research and verified broker accounting", (t) => {
+  const fixture = tempStore("2026-08-13T20:15:00.000Z");
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  fixture.store.ingestSnapshot({ records: [record({ sourceUpdatedAt: "2026-08-13T14:59:00.000Z" })], mirror: {} }, {
+    completedAt: "2026-08-13T15:00:00.000Z",
+    startedAt: "2026-08-13T14:59:00.000Z",
+    session: { status: "regular", regular: true, earlyClose: false, regularCloseMinute: 960 },
+  });
+  fixture.store.recordPortfolioSnapshot({
+    observedAt: "2026-08-13T13:31:00.000Z",
+    accountValue: 75,
+    cashValue: 75,
+    investedValue: 0,
+    buyingPower: 75,
+    dayPnl: 0,
+    goalValue: 150,
+    positions: [],
+  });
+  fixture.store.recordTradeJournal({
+    brokerOrderId: "rh-close-audit",
+    strategyVersion: "argentum-opportunity-v2",
+    symbol: "NET",
+    side: "BUY",
+    status: "filled",
+    quantity: 0.1,
+    entryPrice: 180,
+    openedAt: "2026-08-13T15:30:00.000Z",
+    updatedAt: "2026-08-13T15:31:00.000Z",
+  });
+  fixture.store.recordPortfolioSnapshot({
+    observedAt: "2026-08-13T20:00:00.000Z",
+    accountValue: 76.25,
+    cashValue: 57,
+    investedValue: 19.25,
+    buyingPower: 57,
+    dayPnl: 1.25,
+    unrealizedPnl: 1.25,
+    goalValue: 150,
+    positions: [{ symbol: "NET", quantity: 0.1, currentPrice: 192.5, averageBuyPrice: 180 }],
+  });
+
+  assert.equal(reportWindow(new Date("2026-08-13T20:15:00.000Z")).marketClose, true);
+  const created = fixture.store.createDueReports(new Date("2026-08-13T20:15:00.000Z"), {
+    status: "afterhours",
+    regular: false,
+    earlyClose: false,
+    regularCloseMinute: 960,
+  });
+  assert.equal(created.marketClose.type, "market_close");
+  assert.equal(created.marketClose.sessionMetrics.reportsChecked, 1);
+  assert.equal(created.marketClose.sessionMetrics.stocksChecked, 1);
+  assert.equal(created.marketClose.sessionMetrics.uniqueStocks, 1);
+  assert.equal(created.marketClose.closeAudit.verifiedBuyFills, 1);
+  assert.equal(created.marketClose.closeAudit.moneySpent, 18);
+  assert.equal(created.marketClose.closeAudit.dayPnl, 1.25);
+  assert.equal(created.marketClose.closeAudit.accountChange, 1.25);
+  assert.equal(created.marketClose.closeAudit.trades[0].symbol, "NET");
+  assert.equal(created.marketClose.suggestions.some((item) => item.symbol === "NET"), false, "owned positions should not be suggested as a new entry");
+  assert.deepEqual(fixture.store.createDueReports(new Date("2026-08-13T20:30:00.000Z"), {
+    status: "afterhours",
+    regular: false,
+    earlyClose: false,
+    regularCloseMinute: 960,
+  }), {});
+  assert.equal(fixture.store.latestReport("market_close").closeAudit.moneySpent, 18);
 });
 
 test("Telegram and order audit idempotency persist in SQLite", (t) => {

@@ -206,6 +206,7 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
         }
         if (persisted.reports?.overnight) stockEventBus.publish("overnight.completed", { reportId: `stock-report-overnight-${persisted.reports.overnight.generatedAt?.slice(0, 10) || "current"}`, status: "ready" }, { correlationId: persisted.correlationId });
         if (persisted.reports?.morning) stockEventBus.publish("morning.report_ready", { reportId: `stock-report-morning-${persisted.reports.morning.generatedAt?.slice(0, 10) || "current"}`, status: "ready" }, { correlationId: persisted.correlationId });
+        if (persisted.reports?.marketClose) stockEventBus.publish("market_close.report_ready", { reportId: `stock-report-market-close-${persisted.reports.marketClose.generatedAt?.slice(0, 10) || "current"}`, status: "ready" }, { correlationId: persisted.correlationId });
         const persistedSnapshot = stockOfficeSnapshot(readState());
         const portfolioPlan = buildCopyPortfolioPlan(persistedSnapshot);
         portfolioPlan.proposals.forEach((proposal) => {
@@ -267,11 +268,18 @@ const stockIntelligenceScheduler = createStockIntelligenceScheduler({
       }
     }
     if (robinhoodMcpClient.publicStatus().oauthAuthenticated) {
-      await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
+      const officialBroker = await robinhoodMcpClient.refreshIfStale(5_000).catch((error) => {
         stockEventBus.publish("broker.disconnected", { status: "unavailable", error: error.message, reason: "Official Robinhood refresh failed; execution remains closed." });
         return null;
       });
       await reconcileStockBrokerOrderLifecycle().catch((error) => console.warn("Stock order lifecycle reconciliation failed safely:", error.message));
+      if (officialBroker) {
+        const reportAt = new Date(result.completedAt || Date.now());
+        const reportSession = marketSession(reportAt);
+        recordOfficialPortfolioSnapshot(brokerControlOverview(stockOfficeBrokerSnapshot(readState())));
+        if (reportSession.status === "afterhours") stockIntelligenceStore.saveReport("market_close", reportAt, reportSession);
+        invalidateStockIntelligenceStateCache();
+      }
     }
     await runStockContinuousReview(result).catch((error) => console.warn("Stock continuous proposal review failed safely:", error.message));
   },
@@ -10734,6 +10742,7 @@ function stockIntelligenceState() {
     reports: {
       overnight: stockIntelligenceStore.latestReport("overnight"),
       morning: stockIntelligenceStore.latestReport("morning"),
+      marketClose: stockIntelligenceStore.latestReport("market_close"),
     },
     mirror: stockIntelligenceStore.mirrorState(),
   };
@@ -13705,8 +13714,17 @@ async function handleApi(req, res, url) {
       const guardrailDetails = guardrailApproval ? (guardrailApproval.grantedDetails || guardrailApproval.originalDetails || guardrailApproval.details || {}) : {};
       const brokerControl = brokerControlOverview(snapshot);
       recordOfficialPortfolioSnapshot(brokerControl);
+      const reportAt = new Date();
+      const reportSession = marketSession(reportAt);
+      const latestMarketCloseReport = stockIntelligenceStore.latestReport("market_close");
+      const needsMarketCloseReport = reportSession.status === "afterhours"
+        && (!latestMarketCloseReport?.generatedAt || easternDay(new Date(latestMarketCloseReport.generatedAt)) !== easternDay(reportAt));
+      if (needsMarketCloseReport) {
+        stockIntelligenceStore.saveReport("market_close", reportAt, reportSession);
+        invalidateStockIntelligenceStateCache();
+      }
       const intelligence = {
-        ...snapshot.intelligence,
+        ...(needsMarketCloseReport ? stockIntelligenceState() : snapshot.intelligence),
         performance: stockIntelligenceStore.performanceReport(),
       };
       const intelligenceScheduler = stockIntelligenceScheduler.getStatus();

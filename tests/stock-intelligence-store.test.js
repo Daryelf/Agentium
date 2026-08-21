@@ -284,6 +284,51 @@ test("signal journal samples unchanged research no more than once per five minut
   assert.equal(fixture.store.signalJournal().length, 2);
 });
 
+test("blocked research is journaled once while actionable signals retain timed samples", (t) => {
+  const fixture = tempStore("2026-08-13T06:00:00.000Z");
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const blocked = { records: [record({ status: "rejected", hardRejectionTriggered: true, score: 20 })], mirror: {} };
+  fixture.store.ingestSnapshot(blocked, { completedAt: "2026-08-13T06:00:00.000Z", session: { status: "closed", regular: false } });
+  fixture.store.ingestSnapshot(blocked, { completedAt: "2026-08-13T07:00:00.000Z", session: { status: "closed", regular: false } });
+  assert.equal(fixture.store.signalJournal().length, 1);
+});
+
+test("research snapshots update one row per symbol in each thirty-minute bucket", (t) => {
+  const fixture = tempStore("2026-08-13T06:00:00.000Z");
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const snapshot = { records: [record()], mirror: {} };
+  fixture.store.ingestSnapshot(snapshot, { completedAt: "2026-08-13T06:00:00.000Z", session: { status: "closed", regular: false } });
+  fixture.store.ingestSnapshot(snapshot, { completedAt: "2026-08-13T06:10:00.000Z", session: { status: "closed", regular: false } });
+  fixture.store.ingestSnapshot(snapshot, { completedAt: "2026-08-13T06:31:00.000Z", session: { status: "closed", regular: false } });
+  const db = new DatabaseSync(databasePath(fixture.dataDir));
+  t.after(() => db.close());
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_research_snapshots").get().count, 2);
+});
+
+test("research history compaction keeps recent blocked samples and never removes trade-linked signals", (t) => {
+  const fixture = tempStore("2026-08-13T06:00:00.000Z");
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const db = new DatabaseSync(databasePath(fixture.dataDir));
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO stock_research_runs
+    (id, correlation_id, cycle_type, market_session, status, started_at, completed_at, symbols_scanned, signals_found, metadata_json)
+    VALUES ('retention-run', 'retention-test', 'test', 'closed', 'success', ?, ?, 30, 0, '{}')`).run("2026-08-12T00:00:00.000Z", "2026-08-12T01:00:00.000Z");
+  const insertSignal = db.prepare(`INSERT INTO stock_signal_journal
+    (id, run_id, opportunity_id, strategy_version, symbol, direction, state, opportunity_score, observed_at, created_at, snapshot_hash, data_json)
+    VALUES (?, 'retention-run', ?, 'test', 'NET', 'LONG', 'BLOCKED', 10, ?, ?, ?, '{}')`);
+  for (let index = 0; index < 30; index += 1) {
+    const observedAt = new Date(Date.parse("2026-08-12T00:00:00.000Z") + index * 60_000).toISOString();
+    insertSignal.run(`blocked-${index}`, `stock-opportunity-NET-${index}`, observedAt, observedAt, `hash-${index}`);
+  }
+  db.prepare(`INSERT INTO stock_trade_journal
+    (id, signal_id, broker_order_id, strategy_version, symbol, side, status, created_at, updated_at, data_json)
+    VALUES ('trade-linked', 'blocked-0', 'broker-linked', 'test', 'NET', 'BUY', 'filled', ?, ?, '{}')`).run("2026-08-12T00:00:00.000Z", "2026-08-12T00:00:00.000Z");
+  const compacted = fixture.store.compactResearchHistory({ force: true, at: "2026-08-13T06:00:00.000Z" });
+  assert.equal(compacted.blockedSignalsRemoved, 5);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_signal_journal WHERE state = 'BLOCKED'").get().count, 25);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM stock_signal_journal WHERE id = 'blocked-0'").get().count, 1);
+});
+
 test("verified broker transactions upsert a durable trade journal by broker order ID", (t) => {
   const fixture = tempStore();
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));

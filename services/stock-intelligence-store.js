@@ -9,6 +9,10 @@ const { STOCK_STRATEGY_CONFIG } = require("./stock-strategy-config");
 const OPPORTUNITY_LIMIT = 120;
 const EVENT_LIMIT = 200;
 const SIGNAL_JOURNAL_MIN_INTERVAL_MS = 5 * 60_000;
+const RESEARCH_SNAPSHOT_BUCKET_MS = 30 * 60_000;
+const RESEARCH_SNAPSHOT_HISTORY_PER_SYMBOL = 24;
+const BLOCKED_SIGNAL_HISTORY_PER_SYMBOL = 24;
+const RESEARCH_HISTORY_RETENTION_INTERVAL_MS = 6 * 60 * 60_000;
 const SIGNAL_OUTCOME_LOOKBACK_MS = 6 * 24 * 60 * 60_000;
 const SIGNAL_OUTCOME_BATCH_PER_HORIZON = 500;
 const SIGNAL_OUTCOME_HORIZONS = Object.freeze([
@@ -46,6 +50,12 @@ function parseJson(value, fallback = {}) {
 
 function fingerprint(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function timeBucket(value, durationMs = RESEARCH_SNAPSHOT_BUCKET_MS) {
+  const timestamp = Date.parse(value || "");
+  if (!Number.isFinite(timestamp)) return "unknown";
+  return new Date(Math.floor(timestamp / durationMs) * durationMs).toISOString();
 }
 
 function mirrorTimeliness(source = {}, candidate = {}, receivedAt = new Date().toISOString()) {
@@ -376,6 +386,7 @@ function createStockIntelligenceStore(options = {}) {
   const dataDir = options.dataDir;
   if (!dataDir) throw new Error("Stock intelligence store requires dataDir.");
   const nowFn = options.now || (() => new Date());
+  let lastResearchHistoryRetentionAt = 0;
   initializeLocalDatabase(dataDir);
 
   function open() {
@@ -702,6 +713,50 @@ function createStockIntelligenceStore(options = {}) {
     }
   }
 
+  function compactResearchHistory(input = {}) {
+    const force = input.force === true;
+    const currentTimestamp = Date.parse(input.at || nowFn().toISOString());
+    const retentionAt = Number.isFinite(currentTimestamp) ? currentTimestamp : Date.now();
+    if (!force && retentionAt - lastResearchHistoryRetentionAt < RESEARCH_HISTORY_RETENTION_INTERVAL_MS) {
+      return { skipped: true, blockedSignalsRemoved: 0, snapshotsRemoved: 0 };
+    }
+    const db = open();
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      db.exec(`CREATE TEMP TABLE IF NOT EXISTS argentum_prunable_blocked_signals (id TEXT PRIMARY KEY);
+        DELETE FROM argentum_prunable_blocked_signals;`);
+      db.prepare(`INSERT OR IGNORE INTO argentum_prunable_blocked_signals (id)
+        SELECT id FROM (
+          SELECT journal.id,
+            ROW_NUMBER() OVER (PARTITION BY journal.symbol ORDER BY journal.observed_at DESC, journal.created_at DESC) AS history_rank
+          FROM stock_signal_journal AS journal
+          WHERE journal.state = 'BLOCKED'
+            AND NOT EXISTS (SELECT 1 FROM stock_trade_journal AS trades WHERE trades.signal_id = journal.id)
+        ) WHERE history_rank > ?`).run(BLOCKED_SIGNAL_HISTORY_PER_SYMBOL);
+      db.prepare("DELETE FROM stock_signal_outcomes WHERE signal_id IN (SELECT id FROM argentum_prunable_blocked_signals)").run();
+      db.prepare("DELETE FROM stock_signal_price_observations WHERE signal_id IN (SELECT id FROM argentum_prunable_blocked_signals)").run();
+      const blockedSignalsRemoved = Number(db.prepare("DELETE FROM stock_signal_journal WHERE id IN (SELECT id FROM argentum_prunable_blocked_signals)").run().changes || 0);
+
+      db.exec(`CREATE TEMP TABLE IF NOT EXISTS argentum_prunable_research_snapshots (id TEXT PRIMARY KEY);
+        DELETE FROM argentum_prunable_research_snapshots;`);
+      db.prepare(`INSERT OR IGNORE INTO argentum_prunable_research_snapshots (id)
+        SELECT id FROM (
+          SELECT snapshots.id,
+            ROW_NUMBER() OVER (PARTITION BY snapshots.symbol ORDER BY snapshots.observed_at DESC, snapshots.id DESC) AS history_rank
+          FROM stock_research_snapshots AS snapshots
+        ) WHERE history_rank > ?`).run(RESEARCH_SNAPSHOT_HISTORY_PER_SYMBOL);
+      const snapshotsRemoved = Number(db.prepare("DELETE FROM stock_research_snapshots WHERE id IN (SELECT id FROM argentum_prunable_research_snapshots)").run().changes || 0);
+      db.exec("COMMIT");
+      lastResearchHistoryRetentionAt = retentionAt;
+      return { skipped: false, blockedSignalsRemoved, snapshotsRemoved };
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      db.close();
+    }
+  }
+
   function ingestSnapshot(snapshot = {}, input = {}) {
     const at = input.completedAt ? new Date(input.completedAt) : nowFn();
     const completedAt = at.toISOString();
@@ -742,7 +797,10 @@ function createStockIntelligenceStore(options = {}) {
 
       const insertSnapshot = db.prepare(`INSERT INTO stock_research_snapshots
         (id, run_id, symbol, source, observed_at, expires_at, freshness, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET run_id=excluded.run_id, source=excluded.source,
+          observed_at=excluded.observed_at, expires_at=excluded.expires_at,
+          freshness=excluded.freshness, data_json=excluded.data_json`);
       const upsertOpportunity = db.prepare(`INSERT INTO stock_opportunities
         (id, symbol, status, overall_score, ai_score, technical_score, mirror_score, catalyst_score, risk_score, confidence, rank, source, thesis_hash, first_seen_at, last_updated_at, last_researched_at, next_review_at, proposal_id, data_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -775,12 +833,14 @@ function createStockIntelligenceStore(options = {}) {
         const signalStateChanged = Boolean(latestSignal) && (
           latestSignal.direction !== shortText(opportunity.direction || "LONG", 12)
           || latestSignal.state !== shortText(opportunity.state || "RESEARCH", 40)
-          || Math.abs(Number(latestSignal.opportunityScore || 0) - Number(opportunity.overallScore || 0)) >= 5
         );
+        const actionableSignal = ["high_priority", "candidate"].includes(opportunity.status)
+          || ["ACTIONABLE", "WATCH"].includes(String(opportunity.state || "").toUpperCase());
+        const scoreChanged = Math.abs(Number(latestSignal?.opportunityScore || 0) - Number(opportunity.overallScore || 0)) >= 5;
         const shouldJournalSignal = !latestSignal
           || !Number.isFinite(lastSignalAt)
-          || Date.parse(completedAt) - lastSignalAt >= SIGNAL_JOURNAL_MIN_INTERVAL_MS
-          || signalStateChanged;
+          || signalStateChanged
+          || (actionableSignal && (scoreChanged || Date.parse(completedAt) - lastSignalAt >= SIGNAL_JOURNAL_MIN_INTERVAL_MS));
         const signalId = shouldJournalSignal
           ? `stock-signal-${fingerprint(`${runId}:${opportunity.id}`).slice(0, 32)}`
           : latestSignal.id;
@@ -796,7 +856,7 @@ function createStockIntelligenceStore(options = {}) {
           },
         };
         insertSnapshot.run(
-          `stock-snapshot-${crypto.randomUUID()}`,
+          `stock-snapshot-${fingerprint(`${opportunity.symbol}:${timeBucket(completedAt)}`).slice(0, 32)}`,
           runId,
           opportunity.symbol,
           opportunity.source,
@@ -916,10 +976,11 @@ function createStockIntelligenceStore(options = {}) {
     } finally {
       db.close();
     }
+    const historyRetention = compactResearchHistory({ at: completedAt });
     recordSystemEvent({ id: `research.completed:${runId}`, correlationId, type: "research.completed", actorType: "SYSTEM", newState: input.status || "success", reason: `${records.length} symbols persisted; ${opportunities.length} opportunities updated.`, data: { runId, symbolsScanned: records.length } });
     const outcomeCapture = captureDueSignalOutcomes(records, completedAt);
     const reports = createDueReports(at, session);
-    return { runId, correlationId, opportunities: listOpportunities(), reports, outcomeCapture, providerHealthTransition };
+    return { runId, correlationId, opportunities: listOpportunities(), reports, outcomeCapture, historyRetention, providerHealthTransition };
   }
 
   function persistMirrorSnapshot(db, mirror, completedAt) {
@@ -1360,6 +1421,7 @@ function createStockIntelligenceStore(options = {}) {
   return {
     buildReport,
     captureDueSignalOutcomes,
+    compactResearchHistory,
     completeTelegramEvent,
     createDueReports,
     dailySummary,

@@ -76,6 +76,8 @@
       "!CLIPPING OFFICE /browser-profile/**/*",
       "!CLIPPING OFFICE /browser-downloads/**/*",
       "services/**/*",
+      "stocks/bin/argentum-stock-office-background",
+      "stocks/config/com.argentum.stock-office-background.plist",
       "docs/**/*",
       "argentum-knowledge/**/*",
       "package.json"

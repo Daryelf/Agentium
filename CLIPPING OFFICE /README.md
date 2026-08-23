@@ -45,6 +45,28 @@ KICK_CLIENT_SECRET=
 
 Leave the allowed-channel lists empty when you want StreamClipper to monitor any approved streamer you add in the app. Keep all provider secrets in local env or Railway variables only.
 
+## Buffer manual-draft handoff
+
+Clipping Office can send an operator-approved Product Ready MP4 to a connected TikTok or Instagram channel as a **Buffer draft**. Automatic scheduling and public posting are intentionally disabled.
+
+Set this Railway variable on the Argentum service:
+
+```bash
+BUFFER_API_KEY=
+```
+
+`BUFFER_PUBLIC_ORIGIN` is optional when Railway forwards the public HTTPS host correctly. Set it only when the service needs an explicit origin such as `https://your-argentum-domain.example`.
+
+The operator flow is:
+
+1. Open Settings and test Buffer to load connected TikTok and Instagram channels.
+2. Choose a Product Ready clip and destination channel.
+3. Prepare the exact draft and approve its one-use Human Gate request.
+4. Click **Create draft in Buffer**. This uses Buffer's draft mode; it does not schedule or publish.
+5. Review and publish manually in Buffer, then revoke the media link from Clipping Office.
+
+The API key stays on the server. The approved MP4 is exposed only through a random capability URL whose raw token is not persisted, and the server rechecks the file hash before serving it. A consumed approval is never retried automatically when Buffer's outcome is uncertain.
+
 ## Caption intelligence
 
 Caption generation is a versioned analysis pipeline rather than a transcript-summary template. It cleans the transcript, extracts events and concrete hook details, classifies the clip, generates multiple angles, rejects generic or unsupported claims, scores grounding and specificity, checks recent-caption diversity, and stores the complete audit on the clip candidate. Weak, sensitive, or low-confidence results enter review instead of receiving fake hype.

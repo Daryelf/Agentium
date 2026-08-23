@@ -29,8 +29,11 @@
 | Analytics | Overview | Tab | Show real-mode analytics | `renderAnalytics` | Local state | Active | None | Covered by nav behavior |
 | Analytics | Detailed tabs | Tabs | Drilldown analytics | None | Missing | Disabled | Drilldown pages | Not active |
 | Analytics | Export Report | Button | Export analytics report | None | Missing | Disabled | Report endpoint | Not active |
-| Integrations | Test Connection | Button | Test supported connector from backend | `data-test-integration` | `POST /api/integrations/:id/test` | Active for OpenAI/Twitch/Kick/media | Connector env or local tool | Covered by readiness API smoke |
+| Integrations | Test Connection | Button | Test supported connector from backend | `data-test-integration` | `POST /api/integrations/:id/test` | Active for OpenAI/Twitch/Kick/Buffer/media | Connector env or local tool | Covered by readiness API smoke |
 | Integrations | Status Matrix | Page data | Show truthful configured/tested/manual/gated status | `renderIntegrations` | `GET /api/integrations/status` | Active | None | Covered by smoke |
+| Product Ready | Prepare Buffer Draft | Button | Lock the verified MP4, caption, and selected TikTok/Instagram channel into one approval scope | `data-buffer-prepare` | `POST /api/buffer/drafts/prepare` | Active; local state only | Buffer channel test + verified Product Ready MP4 | Unit + runtime API check |
+| Product Ready | Approve Exact Draft | Button | Approve the exact one-use Buffer draft scope | `data-buffer-approve` | `POST /api/human-gate/approve` | Active; Buffer is not contacted | Pending Human Gate request | Runtime workflow check |
+| Product Ready | Create Draft in Buffer | Button | Send the approved MP4 to Buffer with `saveToDraft: true` | `data-buffer-create` | `POST /api/buffer/posts/:id/create-draft` | Manual draft only; auto-post off | Approved, unconsumed scope + stable HTTPS media URL | Unit test; live call remains operator-triggered |
 | Readiness | Audit | API data | Summarize blockers, mode counts, docs, active sessions | API only | `GET /api/readiness/audit` | Active | None | Covered by smoke |
 | Readiness | Action Matrix | API data | Expose current action contracts | API only | `GET /api/readiness/action-matrix` | Active | None | Covered by smoke |
 | Agent 101 | Tool Map | API data | Expose safe/blocked tool registry | API only | `GET /api/agent101/tool-map` | Active | None | Covered by smoke |

@@ -300,6 +300,20 @@ const state = {
     busy: false,
     error: ""
   },
+  buffer: {
+    configured: false,
+    status: "not_configured",
+    mode: "manual_draft_only",
+    autoPostingEnabled: false,
+    schedulingEnabled: false,
+    channels: [],
+    lastCheckedAt: null,
+    lastSuccessAt: null,
+    message: "Buffer has not been checked.",
+    loading: false,
+    activeClipId: "",
+    error: ""
+  },
   watch: {
     stream: null,
     streamer: null,
@@ -4114,6 +4128,53 @@ function renderProductionChecklist(clip = {}) {
   `;
 }
 
+function renderBufferProductReadyControls(clip = {}) {
+  const workflow = clip.productionWorkflow?.buffer || {};
+  const status = workflow.status || "not_prepared";
+  const channels = Array.isArray(state.buffer.channels) ? state.buffer.channels : [];
+  const selectedChannelId = workflow.channelId || channels[0]?.id || "";
+  const busy = state.buffer.activeClipId === clip.id;
+  const locked = ["approval_pending", "approved", "dispatching", "buffer_draft_created", "manual_review"].includes(status);
+  const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+  const statusCopy = {
+    not_prepared: "Choose a channel and prepare one exact manual draft.",
+    approval_pending: "Human Gate is waiting. Buffer has not been contacted.",
+    approved: "Approved once. Create the draft when you are ready to contact Buffer.",
+    dispatching: "Buffer request in progress. Automatic retry is disabled.",
+    buffer_draft_created: "Draft created in Buffer. It is not scheduled or published.",
+    rejected: "Human Gate rejected this draft. Prepare a fresh scope when ready.",
+    send_back: "Human Gate sent this draft back. Prepare a fresh scope after changes.",
+    failed: "Buffer rejected the request. A fresh Human Gate approval is required to try again.",
+    manual_review: "Buffer status is uncertain. Inspect Buffer before any fresh attempt."
+  }[status] || "Manual Buffer draft only.";
+  const prepareLabel = ["failed", "rejected", "send_back"].includes(status) ? "Prepare fresh approval" : "Prepare Buffer draft";
+  return `
+    <div class="buffer-draft-control ${esc(status)}">
+      <div class="buffer-draft-head">
+        <div><span>Buffer handoff</span><strong>${selectedChannel ? `${selectedChannel.service === "tiktok" ? "TikTok" : "Instagram"} · ${esc(selectedChannel.name)}` : "Manual draft"}</strong></div>
+        <b>Auto-post OFF</b>
+      </div>
+      ${channels.length ? `
+        <label class="buffer-channel-select">
+          <span>Destination channel</span>
+          <select data-buffer-channel-select="${esc(clip.id)}" ${locked || busy ? "disabled" : ""}>
+            ${channels.map((channel) => `<option value="${esc(channel.id)}" ${channel.id === selectedChannelId ? "selected" : ""}>${channel.service === "tiktok" ? "TikTok" : "Instagram"} · ${esc(channel.name)}${channel.organizationName ? ` · ${esc(channel.organizationName)}` : ""}</option>`).join("")}
+          </select>
+        </label>
+      ` : `<p class="buffer-channel-empty">${state.buffer.configured ? "Test Buffer in Settings to load connected TikTok or Instagram channels." : "Add BUFFER_API_KEY in Railway, then test Buffer in Settings."}</p>`}
+      <p>${esc(statusCopy)}</p>
+      <div class="buffer-draft-actions">
+        ${["not_prepared", "failed", "rejected", "send_back"].includes(status) ? `<button type="button" data-buffer-prepare="${esc(clip.id)}" ${busy || !channels.length ? "disabled" : ""}>${busy ? "Working..." : prepareLabel}</button>` : ""}
+        ${status === "approval_pending" ? `<button type="button" class="primary" data-buffer-approve="${esc(clip.id)}" data-buffer-approval-id="${esc(workflow.approvalId)}" ${busy ? "disabled" : ""}>${busy ? "Working..." : "Approve exact draft"}</button>` : ""}
+        ${status === "approved" ? `<button type="button" class="primary" data-buffer-create="${esc(clip.id)}" data-buffer-draft-id="${esc(workflow.draftId)}" data-buffer-approval-id="${esc(workflow.approvalId)}" ${busy ? "disabled" : ""}>${busy ? "Contacting Buffer..." : "Create draft in Buffer"}</button>` : ""}
+        ${status === "dispatching" ? `<button type="button" disabled>Waiting for Buffer...</button>` : ""}
+        ${status === "buffer_draft_created" && !workflow.mediaGrantRevokedAt ? `<button type="button" data-buffer-revoke-media="${esc(clip.id)}" data-buffer-draft-id="${esc(workflow.draftId)}" ${busy ? "disabled" : ""}>Revoke media link after publishing</button>` : ""}
+        ${status === "buffer_draft_created" && workflow.mediaGrantRevokedAt ? `<span class="buffer-media-revoked">Media link revoked · local MP4 kept</span>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 function renderProductionCard(clip = {}, stage = "precheck") {
   const playback = productionPlaybackUrl(clip);
   const workflow = clip.productionWorkflow || {};
@@ -4150,7 +4211,7 @@ function renderProductionCard(clip = {}, stage = "precheck") {
           ${playback ? `<a href="${esc(playback)}" download="${esc(workflow.outputFilename || "product-ready.mp4")}">Download MP4</a>` : ""}
           <button type="button" class="danger" data-product-ready-action="changes" data-product-ready-clip="${esc(clip.id)}" ${busy ? "disabled" : ""}>Needs changes</button>
         </div>
-        ${stage === "product_ready" ? `<small class="production-posting-state">Approved by operator · Not posted</small>` : `<small class="production-posting-state">Awaiting operator approval</small>`}
+        ${stage === "product_ready" ? renderBufferProductReadyControls(clip) : `<small class="production-posting-state">Awaiting operator approval</small>`}
         </div>
       </div>
     </article>
@@ -4442,6 +4503,195 @@ function renderLibraryArea() {
   `;
 }
 
+function applyBufferStatus(payload = {}) {
+  state.buffer = {
+    ...state.buffer,
+    ...payload,
+    configured: payload.configured === true,
+    autoPostingEnabled: false,
+    schedulingEnabled: false,
+    channels: Array.isArray(payload.channels) ? payload.channels : state.buffer.channels || [],
+    loading: false,
+    error: payload.status === "error" ? (payload.message || "Buffer needs attention.") : ""
+  };
+  return state.buffer;
+}
+
+async function loadBufferStatus(options = {}) {
+  if (state.buffer.loading) return state.buffer;
+  state.buffer.loading = true;
+  state.buffer.error = "";
+  state.editor.lastRenderSignature = "";
+  renderClipsArea({ force: true });
+  try {
+    if (options.test === true) {
+      await api("/api/integrations/buffer/test", {
+        method: "POST",
+        body: JSON.stringify({}),
+        timeoutMs: 30000,
+        timeoutMessage: "Buffer did not finish the connection check. No draft was created."
+      });
+    }
+    const status = await api("/api/buffer/status", {
+      timeoutMs: 15000,
+      timeoutMessage: "Buffer status did not answer. No draft was created."
+    });
+    applyBufferStatus(status);
+    if (options.test === true) {
+      renderStatus(status.status === "connected"
+        ? `Buffer connected — ${status.channels?.length || 0} TikTok/Instagram channel${status.channels?.length === 1 ? "" : "s"} available`
+        : status.message || "Buffer connection needs attention");
+    }
+    return state.buffer;
+  } catch (error) {
+    state.buffer.loading = false;
+    state.buffer.error = error.message || "Buffer connection failed";
+    state.buffer.status = "error";
+    if (options.test === true) renderStatus(state.buffer.error);
+    throw error;
+  } finally {
+    state.editor.lastRenderSignature = "";
+    renderClipsArea({ force: true });
+  }
+}
+
+function bufferChannelSelectForClip(clipId = "") {
+  return [...document.querySelectorAll("[data-buffer-channel-select]")]
+    .find((select) => select.dataset.bufferChannelSelect === clipId) || null;
+}
+
+async function prepareClipForBuffer(clipId = "") {
+  const channelId = bufferChannelSelectForClip(clipId)?.value || "";
+  if (!clipId || !channelId || state.buffer.activeClipId) return;
+  state.buffer.activeClipId = clipId;
+  state.buffer.error = "";
+  state.editor.lastRenderSignature = "";
+  renderClipsArea({ force: true });
+  try {
+    const result = await api("/api/buffer/drafts/prepare", {
+      method: "POST",
+      body: JSON.stringify({ candidateId: clipId, channelId }),
+      timeoutMs: 30000,
+      timeoutMessage: "Buffer preparation did not finish. Nothing was posted."
+    });
+    if (result.candidate) replaceClipInState(result.candidate);
+    if (result.buffer) applyBufferStatus(result.buffer);
+    renderStatus("Buffer draft prepared — review the exact Human Gate approval next");
+  } catch (error) {
+    state.buffer.error = error.message || "Buffer draft preparation failed";
+    renderStatus(state.buffer.error);
+  } finally {
+    state.buffer.activeClipId = "";
+    state.editor.lastRenderSignature = "";
+    renderClipsArea({ force: true });
+  }
+}
+
+async function approveClipBufferDraft(clipId = "", approvalId = "") {
+  if (!clipId || !approvalId || state.buffer.activeClipId) return;
+  state.buffer.activeClipId = clipId;
+  state.editor.lastRenderSignature = "";
+  renderClipsArea({ force: true });
+  try {
+    await api("/api/human-gate/approve", {
+      method: "POST",
+      body: JSON.stringify({
+        id: approvalId,
+        notes: "Operator approved one exact Buffer video draft. Automatic scheduling and public posting remain off."
+      }),
+      timeoutMs: 20000
+    });
+    await refreshWatchState();
+    renderStatus("Human Gate approved this exact draft — Buffer has not been contacted yet");
+  } catch (error) {
+    state.buffer.error = error.message || "Buffer draft approval failed";
+    renderStatus(state.buffer.error);
+  } finally {
+    state.buffer.activeClipId = "";
+    state.editor.lastRenderSignature = "";
+    renderClipsArea({ force: true });
+  }
+}
+
+async function createApprovedBufferDraft(clipId = "", draftId = "", approvalId = "") {
+  if (!clipId || !draftId || !approvalId || state.buffer.activeClipId) return;
+  state.buffer.activeClipId = clipId;
+  state.editor.lastRenderSignature = "";
+  renderClipsArea({ force: true });
+  try {
+    const result = await api(`/api/buffer/posts/${encodeURIComponent(draftId)}/create-draft`, {
+      method: "POST",
+      body: JSON.stringify({ approvalId }),
+      timeoutMs: 45000,
+      timeoutMessage: "Buffer did not confirm the draft. Inspect Buffer before attempting anything again."
+    });
+    if (result.candidate) replaceClipInState(result.candidate);
+    if (result.buffer) applyBufferStatus(result.buffer);
+    renderStatus("Buffer draft created — it is not scheduled or published");
+  } catch (error) {
+    state.buffer.error = error.message || "Buffer draft creation failed";
+    await refreshWatchState().catch(() => {});
+    renderStatus(state.buffer.error);
+  } finally {
+    state.buffer.activeClipId = "";
+    state.editor.lastRenderSignature = "";
+    renderClipsArea({ force: true });
+  }
+}
+
+async function revokeClipBufferMedia(clipId = "", draftId = "") {
+  if (!clipId || !draftId || state.buffer.activeClipId) return;
+  state.buffer.activeClipId = clipId;
+  state.editor.lastRenderSignature = "";
+  renderClipsArea({ force: true });
+  try {
+    const result = await api(`/api/buffer/posts/${encodeURIComponent(draftId)}/revoke-media`, {
+      method: "POST",
+      body: JSON.stringify({}),
+      timeoutMs: 15000
+    });
+    if (result.candidate) replaceClipInState(result.candidate);
+    renderStatus("Buffer media link revoked. The local Product Ready MP4 was not deleted.");
+  } catch (error) {
+    state.buffer.error = error.message || "Buffer media link could not be revoked";
+    renderStatus(state.buffer.error);
+  } finally {
+    state.buffer.activeClipId = "";
+    state.editor.lastRenderSignature = "";
+    renderClipsArea({ force: true });
+  }
+}
+
+function renderBufferSettings() {
+  const buffer = state.buffer || {};
+  const connected = buffer.status === "connected";
+  const channelSummary = (buffer.channels || []).map((channel) => (
+    `${channel.service === "tiktok" ? "TikTok" : "Instagram"}: ${channel.name}`
+  ));
+  return `
+    <section class="settings-buffer-section ${connected ? "is-connected" : "needs-attention"}">
+      <header>
+        <div>
+          <span>Publishing connector</span>
+          <strong>Buffer · manual drafts</strong>
+          <small>${esc(buffer.message || "Test the Railway BUFFER_API_KEY and load connected channels.")}</small>
+        </div>
+        <div class="buffer-mode-lock"><b>Auto-post OFF</b><small>No schedule · no share now</small></div>
+      </header>
+      <div class="settings-buffer-flow" aria-label="Buffer manual workflow">
+        <span><b>1</b> Choose Product Ready clip</span>
+        <span><b>2</b> Human Gate approval</span>
+        <span><b>3</b> Create Buffer draft</span>
+        <span><b>4</b> Publish manually in Buffer</span>
+      </div>
+      ${channelSummary.length ? `<p class="settings-buffer-channels">${channelSummary.map(esc).join(" · ")}</p>` : ""}
+      ${buffer.error ? `<p class="settings-buffer-error">${esc(buffer.error)}</p>` : ""}
+      <button type="button" data-buffer-test ${buffer.loading ? "disabled" : ""}>${buffer.loading ? "Checking Buffer..." : connected ? "Refresh Buffer channels" : "Test Buffer connection"}</button>
+      <p class="settings-buffer-note">The API key stays server-side. Creating a Buffer draft requires a separate exact approval and still does not publish the video.</p>
+    </section>
+  `;
+}
+
 function renderSettingsArea() {
   const format = selectedClipFormat();
   const selectedStage = automationStage();
@@ -4500,6 +4750,7 @@ function renderSettingsArea() {
           `).join("")}
         </div>
       </div>
+      ${renderBufferSettings()}
     </section>
   `;
 }
@@ -6836,6 +7087,7 @@ function editorRenderSignature() {
     exporting: state.editor.exportingClipId || "",
     uploadingSource: Boolean(state.editor.uploadingSource),
     productionBusy: state.editor.productionBusyClipId || "",
+    buffer: `${state.buffer.status}:${state.buffer.loading}:${state.buffer.activeClipId}:${(state.buffer.channels || []).map((channel) => channel.id).join(",")}`,
     stickerLibrary: (state.editor.stickerLibrary || []).map((entry) => `${entry.id}:${entry.updatedAt}`).join("|"),
     clips,
     builder,
@@ -8445,8 +8697,9 @@ async function initializeClippingOffice() {
       };
     });
 
-    await runStartupStep("providers", 2, "Connecting to Twitch and Kick...", async () => {
+    await runStartupStep("providers", 2, "Connecting to Twitch, Kick, and Buffer status...", async () => {
       await loadProviderStatus();
+      await loadBufferStatus().catch(() => null);
       await loadServerAutomationSettings().catch(() => null);
       const connected = [state.twitch.configured && "Twitch", state.kick.configured && "Kick"].filter(Boolean);
       return {
@@ -8582,6 +8835,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const openLocalPathButton = event.target.closest("[data-open-local-path]");
     const libraryOpenEditorButton = event.target.closest("[data-library-open-editor]");
     const libraryOpenReviewButton = event.target.closest("[data-library-open-review]");
+    const bufferTestButton = event.target.closest("[data-buffer-test]");
+    const bufferPrepareButton = event.target.closest("[data-buffer-prepare]");
+    const bufferApproveButton = event.target.closest("[data-buffer-approve]");
+    const bufferCreateButton = event.target.closest("[data-buffer-create]");
+    const bufferRevokeMediaButton = event.target.closest("[data-buffer-revoke-media]");
     const editorToolTabButton = event.target.closest("[data-editor-tool-tab]");
     const editorTimelineToggleButton = event.target.closest("[data-editor-timeline-toggle]");
     const watchButton = event.target.closest("[data-watch-streamer]");
@@ -8666,6 +8924,36 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (appViewButton) {
       setAppView(appViewButton.dataset.appView || "studio");
+      return;
+    }
+    if (bufferTestButton) {
+      loadBufferStatus({ test: true }).catch(() => {});
+      return;
+    }
+    if (bufferPrepareButton) {
+      prepareClipForBuffer(bufferPrepareButton.dataset.bufferPrepare || "");
+      return;
+    }
+    if (bufferApproveButton) {
+      approveClipBufferDraft(
+        bufferApproveButton.dataset.bufferApprove || "",
+        bufferApproveButton.dataset.bufferApprovalId || ""
+      );
+      return;
+    }
+    if (bufferCreateButton) {
+      createApprovedBufferDraft(
+        bufferCreateButton.dataset.bufferCreate || "",
+        bufferCreateButton.dataset.bufferDraftId || "",
+        bufferCreateButton.dataset.bufferApprovalId || ""
+      );
+      return;
+    }
+    if (bufferRevokeMediaButton) {
+      revokeClipBufferMedia(
+        bufferRevokeMediaButton.dataset.bufferRevokeMedia || "",
+        bufferRevokeMediaButton.dataset.bufferDraftId || ""
+      );
       return;
     }
     if (libraryFilterButton) {

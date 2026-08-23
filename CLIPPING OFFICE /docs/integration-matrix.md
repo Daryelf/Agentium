@@ -9,6 +9,7 @@ The live source of truth is `GET /api/integrations/status`.
 | OpenAI | Server-side AI provider | Backend test request succeeds without exposing the key | Billing/model/key errors fall back to local-safe behavior | `POST /api/integrations/openai/test` |
 | Twitch | Official API only | Token validation or app token exchange succeeds | Real clipping needs permission, user scopes, and source evidence | `POST /api/integrations/twitch/test` |
 | Kick | Official API only | Token exchange succeeds | Live discovery only; no scraping or posting | `POST /api/integrations/kick/test` |
+| Buffer | Official GraphQL API | API key authenticates and connected TikTok/Instagram channels load | Exact one-use Human Gate approval; draft creation only; no scheduling or public posting | `POST /api/integrations/buffer/test` |
 | Local Media Toolchain | FFmpeg/FFprobe or manual handoff | FFmpeg and FFprobe are available to the server process | No render guarantees without source verification and probe pass | `POST /api/integrations/media/test` |
 | Browser Workspace | Supervised Chromium | Browser smoke test verifies screenshot/control path | No credential collection or external account changes | `POST /api/browser/smoke-test` |
 | CapCut | Manual handoff | Not a direct connector | Operator controls CapCut | `GET /api/capcut/status` |

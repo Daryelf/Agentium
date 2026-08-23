@@ -375,6 +375,7 @@ const LOCAL_CONNECTOR_SECRET_ENV = [
   { provider: "kick_client_id", env: "KICK_CLIENT_ID" },
   { provider: "kick_client_secret", env: "KICK_CLIENT_SECRET" },
   { provider: "kick_oauth_token", env: "KICK_OAUTH_TOKEN" },
+  { provider: "buffer_api_key", env: "BUFFER_API_KEY" },
 ];
 const LOCAL_CONNECTOR_ENV_ORIGINALS = Object.fromEntries(
   LOCAL_CONNECTOR_SECRET_ENV.map(({ env }) => [env, process.env[env] || ""]),
@@ -450,6 +451,15 @@ const CONNECTOR_DEFINITIONS = {
     approvalRequired: true,
     blockedActions: ["account login", "publishing", "payment changes"],
     checklist: ["Install or open CapCut manually", "Create project manually", "Use Agent 101 edit notes", "Export locally before approval"],
+  },
+  buffer: {
+    label: "Buffer",
+    category: "publishing_connector",
+    status: "not_configured",
+    requiredEnv: ["BUFFER_API_KEY"],
+    approvalRequired: true,
+    blockedActions: ["automatic scheduling", "share now", "silent publishing", "frontend key exposure"],
+    checklist: ["Keep BUFFER_API_KEY server-side", "Test connected TikTok/Instagram channels", "Approve one exact draft in Human Gate", "Publish manually inside Buffer"],
   },
   tiktok: {
     label: "TikTok",
@@ -15154,12 +15164,20 @@ async function handleClippingOffice(req, res, url) {
 
   const clippingOffice = await clippingOfficeModule();
   const originalUrl = req.url;
+  const originalPublicOrigin = req.headers["x-argentum-public-origin"];
+  const originalMountPath = req.headers["x-argentum-mount-path"];
   const strippedPath = url.pathname.slice(CLIPPING_OFFICE_MOUNT.length) || "/";
   req.url = `${strippedPath}${url.search || ""}`;
+  req.headers["x-argentum-public-origin"] = publicRequestOrigin(req);
+  req.headers["x-argentum-mount-path"] = CLIPPING_OFFICE_MOUNT;
   try {
     await clippingOffice.handleRequest(req, res);
   } finally {
     req.url = originalUrl;
+    if (originalPublicOrigin === undefined) delete req.headers["x-argentum-public-origin"];
+    else req.headers["x-argentum-public-origin"] = originalPublicOrigin;
+    if (originalMountPath === undefined) delete req.headers["x-argentum-mount-path"];
+    else req.headers["x-argentum-mount-path"] = originalMountPath;
   }
 }
 
@@ -15342,6 +15360,8 @@ function handleBusinessOfficeApp(req, res, url, mountPath, officeId) {
 async function handleArgentumRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
   const shouldBypassClippingOfficeAuth = APP_MODE === "local" || (LOCAL_OFFICE_BYPASS && localRuntime.isLocalHost(url.hostname));
+  const isPublicBufferMedia = ["GET", "HEAD"].includes(req.method)
+    && /^\/apps\/clipping-office\/api\/buffer\/media\/[^/]+\/[^/]+$/.test(url.pathname);
   const isLocalRobinhoodOauthCallback = APP_MODE === "local"
     && req.method === "GET"
     && localRuntime.isLocalHost(url.hostname)
@@ -15363,6 +15383,10 @@ async function handleArgentumRequest(req, res) {
       return;
     }
     if (shouldBypassClippingOfficeAuth && url.pathname.startsWith(CLIPPING_OFFICE_MOUNT)) {
+      await handleClippingOffice(req, res, url);
+      return;
+    }
+    if (isPublicBufferMedia) {
       await handleClippingOffice(req, res, url);
       return;
     }

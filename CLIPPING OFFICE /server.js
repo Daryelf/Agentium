@@ -51,6 +51,13 @@ import {
   evaluateEditorEditReadiness,
   evaluateEditorProductionReadiness
 } from "./services/editor-production-readiness.js";
+import {
+  buildBufferMediaUrl,
+  bufferMediaGrantMatches,
+  createBufferMediaCapability,
+  createBufferVideoDraft,
+  listBufferChannels
+} from "./services/buffer-publisher.js";
 
 const MODULE_FILE = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(MODULE_FILE);
@@ -211,6 +218,8 @@ const config = {
   kickClientId: process.env.KICK_CLIENT_ID || "",
   kickClientSecret: process.env.KICK_CLIENT_SECRET || "",
   kickOAuthToken: process.env.KICK_OAUTH_TOKEN || "",
+  bufferApiKey: process.env.BUFFER_API_KEY || process.env.BUFFER_ACCESS_TOKEN || "",
+  bufferPublicOrigin: process.env.BUFFER_PUBLIC_ORIGIN || "",
   databaseUrl: process.env.DATABASE_URL || "",
   redisUrl: process.env.REDIS_URL || "",
   objectStorageBucket: process.env.S3_BUCKET || process.env.AWS_BUCKET || process.env.MINIO_BUCKET || "",
@@ -363,6 +372,14 @@ const stateDefaults = {
   smokeTests: [],
   twitchValidation: null,
   integrationChecks: {},
+  bufferPublishing: {
+    channels: [],
+    organizations: [],
+    mediaGrants: [],
+    lastCheckedAt: null,
+    lastSuccessAt: null,
+    lastError: ""
+  },
   logs: [],
   automation: structuredClone(DEFAULT_AUTOMATION),
   browser: {
@@ -589,6 +606,10 @@ function kickApiConfigured() {
   return Boolean(config.kickOAuthToken || (config.kickClientId && config.kickClientSecret));
 }
 
+function bufferApiConfigured() {
+  return Boolean(config.bufferApiKey);
+}
+
 function liveProviderConfigured(platform) {
   if (platform === "twitch") return twitchApiConfigured();
   if (platform === "kick") return kickApiConfigured();
@@ -771,6 +792,10 @@ function normalizeLoadedState() {
   state.handoffPackages ||= [];
   state.smokeTests ||= [];
   state.integrationChecks ||= {};
+  state.bufferPublishing ||= structuredClone(stateDefaults.bufferPublishing);
+  state.bufferPublishing.channels ||= [];
+  state.bufferPublishing.organizations ||= [];
+  state.bufferPublishing.mediaGrants ||= [];
   state.logs ||= [];
   state.automation = normalizeAutomationState(state.automation);
   state.browser ||= structuredClone(stateDefaults.browser);
@@ -5436,6 +5461,10 @@ function publicConfig() {
     twitchAllowedChannels: config.twitchAllowedChannels,
     kickConfigured: kickApiConfigured(),
     kickOAuthTokenConfigured: Boolean(config.kickOAuthToken),
+    bufferConfigured: bufferApiConfigured(),
+    bufferMode: "manual_draft_only",
+    bufferAutoPostingEnabled: false,
+    bufferChannelsCached: (state.bufferPublishing?.channels || []).length,
     postDailyLimit: config.postDailyLimit,
     singleWatchMode: config.singleWatchMode,
     maxWatchedStreamers: config.maxWatchedStreamers,
@@ -5606,6 +5635,100 @@ function productionModeSummary() {
   };
 }
 
+function publicBufferChannel(channel = {}) {
+  return {
+    id: cleanText(channel.id).slice(0, 160),
+    name: cleanText(channel.name).slice(0, 160),
+    service: normalizeStatus(cleanText(channel.service).toLowerCase(), ["instagram", "tiktok"], "instagram"),
+    organizationId: cleanText(channel.organizationId).slice(0, 160),
+    organizationName: cleanText(channel.organizationName).slice(0, 160)
+  };
+}
+
+function publicBufferPublishingStatus() {
+  const publishing = state.bufferPublishing || {};
+  const check = safeIntegrationCheck("buffer");
+  const channels = (publishing.channels || []).map(publicBufferChannel).filter((channel) => channel.id);
+  const status = !bufferApiConfigured()
+    ? "not_configured"
+    : check?.status === "connected"
+      ? "connected"
+      : check?.status === "error"
+        ? "error"
+        : "not_tested";
+  return {
+    configured: bufferApiConfigured(),
+    status,
+    mode: "manual_draft_only",
+    autoPostingEnabled: false,
+    schedulingEnabled: false,
+    channels,
+    supportedServices: ["tiktok", "instagram"],
+    lastCheckedAt: publishing.lastCheckedAt || check?.lastTestedAt || null,
+    lastSuccessAt: publishing.lastSuccessAt || check?.lastSuccessAt || null,
+    message: !bufferApiConfigured()
+      ? "BUFFER_API_KEY is not configured on this server."
+      : status === "connected"
+        ? channels.length
+          ? `${channels.length} TikTok/Instagram Buffer channel${channels.length === 1 ? "" : "s"} ready for manual drafts.`
+          : "Buffer connected, but no TikTok or Instagram channels are connected."
+        : status === "error"
+          ? publishing.lastError || "Buffer needs attention."
+          : "Buffer is configured server-side but has not been tested in this runtime.",
+    secretsExposed: false
+  };
+}
+
+async function testBufferIntegration() {
+  const checkedAt = now();
+  state.bufferPublishing ||= structuredClone(stateDefaults.bufferPublishing);
+  state.bufferPublishing.lastCheckedAt = checkedAt;
+  if (!bufferApiConfigured()) {
+    state.bufferPublishing.channels = [];
+    state.bufferPublishing.organizations = [];
+    state.bufferPublishing.lastError = "BUFFER_API_KEY is not configured on this server.";
+    const check = rememberIntegrationCheck("buffer", {
+      status: "not_configured",
+      message: state.bufferPublishing.lastError
+    });
+    await saveState();
+    return check;
+  }
+  try {
+    const result = await listBufferChannels({ apiKey: config.bufferApiKey });
+    state.bufferPublishing.channels = result.channels.map(publicBufferChannel);
+    state.bufferPublishing.organizations = result.organizations.map((organization) => ({
+      id: cleanText(organization.id).slice(0, 160),
+      name: cleanText(organization.name).slice(0, 160)
+    }));
+    state.bufferPublishing.lastSuccessAt = checkedAt;
+    state.bufferPublishing.lastError = "";
+    const message = state.bufferPublishing.channels.length
+      ? `Buffer authenticated and returned ${state.bufferPublishing.channels.length} supported channel${state.bufferPublishing.channels.length === 1 ? "" : "s"}.`
+      : "Buffer authenticated, but it returned no connected TikTok or Instagram channels.";
+    const check = rememberIntegrationCheck("buffer", { status: "connected", message });
+    await logEvent("integration_test", "Buffer integration tested", {
+      id: "buffer",
+      status: "connected",
+      supportedChannels: state.bufferPublishing.channels.length
+    });
+    await saveState();
+    return check;
+  } catch (error) {
+    const message = cleanText(error.message).slice(0, 300) || "Buffer API validation failed.";
+    state.bufferPublishing.channels = [];
+    state.bufferPublishing.organizations = [];
+    state.bufferPublishing.lastError = message;
+    const check = rememberIntegrationCheck("buffer", { status: "error", message, error: message });
+    await logEvent("integration_test_failed", "Buffer integration test failed", {
+      id: "buffer",
+      error: message
+    });
+    await saveState();
+    return check;
+  }
+}
+
 function safeIntegrationCheck(id) {
   const check = state.integrationChecks?.[id] || null;
   if (!check) return null;
@@ -5718,6 +5841,10 @@ async function runIntegrationCheck(id) {
     }
   }
 
+  if (id === "buffer") {
+    return testBufferIntegration();
+  }
+
   if (id === "media") {
     const media = await mediaToolStatus();
     const status = media.ffmpeg.configured && media.ffprobe.configured ? "local_ready" : "manual_handoff";
@@ -5742,6 +5869,7 @@ async function buildIntegrationMatrix() {
   const openaiCheck = safeIntegrationCheck("openai");
   const twitchCheck = safeIntegrationCheck("twitch");
   const kickCheck = safeIntegrationCheck("kick");
+  const bufferCheck = safeIntegrationCheck("buffer");
   const mediaCheck = safeIntegrationCheck("media");
   const browserPassed = latestSmoke?.checks?.some((check) => /browser|chromium|screenshot/i.test(check.name || check.id || "") && check.status === "passed");
   const mediaReady = media.ffmpeg.configured && media.ffprobe.configured;
@@ -5799,6 +5927,25 @@ async function buildIntegrationMatrix() {
       nextAction: kickApiConfigured() ? "Run Test Connection" : "Add Kick env vars"
     }),
     integrationRecord({
+      id: "buffer",
+      name: "Buffer",
+      category: "publishing",
+      configured: bufferApiConfigured(),
+      status: !bufferApiConfigured()
+        ? "not_configured"
+        : bufferCheck?.status === "connected"
+          ? "connected"
+          : bufferCheck?.status === "error"
+            ? "error"
+            : "not_tested",
+      mode: "manual_draft_only",
+      message: publicBufferPublishingStatus().message,
+      missingConfig: bufferApiConfigured() ? [] : ["BUFFER_API_KEY"],
+      capabilities: ["Connected TikTok/Instagram channel discovery", "Human Gate-approved video drafts in Buffer"],
+      blockedActions: ["Automatic scheduling", "Share now", "Silent uploads", "Browser key exposure"],
+      nextAction: bufferApiConfigured() ? "Test Buffer and refresh connected channels" : "Add BUFFER_API_KEY in Railway"
+    }),
+    integrationRecord({
       id: "media",
       name: "Local Media Toolchain",
       category: "media",
@@ -5843,13 +5990,15 @@ async function buildIntegrationMatrix() {
       id: "posting-platforms",
       name: "TikTok / Instagram / YouTube",
       category: "publishing",
-      configured: false,
+      configured: bufferApiConfigured(),
       status: "gated",
       mode: "human_gate_only",
-      message: "Posting drafts can be generated, but uploading and publishing are not implemented.",
-      capabilities: ["Draft captions", "Posting package", "Human Gate request"],
-      blockedActions: ["Public posting", "Uploads", "Account connection", "Spend"],
-      nextAction: "Approve connector design before adding OAuth/API"
+      message: bufferApiConfigured()
+        ? "Buffer can receive a manually approved draft. Automatic scheduling and public posting stay off."
+        : "Posting drafts can be generated, but no server-side publishing connector is configured.",
+      capabilities: ["Draft captions", "Posting package", "Human Gate request", "Manual Buffer draft"],
+      blockedActions: ["Automatic public posting", "Automatic scheduling", "Account changes", "Spend"],
+      nextAction: bufferApiConfigured() ? "Test Buffer, choose a channel, and prepare a manual draft" : "Configure Buffer for the manual draft stage"
     }),
     integrationRecord({
       id: "storage",
@@ -5936,6 +6085,8 @@ function buildActionMatrixPayload() {
       { page: "Clip Radar", actionId: "preview-candidate", route: "local + /api/media/sources/:id/playback", status: "active_when_source_verified", mode: "real_or_practice" },
       { page: "Clip Builder", actionId: "render-draft", route: "POST /api/media/candidates/:id/render", status: "active_when_media_ready", mode: "real_or_practice" },
       { page: "Posting Queue", actionId: "create-draft", route: "POST /api/posting-drafts", status: "blocked_until_verified_clip", mode: "draft_only" },
+      { page: "Product Ready", actionId: "prepare-buffer-draft", route: "POST /api/buffer/drafts/prepare", status: "human_gate_required", mode: "manual_draft_only" },
+      { page: "Product Ready", actionId: "create-buffer-draft", route: "POST /api/buffer/posts/:id/create-draft", status: "one_use_approval_required", mode: "manual_draft_only" },
       { page: "Human Gate", actionId: "approve-sendback-reject", route: "POST /api/human-gate/*", status: "active", mode: "operator_review" },
       { page: "Browser Workspace", actionId: "browser-control", route: "POST /api/browser/sessions/*", status: config.browserEnabled ? "active_requires_smoke" : "disabled", mode: "supervised" },
       { page: "Integrations", actionId: "test-integration", route: "POST /api/integrations/:id/test", status: "active_for_supported_connectors", mode: "server_only" }
@@ -5957,7 +6108,8 @@ function buildAgentToolMapPayload() {
       { id: "render_clip", route: "POST /api/media/candidates/:id/render", safety: "local_media_only", writes: ["mediaJobs", "artifacts", "logs"] },
       { id: "create_posting_draft", route: "POST /api/posting-drafts", safety: "requires_verified_render", writes: ["postingDrafts", "logs"] },
       { id: "request_approval", route: "POST /api/human-gate/requests", safety: "human_gate_required", writes: ["approvalRequests", "logs"] },
-      { id: "publish_external", route: "none", safety: "not_implemented_blocked", writes: [] }
+      { id: "create_buffer_draft", route: "POST /api/buffer/posts/:id/create-draft", safety: "exact_one_use_human_gate_manual_draft_only", writes: ["postingDrafts", "approvalRequests", "bufferPublishing", "logs"] },
+      { id: "publish_external", route: "none", safety: "automatic_posting_disabled", writes: [] }
     ]
   };
 }
@@ -6003,7 +6155,7 @@ async function buildReadinessAudit() {
     docs: readinessDocsStatus(),
     knownGaps: [
       "Real source capture still requires verified provider permission and playable source records before candidates become production candidates.",
-      "Direct publishing/uploading remains intentionally unimplemented and Human Gate blocked.",
+      "Buffer draft creation is manual and Human Gate controlled; automatic scheduling and public posting remain disabled.",
       "Database and object storage migration are needed before multi-user production traffic.",
       "CapCut export/download and publishing remain Human Gate gated even when desktop staging is ready."
     ],
@@ -6398,6 +6550,421 @@ async function createVerifiedPostingDraft(body = {}) {
   await logEvent("post_queued", "Posting draft queued", { draftId: draft.id, platform: draft.platform });
   await saveState();
   return { draft, dailyLimit: dailyLimitStatus() };
+}
+
+const BUFFER_DRAFT_APPROVAL_TYPE = "buffer_post_draft";
+const BUFFER_DRAFT_ACTION_TYPE = "create_buffer_video_draft";
+
+function bufferPlatformForService(service = "") {
+  return cleanText(service).toLowerCase() === "tiktok" ? "tiktok" : "instagram_reels";
+}
+
+function bufferCaptionForCandidate(candidate = {}) {
+  const editorial = candidate.editorialCaption || {};
+  const segmentText = (candidate.builderDraft?.editorState?.captions?.segments || [])
+    .map((segment) => cleanText(segment?.text))
+    .filter(Boolean)
+    .join(" ");
+  const caption = cleanText(
+    editorial.primary_caption
+    || editorial.text
+    || segmentText
+    || candidate.title
+    || "New clip"
+  ).replace(/\s+/g, " ").slice(0, 3500);
+  const rawHashtags = [
+    ...(Array.isArray(editorial.hashtags) ? editorial.hashtags : []),
+    ...(Array.isArray(candidate.hashtags) ? candidate.hashtags : []),
+    ...(Array.isArray(candidate.clipPackage?.hashtags) ? candidate.clipPackage.hashtags : [])
+  ];
+  const hashtags = [...new Set(rawHashtags
+    .map((value) => cleanText(value).replace(/^#+/, "").replace(/[^A-Za-z0-9_]/g, ""))
+    .filter(Boolean)
+    .slice(0, 20))];
+  const tagText = hashtags.map((tag) => `#${tag}`).join(" ");
+  return {
+    caption: [caption, tagText].filter(Boolean).join("\n\n").slice(0, 4000),
+    hashtags
+  };
+}
+
+function candidateForPostingDraft(draft = {}) {
+  const candidateId = cleanText(draft.candidateId || draft.buffer?.candidateId);
+  if (candidateId) return state.clipCandidates.find((candidate) => candidate.id === candidateId) || null;
+  const artifact = state.artifacts.find((item) => item.id === draft.clipArtifactId);
+  const linkedId = cleanText(artifact?.content?.candidateId);
+  return state.clipCandidates.find((candidate) => candidate.id === linkedId) || null;
+}
+
+function cachedBufferChannel(channelId = "") {
+  const id = cleanText(channelId);
+  return (state.bufferPublishing?.channels || []).find((channel) => channel.id === id) || null;
+}
+
+function bufferApprovalEvidence({ candidate, artifact, draft, channel, caption }) {
+  const exact = {
+    candidateId: candidate.id,
+    draftId: draft.id,
+    artifactId: artifact.id,
+    artifactSha256: cleanText(artifact.content?.sha256 || artifact.sha256).toLowerCase(),
+    channelId: channel.id,
+    channelService: channel.service,
+    captionHash: safeHash(caption),
+    deliveryMode: "manual_buffer_draft_only",
+    saveToDraft: true,
+    schedulingType: "notification",
+    automaticPosting: false
+  };
+  return {
+    ...exact,
+    fingerprint: safeHash(exact),
+    channelName: channel.name,
+    organizationName: channel.organizationName,
+    clipFilename: artifact.filename,
+    captionPreview: cleanText(caption).slice(0, 500),
+    note: "Approval creates one draft in Buffer. It does not schedule or publish the post."
+  };
+}
+
+function assertProductReadyForBuffer(candidate, artifact) {
+  if (!candidate || candidate.productionWorkflow?.stage !== "product_ready") {
+    throw Object.assign(new Error("Buffer preparation requires an operator-approved Product Ready clip."), { statusCode: 409 });
+  }
+  if (candidate.productionWorkflow?.approval?.status !== "approved") {
+    throw Object.assign(new Error("Product Ready approval is missing for this clip."), { statusCode: 409 });
+  }
+  if (!artifactIsVerifiedClip(artifact)) {
+    throw Object.assign(new Error("Buffer preparation requires the verified Product Ready MP4."), { statusCode: 422 });
+  }
+  if (cleanText(candidate.productionWorkflow.exportArtifactId || candidate.renderedArtifactId) !== artifact.id) {
+    throw Object.assign(new Error("The Product Ready artifact changed. Review the current render before Buffer preparation."), { statusCode: 409 });
+  }
+}
+
+async function prepareBufferDraft(body = {}) {
+  if (!bufferApiConfigured()) {
+    throw Object.assign(new Error("Buffer is not configured on this server. Add BUFFER_API_KEY in Railway."), { statusCode: 409 });
+  }
+  const candidate = state.clipCandidates.find((item) => item.id === cleanText(body.candidateId));
+  if (!candidate) throw Object.assign(new Error("Clip candidate not found."), { statusCode: 404 });
+  const artifact = productionArtifactForCandidate(candidate);
+  assertProductReadyForBuffer(candidate, artifact);
+  const channel = cachedBufferChannel(body.channelId);
+  if (!channel) {
+    throw Object.assign(new Error("Test Buffer in Settings and choose one of its connected TikTok or Instagram channels."), { statusCode: 409 });
+  }
+  const existing = candidate.productionWorkflow?.buffer || null;
+  if (existing && ["approval_pending", "approved", "dispatching", "buffer_draft_created"].includes(existing.status)) {
+    if (existing.channelId !== channel.id) {
+      throw Object.assign(new Error("This clip already has an active Buffer draft workflow for another channel."), { statusCode: 409 });
+    }
+    const existingDraft = state.postingDrafts.find((draft) => draft.id === existing.draftId) || null;
+    const existingApproval = approvalById(existing.approvalId);
+    return { candidate, draft: existingDraft, approval: existingApproval, buffer: publicBufferPublishingStatus(), reused: true };
+  }
+  const { caption, hashtags } = bufferCaptionForCandidate(candidate);
+  const created = await createVerifiedPostingDraft({
+    clipPackageId: cleanText(candidate.clipPackageId),
+    clipArtifactId: artifact.id,
+    platform: bufferPlatformForService(channel.service),
+    caption,
+    hashtags,
+    approvalStatus: "pending",
+    riskNotes: [
+      "Manual Buffer draft only.",
+      "Human Gate approval is required before the server contacts Buffer.",
+      "Automatic scheduling and public posting are disabled."
+    ]
+  });
+  const draft = created.draft;
+  Object.assign(draft, {
+    candidateId: candidate.id,
+    publishProvider: "buffer",
+    deliveryMode: "manual_draft_only",
+    platformStatus: "awaiting_human_gate",
+    buffer: {
+      candidateId: candidate.id,
+      channelId: channel.id,
+      channelName: channel.name,
+      service: channel.service,
+      organizationName: channel.organizationName,
+      saveToDraft: true,
+      schedulingType: "notification",
+      automaticPosting: false
+    },
+    updatedAt: now()
+  });
+  const evidence = bufferApprovalEvidence({ candidate, artifact, draft, channel, caption });
+  const approval = createApprovalRequest({
+    type: BUFFER_DRAFT_APPROVAL_TYPE,
+    actionType: BUFFER_DRAFT_ACTION_TYPE,
+    title: `Create Buffer draft: ${channel.name}`,
+    riskLevel: "medium",
+    linkedId: draft.id,
+    createdBy: "operator",
+    evidence
+  });
+  candidate.productionWorkflow = {
+    ...(candidate.productionWorkflow || {}),
+    postingStatus: "buffer_approval_pending",
+    buffer: {
+      status: "approval_pending",
+      draftId: draft.id,
+      approvalId: approval.id,
+      channelId: channel.id,
+      channelName: channel.name,
+      service: channel.service,
+      fingerprint: evidence.fingerprint,
+      automaticPosting: false,
+      preparedAt: now(),
+      updatedAt: now()
+    },
+    updatedAt: now()
+  };
+  candidate.updatedAt = now();
+  await logEvent("buffer_draft_approval_requested", "Buffer draft routed to Human Gate", {
+    candidateId: candidate.id,
+    draftId: draft.id,
+    approvalId: approval.id,
+    channelId: channel.id,
+    service: channel.service,
+    automaticPosting: false
+  });
+  await saveState();
+  return { candidate, draft, approval, buffer: publicBufferPublishingStatus(), reused: false };
+}
+
+function bufferPublicOrigin(req) {
+  return cleanText(config.bufferPublicOrigin || req.headers["x-argentum-public-origin"] || "");
+}
+
+function bufferMountPath(req) {
+  return cleanText(req.headers["x-argentum-mount-path"] || "");
+}
+
+async function executeBufferDraft(req, draftId, body = {}) {
+  if (!bufferApiConfigured()) {
+    throw Object.assign(new Error("Buffer is not configured on this server."), { statusCode: 409 });
+  }
+  const draft = state.postingDrafts.find((item) => item.id === cleanText(draftId));
+  if (!draft || draft.publishProvider !== "buffer") {
+    throw Object.assign(new Error("Buffer posting draft not found."), { statusCode: 404 });
+  }
+  const candidate = candidateForPostingDraft(draft);
+  const artifact = state.artifacts.find((item) => item.id === draft.clipArtifactId);
+  assertProductReadyForBuffer(candidate, artifact);
+  const approvalId = cleanText(body.approvalId || candidate.productionWorkflow?.buffer?.approvalId);
+  const approval = approvalById(approvalId);
+  if (!approval
+    || approval.type !== BUFFER_DRAFT_APPROVAL_TYPE
+    || approval.actionType !== BUFFER_DRAFT_ACTION_TYPE
+    || approval.linkedId !== draft.id
+    || approval.status !== "approved") {
+    throw Object.assign(new Error("An exact approved Human Gate request is required before creating the Buffer draft."), { statusCode: 409 });
+  }
+  if (approval.consumedAt || Number(approval.useCount || 0) > 0) {
+    throw Object.assign(new Error("This Buffer approval was already consumed. It cannot be reused."), { statusCode: 409 });
+  }
+  const currentSha256 = await fileSha256(artifact.path).catch(() => "");
+  const expectedSha256 = cleanText(artifact.content?.sha256 || artifact.sha256).toLowerCase();
+  if (!currentSha256 || !expectedSha256 || currentSha256 !== expectedSha256) {
+    throw Object.assign(new Error("The Product Ready MP4 changed after approval. Create a fresh Buffer approval."), { statusCode: 409 });
+  }
+  const refreshed = await listBufferChannels({ apiKey: config.bufferApiKey });
+  state.bufferPublishing.channels = refreshed.channels.map(publicBufferChannel);
+  state.bufferPublishing.organizations = refreshed.organizations.map((organization) => ({
+    id: cleanText(organization.id).slice(0, 160),
+    name: cleanText(organization.name).slice(0, 160)
+  }));
+  state.bufferPublishing.lastCheckedAt = now();
+  state.bufferPublishing.lastSuccessAt = now();
+  state.bufferPublishing.lastError = "";
+  const channel = cachedBufferChannel(draft.buffer?.channelId);
+  if (!channel) {
+    throw Object.assign(new Error("The approved Buffer channel is no longer connected. Create a fresh approval after reconnecting it."), { statusCode: 409 });
+  }
+  const evidence = bufferApprovalEvidence({ candidate, artifact, draft, channel, caption: draft.caption });
+  if (approval.evidence?.fingerprint !== evidence.fingerprint
+    || candidate.productionWorkflow?.buffer?.fingerprint !== evidence.fingerprint) {
+    throw Object.assign(new Error("The Buffer draft scope changed after approval. Create a fresh Human Gate request."), { statusCode: 409 });
+  }
+  const capability = createBufferMediaCapability({
+    draftId: draft.id,
+    artifactId: artifact.id,
+    artifactSha256: currentSha256,
+    filename: artifact.filename,
+    createdAt: now()
+  });
+  const videoUrl = buildBufferMediaUrl({
+    publicOrigin: bufferPublicOrigin(req),
+    mountPath: bufferMountPath(req),
+    token: capability.token,
+    filename: artifact.filename
+  });
+  state.bufferPublishing.mediaGrants.unshift(capability.grant);
+  state.bufferPublishing.mediaGrants = state.bufferPublishing.mediaGrants.slice(0, 250);
+  const consumedAt = now();
+  approval.useCount = 1;
+  approval.consumedAt = consumedAt;
+  approval.executionStatus = "dispatching";
+  draft.status = "draft";
+  draft.approvalStatus = "approved";
+  draft.platformStatus = "buffer_dispatching";
+  draft.mediaGrantId = capability.grant.id;
+  draft.updatedAt = consumedAt;
+  candidate.productionWorkflow = {
+    ...(candidate.productionWorkflow || {}),
+    postingStatus: "buffer_dispatching",
+    buffer: {
+      ...(candidate.productionWorkflow?.buffer || {}),
+      status: "dispatching",
+      approvalConsumedAt: consumedAt,
+      mediaGrantId: capability.grant.id,
+      automaticPosting: false,
+      updatedAt: consumedAt
+    },
+    updatedAt: consumedAt
+  };
+  candidate.updatedAt = consumedAt;
+  await logEvent("buffer_draft_dispatching", "One-use Buffer approval consumed before external dispatch", {
+    candidateId: candidate.id,
+    draftId: draft.id,
+    approvalId: approval.id,
+    channelId: channel.id,
+    saveToDraft: true,
+    automaticPosting: false
+  });
+  await saveState();
+
+  try {
+    const post = await createBufferVideoDraft({
+      apiKey: config.bufferApiKey,
+      channelId: channel.id,
+      text: draft.caption,
+      videoUrl
+    });
+    const completedAt = now();
+    approval.executionStatus = "completed";
+    approval.executionCompletedAt = completedAt;
+    draft.platformStatus = "buffer_draft_created";
+    draft.externalPostId = post.id;
+    draft.externalStatus = post.status || "draft";
+    draft.buffer = {
+      ...(draft.buffer || {}),
+      postId: post.id,
+      postStatus: post.status || "draft",
+      createdAt: completedAt,
+      saveToDraft: true,
+      schedulingType: "notification",
+      automaticPosting: false
+    };
+    draft.updatedAt = completedAt;
+    candidate.productionWorkflow = {
+      ...(candidate.productionWorkflow || {}),
+      postingStatus: "buffer_draft_created_not_published",
+      buffer: {
+        ...(candidate.productionWorkflow?.buffer || {}),
+        status: "buffer_draft_created",
+        postId: post.id,
+        postStatus: post.status || "draft",
+        saveToDraft: true,
+        schedulingType: "notification",
+        automaticPosting: false,
+        createdAt: completedAt,
+        updatedAt: completedAt
+      },
+      updatedAt: completedAt
+    };
+    candidate.updatedAt = completedAt;
+    await logEvent("buffer_draft_created", "Buffer accepted the approved video as a manual draft", {
+      candidateId: candidate.id,
+      draftId: draft.id,
+      approvalId: approval.id,
+      bufferPostId: post.id,
+      channelId: channel.id,
+      saveToDraft: true,
+      automaticPosting: false
+    });
+    await saveState();
+    return { candidate, draft, approval, post, buffer: publicBufferPublishingStatus() };
+  } catch (error) {
+    const failedAt = now();
+    const ambiguous = error.ambiguous === true;
+    approval.executionStatus = ambiguous ? "manual_review" : "failed";
+    approval.executionCompletedAt = failedAt;
+    draft.platformStatus = ambiguous ? "buffer_status_unknown" : "buffer_rejected";
+    draft.externalError = cleanText(error.message).slice(0, 300);
+    draft.updatedAt = failedAt;
+    if (!ambiguous) {
+      capability.grant.status = "revoked";
+      capability.grant.revokedAt = failedAt;
+    }
+    candidate.productionWorkflow = {
+      ...(candidate.productionWorkflow || {}),
+      postingStatus: ambiguous ? "buffer_manual_review" : "buffer_failed",
+      buffer: {
+        ...(candidate.productionWorkflow?.buffer || {}),
+        status: ambiguous ? "manual_review" : "failed",
+        error: cleanText(error.message).slice(0, 300),
+        postId: cleanText(error.bufferPostId || candidate.productionWorkflow?.buffer?.postId),
+        postStatus: cleanText(error.bufferPostStatus || candidate.productionWorkflow?.buffer?.postStatus),
+        automaticRetry: false,
+        approvalConsumed: true,
+        updatedAt: failedAt
+      },
+      updatedAt: failedAt
+    };
+    candidate.updatedAt = failedAt;
+    await logEvent("buffer_draft_failed", "Buffer draft creation stopped without automatic retry", {
+      candidateId: candidate.id,
+      draftId: draft.id,
+      approvalId: approval.id,
+      ambiguous,
+      bufferPostId: cleanText(error.bufferPostId),
+      bufferPostStatus: cleanText(error.bufferPostStatus),
+      error: cleanText(error.message).slice(0, 300),
+      automaticRetry: false
+    });
+    await saveState();
+    error.statusCode ||= 502;
+    error.details = {
+      approvalConsumed: true,
+      automaticRetry: false,
+      inspectBufferBeforeRetry: ambiguous
+    };
+    throw error;
+  }
+}
+
+async function revokeBufferMediaForDraft(draftId = "") {
+  const draft = state.postingDrafts.find((item) => item.id === cleanText(draftId));
+  if (!draft || draft.publishProvider !== "buffer") {
+    throw Object.assign(new Error("Buffer posting draft not found."), { statusCode: 404 });
+  }
+  const revokedAt = now();
+  let revoked = 0;
+  for (const grant of state.bufferPublishing?.mediaGrants || []) {
+    if (grant.draftId !== draft.id || grant.status !== "active") continue;
+    grant.status = "revoked";
+    grant.revokedAt = revokedAt;
+    revoked += 1;
+  }
+  draft.mediaGrantRevokedAt = revokedAt;
+  draft.updatedAt = revokedAt;
+  const candidate = candidateForPostingDraft(draft);
+  if (candidate?.productionWorkflow?.buffer) {
+    candidate.productionWorkflow.buffer.mediaGrantRevokedAt = revokedAt;
+    candidate.productionWorkflow.buffer.updatedAt = revokedAt;
+    candidate.productionWorkflow.updatedAt = revokedAt;
+    candidate.updatedAt = revokedAt;
+  }
+  await logEvent("buffer_media_revoked", "Buffer media capability revoked by operator", {
+    draftId: draft.id,
+    candidateId: candidate?.id || "",
+    revoked
+  });
+  await saveState();
+  return { candidate, draft, revoked };
 }
 
 function artifactIsVerifiedClip(artifact) {
@@ -13028,6 +13595,38 @@ async function handleApi(req, res, pathname, searchParams) {
     return sendJson(res, 200, matrix);
   }
 
+  if (req.method === "GET" && pathname === "/api/buffer/status") {
+    return sendJson(res, 200, publicBufferPublishingStatus());
+  }
+
+  if (req.method === "POST" && pathname === "/api/buffer/drafts/prepare") {
+    const body = await readJsonBody(req);
+    try {
+      return sendJson(res, 201, await prepareBufferDraft(body));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const bufferCreateDraftMatch = pathname.match(/^\/api\/buffer\/posts\/([^/]+)\/create-draft$/);
+  if (req.method === "POST" && bufferCreateDraftMatch) {
+    const body = await readJsonBody(req);
+    try {
+      return sendJson(res, 200, await executeBufferDraft(req, bufferCreateDraftMatch[1], body));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
+  const bufferRevokeMediaMatch = pathname.match(/^\/api\/buffer\/posts\/([^/]+)\/revoke-media$/);
+  if (req.method === "POST" && bufferRevokeMediaMatch) {
+    try {
+      return sendJson(res, 200, await revokeBufferMediaForDraft(bufferRevokeMediaMatch[1]));
+    } catch (error) {
+      return sendError(res, error.statusCode || 500, error.message, error.details || {});
+    }
+  }
+
   const integrationTestMatch = pathname.match(/^\/api\/integrations\/([^/]+)\/test$/);
   if (req.method === "POST" && integrationTestMatch) {
     const id = cleanText(integrationTestMatch[1]);
@@ -16112,6 +16711,49 @@ async function handleApi(req, res, pathname, searchParams) {
         draft.approvedAt = now();
       }
     }
+    if (request.type === BUFFER_DRAFT_APPROVAL_TYPE) {
+      const draft = state.postingDrafts.find((item) => item.id === request.linkedId);
+      const candidate = candidateForPostingDraft(draft);
+      const artifact = state.artifacts.find((item) => item.id === draft?.clipArtifactId);
+      try {
+        assertProductReadyForBuffer(candidate, artifact);
+      } catch (error) {
+        await logEvent("approval_blocked", "Buffer Human Gate decision blocked because the Product Ready scope changed", {
+          approvalId: request.id,
+          draftId: draft?.id,
+          error: error.message
+        });
+        return sendError(res, error.statusCode || 422, error.message);
+      }
+      if (action === "approved" && draft?.approvalStatus !== "approved" && dailyLimitStatus().blocked) {
+        return sendError(res, 429, "Daily approved post limit reached", dailyLimitStatus());
+      }
+      if (draft) {
+        draft.approvalStatus = action;
+        draft.status = "draft";
+        draft.platformStatus = action === "approved"
+          ? "human_gate_approved"
+          : action === "rejected"
+            ? "human_gate_rejected"
+            : "human_gate_send_back";
+        draft.updatedAt = now();
+        if (action === "approved") draft.approvedAt = now();
+      }
+      if (candidate?.productionWorkflow?.buffer) {
+        candidate.productionWorkflow.buffer.status = action === "approved"
+          ? "approved"
+          : action === "rejected"
+            ? "rejected"
+            : "send_back";
+        candidate.productionWorkflow.buffer.approvalStatus = action;
+        candidate.productionWorkflow.buffer.updatedAt = now();
+        candidate.productionWorkflow.postingStatus = action === "approved"
+          ? "buffer_approved_waiting_manual_create"
+          : `buffer_${action}`;
+        candidate.productionWorkflow.updatedAt = now();
+        candidate.updatedAt = now();
+      }
+    }
     if (request.type === "clip_package") {
       const clipPackage = state.clipPackages.find((item) => item.id === request.linkedId);
       if (clipPackage) {
@@ -16186,6 +16828,53 @@ async function handleApi(req, res, pathname, searchParams) {
   return sendError(res, 404, "API route not found", { pathname, method: req.method });
 }
 
+async function handleBufferMediaRequest(req, res, pathname) {
+  const match = pathname.match(/^\/api\/buffer\/media\/([^/]+)\/([^/]+)$/);
+  if (!match || !["GET", "HEAD"].includes(req.method)) return false;
+  const token = decodeURIComponent(match[1]);
+  const filename = decodeURIComponent(match[2]);
+  const grant = (state.bufferPublishing?.mediaGrants || []).find((item) => (
+    bufferMediaGrantMatches(item, token, filename)
+  ));
+  if (!grant) {
+    sendError(res, 404, "Media not found");
+    return true;
+  }
+  const artifact = state.artifacts.find((item) => item.id === grant.artifactId);
+  const outputRoot = `${path.resolve(config.outputDir)}${path.sep}`;
+  const artifactPath = path.resolve(cleanText(artifact?.path));
+  if (!artifactIsVerifiedClip(artifact)
+    || artifact.filename !== grant.filename
+    || !artifactPath.startsWith(outputRoot)
+    || cleanText(artifact.content?.sha256 || artifact.sha256).toLowerCase() !== grant.artifactSha256) {
+    sendError(res, 410, "Media is no longer available");
+    return true;
+  }
+  const actualSha256 = await fileSha256(artifactPath).catch(() => "");
+  if (!actualSha256 || actualSha256 !== grant.artifactSha256) {
+    sendError(res, 410, "Media is no longer available");
+    return true;
+  }
+  if (req.method === "HEAD") {
+    const stat = await fs.stat(artifactPath).catch(() => null);
+    if (!stat?.isFile()) {
+      sendError(res, 404, "Media not found");
+      return true;
+    }
+    res.writeHead(200, {
+      "content-type": "video/mp4",
+      "content-length": stat.size,
+      "accept-ranges": "bytes",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff"
+    });
+    res.end();
+    return true;
+  }
+  await streamFileWithRange(req, res, artifactPath, "video/mp4");
+  return true;
+}
+
 async function serveStatic(req, res, pathname) {
   if (pathname.startsWith("/outputs/")) {
     const filename = decodeURIComponent(pathname.replace("/outputs/", ""));
@@ -16255,6 +16944,10 @@ async function streamFileWithRange(req, res, filePath, contentType = contentType
 async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (url.pathname.startsWith("/api/buffer/media/")) {
+      await readyPromise;
+      if (await handleBufferMediaRequest(req, res, url.pathname)) return;
+    }
     if (url.pathname.startsWith("/api/")) {
       const accessError = standaloneApiAccessError(req);
       if (accessError) return sendError(res, accessError.statusCode || 403, accessError.message);

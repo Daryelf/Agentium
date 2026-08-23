@@ -88,7 +88,7 @@ States:
 Rules:
 
 - Draft creation is safe internal work.
-- External posting/uploading is not implemented and requires Human Gate.
+- Buffer draft creation is implemented only for verified Product Ready MP4s after an exact one-use Human Gate approval. It uses Buffer draft mode; automatic scheduling and public posting remain disabled. Other external posting/uploading remains unimplemented.
 
 ## Human Gate
 
